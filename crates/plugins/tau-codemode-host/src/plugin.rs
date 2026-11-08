@@ -366,7 +366,15 @@ impl AgentTool for InferTool {
                 true,
             );
         };
-        let request = match InferRequest::parse(args) {
+        // A script asks the run's model: it cannot pick another.
+        let request = match InferRequest::parse(args).and_then(|request| {
+            match request.model {
+                Some(_) => Err("infer here asks the run's model; `model` \
+                                is not taken"
+                    .to_owned()),
+                None => Ok(request),
+            }
+        }) {
             Ok(request) => request,
             Err(error) => {
                 let started = inference_trace::Record::Started {

@@ -955,6 +955,107 @@ fn a_run_hook_calls_the_model_and_jev_it_uses() {
     );
 }
 
+const READER: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "reader",
+  uses = { transcript = true, infer = true },
+  before_request = function(request, ctx)
+    if request.replies ~= 1 then return nil end
+    local messages = ctx.transcript()
+    local call = messages[2].calls[1]
+    local model
+    for _, known in ipairs(ctx.models) do
+      if known.family == "luna" then model = known.id end
+    end
+    local answer = ctx.tools.infer({ task = "Say ok.", context = json.null, model = "luna" })
+    ctx.state.read = {
+      replies = request.replies,
+      first = messages[1].text,
+      call = { name = call.name, cmd = call.args.cmd },
+      result = messages[3].text,
+      luna = model,
+      answer = answer.value,
+    }
+  end,
+}
+"#;
+
+const BLIND: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "blind",
+  before_request = function(request, ctx)
+    local ok, why = pcall(ctx.transcript)
+    ctx.state.ok = ok
+    ctx.state.why = tostring(why)
+  end,
+}
+"#;
+
+/// A run hook reads the run's conversation whole when its plugin uses
+/// it (ADR 0050): before the second request, the person's message, the
+/// call with its arguments and the result; `replies` counts the agent's
+/// messages, `ctx.models` lists the plan's models, and `infer` asks the
+/// family it names. A plugin that does not use the transcript cannot
+/// read it.
+#[test]
+fn a_run_hook_reads_the_conversation_it_uses() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("exec_command", json!({ "cmd": "ls -la" })))
+        .turn(|t| t.text("ok"))
+        .turn(|t| t.text("done"));
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
+    let plugins = LuauPlugins::new(
+        vec![active("blind", BLIND), active("reader", READER)],
+        json!({ "kind": "main", "repo": "r", "model": "m" }),
+        None,
+    );
+    let agent = Agent::new(llm.clone()).tool(ExecCommand).plugin(plugins);
+    let outcome = block_on_io(agent.run("look around", &store)).unwrap();
+    assert_eq!(outcome.text, "done");
+    let luna = tau_ai::model::plan_models()
+        .into_iter()
+        .find(|model| model.id.ends_with("-luna"))
+        .map(|model| model.id.clone())
+        .unwrap();
+    let asked: Vec<String> = llm
+        .requests()
+        .iter()
+        .map(|request| request.settings.model.clone())
+        .collect();
+    assert!(
+        asked.contains(&luna),
+        "infer asked the newest luna: {asked:?}"
+    );
+    let stored = records(&store, &outcome.run);
+    let state = |name: &str| {
+        stored.iter().rev().find_map(|record| match record {
+            Record::State { plugin, state } if plugin == name => {
+                Some(state.clone())
+            }
+            _ => None,
+        })
+    };
+    assert_eq!(
+        state("reader").unwrap()["read"],
+        json!({
+            "replies": 1,
+            "first": "look around",
+            "call": { "name": "exec_command", "cmd": "ls -la" },
+            "result": "ran \"ls -la\"",
+            "luna": luna,
+            "answer": "ok",
+        })
+    );
+    let blind = state("blind").unwrap();
+    assert_eq!(blind["ok"], json!(false));
+    assert!(
+        blind["why"].as_str().unwrap().contains("uses.transcript"),
+        "{blind}"
+    );
+}
+
 const TALLY: &str = r#"
 local tau = require("tau")
 return tau.plugin {

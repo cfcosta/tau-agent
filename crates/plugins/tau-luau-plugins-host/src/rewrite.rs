@@ -54,6 +54,45 @@ pub fn summary(transcript: &[Message]) -> Value {
     Value::Array(messages)
 }
 
+/// `transcript` whole, as `ctx.transcript()` gives it: each message by
+/// its place (from 1), its role and its full text; an answer's calls
+/// with their arguments and, as a Luau table keeps no order, `order`,
+/// their names in the order the model gave them; a result's call, name
+/// and whether it went well.
+pub fn transcript(transcript: &[Message]) -> Value {
+    let messages: Vec<Value> = transcript
+        .iter()
+        .enumerate()
+        .map(|(at, message)| {
+            let mut out = match message {
+                Message::User(user) => json!({ "text": user.content.text() }),
+                Message::Assistant(assistant) => json!({
+                    "text": assistant.text(),
+                    "calls": assistant
+                        .tool_calls()
+                        .map(|call| json!({
+                            "id": call.id,
+                            "name": call.name,
+                            "args": call.arguments,
+                            "order": call.arguments.keys().collect::<Vec<_>>(),
+                        }))
+                        .collect::<Vec<_>>(),
+                }),
+                Message::ToolResult(result) => json!({
+                    "text": blocks_text(&result.content),
+                    "call": result.tool_call_id,
+                    "name": result.tool_name,
+                    "ok": !result.is_error,
+                }),
+            };
+            out["index"] = json!(at + 1);
+            out["role"] = json!(message.role());
+            out
+        })
+        .collect();
+    Value::Array(messages)
+}
+
 fn blocks_text(blocks: &[InputBlock]) -> String {
     blocks.iter().filter_map(InputBlock::as_text).collect()
 }

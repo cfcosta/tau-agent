@@ -977,6 +977,7 @@ impl Registry {
             view: None,
             logs: Vec::new(),
             error: None,
+            interface: None,
         };
         let loaded = {
             let state = self.0.state.read().await;
@@ -1053,8 +1054,11 @@ impl Registry {
                 .await
             }
         };
-        if let Err(error) = followed {
-            done.error = Some((format!("actions.{action}"), error));
+        match followed {
+            Ok(value) => done.interface = value.get("tau_interface").cloned(),
+            Err(error) => {
+                done.error = Some((format!("actions.{action}"), error));
+            }
         }
         if loaded.declaration.hooks.view {
             context.state = done.state.clone();

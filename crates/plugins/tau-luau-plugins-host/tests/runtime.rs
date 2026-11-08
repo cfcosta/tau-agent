@@ -134,6 +134,7 @@ async fn a_plugin_declares_what_it_is() {
             secrets: Vec::new(),
             model: None,
             store: false,
+            transcript: false,
         }
     );
     let tools: Vec<(&str, bool)> = declared

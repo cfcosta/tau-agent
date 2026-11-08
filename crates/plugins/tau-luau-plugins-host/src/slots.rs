@@ -36,7 +36,11 @@ pub(crate) fn context(
 /// model, asking `model` with it.
 pub(crate) struct ModelReach {
     model: Option<tau_ui_plugin::PluginModel>,
-    name: Option<String>,
+    /// The model `uses.model` names, if it names one.
+    named: Option<String>,
+    /// What `infer` asks when neither the call nor `uses.model` names a
+    /// model: the run's, for `title`.
+    fallback: Option<String>,
 }
 
 impl ModelReach {
@@ -50,7 +54,8 @@ impl ModelReach {
         let declaration = &active.loaded.declaration;
         std::sync::Arc::new(Self {
             model: registry.model_of(&declaration.name),
-            name: model_named(declaration.uses.model.as_deref(), fallback),
+            named: declaration.uses.model.clone(),
+            fallback: fallback.map(str::to_owned),
         })
     }
 }
@@ -99,9 +104,8 @@ impl ModelReach {
             .model
             .as_ref()
             .ok_or("there is no model to ask: the person is signed out")?;
-        let name = self
-            .name
-            .clone()
+        let named = request.model.as_deref().or(self.named.as_deref());
+        let name = model_named(named, self.fallback.as_deref())
             .ok_or("name the model `infer` asks in `uses.model`")?;
         let effort = effort_for(&name, request.effort);
         let mut settings = tau_ui_plugin::AskSettings::new(name, effort);

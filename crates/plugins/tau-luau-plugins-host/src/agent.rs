@@ -48,6 +48,7 @@ use tau_ai::{
         AssistantBlock,
         AssistantMessage,
         InputBlock,
+        Message,
         TextContent,
         Usage,
     },
@@ -239,20 +240,28 @@ impl Inner {
     }
 
     /// What `active`'s run hooks reach (ADR 0050): the model and Jev,
-    /// when its `uses` names them, charged to the run; else nothing.
-    fn reach(&self, active: &Active, ctx: &PluginCtx) -> Arc<dyn Reach> {
+    /// when its `uses` names them, charged to the run, and the run's
+    /// conversation, `transcript`, where the hook has it and `uses`
+    /// names it; else nothing.
+    fn reach(
+        &self,
+        active: &Active,
+        ctx: &PluginCtx,
+        transcript: Option<&[Message]>,
+    ) -> Arc<dyn Reach> {
         let uses = &active.loaded.declaration.uses;
-        if !uses.infer && !uses.jev {
+        let transcript = transcript
+            .filter(|_| uses.transcript)
+            .map(|transcript| Arc::from(transcript.to_vec()));
+        if !uses.infer && !uses.jev && transcript.is_none() {
             return Arc::new(NoReach);
         }
-        let run_model = self.run["model"].as_str().unwrap_or_default();
-        let model =
-            crate::slots::model_named(uses.model.as_deref(), Some(run_model))
-                .unwrap_or_default();
         Arc::new(RunReach {
             plugin: ctx.clone(),
             jev: self.jev.clone(),
-            model,
+            named: uses.model.clone(),
+            run_model: self.run["model"].as_str().unwrap_or_default().into(),
+            transcript,
         })
     }
 
@@ -681,7 +690,7 @@ impl Plugin for LuauPlugins {
                         input,
                         &mut state,
                         ctx,
-                        self.0.reach(active, ctx),
+                        self.0.reach(active, ctx, None),
                     )
                     .await
                 else {
@@ -761,7 +770,7 @@ impl PluginRun for LuauRun {
                     input.clone(),
                     &mut state,
                     ctx,
-                    inner.reach(active, ctx),
+                    inner.reach(active, ctx, None),
                 )
                 .await
             else {
@@ -837,7 +846,7 @@ impl PluginRun for LuauRun {
                     input.clone(),
                     &mut state,
                     ctx,
-                    inner.reach(active, ctx),
+                    inner.reach(active, ctx, Some(view.transcript)),
                 )
                 .await
             else {
@@ -890,7 +899,7 @@ impl PluginRun for LuauRun {
                     input.clone(),
                     &mut state,
                     ctx,
-                    inner.reach(active, ctx),
+                    inner.reach(active, ctx, None),
                 )
                 .await;
         }
@@ -929,7 +938,7 @@ impl PluginRun for LuauRun {
                     input,
                     &mut state,
                     ctx,
-                    inner.reach(active, ctx),
+                    inner.reach(active, ctx, None),
                 )
                 .await
             else {
@@ -977,7 +986,7 @@ impl PluginRun for LuauRun {
                     input.clone(),
                     &mut state,
                     ctx,
-                    inner.reach(active, ctx),
+                    inner.reach(active, ctx, None),
                 )
                 .await
             else {
@@ -1015,6 +1024,11 @@ impl PluginRun for LuauRun {
             "effort": view.effort,
             "turn": view.turn,
             "messages": view.transcript.len(),
+            "replies": view
+                .transcript
+                .iter()
+                .filter(|message| matches!(message, Message::Assistant(_)))
+                .count(),
         });
         for active in inner.active().iter() {
             let Some(answer) = inner
@@ -1024,7 +1038,7 @@ impl PluginRun for LuauRun {
                     input.clone(),
                     &mut state,
                     ctx,
-                    inner.reach(active, ctx),
+                    inner.reach(active, ctx, Some(view.transcript)),
                 )
                 .await
             else {
@@ -1097,7 +1111,7 @@ impl PluginRun for LuauRun {
                             input.clone(),
                             &mut state,
                             ctx,
-                            inner.reach(active, ctx),
+                            inner.reach(active, ctx, None),
                         )
                         .await;
                 }
@@ -1124,7 +1138,7 @@ impl PluginRun for LuauRun {
                         input.clone(),
                         &mut state,
                         ctx,
-                        inner.reach(active, ctx),
+                        inner.reach(active, ctx, None),
                     )
                     .await;
             }
@@ -1434,14 +1448,20 @@ impl Reach for ToolReach {
 struct RunReach {
     plugin: PluginCtx,
     jev: Option<Arc<dyn Jev>>,
-    /// The model `infer` asks: `uses.model`'s, else the run's.
-    model: String,
+    /// The model `uses.model` names, if it names one.
+    named: Option<String>,
+    /// The run's model: what `infer` asks when neither the call nor
+    /// `uses.model` names one.
+    run_model: String,
+    /// The run's conversation, when the hook has it and the plugin uses
+    /// it.
+    transcript: Option<Arc<[Message]>>,
 }
 
 #[async_trait]
 impl Reach for RunReach {
     fn tools(&self) -> Vec<ToolEntry> {
-        vec![ToolEntry {
+        let mut tools = vec![ToolEntry {
             name: "infer".into(),
             description: "Asks the model one task.".into(),
             input_schema:
@@ -1449,10 +1469,28 @@ impl Reach for RunReach {
             output_schema: None,
             namespace: None,
             sequential: false,
-        }]
+        }];
+        if self.transcript.is_some() {
+            tools.push(ToolEntry {
+                name: "transcript".into(),
+                description: "The run's conversation, whole.".into(),
+                input_schema: json!({ "type": "object" }),
+                output_schema: None,
+                namespace: None,
+                sequential: false,
+            });
+        }
+        tools
     }
 
     async fn call(&self, call: ScriptCall) -> Result<ToolReply, String> {
+        if let ("transcript", Some(transcript)) =
+            (call.name.as_str(), &self.transcript)
+        {
+            return Ok(ToolReply::success(crate::rewrite::transcript(
+                transcript,
+            )));
+        }
         if call.name != "infer" {
             return Err(format!(
                 "`{}` cannot be called from this hook",
@@ -1478,13 +1516,16 @@ impl Reach for RunReach {
 
 impl RunReach {
     async fn infer(&self, args: Value) -> Result<Value, String> {
-        use tau_ai::message::{Message, UserContent, UserMessage};
+        use tau_ai::message::{UserContent, UserMessage};
         use tau_codemode_host::inference::{INSTRUCTIONS, InferRequest};
         let request = InferRequest::parse(args)?;
+        let named = request.model.as_deref().or(self.named.as_deref());
+        let model = crate::slots::model_named(named, Some(&self.run_model))
+            .unwrap_or_default();
         let settings = tau_ai::responses::request::Settings {
-            model: self.model.clone(),
+            reasoning: crate::slots::effort_for(&model, request.effort),
+            model,
             instructions: Some(INSTRUCTIONS.into()),
-            reasoning: crate::slots::effort_for(&self.model, request.effort),
             text_format: request.text_format(),
             ..Default::default()
         };

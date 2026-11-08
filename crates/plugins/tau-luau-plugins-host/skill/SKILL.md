@@ -104,7 +104,7 @@ one, its `card`.
 | tool `card`         | the call's arguments and the result                  | a view piece, drawn on the call's card                         | 200 ms |
 | `start`             | `{ input, context, instructions }`                   | `nil`, or `tau.start{ context, instructions }`                 | 2 s    |
 | `before_tool`       | `{ id, name, args }`                                 | `nil`, `tau.block(why)`, `tau.flag(why)` or `tau.change(args)` | 2 s    |
-| `before_request`    | `{ model, effort, turn, messages }`                  | `nil`, or `tau.effort(level)`                                  | 200 ms |
+| `before_request`    | `{ model, effort, turn, messages, replies }`         | `nil`, or `tau.effort(level)`                                  | 200 ms |
 | `after_tool_result` | `{ id, name, args, ok, text, truncated }`            | `nil`, or `tau.result(text)`                                   | 2 s    |
 | `rewrite_context`   | `{ trigger, turn, tokens, window, messages }`        | `nil`, or `tau.rewrite{ keep, insert, drops_conversation }`    | 10 s   |
 | `rewritten`         | `{ plugin, before, after, drops_conversation }`      | nothing                                                        | 2 s    |
@@ -206,6 +206,8 @@ A plugin with `uses.infer` asks the person's model one task:
 `{ ok, value, error? }`, `value` the answer's text, or JSON that holds
 to `schema`; `effort` is `"low"`, `"medium"` and so on, else the
 model's own, and a model that does not take it is asked with its own.
+`model`, a model or a family, asks that one in place of `uses.model`'s:
+a model the person picks in the plugin's settings.
 `uses.model` names a model, or a family (`"luna"`): the plan's newest
 of it, else the model the hook would ask without one. In a run, from
 any run hook, it asks that model, else the run's, booked to the run. In
@@ -228,19 +230,30 @@ new reach.
 
 ### `ctx`
 
-| Field          | What it is                                                                                                                                                                       |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ctx.run`      | `{ id, kind = "main" or "chat" or "sub_agent", repo, model, turn }`                                                                                                              |
-| `ctx.now`      | `{ unix, iso, weekday }`; `weekday` is `"Monday"` and so on                                                                                                                      |
-| `ctx.settings` | what the person set, over `settings.default`; per repository when one keeps its own copy                                                                                         |
-| `ctx.state`    | the plugin's table for this run; what a hook leaves in it is kept                                                                                                                |
-| `ctx.tools`    | in a tool's `call`: the tools `uses.tools` names, called as `ctx.tools.read({ path = "a" })`; in every hook, `infer` when `uses.infer`, which a fake run's `tools` stands in for |
-| `ctx.jev`      | Jev, when `uses.jev`: in a tool's `call` and every run hook but `on_event`, booked to the run                                                                                    |
-| `ctx.log`      | `ctx.log(text)`: a line on the plugin's page, never for the model                                                                                                                |
-| `ctx.store`    | with `uses.store`: the plugin's store in the repository the hook works in (below)                                                                                                |
+| Field              | What it is                                                                                                                                                                       |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ctx.run`          | `{ id, kind = "main" or "chat" or "sub_agent", repo, model, turn }`                                                                                                              |
+| `ctx.now`          | `{ unix, iso, weekday }`; `weekday` is `"Monday"` and so on                                                                                                                      |
+| `ctx.settings`     | what the person set, over `settings.default`; per repository when one keeps its own copy                                                                                         |
+| `ctx.state`        | the plugin's table for this run; what a hook leaves in it is kept                                                                                                                |
+| `ctx.tools`        | in a tool's `call`: the tools `uses.tools` names, called as `ctx.tools.read({ path = "a" })`; in every hook, `infer` when `uses.infer`, which a fake run's `tools` stands in for |
+| `ctx.jev`          | Jev, when `uses.jev`: in a tool's `call` and every run hook but `on_event`, booked to the run                                                                                    |
+| `ctx.log`          | `ctx.log(text)`: a line on the plugin's page, never for the model                                                                                                                |
+| `ctx.store`        | with `uses.store`: the plugin's store in the repository the hook works in (below)                                                                                                |
+| `ctx.transcript()` | with `uses.transcript`, in `before_request` and `rewrite_context`: the run's conversation, whole (below)                                                                         |
+| `ctx.models`       | the plan's models, newest of each family: `{ id, family, efforts }`                                                                                                              |
 
 `ctx.state` is stored with the run: a resumed or forked run keeps it.
 JSON has no empty array: use `array({})` for one that must stay a list.
+
+`ctx.transcript()` is the run's conversation as the model will read it,
+each message `{ index, role, text }`: `role` is `"user"`, `"assistant"`
+or `"toolResult"`, and `text` is whole. An answer has its `calls`, each
+`{ id, name, args, order }`, `order` the names of `args` in the order
+the model gave them (a table keeps none); a result has its `call`,
+`name` and `ok`. `uses.transcript` is new reach: the plugin reads all
+the person said. `before_request` gets `replies`, the agent's messages
+so far, to count steps without reading it.
 
 ### `tau`
 
@@ -315,6 +328,9 @@ read the state: it has no tools. What it returns goes in three places:
 - `note`: a piece shown in the run's conversation, where the run is
   when the note first appears; a different note later shows where the
   run is then, and the earlier one stays.
+- `notes`: `{ [key] = piece }`, notes that stay put: each shows where
+  the run is when its key first comes, and is drawn again there as it
+  changes, as a note answered or opened.
 - `page`: pieces shown on the plugin's own page, from its newest run;
   buttons there act on that run.
 - `banner`: pieces across the top of the run.
@@ -331,7 +347,9 @@ the run the tree is drawn in (or its page shows):
 message; `tau.steer` cuts into a turn going on; `tau.composer` puts
 `text` in the composer; `tau.start` starts a run in `repo` with `text`;
 `tau.alert` shows `title` and `message`; `tau.details` opens the run's
-details.
+details. An action of the plugin's own may end in one of them as well:
+it answers `tau.interface("composer", { text = "..." })`, and once what
+it did to the state is kept, tau does that on the action's run.
 
 A plugin's `commands` are slash commands in the composer's menu, each
 with its `description` and what follows it (`args`, such as
@@ -440,6 +458,8 @@ t.case("what it checks", function()
     settings = { ... },            -- else the defaults
     state = { ... },               -- else {}
     tools = { read = "text" },     -- what ctx.tools give: a value, or a function of the args
+    transcript = { ... },          -- what ctx.transcript() gives, with uses.transcript
+    models = { ... },              -- what ctx.models lists, else none
   }
   t.equal(run:before_tool { name = "exec_command", args = { cmd = "ls" } }, nil)
 end)

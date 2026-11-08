@@ -110,6 +110,25 @@ impl Fold for State {
                         .insert(key.clone(), (plugin.clone(), note.clone()));
                     run.transcript(&key);
                 }
+                // Keyed notes: each goes where the run is when its key
+                // first comes, and is drawn again there as it changes.
+                for (key, note) in view
+                    .get("notes")
+                    .and_then(Value::as_object)
+                    .into_iter()
+                    .flatten()
+                {
+                    let anchor = format!("note-{plugin}-{key}");
+                    let placed = self.notes.contains_key(&anchor);
+                    if note.is_null() && !placed {
+                        continue;
+                    }
+                    self.notes
+                        .insert(anchor.clone(), (plugin.clone(), note.clone()));
+                    if !placed {
+                        run.transcript(&anchor);
+                    }
+                }
                 self.of(plugin).view = view;
             }
             Record::Log { plugin, lines } => {
@@ -605,6 +624,16 @@ impl UiPlugin for LuauPluginsUi {
             let run = RunId(done.run.as_str().into());
             for record in done.records() {
                 handle.record(&run, record);
+            }
+            // What it asked the interface to do, on its run.
+            if let Some(asked) = &done.interface {
+                let action = asked["action"].as_str().unwrap_or_default();
+                kernel_action(
+                    &format!("tau.{action}"),
+                    &asked["args"],
+                    Some(&run),
+                    handle,
+                );
             }
         }
     }
@@ -1686,6 +1715,43 @@ mod tests {
         );
     }
 
+    /// What an action asked the interface to do once done
+    /// (`tau.interface`) is done after its records are kept, on its run.
+    #[test]
+    fn an_action_may_ask_the_interface_when_done() {
+        use std::{cell::RefCell, rc::Rc};
+
+        use tau_ui_plugin::Request;
+        let asked: Rc<RefCell<Vec<Request>>> = Rc::default();
+        let sink = asked.clone();
+        let handle = Handle::new(
+            NAME,
+            Rc::new(move |_, request| sink.borrow_mut().push(request)),
+        );
+        let done = ActionDone {
+            plugin: "p".into(),
+            run: "r1".into(),
+            state: json!({ "answered": true }),
+            view: None,
+            logs: Vec::new(),
+            error: None,
+            interface: Some(json!({
+                "action": "composer",
+                "args": { "text": "about the note" },
+            })),
+        };
+        LuauPluginsUi.reply(serde_json::to_value(&done).unwrap(), &handle);
+        let asked = asked.borrow();
+        assert!(
+            matches!(asked.first(), Some(Request::Record { .. })),
+            "{asked:?}"
+        );
+        assert_eq!(
+            asked.last(),
+            Some(&Request::Composer("about the note".into()))
+        );
+    }
+
     /// A tree's `tau.` actions ask the interface, on the run the tree is
     /// drawn in; the plugin's own are not, and an unknown one says so.
     #[test]
@@ -1867,6 +1933,32 @@ mod tests {
         assert_eq!(entries[0].to, entry_link("deploys"));
     }
 
+    /// A keyed note is placed where the run is when its key first
+    /// comes, and drawn again in place as it changes: a later key is
+    /// placed later, and the earlier stays where it was.
+    #[test]
+    fn keyed_notes_stay_where_they_were_placed() {
+        let mut state = State::default();
+        let mut run = tau_ui_plugin::testing::FakeRun::default();
+        let view = |notes: Value| Record::View {
+            plugin: "w".into(),
+            view: json!({ "notes": notes }),
+        };
+        for record in [
+            view(json!({})),
+            view(json!({ "n0": "new" })),
+            view(json!({ "n0": "answered" })),
+            view(json!({ "n0": "answered", "n1": "second" })),
+            view(json!({ "n0": "answered", "n1": "second", "n2": null })),
+        ] {
+            state.apply(record, &mut run);
+        }
+        assert_eq!(run.anchors, ["note-w-n0", "note-w-n1"]);
+        assert_eq!(state.notes["note-w-n0"].1, json!("answered"));
+        assert_eq!(state.notes["note-w-n1"].1, json!("second"));
+        assert!(!state.notes.contains_key("note-w-n2"));
+    }
+
     /// A view's note is placed in the transcript where the run is when
     /// it first draws, and again only when it changes; each keeps the
     /// note it was placed with.
@@ -1927,6 +2019,7 @@ mod tests {
             view: Some(json!({ "status": { "text": "2" } })),
             logs: vec!["added".into()],
             error: Some(("view".into(), "late".into())),
+            interface: None,
         };
         let mut state = State::default();
         for record in done.records() {

@@ -691,7 +691,11 @@ impl Loaded {
         );
         let inputs = vec![
             ("__input".to_owned(), input.to_string()),
-            ("__context".to_owned(), json!(context).to_string()),
+            ("__context".to_owned(), {
+                let mut context = json!(context);
+                context["models"] = plan_models();
+                context.to_string()
+            }),
         ];
         let started = std::time::Instant::now();
         // Its turn with the store, from here to the end of the hook.
@@ -758,6 +762,24 @@ impl Loaded {
             wall,
         }
     }
+}
+
+/// The models of the person's plan, newest of each family, as
+/// `ctx.models` lists them: `{ id, family, efforts }`.
+pub fn plan_models() -> Value {
+    Value::Array(
+        tau_ai::model::plan_models()
+            .into_iter()
+            .map(|model| {
+                json!({
+                    "id": model.id,
+                    "family": tau_ai::model::family_version(&model.id)
+                        .map(|(family, _)| family),
+                    "efforts": model.efforts,
+                })
+            })
+            .collect(),
+    )
 }
 
 /// How long a test file may run.
@@ -991,6 +1013,8 @@ struct Reaches {
     jev: bool,
     network: Option<Network>,
     store: Option<SessionRef>,
+    /// The run's conversation (`uses.transcript`).
+    transcript: bool,
     /// The property case its draws come from, while a property runs
     /// (ADR 0049).
     hegel: Option<crate::hegel::Shared>,
@@ -1022,6 +1046,7 @@ impl Reaches {
                 store: secrets.map(tau_tools_host::secrets::SecretStore::new),
             }),
             store: None,
+            transcript: uses.transcript,
             hegel: None,
         }
     }
@@ -1034,6 +1059,7 @@ impl Reaches {
             jev: false,
             network: None,
             store: None,
+            transcript: false,
             hegel: None,
         }
     }
@@ -1078,6 +1104,7 @@ async fn run(
         jev: reaches.jev,
         network: reaches.network,
         store: reaches.store,
+        transcript: reaches.transcript,
         hegel: reaches.hegel,
     });
     let request = Request {
@@ -1139,6 +1166,8 @@ struct PluginHost {
     jev: bool,
     network: Option<Network>,
     store: Option<SessionRef>,
+    /// Whether it reads the run's conversation (`uses.transcript`).
+    transcript: bool,
     /// The case a property's draws come from, while one runs.
     hegel: Option<crate::hegel::Shared>,
 }
@@ -1199,6 +1228,7 @@ impl PluginHost {
     fn allowed(&self, name: &str) -> bool {
         self.tools.iter().any(|tool| tool == name)
             || (self.infer && name == "infer")
+            || (self.transcript && name == "transcript")
     }
 }
 
@@ -1242,7 +1272,10 @@ impl Host for PluginHost {
                 input_schema: json!({ "type": "object" }),
                 output_schema: None,
                 namespace: None,
-                sequential: true,
+                // Not codemode's sequential lock: a property's VM is one
+                // thread, and the driver has its own. Under that lock a
+                // long case stalled for good (ADR 0050, "As built").
+                sequential: false,
             });
         }
         if self.network.is_some() {

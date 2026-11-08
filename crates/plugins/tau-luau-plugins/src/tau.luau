@@ -147,6 +147,14 @@ function tau.start_chat(chat)
 	}
 end
 
+-- What an action answers to have the interface do one of tau's button
+-- actions once it is done, on the action's run: `composer` (`text`),
+-- `send` (`text`), `steer` (`text`), `start` (`repo`, `text`), `alert`
+-- (`title`, `message`) or `details`.
+function tau.interface(action, args)
+	return { tau_interface = { action = tostring(action), args = args or {} } }
+end
+
 -- What an action answers to say the person's `text` to the chat `run`,
 -- steering a turn going or starting one; `then` and `args` as
 -- `tau.start_chat`'s.
@@ -610,6 +618,7 @@ function tau._describe(plugin)
 			secrets = uses.secrets or array({}),
 			model = uses.model or json.null,
 			store = uses.store == true,
+			transcript = uses.transcript == true,
 		},
 		-- What can be set; `view` draws the settings page, on the host.
 		settings = plugin.settings and {
@@ -946,10 +955,21 @@ function tau._ctx(data, with_tools)
 		tools = with_tools or tools,
 		store = store_of(with_tools or tools),
 		jev = jev,
+		-- The plan's models, newest of each family: `{ id, family, efforts }`.
+		models = data.models or array({}),
 		_logs = logs,
 	}
 	function ctx.log(text)
 		table.insert(logs, tostring(text))
+	end
+	-- The run's conversation, whole: in `before_request` and
+	-- `rewrite_context`, with `uses.transcript`.
+	function ctx.transcript()
+		local source = with_tools or tools
+		if source == nil or source.transcript == nil then
+			error("ctx.transcript() is for before_request and rewrite_context, with uses.transcript", 2)
+		end
+		return source.transcript({})
 	end
 	return ctx
 end
@@ -1054,8 +1074,8 @@ end
 
 -- A fake run: `spec` may give `now` (an ISO date), `id`, `kind`,
 -- `settings`, `state`, `store` (a table of keys, shared by the runs
--- given the same one) and `tools` (a function or a value per tool
--- name). Its hooks are methods; each keeps the state the last one left,
+-- given the same one), `tools` (a function or a value per tool name)
+-- and `transcript` (the messages `ctx.transcript()` gives). Its hooks are methods; each keeps the state the last one left,
 -- and a hook that fails keeps none of what it wrote to the store.
 function test.run(spec)
 	spec = spec or {}
@@ -1102,6 +1122,12 @@ function test.run(spec)
 			return found
 		end
 	end
+	-- The conversation `ctx.transcript()` gives: `spec.transcript`.
+	if plugin.uses and plugin.uses.transcript then
+		fakes.transcript = function()
+			return spec.transcript or array({})
+		end
+	end
 	local run = {
 		store = kept,
 		state = spec.state or {},
@@ -1110,6 +1136,7 @@ function test.run(spec)
 			run = { id = spec.id or "test", kind = spec.kind or "main", repo = "test", model = "test", turn = 1 },
 			now = { unix = unix_of(now), iso = now, weekday = weekday(now) },
 			settings = spec.settings or defaults,
+			models = spec.models or array({}),
 		},
 	}
 	local function call(hook, ...)

@@ -68,6 +68,9 @@ pub struct Uses {
     /// A store of its own in each repository (`ctx.store`).
     #[serde(default)]
     pub store: bool,
+    /// The run's conversation, read whole (`ctx.transcript()`).
+    #[serde(default)]
+    pub transcript: bool,
 }
 
 impl Uses {
@@ -88,6 +91,9 @@ impl Uses {
         }
         if self.store && !before.store {
             grown.push("a store of its own".into());
+        }
+        if self.transcript && !before.transcript {
+            grown.push("reading the run's conversation".into());
         }
         if self.change_args && !before.change_args {
             grown.push("changing a tool call's arguments".into());
@@ -528,6 +534,10 @@ pub struct ActionDone {
     pub view: Option<Value>,
     pub logs: Vec<String>,
     pub error: Option<(String, String)>,
+    /// What the interface does once it is done (`tau.interface`):
+    /// `{ action, args }`, one of tau's button actions.
+    #[serde(default)]
+    pub interface: Option<Value>,
 }
 
 impl ActionDone {
@@ -659,6 +669,7 @@ mod tests {
                 secrets: Vec::new(),
                 model: None,
                 store: false,
+                transcript: false,
             },
             settings: None,
             tools: Vec::new(),

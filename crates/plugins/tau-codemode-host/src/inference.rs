@@ -18,6 +18,9 @@ pub struct InferRequest {
     pub schema: Option<Value>,
     /// The reasoning effort to ask with; `None` keeps the caller's.
     pub effort: Option<tau_ai::responses::request::ReasoningEffort>,
+    /// The model to ask, by id or family, where the caller lets it be
+    /// chosen; `None` keeps the caller's.
+    pub model: Option<String>,
 }
 
 /// What an `infer` request is told: one task, on its own.
@@ -30,7 +33,10 @@ impl InferRequest {
             return Err("infer arguments must be an object".into());
         };
         if let Some(key) = fields.keys().find(|key| {
-            !matches!(key.as_str(), "task" | "context" | "schema" | "effort")
+            !matches!(
+                key.as_str(),
+                "task" | "context" | "schema" | "effort" | "model"
+            )
         }) {
             return Err(format!("unknown infer argument: {key}"));
         }
@@ -61,11 +67,21 @@ impl InferRequest {
                 })?)
             }
         };
+        let model = match fields.remove("model") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(model)) if !model.trim().is_empty() => {
+                Some(model)
+            }
+            Some(_) => {
+                return Err("model must be a model's id or family".into());
+            }
+        };
         Ok(Self {
             task,
             context,
             schema,
             effort,
+            model,
         })
     }
 
@@ -77,7 +93,8 @@ impl InferRequest {
                 "task": {"type": "string", "description": "The independent task for inference."},
                 "context": {"description": "Explicit JSON context for this task; null is allowed."},
                 "schema": {"description": "Optional JSON Schema for the answer, or null."},
-                "effort": {"description": "Optional reasoning effort: none, minimal, low, medium, high, xhigh or max."}
+                "effort": {"description": "Optional reasoning effort: none, minimal, low, medium, high, xhigh or max."},
+                "model": {"description": "Optional model, by id or family, where the caller lets it be chosen."}
             },
             "required": ["task", "context"],
             "additionalProperties": false
