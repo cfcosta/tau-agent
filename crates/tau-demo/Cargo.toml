@@ -31,7 +31,6 @@ tau-chatgpt.workspace = true
 tau-codemode.workspace = true
 tau-compaction.workspace = true
 tau-constitution.workspace = true
-tau-constitution-host = { workspace = true, features = ["demo"] }
 tau-direnv.workspace = true
 tau-fast-compaction.workspace = true
 tau-github.workspace = true

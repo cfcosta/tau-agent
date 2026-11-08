@@ -179,8 +179,9 @@ Open findings:
   `structured_text_tracks_exact_and_exceeded_bounds` caught it.
 - `sp()`, `stagger()` and `SetupStep::stage()` have no test left; the old ones
   restated their formulas.
-- `tau-constitution`'s rule edits are tested from `tau-constitution-host`, so
-  `cargo mutants -p tau-constitution` alone shows survivors there.
+- `tau-constitution`'s rule edits were tested from `tau-constitution-host`,
+  so `cargo mutants -p tau-constitution` alone showed survivors there. Both
+  are Luau now (ADR 0050), tested by its own Luau tests.
 
 ### Round two
 

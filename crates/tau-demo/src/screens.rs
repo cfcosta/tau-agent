@@ -74,9 +74,7 @@ pub static SCREENS: &[(&str, Screen)] = &[
             cx,
         );
     }),
-    ("constitution", |ws, _, cx| {
-        plugin_page(ws, tau_constitution_host::NAME, "rules", "repo", cx)
-    }),
+    ("constitution", |ws, _, cx| rules_at(ws, "constitution", cx)),
     ("mcp", |ws, _, cx| {
         plugin_page(ws, tau_mcp_host::NAME, "servers", "repo", cx)
     }),
@@ -521,32 +519,15 @@ pub static SCREENS: &[(&str, Screen)] = &[
     ("rule-missing", |ws, _, cx| rules_at(ws, "rule-missing", cx)),
     ("rules-review", |ws, _, cx| rules_at(ws, "rules-review", cx)),
     // Rules that cannot be read; and none, with no Jev to try them.
-    ("rules-broken", |ws, _, cx| {
-        rules_at(ws, "rules-broken", cx);
-        let mut catalog = ws.catalog().clone();
-        if let Some(repo) = catalog.repo_mut("tau-agent") {
-            repo.plugins.insert(
-                tau_constitution_host::NAME.into(),
-                PluginValue::typed(tau_constitution_host::demo::broken()),
-            );
-        }
-        ws.apply(HostUpdate::catalog(catalog), cx);
-    }),
+    ("rules-broken", |ws, _, cx| rules_at(ws, "rules-broken", cx)),
     ("rules-empty", |ws, host, cx| {
-        rules_at(ws, "rules-empty", cx);
-        let reset = tau_constitution::ui::Act::Reset {
-            repo: "tau-agent".into(),
-        };
-        let reset = serde_json::to_value(reset).expect("an act serializes");
-        if let Err(error) = host.act(tau_constitution_host::NAME, reset) {
-            eprintln!("tau-ui: the demo's rules stay: {error:#}");
-        }
         let mut catalog = host.catalog(ws.catalog().clone());
         catalog.plugin_data.insert(
             tau_jev::NAME.into(),
             tau_ui_plugin::PluginValue::typed(tau_jev::ui::Data::default()),
         );
         ws.apply(HostUpdate::catalog(catalog), cx);
+        rules_at(ws, "rules-empty", cx);
     }),
     // /goal: the command menu, writing a goal, and a goal's states.
     ("slash", |ws, _, cx| {
@@ -1680,26 +1661,44 @@ fn vcs_card(
     );
 }
 
-/// tau-agent's rules page in the state `name` names, which
-/// tau-constitution opens; a rule is tried on the demo run's shell
-/// commands.
+/// tau-agent's rules page, tau-constitution's (a Luau plugin, ADR 0050),
+/// in the state the screen `name` shows, drawn from its fixture: the
+/// rules, a rule being written and tried on the demo run's command, one
+/// saved without a place, the review tab, rules that cannot be read, or
+/// none.
 fn rules_at(
     workspace: &mut Workspace,
     name: &str,
     cx: &mut Context<Workspace>,
 ) {
-    plugin_page(workspace, tau_constitution_host::NAME, "rules", "repo", cx);
-    let handle = workspace.plugin_handle(tau_constitution_host::NAME);
-    let calls = workspace
-        .run(&run_id())
-        .map(|run| run.cards())
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|card| card.tool == "exec_command")
-        .map(|card| (card.tool, card.args))
-        .collect();
-    tau_constitution_host::demo::open(name, &handle, "tau-agent", calls);
-    workspace.drain_plugin_requests(cx);
+    let (shown, tab) = match name {
+        "rules-review" => ("constitution", 1),
+        other => (other, 0),
+    };
+    let link = tau_luau_plugins::ui::repo_page_link(
+        tau_constitution::NAME,
+        "rules",
+        "tau-agent",
+    )
+    .param("demo", shown);
+    workspace.navigate(
+        Route::Plugin {
+            plugin: tau_luau_plugins::NAME.into(),
+            page: link.page,
+            params: link.params,
+        },
+        cx,
+    );
+    // The second tab: what waits for review, in the UI state (ADR 0045).
+    if tab > 0 {
+        let tabs = format!("{}/rules-tabs", tau_constitution::NAME);
+        workspace.set_plugin_ui(
+            tau_luau_plugins::NAME,
+            tau_ui_plugin::tree::tab_key(&tabs),
+            Some(json!(tab)),
+            cx,
+        );
+    }
 }
 
 /// A message of the demo run that kept medium reasoning over Jev's pick

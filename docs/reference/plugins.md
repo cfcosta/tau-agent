@@ -554,9 +554,9 @@ tau-luau-plugins the plugins repository.
   interface does not need keeps it in a crate of its own,
   `tau-<plugin>-host`: tau-codemode (Luau), tau-luau-plugins, tau-vcs
   (jj-lib, gix), tau-mcp (rmcp), tau-tools (the tools), tau-memory
-  (candle) and tau-constitution (its database). The plugin's crate
-  keeps its records, their fold, its views and the shapes they read
-  (`details` modules, tau-mcp's `info`). tau-ask, tau-direnv and
+  (candle). The plugin's crate keeps its records, their fold, its
+  views and the shapes they read (`details` modules, tau-mcp's
+  `info`). tau-ask, tau-direnv and
   tau-skills keep theirs behind a default `host` feature; the rest,
   which are light, beside their `UiPlugin`. `tau-ui-remote` depends on
   no plugin crate at all, so neither it nor a phone links one.
@@ -1152,11 +1152,12 @@ tau-memory-host --features docbert --bin tau-memory-eval` (`--keywords`
 
 ### `tau-constitution`: rules checked on specific calls
 
-Built: `crates/plugins/tau-constitution`, with its host half in
-`crates/plugins/tau-constitution-host`. Its reference is
-[constitution.md](constitution.md).
+Built: `crates/plugins/tau-constitution`, a Luau plugin tau comes with
+(ADR 0050). Its reference is [constitution.md](constitution.md).
 
-- **Seams:** `before_tool`, optionally `before_stop`.
+- **Seams:** `start` (what it watches, and a run fails on rules that
+  cannot be read), `before_tool`, `before_stop` (it declares
+  `continues = 10`), and a page of each repository on its store.
 - **Constitution:** a list of rules, each with an id, its text, and
   where it applies:
   - named tools and argument fields, such as `edit.newText`,
@@ -1175,6 +1176,10 @@ Built: `crates/plugins/tau-constitution`, with its host half in
 - **Final answer:** `before_stop` checks it the same way. A violation
   returns `Continue` with the rule. A cap on continuations stops a run
   from looping.
+- **State:** the rules, what waits for review and what the checks did
+  are in the plugin's store in each repository; each run's checks are
+  its `ctx.state`, drawn on the calls' cards, as notes and in the
+  inspector.
 - **Risk:** the state is untrusted. File content and tool output can
   try to steer Jev, which its docs warn about. Rules for destructive
   calls get higher thresholds, and the checked fields are what the

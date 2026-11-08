@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 use tau_agent::tool::RunId;
 use tau_ui_kit::assets::Icon;
 use tau_ui_plugin::{
+    CardMark,
     ENTRY,
     Fold,
     Handle,
@@ -96,6 +97,10 @@ pub struct PluginState {
     pub off: Option<String>,
     /// Calls it flagged, and why, by call id.
     pub flags: BTreeMap<String, String>,
+    /// Calls its view marked on their cards, by call id: how, as the
+    /// cards were last marked.
+    #[serde(default)]
+    pub marked: BTreeMap<String, CardMark>,
     pub logs: Vec<String>,
 }
 
@@ -136,6 +141,31 @@ impl Fold for State {
                         .insert(anchor.clone(), (plugin.clone(), note.clone()));
                     if !placed {
                         run.transcript(&anchor);
+                    }
+                }
+                // A call its view marks shows so on its card, refused or
+                // flagged, as a Rust plugin's verdict does.
+                for (call_id, drawn) in view
+                    .get("calls")
+                    .and_then(Value::as_object)
+                    .into_iter()
+                    .flatten()
+                {
+                    let mark = match drawn.get("mark").and_then(Value::as_str) {
+                        Some("blocked") => CardMark::Blocked {
+                            reason: drawn["reason"]
+                                .as_str()
+                                .unwrap_or_default()
+                                .to_owned(),
+                        },
+                        Some("flagged") => CardMark::Flagged,
+                        _ => continue,
+                    };
+                    let part = self.of(plugin.clone());
+                    if part.marked.get(call_id) != Some(&mark)
+                        && run.mark(call_id, mark.clone())
+                    {
+                        part.marked.insert(call_id.clone(), mark);
                     }
                 }
                 self.of(plugin).view = view;
@@ -353,7 +383,23 @@ pub(crate) fn rewrite(node: Node, f: &mut dyn FnMut(Node) -> Node) -> Node {
 /// marked as the plugin's. A piece it does not know draws as a red box
 /// that says so.
 pub fn embed(piece: &Value, plugin: &str) -> Node {
-    embed_as(piece, plugin, LUAU)
+    // A link to one of its own pages that names a repository opens that
+    // page of the repository.
+    rewrite(embed_as(piece, plugin, LUAU), &mut |node| match node {
+        Node::Link { label, to }
+            if to.plugin.is_none() && to.params.contains_key(REPO_PARAM) =>
+        {
+            let mut link =
+                repo_page_link(plugin, &to.page, &to.params[REPO_PARAM]);
+            for (name, value) in to.params {
+                if name != PAGE_PARAM && name != REPO_PARAM {
+                    link = link.param(name, value);
+                }
+            }
+            Node::Link { label, to: link }
+        }
+        other => other,
+    })
 }
 
 /// `piece`, a Luau plugin's page of `repo`, as a tree whose actions are
@@ -527,6 +573,7 @@ fn kernel_action(
         "start" => handle.start(text("repo"), text("text")),
         "alert" => handle.alert(text("title"), text("message")),
         "details" => handle.run_details(),
+        "open_run" => handle.open_run(&RunId(text("run").into())),
         // Enter in an input of a command's popover: what it says stays
         // its draft, which Enter would clear, and the composer is sent.
         submit if submit.starts_with("submit/") => {
@@ -776,10 +823,7 @@ impl UiPlugin for LuauPluginsUi {
     }
 
     fn declaration(&self) -> tau_ui_plugin::Declaration {
-        // The person's plugins come after the rules, so theirs hold
-        // first.
         tau_ui_plugin::Declaration::new()
-            .after(&["tau-constitution"])
             .seams(&[
                 tau_ui_plugin::Seam::Tools,
                 tau_ui_plugin::Seam::Start,
@@ -1237,12 +1281,15 @@ fn repo_page(
         .map(Value::to_string)
         .unwrap_or_default();
     let params = view.params.clone();
+    // Whether a Jev key is saved, as the page's `ctx.run.jev`.
+    let jev = tau_jev::keyed(view);
     Node::Fetched {
-        key: format!("luau-repo-page/{plugin}/{}/{kept}", json!(params)),
+        key: format!("luau-repo-page/{plugin}/{}/{kept}/{jev}", json!(params)),
         fetch: json!(Act::Page {
             plugin: plugin.to_owned(),
             page: page.to_owned(),
             params,
+            jev,
         }),
     }
 }
@@ -2289,6 +2336,101 @@ mod tests {
         let body = format!("{:?}", on_card(&state, "c1", "body").unwrap());
         assert!(body.contains("rules says"), "{body}");
         assert_eq!(on_card(&state, "c2", "badge"), None);
+    }
+
+    /// A view's `calls` that say `mark` mark their cards, refused with
+    /// the reason or flagged, as a Rust plugin's verdict does; a card not
+    /// shown yet is marked once it is, and a mark is not made twice.
+    #[test]
+    fn a_views_calls_mark_their_cards() {
+        let card = |id: &str| tau_ui_plugin::CardInfo {
+            call_id: id.into(),
+            tool: "write".into(),
+            args: json!({}),
+            summary: String::new(),
+            size: 0,
+            turn: 1,
+        };
+        let mut state = State::default();
+        let mut run =
+            tau_ui_plugin::testing::FakeRun::with_cards(vec![card("c1")]);
+        let view = || Record::View {
+            plugin: "rules".into(),
+            view: json!({ "calls": {
+                "c1": { "mark": "blocked", "reason": "rule R1" },
+                "c2": { "mark": "flagged" },
+                "c3": { "badge": { "piece": "mono", "text": "R1 0.10" } },
+            } }),
+        };
+        state.apply(view(), &mut run);
+        assert_eq!(
+            run.marks["c1"],
+            CardMark::Blocked {
+                reason: "rule R1".into()
+            }
+        );
+        assert!(!run.marks.contains_key("c3"));
+        let marked = &state.plugins["rules"].marked;
+        assert!(marked.contains_key("c1") && !marked.contains_key("c2"));
+        // c2's card shows; the next view marks it, and leaves c1 be.
+        run.cards.push(card("c2"));
+        run.marks.clear();
+        state.apply(view(), &mut run);
+        assert_eq!(run.marks.keys().collect::<Vec<_>>(), ["c2"]);
+        assert_eq!(run.marks["c2"], CardMark::Flagged);
+    }
+
+    /// A link in a run's view to one of the plugin's own pages that
+    /// names a repository opens that page of the repository; one that
+    /// names none, or another plugin's page, stays as it is.
+    #[test]
+    fn a_views_link_to_its_page_of_a_repository_opens_it() {
+        let link = |params: Value, plugin: Value| {
+            json!({ "piece": "link", "label": "Review", "to": {
+                "plugin": plugin, "page": "rules", "params": params,
+            } })
+        };
+        let to = |piece: Value| match embed(&piece, "rules-plugin") {
+            Node::Link { to, .. } => to,
+            other => panic!("not a link: {other:?}"),
+        };
+        let opened = to(link(
+            json!({ "repo": "docbert", "rule": "R2" }),
+            Value::Null,
+        ));
+        assert_eq!(
+            opened,
+            repo_page_link("rules-plugin", "rules", "docbert")
+                .param("rule", "R2")
+        );
+        assert_eq!(to(link(json!({}), Value::Null)), Link::page("rules"));
+        assert_eq!(
+            to(link(json!({ "repo": "docbert" }), json!("tau-jev"))).plugin,
+            Some("tau-jev".into())
+        );
+    }
+
+    /// `tau.open_run` from a plugin's tree opens the run it names.
+    #[test]
+    fn open_run_opens_the_run_it_names() {
+        let asked: std::rc::Rc<
+            std::cell::RefCell<Vec<tau_ui_plugin::Request>>,
+        > = std::rc::Rc::default();
+        let sink = asked.clone();
+        let handle = Handle::new(
+            NAME,
+            std::rc::Rc::new(move |_, request| sink.borrow_mut().push(request)),
+        );
+        assert!(kernel_action(
+            "tau.open_run",
+            &json!({ "run": "r7" }),
+            None,
+            &handle
+        ));
+        assert_eq!(
+            asked.borrow().as_slice(),
+            [tau_ui_plugin::Request::OpenRun(RunId("r7".into()))]
+        );
     }
 
     /// A popover's drafts are read from each of its inputs, however

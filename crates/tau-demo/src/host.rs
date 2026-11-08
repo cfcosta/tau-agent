@@ -1,7 +1,8 @@
 //! The demo's host half of the plugins: each plugin's real host state,
 //! over a store and directories of its own that go away with it. What a
-//! plugin's page asks is carried out the way a host would, so a rule
-//! added in the demo is kept by tau-constitution, not by the demo.
+//! plugin's page asks is carried out the way a host would. The Luau
+//! plugins tau comes with, which the demo cannot run, draw their pages
+//! from their fixtures.
 
 #![allow(
     clippy::disallowed_methods,
@@ -38,7 +39,7 @@ use tokio::{runtime::Runtime, sync::mpsc};
 const SPEND: [(&str, f64); 7] = [
     (tau_reasoning::NAME, 0.004),
     (tau_memory_host::NAME, 0.212),
-    (tau_constitution_host::NAME, 0.031),
+    (tau_constitution::NAME, 0.031),
     (tau_fast_compaction::NAME, 0.046),
     (tau_compaction::NAME, 0.061),
     (tau_goal::NAME, 0.009),
@@ -133,14 +134,6 @@ impl DemoHost {
         );
         tau_memory_host::demo::seed(&cx)?;
         let hosted = runtime.block_on(hosted::host_all(&cx));
-        for act in tau_constitution_host::demo::acts() {
-            runtime.block_on(hosted::act(
-                &hosted,
-                tau_constitution_host::NAME,
-                serde_json::to_value(act)?,
-                &cx,
-            ))?;
-        }
         Ok(Self {
             cx,
             hosted,
@@ -250,6 +243,9 @@ impl DemoHost {
         plugin: &str,
         action: Value,
     ) -> anyhow::Result<Option<Value>> {
+        if let Some(page) = luau_page(plugin, &action) {
+            return Ok(Some(page));
+        }
         self.runtime.block_on(hosted::act(
             &self.hosted,
             plugin,
@@ -338,6 +334,10 @@ fn luau_built_ins() -> (PluginInfo, PluginValue) {
     let overview = Overview {
         commit: None,
         plugins: vec![
+            built_in(
+                tau_constitution::NAME,
+                tau_constitution::DEMO_DECLARATION,
+            ),
             built_in(tau_goal::NAME, tau_goal::DEMO_DECLARATION),
             built_in(tau_reasoning::NAME, tau_reasoning::DEMO_DECLARATION),
         ],
@@ -360,7 +360,7 @@ fn luau_built_ins() -> (PluginInfo, PluginValue) {
         .collect();
     let info = PluginInfo {
         name: tau_luau_plugins::NAME.into(),
-        description: "Plugins written in Luau: 2 active".into(),
+        description: "Plugins written in Luau: 3 active".into(),
         group: tau_ui_plugin::Group::Yours,
         page: Some(tau_ui_plugin::Link::page(tau_luau_plugins::ui::PAGE)),
         reach: Default::default(),
@@ -372,4 +372,28 @@ fn luau_built_ins() -> (PluginInfo, PluginValue) {
         rewrites_keep_transcript: false,
     };
     (info, PluginValue::typed(overview))
+}
+
+/// tau-constitution's rules page of tau-agent, which the demo cannot draw
+/// with Luau: the tree its fixture keeps for the screen its `demo`
+/// parameter names (the rules when it names none), as tau-luau-plugins'
+/// host half answers a page. `None` for any other action.
+fn luau_page(plugin: &str, action: &Value) -> Option<Value> {
+    let Ok(tau_luau_plugins::Act::Page {
+        plugin: luau,
+        params,
+        ..
+    }) = serde_json::from_value(action.clone())
+    else {
+        return None;
+    };
+    if plugin != tau_luau_plugins::NAME || luau != tau_constitution::NAME {
+        return None;
+    }
+    let pages: Value = serde_json::from_str(tau_constitution::DEMO_PAGES)
+        .expect("the pages' fixture is JSON");
+    let screen = params.get("demo").map_or("constitution", String::as_str);
+    let repo = params.get("repo").map_or("", String::as_str);
+    let tree = tau_luau_plugins::ui::embed_repo(&pages[screen], &luau, repo);
+    Some(serde_json::json!({ "tree": tree.value() }))
 }

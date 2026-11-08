@@ -1103,7 +1103,12 @@ local function deep_copy(value)
 	for key, item in pairs(value) do
 		out[key] = deep_copy(item)
 	end
-	return setmetatable(out, getmetatable(value))
+	-- An array's metatable is hidden: it reads as `false`.
+	local meta = getmetatable(value)
+	if meta == getmetatable(array({})) then
+		return array(out)
+	end
+	return setmetatable(out, meta)
 end
 
 -- A fake run: `spec` may give `now` (an ISO date), `id`, `kind`,

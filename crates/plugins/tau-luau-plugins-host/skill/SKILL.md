@@ -354,9 +354,11 @@ read the state: it has no tools. What it returns goes in three places:
   under its title in the sidebar; `tone` is `"good"`, `"warn"` or
   `"bad"`, `icon` one of the interface's icons, and `phone_line` the
   line on a phone, when it differs.
-- `calls`: `{ [call_id] = { badge?, body? } }`, pieces on another
-  tool's card: `badge` beside its title, `body` under it, such as why a
-  check flagged or blocked the call.
+- `calls`: `{ [call_id] = { badge?, body?, mark?, reason? } }`, pieces
+  on another tool's card: `badge` beside its title, `body` under it,
+  such as why a check flagged or blocked the call. `mark = "blocked"`
+  (with the `reason` the model got) or `"flagged"` marks the card so,
+  as the phone and the run's review list show it.
 - `messages`: `{ [text] = pieces }`, how a person's message whose text
   is exactly `text` draws, such as a command the plugin read, or a
   message it sent with `tau.continue`; `ui.stack({})` draws nothing.
@@ -376,8 +378,8 @@ the run the tree is drawn in (or its page shows):
 message; `tau.steer` cuts into a turn going on; `tau.composer` puts
 `text` in the composer; `tau.start` starts a run in `repo` with `text`;
 `tau.alert` shows `title` and `message`; `tau.details` opens the run's
-details. An action of the plugin's own may end in one of them as well:
-it answers `tau.interface("composer", { text = "..." })`, and once what
+details; `tau.open_run` opens the run `run`. An action of the
+plugin's own may end in one of them as well: it answers `tau.interface("composer", { text = "..." })`, and once what
 it did to the state is kept, tau does that on the action's run.
 
 A plugin's `commands` are slash commands in the composer's menu, each
@@ -426,7 +428,9 @@ reach.
 
 `pages` are the plugin's pages of a repository: each `page(params,
 ctx)` returns a view tree, `params.repo` the repository, its store in
-`ctx.store`. `repo_nav`, `{ label, page, icon? }`, is its entry under
+`ctx.store`, and `ctx.run.jev` whether a Jev key is saved. A run's view
+links to one of them with `params.repo`:
+`ui.link("Review", "rules", { params = { repo = ctx.run.repo } })`. `repo_nav`, `{ label, page, icon? }`, is its entry under
 each repository in the sidebar, opening that page; `repo_data(ctx)`
 returns what the entry shows, `{ nav = { detail?, badge?, tone? } }`
 among it. A page's buttons and inputs carry out the plugin's `actions`

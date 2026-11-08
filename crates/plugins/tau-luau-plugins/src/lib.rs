@@ -520,6 +520,9 @@ pub enum Act {
         plugin: String,
         page: String,
         params: BTreeMap<String, String>,
+        /// Whether a Jev key is saved, as the interface sees it.
+        #[serde(default)]
+        jev: bool,
     },
     /// Carries out `plugin`'s `actions[action]` with `args` from one of
     /// its pages of the repository `repo`: no run's state, its store

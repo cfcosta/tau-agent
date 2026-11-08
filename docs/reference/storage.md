@@ -25,8 +25,9 @@ and `openai-key` are no longer read, and tau does not delete them
 
 Runs are two tables, `runs` and `messages`. A plugin that keeps more
 than its records keeps it in a SQLite file of its own, under
-`HostCx::plugin_dir`, never here: tau-constitution's rules are in its
-own `constitution.db` ([constitution.md](constitution.md)).
+`HostCx::plugin_dir`, never here: a Luau plugin's store in each
+repository is one, as tau-constitution's rules are
+([constitution.md](constitution.md)).
 
 - **A run** is a flat list of messages.
 - **A fork** is a run whose `parent_run_id` points at another run. It
@@ -244,17 +245,15 @@ Run them from the repository root. `cargo sqlx prepare` writes `.sqlx/`
 in the directory it runs in, so it runs in the crate, and the database
 URL is absolute so the macros find it from there too.
 
-A plugin with its own database, such as tau-constitution, keeps its
-migrations and `.sqlx/` in its host crate (`tau-constitution-host`),
-with a dated migration version so it never clashes with
-tau-store-sqlite's. Its metadata is prepared against a
-database with both schemas, since its tests compile
-tau-store-sqlite's queries too:
+A plugin with its own database keeps its migrations and `.sqlx/` in
+its host crate, with a dated migration version so it never clashes with
+tau-store-sqlite's, and prepares its metadata against a database with
+both schemas, since its tests compile tau-store-sqlite's queries too:
 
 ```sh
 sqlx database setup --source crates/tau-store-sqlite/migrations
-sqlx migrate run --ignore-missing --source crates/plugins/tau-constitution-host/migrations
-(cd crates/plugins/tau-constitution-host && cargo sqlx prepare)
+sqlx migrate run --ignore-missing --source crates/plugins/<plugin>-host/migrations
+(cd crates/plugins/<plugin>-host && cargo sqlx prepare)
 ```
 
 - **Commit `.sqlx/`.** Crates that depend on `tau-store-sqlite` don't

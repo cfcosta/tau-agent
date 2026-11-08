@@ -389,6 +389,72 @@ What the port found besides:
   built-in plugins from fixtures of their declarations, which their
   tests check.
 
+### tau-constitution
+
+Its SQLite of rules became the plugin's store in each repository, as
+planned, and its page a page of the repository. Before the port, a view
+drew on other tools' cards (`calls`), a page's action got the host's Jev,
+and `start` could end the run (`tau.fail`). It needed four things more:
+
+- **A view marks a card.** `calls[id].mark` is `"blocked"`, with the
+  `reason` the model got, or `"flagged"`: the card is marked so, as a
+  Rust plugin's verdict marked it, so the phone, the run's review list
+  and codemode's rows show it. tau-luau-plugins marks it, once each.
+- **A run's view links to the plugin's page of a repository**: a link to
+  one of its own pages whose `params` name a `repo` opens that page of
+  the repository, where it opened nothing before.
+- **`tau.open_run`** opens the run `run`, for the review queue's Open in
+  run.
+- **A page knows a Jev key is saved**, as `ctx.run.jev`, from the
+  interface, and is drawn again when that changes.
+
+What the port found besides:
+
+- **A run that fails at start did not say why.** The host told its
+  caller only that the message could not be stored. It now says the
+  run's error: "The chat did not start: … The constitution stored for
+  repo is not valid: Rule R1: review (0.9) is above block (0.2)".
+- **The test harness could not copy an array in a fake store**: an
+  array's metatable reads as `false`, which `setmetatable` refuses, so
+  any hook on a store holding one failed. It copies them as arrays now.
+- **Everything the page shows is in the store**, as the person chose:
+  the rules and settings, what waits for review (Looks fine takes it
+  off), the last 30 things the rules handled, each run's counts, and the
+  latest 24 calls and 3 answers to try a rule on. The old `constitution.db`,
+  its migrations and the counts from every stored run's records are gone,
+  and nothing is migrated.
+- **The page's state is the store's too.** The rule being written, what
+  trying it gave and a removal waiting to be confirmed were each
+  window's UI state; they are the repository's now, on every device. A
+  button cannot read an input's draft, so Enter in the rule's field keeps
+  the rule, shown above it, and Save and Try it use what it kept; Enter
+  in the field's field adds it, and its button is gone. Editing a rule
+  shows its text above an empty field. "Asking Jev…" does not show: the
+  page draws again once Try it is done. A save that fails is the
+  action's error, which the interface shows, and the editor stays open.
+- **Smaller differences.** The review queue names a run by its first
+  message's first line, as a hook knows no title. A blocked call's meter
+  shows the rule's marks when it was checked. Switches are buttons, and
+  one tree draws wide and compact, where the Rust page hid some of it on
+  a phone. Where a field is found under several keys of one object, its
+  values come in the keys' sorted order, not the model's: a Luau table
+  keeps none. A failed check's message is the error the Luau got from
+  Jev. The catalog's row is one of tau-luau-plugins', and Jev's cost is
+  booked to it.
+- **The parity check** ran the Rust rules, checks and fold, copied from
+  before the port, beside the Luau on drawn inputs: 400 texts of
+  Unicode white space, cases and dots, trimmed and read as targets, and
+  numbers written as Rust writes them; 400 rules checked; 300 stored
+  constitutions read back; 300 runs of edits; 400 calls checked, on
+  drawn rules and arguments, with Jev's scores at and near the marks or
+  its failure, comparing what each rule reads, the request, the records
+  and the reason; 300 final answers, with holds; 300 runs of drawn
+  records folded into counts, notes and calls; 200 repositories' totals;
+  300 drafts' steps; the starting line; and 300 holds' steps and dollar
+  amounts. All equal. A doubled space in a reason, `>` for `>=` at the
+  block mark, and one white space left out of the trim each failed it.
+  It went with the Rust crates.
+
 ## Alternatives considered
 
 - **Port the plugins and leave the gaps**, calling Jev over HTTP with

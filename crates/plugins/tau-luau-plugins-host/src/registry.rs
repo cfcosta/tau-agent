@@ -504,12 +504,14 @@ impl Registry {
     }
 
     /// Draws `plugin`'s page `page` of `params`, `repo` among them, as a
-    /// fetched tree: its actions carried out in that repository.
+    /// fetched tree: its actions carried out in that repository. `jev`
+    /// says whether a Jev key is saved, as `ctx.run.jev`.
     pub async fn page(
         &self,
         plugin: &str,
         page: &str,
         params: &BTreeMap<String, String>,
+        jev: bool,
     ) -> serde_json::Value {
         let failed = |why: String| {
             serde_json::json!({ "tree": {
@@ -522,7 +524,8 @@ impl Registry {
         let Some(repo) = params.get("repo") else {
             return failed("the page names no repository".into());
         };
-        let context = self.repo_context(&active, repo).await;
+        let mut context = self.repo_context(&active, repo).await;
+        context.run["jev"] = serde_json::json!(jev);
         let outcome = active
             .loaded
             .call(

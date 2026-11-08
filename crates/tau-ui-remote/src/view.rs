@@ -1968,7 +1968,7 @@ mod tests {
             gs::booleans(),
             gs::sampled_from(vec![
                 tau_goal::NAME,
-                tau_constitution::NAME,
+                "tau-constitution",
                 tau_reasoning::NAME,
             ]),
             // Multiples of 1/1024, so sums are exact.
@@ -2011,12 +2011,18 @@ mod tests {
         })
     }
 
-    /// tau-constitution's state in `view`, as its fold leaves it.
-    fn rules_of(view: &RunView) -> tau_constitution::ui::State {
-        view.plugin_states
-            .get(tau_constitution::NAME)
-            .map(|state| serde_json::from_value(state.json().clone()).unwrap())
-            .unwrap_or_default()
+    /// What a Luau plugin, `rules`, reports drawing `drawn` (ADR 0050):
+    /// tau-luau-plugins' record of its view.
+    fn luau_view(drawn: Value) -> RunEvent {
+        let record = tau_luau_plugins::Record::View {
+            plugin: "rules".into(),
+            view: drawn,
+        };
+        RunEvent::PluginReport {
+            run: run(),
+            plugin: tau_luau_plugins::NAME.into(),
+            body: serde_json::to_value(record).unwrap(),
+        }
     }
 
     /// fast-compaction's state in `view`, as its fold leaves it.
@@ -2218,14 +2224,11 @@ mod tests {
         assert_eq!(state.status().as_deref(), Some("1 pruned · −46%"));
     }
 
+    /// A Luau plugin's view marks the calls it decided on, and the mark
+    /// outlasts the call's end; a stop it held is its one note, not two.
     #[test]
-    fn constitution_verdicts_mark_their_calls_and_answers() {
+    fn a_luau_plugins_verdicts_mark_their_calls_and_answers() {
         let mut view = view();
-        let report = |body: Value| RunEvent::PluginReport {
-            run: run(),
-            plugin: tau_constitution::NAME.into(),
-            body,
-        };
         view.apply(&RunEvent::ToolStart {
             run: run(),
             call_id: "c1".into(),
@@ -2233,9 +2236,8 @@ mod tests {
             args: serde_json::json!({"path": "a", "content": "maybe"}),
             parent: None,
         });
-        view.apply(&report(serde_json::json!({
-            "kind": "flagged", "rule": "R2", "text": "No unwrap.",
-            "score": 0.55, "call_id": "c1", "tool": "write"
+        view.apply(&luau_view(serde_json::json!({
+            "calls": { "c1": { "mark": "flagged" } }
         })));
         view.apply(&RunEvent::ToolEnd {
             run: run(),
@@ -2251,17 +2253,17 @@ mod tests {
         assert_eq!(
             card.state,
             ToolState::Flagged {
-                plugin: tau_constitution::NAME.into(),
+                plugin: tau_luau_plugins::NAME.into(),
             }
         );
         // A held answer is one note, not two.
-        view.apply(&report(serde_json::json!({
-            "kind": "held", "rule": "R6", "text": "Name the tests.",
-            "score": 0.9, "reason": "Your answer breaks rule R6"
+        view.apply(&luau_view(serde_json::json!({
+            "calls": { "c1": { "mark": "flagged" } },
+            "notes": { "c0": { "piece": "text", "text": "held the stop" } },
         })));
         view.apply(&RunEvent::Continued {
             run: run(),
-            plugin: tau_constitution::NAME.into(),
+            plugin: tau_luau_plugins::NAME.into(),
             message: "Your answer breaks rule R6".into(),
         });
         let notes = view
@@ -2272,27 +2274,6 @@ mod tests {
             })
             .count();
         assert_eq!(notes, 1);
-        // Every check counts; passing scores show on their call's card.
-        view.apply(&report(serde_json::json!({
-            "kind": "checked", "call_id": "c1", "tool": "write",
-            "scores": [{"rule": "R2", "score": 0.55}, {"rule": "R4", "score": 0.02}],
-            "cost": 0.00003
-        })));
-        view.apply(&report(serde_json::json!({
-            "kind": "checked", "scores": [{"rule": "R6", "score": 0.9}], "cost": 0.00001
-        })));
-        let state = rules_of(&view);
-        assert_eq!(
-            state.calls["c1"].scores,
-            [("R2".to_owned(), 0.55), ("R4".to_owned(), 0.02)]
-        );
-        let stats = &state.stats;
-        assert_eq!((stats.calls, stats.answers, stats.questions), (1, 1, 3));
-        assert_eq!(stats.flagged, ["R2"]);
-        assert_eq!(stats.held, ["R6"]);
-        assert!((stats.cost - 0.00004).abs() < 1e-12);
-        // The run's plugin list says so.
-        assert_eq!(state.status().unwrap().0, "1 flagged · 1 held");
         // Other plugins' reports only reach the log.
         let before = view.items.len();
         view.apply(&RunEvent::PluginReport {
@@ -2480,26 +2461,25 @@ mod tests {
             parent: None,
         });
         let anchors = view.items.len();
-        view.restate(
-            tau_constitution::NAME,
-            &[json!({
-                "kind": "blocked", "rule": "R1", "text": "No rm.",
-                "score": 0.95, "call_id": "c1", "tool": "exec_command",
-                "reason": "rule R1"
-            })],
-        );
+        let RunEvent::PluginReport { body, .. } = luau_view(json!({
+            "calls": { "c1": { "mark": "blocked", "reason": "rule R1" } }
+        })) else {
+            unreachable!()
+        };
+        view.restate(tau_luau_plugins::NAME, &[body]);
         let card = view.tool("c1").unwrap();
         assert!(matches!(
             &card.state,
-            ToolState::Blocked { plugin, .. } if plugin == tau_constitution::NAME
+            ToolState::Blocked { plugin, reason }
+                if plugin == tau_luau_plugins::NAME && reason == "rule R1"
         ));
         assert_eq!(view.items.len(), anchors);
         assert!(card.anchors.is_empty());
     }
 
     /// A plugin's verdict on a nested call marks its row on the card it
-    /// shows on, not the card: the script may catch the refusal. Its
-    /// anchor lands on that card; a context rewrite cannot drop it.
+    /// shows on, not the card: the script may catch the refusal. A
+    /// context rewrite cannot drop it.
     #[test]
     fn a_nested_calls_verdict_marks_its_row() {
         let mut view = view();
@@ -2517,25 +2497,15 @@ mod tests {
             args: json!({"cmd": "rm -rf /"}),
             parent: Some("c1".into()),
         });
-        view.apply(&RunEvent::PluginReport {
-            run: run(),
-            plugin: tau_constitution::NAME.into(),
-            body: json!({
-                "kind": "blocked", "rule": "R1", "text": "No rm.",
-                "score": 0.95, "call_id": "c1/1", "tool": "exec_command",
-                "reason": "rule R1"
-            }),
-        });
+        view.apply(&luau_view(json!({
+            "calls": { "c1/1": { "mark": "blocked", "reason": "rule R1" } }
+        })));
         let card = view.tool("c1").unwrap();
         assert_eq!(card.state, ToolState::Running);
         let marks: Vec<_> = card.data.marks_of("c1/1").collect();
         assert_eq!(marks.len(), 1);
-        assert_eq!(marks[0].plugin, tau_constitution::NAME);
+        assert_eq!(marks[0].plugin, tau_luau_plugins::NAME);
         assert!(matches!(marks[0].mark, CardMark::Blocked { .. }));
-        assert!(
-            card.anchors
-                .contains(&(tau_constitution::NAME.into(), "c1/1".into()))
-        );
         {
             use tau_ui_plugin::RunCx as _;
             let mut folding = Folding {
@@ -2957,59 +2927,6 @@ mod tests {
             view.tool("t2").and_then(|card| card.dropped),
             Some(Dropped::Result)
         );
-    }
-
-    /// Checks Jev could not answer come back from history, saying what
-    /// `on_error` did, and count as not checked.
-    #[test]
-    fn failed_checks_show_from_history() {
-        let record = |body: Value| Stored::Record {
-            plugin: tau_constitution::NAME.into(),
-            body,
-        };
-        let view = RunView::from_timeline(
-            run(),
-            "t",
-            "a",
-            "gpt-6-sol",
-            &[
-                record(json!({
-                    "kind": "error", "call_id": "c1", "tool": "write",
-                    "message": "Jev could not check the call: offline",
-                    "on_error": "block",
-                })),
-                record(json!({
-                    "kind": "error",
-                    "message": "Jev could not check the final answer: offline",
-                    "on_error": "block", "held": true,
-                })),
-                record(json!({
-                    "kind": "error",
-                    "message": "Jev could not check the final answer: offline",
-                    "on_error": "allow", "held": false,
-                })),
-            ],
-        );
-        let state = rules_of(&view);
-        let details: Vec<&str> = view
-            .items
-            .iter()
-            .filter_map(|item| match item {
-                Item::Anchor { key, .. } => {
-                    Some(state.notes[key].detail.as_str())
-                }
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            details,
-            [
-                "not checked · blocked",
-                "not checked · sent back",
-                "not checked · the answer stands"
-            ]
-        );
-        assert_eq!(state.stats.failed, 3);
     }
 
     #[test]

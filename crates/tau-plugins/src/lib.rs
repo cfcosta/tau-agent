@@ -15,7 +15,6 @@ pub fn plugins() -> Registry {
         .with(tau_chatgpt::ChatGptUi)
         .with(tau_codemode::CodemodeUi)
         .with(tau_compaction::ui::CompactionUi)
-        .with(tau_constitution::ui::ConstitutionUi)
         .with(tau_direnv::DirenvUi)
         .with(tau_fast_compaction::ui::FastCompactionUi)
         .with(tau_github::GitHubUi)

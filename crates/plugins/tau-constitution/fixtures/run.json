@@ -1,0 +1,993 @@
+[
+  {
+    "state": {
+      "calls": {
+        "c4": {
+          "scores": [
+            {
+              "rule": "R2",
+              "score": 0.95
+            },
+            {
+              "rule": "R3",
+              "score": 0.04
+            },
+            {
+              "rule": "R4",
+              "score": 0.08
+            }
+          ],
+          "shown": "let secs: u64 = header.to_str().unwrap().parse().unwrap();",
+          "tool": "edit",
+          "verdict": {
+            "block": 0.8,
+            "kind": "blocked",
+            "reason": "Blocked by tau-constitution: this call breaks rule R2 (\"Library code returns errors. No unwrap or expect outside tests.\"), violation probability 0.95. Change the call so it follows the rule, then try again.",
+            "review": 0.3,
+            "rule": "R2",
+            "score": 0.95
+          }
+        }
+      },
+      "holds": 0,
+      "live": true,
+      "notes": {},
+      "repo": "tau-agent",
+      "said": {},
+      "starting": "watching 6 rules",
+      "stats": {
+        "answers": 0,
+        "blocked": ["R2"],
+        "calls": 1,
+        "cost": 0.000049392000000000004,
+        "failed": 0,
+        "flagged": [],
+        "flagged_answers": [],
+        "held": [],
+        "questions": 3
+      },
+      "title": "Make the HTTP client honor retry-after on 429s and 503s"
+    },
+    "view": {
+      "calls": {
+        "c4": {
+          "body": {
+            "children": [
+              {
+                "piece": "badge",
+                "text": "tau-constitution",
+                "tone": "bad"
+              },
+              {
+                "label": "Rule R2",
+                "piece": "link",
+                "to": {
+                  "page": "rules",
+                  "params": {
+                    "repo": "tau-agent",
+                    "rule": "R2"
+                  },
+                  "plugin": null
+                }
+              },
+              {
+                "label": "p(violation) 0.95 · review 0.30 · block 0.80",
+                "piece": "progress",
+                "share": 0.95
+              }
+            ],
+            "piece": "row"
+          },
+          "mark": "blocked",
+          "reason": "Blocked by tau-constitution: this call breaks rule R2 (\"Library code returns errors. No unwrap or expect outside tests.\"), violation probability 0.95. Change the call so it follows the rule, then try again."
+        }
+      },
+      "inspector": {
+        "children": [
+          {
+            "piece": "heading",
+            "text": "Constitution checks"
+          },
+          {
+            "piece": "rows",
+            "rows": [
+              {
+                "key": "calls checked",
+                "value": "1"
+              },
+              {
+                "key": "answers checked",
+                "value": "0"
+              },
+              {
+                "key": "questions asked",
+                "value": "3"
+              },
+              {
+                "key": "blocked",
+                "value": "1 (R2)"
+              },
+              {
+                "key": "flagged",
+                "value": "0"
+              },
+              {
+                "key": "held",
+                "value": "0"
+              },
+              {
+                "key": "Jev cost",
+                "value": "$0.000"
+              }
+            ]
+          },
+          {
+            "piece": "text",
+            "text": "Only the fields the model wrote are checked, such as edit.newText or exec_command.cmd. Tool output never goes to Jev."
+          }
+        ],
+        "piece": "stack"
+      },
+      "messages": {},
+      "notes": {},
+      "status": {
+        "detail": null,
+        "piece": "status",
+        "text": "1 blocked",
+        "tone": "bad"
+      }
+    }
+  },
+  {
+    "state": {
+      "calls": {
+        "c4": {
+          "scores": [
+            {
+              "rule": "R2",
+              "score": 0.95
+            },
+            {
+              "rule": "R3",
+              "score": 0.04
+            },
+            {
+              "rule": "R4",
+              "score": 0.08
+            }
+          ],
+          "shown": "let secs: u64 = header.to_str().unwrap().parse().unwrap();",
+          "tool": "edit",
+          "verdict": {
+            "block": 0.8,
+            "kind": "blocked",
+            "reason": "Blocked by tau-constitution: this call breaks rule R2 (\"Library code returns errors. No unwrap or expect outside tests.\"), violation probability 0.95. Change the call so it follows the rule, then try again.",
+            "review": 0.3,
+            "rule": "R2",
+            "score": 0.95
+          }
+        },
+        "c5": {
+          "scores": [
+            {
+              "rule": "R2",
+              "score": 0.02
+            },
+            {
+              "rule": "R3",
+              "score": 0.03
+            },
+            {
+              "rule": "R4",
+              "score": 0.06
+            }
+          ],
+          "shown": "fn server_hint(headers: &HeaderMap) -> Option<Duration> {",
+          "tool": "edit"
+        }
+      },
+      "holds": 0,
+      "live": true,
+      "notes": {},
+      "repo": "tau-agent",
+      "said": {},
+      "starting": "watching 6 rules",
+      "stats": {
+        "answers": 0,
+        "blocked": ["R2"],
+        "calls": 2,
+        "cost": 0.000098742,
+        "failed": 0,
+        "flagged": [],
+        "flagged_answers": [],
+        "held": [],
+        "questions": 6
+      },
+      "title": "Make the HTTP client honor retry-after on 429s and 503s"
+    },
+    "view": {
+      "calls": {
+        "c4": {
+          "body": {
+            "children": [
+              {
+                "piece": "badge",
+                "text": "tau-constitution",
+                "tone": "bad"
+              },
+              {
+                "label": "Rule R2",
+                "piece": "link",
+                "to": {
+                  "page": "rules",
+                  "params": {
+                    "repo": "tau-agent",
+                    "rule": "R2"
+                  },
+                  "plugin": null
+                }
+              },
+              {
+                "label": "p(violation) 0.95 · review 0.30 · block 0.80",
+                "piece": "progress",
+                "share": 0.95
+              }
+            ],
+            "piece": "row"
+          },
+          "mark": "blocked",
+          "reason": "Blocked by tau-constitution: this call breaks rule R2 (\"Library code returns errors. No unwrap or expect outside tests.\"), violation probability 0.95. Change the call so it follows the rule, then try again."
+        },
+        "c5": {
+          "badge": {
+            "piece": "mono",
+            "text": "R2 0.02 · R3 0.03 · R4 0.06"
+          }
+        }
+      },
+      "inspector": {
+        "children": [
+          {
+            "piece": "heading",
+            "text": "Constitution checks"
+          },
+          {
+            "piece": "rows",
+            "rows": [
+              {
+                "key": "calls checked",
+                "value": "2"
+              },
+              {
+                "key": "answers checked",
+                "value": "0"
+              },
+              {
+                "key": "questions asked",
+                "value": "6"
+              },
+              {
+                "key": "blocked",
+                "value": "1 (R2)"
+              },
+              {
+                "key": "flagged",
+                "value": "0"
+              },
+              {
+                "key": "held",
+                "value": "0"
+              },
+              {
+                "key": "Jev cost",
+                "value": "$0.000"
+              }
+            ]
+          },
+          {
+            "piece": "text",
+            "text": "Only the fields the model wrote are checked, such as edit.newText or exec_command.cmd. Tool output never goes to Jev."
+          }
+        ],
+        "piece": "stack"
+      },
+      "messages": {},
+      "notes": {},
+      "status": {
+        "detail": null,
+        "piece": "status",
+        "text": "1 blocked",
+        "tone": "bad"
+      }
+    }
+  },
+  {
+    "state": {
+      "calls": {
+        "c4": {
+          "scores": [
+            {
+              "rule": "R2",
+              "score": 0.95
+            },
+            {
+              "rule": "R3",
+              "score": 0.04
+            },
+            {
+              "rule": "R4",
+              "score": 0.08
+            }
+          ],
+          "shown": "let secs: u64 = header.to_str().unwrap().parse().unwrap();",
+          "tool": "edit",
+          "verdict": {
+            "block": 0.8,
+            "kind": "blocked",
+            "reason": "Blocked by tau-constitution: this call breaks rule R2 (\"Library code returns errors. No unwrap or expect outside tests.\"), violation probability 0.95. Change the call so it follows the rule, then try again.",
+            "review": 0.3,
+            "rule": "R2",
+            "score": 0.95
+          }
+        },
+        "c5": {
+          "scores": [
+            {
+              "rule": "R2",
+              "score": 0.02
+            },
+            {
+              "rule": "R3",
+              "score": 0.03
+            },
+            {
+              "rule": "R4",
+              "score": 0.06
+            }
+          ],
+          "shown": "fn server_hint(headers: &HeaderMap) -> Option<Duration> {",
+          "tool": "edit"
+        },
+        "c6": {
+          "scores": [
+            {
+              "rule": "R1",
+              "score": 0.41
+            }
+          ],
+          "shown": "rm -rf target/debug/incremental",
+          "tool": "exec_command",
+          "verdict": {
+            "block": 0.6,
+            "kind": "flagged",
+            "reason": "Never delete outside target/ or rewrite published history.",
+            "review": 0.3,
+            "rule": "R1",
+            "score": 0.41
+          }
+        }
+      },
+      "holds": 0,
+      "live": true,
+      "notes": {},
+      "repo": "tau-agent",
+      "said": {},
+      "starting": "watching 6 rules",
+      "stats": {
+        "answers": 0,
+        "blocked": ["R2"],
+        "calls": 3,
+        "cost": 0.000118566,
+        "failed": 0,
+        "flagged": ["R1"],
+        "flagged_answers": [],
+        "held": [],
+        "questions": 7
+      },
+      "title": "Make the HTTP client honor retry-after on 429s and 503s"
+    },
+    "view": {
+      "calls": {
+        "c4": {
+          "body": {
+            "children": [
+              {
+                "piece": "badge",
+                "text": "tau-constitution",
+                "tone": "bad"
+              },
+              {
+                "label": "Rule R2",
+                "piece": "link",
+                "to": {
+                  "page": "rules",
+                  "params": {
+                    "repo": "tau-agent",
+                    "rule": "R2"
+                  },
+                  "plugin": null
+                }
+              },
+              {
+                "label": "p(violation) 0.95 · review 0.30 · block 0.80",
+                "piece": "progress",
+                "share": 0.95
+              }
+            ],
+            "piece": "row"
+          },
+          "mark": "blocked",
+          "reason": "Blocked by tau-constitution: this call breaks rule R2 (\"Library code returns errors. No unwrap or expect outside tests.\"), violation probability 0.95. Change the call so it follows the rule, then try again."
+        },
+        "c5": {
+          "badge": {
+            "piece": "mono",
+            "text": "R2 0.02 · R3 0.03 · R4 0.06"
+          }
+        },
+        "c6": {
+          "badge": {
+            "children": [
+              {
+                "piece": "mono",
+                "text": "R1 0.41"
+              },
+              {
+                "label": "Review",
+                "piece": "link",
+                "to": {
+                  "page": "rules",
+                  "params": {
+                    "repo": "tau-agent",
+                    "rule": "R1"
+                  },
+                  "plugin": null
+                }
+              }
+            ],
+            "piece": "row"
+          },
+          "mark": "flagged"
+        }
+      },
+      "inspector": {
+        "children": [
+          {
+            "piece": "heading",
+            "text": "Constitution checks"
+          },
+          {
+            "piece": "rows",
+            "rows": [
+              {
+                "key": "calls checked",
+                "value": "3"
+              },
+              {
+                "key": "answers checked",
+                "value": "0"
+              },
+              {
+                "key": "questions asked",
+                "value": "7"
+              },
+              {
+                "key": "blocked",
+                "value": "1 (R2)"
+              },
+              {
+                "key": "flagged",
+                "value": "1 (R1)"
+              },
+              {
+                "key": "held",
+                "value": "0"
+              },
+              {
+                "key": "Jev cost",
+                "value": "$0.000"
+              }
+            ]
+          },
+          {
+            "piece": "text",
+            "text": "Only the fields the model wrote are checked, such as edit.newText or exec_command.cmd. Tool output never goes to Jev."
+          }
+        ],
+        "piece": "stack"
+      },
+      "messages": {},
+      "notes": {},
+      "status": {
+        "detail": null,
+        "piece": "status",
+        "text": "1 blocked · 1 flagged",
+        "tone": "bad"
+      }
+    }
+  },
+  {
+    "state": {
+      "calls": {
+        "c4": {
+          "scores": [
+            {
+              "rule": "R2",
+              "score": 0.95
+            },
+            {
+              "rule": "R3",
+              "score": 0.04
+            },
+            {
+              "rule": "R4",
+              "score": 0.08
+            }
+          ],
+          "shown": "let secs: u64 = header.to_str().unwrap().parse().unwrap();",
+          "tool": "edit",
+          "verdict": {
+            "block": 0.8,
+            "kind": "blocked",
+            "reason": "Blocked by tau-constitution: this call breaks rule R2 (\"Library code returns errors. No unwrap or expect outside tests.\"), violation probability 0.95. Change the call so it follows the rule, then try again.",
+            "review": 0.3,
+            "rule": "R2",
+            "score": 0.95
+          }
+        },
+        "c5": {
+          "scores": [
+            {
+              "rule": "R2",
+              "score": 0.02
+            },
+            {
+              "rule": "R3",
+              "score": 0.03
+            },
+            {
+              "rule": "R4",
+              "score": 0.06
+            }
+          ],
+          "shown": "fn server_hint(headers: &HeaderMap) -> Option<Duration> {",
+          "tool": "edit"
+        },
+        "c6": {
+          "scores": [
+            {
+              "rule": "R1",
+              "score": 0.41
+            }
+          ],
+          "shown": "rm -rf target/debug/incremental",
+          "tool": "exec_command",
+          "verdict": {
+            "block": 0.6,
+            "kind": "flagged",
+            "reason": "Never delete outside target/ or rewrite published history.",
+            "review": 0.3,
+            "rule": "R1",
+            "score": 0.41
+          }
+        }
+      },
+      "holds": 1,
+      "live": true,
+      "notes": {
+        "c0": {
+          "detail": "before_stop · continuation 1 / 3",
+          "text": "held the stop: the answer breaks R6 (\"The final answer names the tests that ran and their result.\")",
+          "tone": "warn"
+        }
+      },
+      "repo": "tau-agent",
+      "said": {
+        "Your answer breaks rule R6 (\"The final answer names the tests that ran and their result.\"). Revise it so it follows the rule, then answer again.": true
+      },
+      "starting": "watching 6 rules",
+      "stats": {
+        "answers": 1,
+        "blocked": ["R2"],
+        "calls": 3,
+        "cost": 0.000135324,
+        "failed": 0,
+        "flagged": ["R1"],
+        "flagged_answers": [],
+        "held": ["R6"],
+        "max_holds": 3,
+        "questions": 8
+      },
+      "title": "Make the HTTP client honor retry-after on 429s and 503s"
+    },
+    "view": {
+      "calls": {
+        "c4": {
+          "body": {
+            "children": [
+              {
+                "piece": "badge",
+                "text": "tau-constitution",
+                "tone": "bad"
+              },
+              {
+                "label": "Rule R2",
+                "piece": "link",
+                "to": {
+                  "page": "rules",
+                  "params": {
+                    "repo": "tau-agent",
+                    "rule": "R2"
+                  },
+                  "plugin": null
+                }
+              },
+              {
+                "label": "p(violation) 0.95 · review 0.30 · block 0.80",
+                "piece": "progress",
+                "share": 0.95
+              }
+            ],
+            "piece": "row"
+          },
+          "mark": "blocked",
+          "reason": "Blocked by tau-constitution: this call breaks rule R2 (\"Library code returns errors. No unwrap or expect outside tests.\"), violation probability 0.95. Change the call so it follows the rule, then try again."
+        },
+        "c5": {
+          "badge": {
+            "piece": "mono",
+            "text": "R2 0.02 · R3 0.03 · R4 0.06"
+          }
+        },
+        "c6": {
+          "badge": {
+            "children": [
+              {
+                "piece": "mono",
+                "text": "R1 0.41"
+              },
+              {
+                "label": "Review",
+                "piece": "link",
+                "to": {
+                  "page": "rules",
+                  "params": {
+                    "repo": "tau-agent",
+                    "rule": "R1"
+                  },
+                  "plugin": null
+                }
+              }
+            ],
+            "piece": "row"
+          },
+          "mark": "flagged"
+        }
+      },
+      "inspector": {
+        "children": [
+          {
+            "piece": "heading",
+            "text": "Constitution checks"
+          },
+          {
+            "piece": "rows",
+            "rows": [
+              {
+                "key": "calls checked",
+                "value": "3"
+              },
+              {
+                "key": "answers checked",
+                "value": "1"
+              },
+              {
+                "key": "questions asked",
+                "value": "8"
+              },
+              {
+                "key": "blocked",
+                "value": "1 (R2)"
+              },
+              {
+                "key": "flagged",
+                "value": "1 (R1)"
+              },
+              {
+                "key": "held",
+                "value": "1 of 3 (R6)"
+              },
+              {
+                "key": "Jev cost",
+                "value": "$0.000"
+              }
+            ]
+          },
+          {
+            "piece": "text",
+            "text": "Only the fields the model wrote are checked, such as edit.newText or exec_command.cmd. Tool output never goes to Jev."
+          }
+        ],
+        "piece": "stack"
+      },
+      "messages": {
+        "Your answer breaks rule R6 (\"The final answer names the tests that ran and their result.\"). Revise it so it follows the rule, then answer again.": {
+          "children": [],
+          "piece": "stack"
+        }
+      },
+      "notes": {
+        "c0": {
+          "children": [
+            {
+              "name": "blocked",
+              "piece": "icon",
+              "tone": "warn"
+            },
+            {
+              "piece": "mono",
+              "text": "tau-constitution"
+            },
+            {
+              "piece": "text",
+              "text": "held the stop: the answer breaks R6 (\"The final answer names the tests that ran and their result.\")"
+            },
+            {
+              "piece": "mono",
+              "text": "before_stop · continuation 1 / 3"
+            }
+          ],
+          "piece": "row"
+        }
+      },
+      "status": {
+        "detail": null,
+        "piece": "status",
+        "text": "1 blocked · 1 flagged · 1 held",
+        "tone": "bad"
+      }
+    }
+  },
+  {
+    "state": {
+      "calls": {
+        "c4": {
+          "scores": [
+            {
+              "rule": "R2",
+              "score": 0.95
+            },
+            {
+              "rule": "R3",
+              "score": 0.04
+            },
+            {
+              "rule": "R4",
+              "score": 0.08
+            }
+          ],
+          "shown": "let secs: u64 = header.to_str().unwrap().parse().unwrap();",
+          "tool": "edit",
+          "verdict": {
+            "block": 0.8,
+            "kind": "blocked",
+            "reason": "Blocked by tau-constitution: this call breaks rule R2 (\"Library code returns errors. No unwrap or expect outside tests.\"), violation probability 0.95. Change the call so it follows the rule, then try again.",
+            "review": 0.3,
+            "rule": "R2",
+            "score": 0.95
+          }
+        },
+        "c5": {
+          "scores": [
+            {
+              "rule": "R2",
+              "score": 0.02
+            },
+            {
+              "rule": "R3",
+              "score": 0.03
+            },
+            {
+              "rule": "R4",
+              "score": 0.06
+            }
+          ],
+          "shown": "fn server_hint(headers: &HeaderMap) -> Option<Duration> {",
+          "tool": "edit"
+        },
+        "c6": {
+          "scores": [
+            {
+              "rule": "R1",
+              "score": 0.41
+            }
+          ],
+          "shown": "rm -rf target/debug/incremental",
+          "tool": "exec_command",
+          "verdict": {
+            "block": 0.6,
+            "kind": "flagged",
+            "reason": "Never delete outside target/ or rewrite published history.",
+            "review": 0.3,
+            "rule": "R1",
+            "score": 0.41
+          }
+        }
+      },
+      "holds": 1,
+      "live": true,
+      "notes": {
+        "c0": {
+          "detail": "before_stop · continuation 1 / 3",
+          "text": "held the stop: the answer breaks R6 (\"The final answer names the tests that ran and their result.\")",
+          "tone": "warn"
+        }
+      },
+      "repo": "tau-agent",
+      "said": {
+        "Your answer breaks rule R6 (\"The final answer names the tests that ran and their result.\"). Revise it so it follows the rule, then answer again.": true
+      },
+      "starting": "watching 6 rules",
+      "stats": {
+        "answers": 2,
+        "blocked": ["R2"],
+        "calls": 3,
+        "cost": 0.000152502,
+        "failed": 0,
+        "flagged": ["R1"],
+        "flagged_answers": [],
+        "held": ["R6"],
+        "max_holds": 3,
+        "questions": 9
+      },
+      "title": "Make the HTTP client honor retry-after on 429s and 503s"
+    },
+    "view": {
+      "calls": {
+        "c4": {
+          "body": {
+            "children": [
+              {
+                "piece": "badge",
+                "text": "tau-constitution",
+                "tone": "bad"
+              },
+              {
+                "label": "Rule R2",
+                "piece": "link",
+                "to": {
+                  "page": "rules",
+                  "params": {
+                    "repo": "tau-agent",
+                    "rule": "R2"
+                  },
+                  "plugin": null
+                }
+              },
+              {
+                "label": "p(violation) 0.95 · review 0.30 · block 0.80",
+                "piece": "progress",
+                "share": 0.95
+              }
+            ],
+            "piece": "row"
+          },
+          "mark": "blocked",
+          "reason": "Blocked by tau-constitution: this call breaks rule R2 (\"Library code returns errors. No unwrap or expect outside tests.\"), violation probability 0.95. Change the call so it follows the rule, then try again."
+        },
+        "c5": {
+          "badge": {
+            "piece": "mono",
+            "text": "R2 0.02 · R3 0.03 · R4 0.06"
+          }
+        },
+        "c6": {
+          "badge": {
+            "children": [
+              {
+                "piece": "mono",
+                "text": "R1 0.41"
+              },
+              {
+                "label": "Review",
+                "piece": "link",
+                "to": {
+                  "page": "rules",
+                  "params": {
+                    "repo": "tau-agent",
+                    "rule": "R1"
+                  },
+                  "plugin": null
+                }
+              }
+            ],
+            "piece": "row"
+          },
+          "mark": "flagged"
+        }
+      },
+      "inspector": {
+        "children": [
+          {
+            "piece": "heading",
+            "text": "Constitution checks"
+          },
+          {
+            "piece": "rows",
+            "rows": [
+              {
+                "key": "calls checked",
+                "value": "3"
+              },
+              {
+                "key": "answers checked",
+                "value": "2"
+              },
+              {
+                "key": "questions asked",
+                "value": "9"
+              },
+              {
+                "key": "blocked",
+                "value": "1 (R2)"
+              },
+              {
+                "key": "flagged",
+                "value": "1 (R1)"
+              },
+              {
+                "key": "held",
+                "value": "1 of 3 (R6)"
+              },
+              {
+                "key": "Jev cost",
+                "value": "$0.000"
+              }
+            ]
+          },
+          {
+            "piece": "text",
+            "text": "Only the fields the model wrote are checked, such as edit.newText or exec_command.cmd. Tool output never goes to Jev."
+          }
+        ],
+        "piece": "stack"
+      },
+      "messages": {
+        "Your answer breaks rule R6 (\"The final answer names the tests that ran and their result.\"). Revise it so it follows the rule, then answer again.": {
+          "children": [],
+          "piece": "stack"
+        }
+      },
+      "notes": {
+        "c0": {
+          "children": [
+            {
+              "name": "blocked",
+              "piece": "icon",
+              "tone": "warn"
+            },
+            {
+              "piece": "mono",
+              "text": "tau-constitution"
+            },
+            {
+              "piece": "text",
+              "text": "held the stop: the answer breaks R6 (\"The final answer names the tests that ran and their result.\")"
+            },
+            {
+              "piece": "mono",
+              "text": "before_stop · continuation 1 / 3"
+            }
+          ],
+          "piece": "row"
+        }
+      },
+      "status": {
+        "detail": null,
+        "piece": "status",
+        "text": "1 blocked · 1 flagged · 1 held",
+        "tone": "bad"
+      }
+    }
+  }
+]

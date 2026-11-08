@@ -38,7 +38,7 @@ tau-agent/
 │       ├── tau-compaction/       # summarizing compaction
 │       ├── tau-compaction-chain/ # pruning, the tree and the summary in
 │       │                         # turn, filling `tau.compaction` (Luau)
-│       ├── tau-constitution/     # a repository's rules, checked with Jev
+│       ├── tau-constitution/     # a repository's rules, checked with Jev (Luau)
 │       ├── tau-direnv/           # agent commands in the repository's
 │       │                         # direnv environment (ADR 0025)
 │       ├── tau-fast-compaction/  # Jev-driven pruning of tool history

@@ -43,7 +43,6 @@ serde_json.workspace = true
 tau-agent = { workspace = true, features = ["serde"] }
 tau-ai.workspace = true
 tau-compaction.workspace = true
-tau-constitution-host.workspace = true
 tau-ask.workspace = true
 tau-canvas.workspace = true
 tau-skills.workspace = true

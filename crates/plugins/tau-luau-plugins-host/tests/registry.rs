@@ -854,6 +854,7 @@ return tau.plugin {
       for _, item in ipairs(ctx.store.list("item/")) do
         table.insert(rows, ui.button(item.value, "drop", { key = item.key }))
       end
+      table.insert(rows, ctx.run.jev and "keyed" or "no key")
       return ui.stack(rows)
     end,
   },
@@ -868,8 +869,8 @@ return tau.plugin {
 "#;
 
 /// A plugin's page of a repository and what it keeps of it read its
-/// store there; an action from the page writes it, and another
-/// repository's store is its own.
+/// store there, and whether a Jev key is saved; an action from the page
+/// writes it, and another repository's store is its own.
 #[test]
 fn a_plugins_page_of_a_repository_reads_and_writes_its_store_there() {
     let home = tempfile::tempdir().unwrap();
@@ -902,9 +903,12 @@ fn a_plugins_page_of_a_repository_reads_and_writes_its_store_there() {
         ("entry".to_owned(), "greet".to_owned()),
         ("repo".to_owned(), "home".to_owned()),
     ]);
-    let page = block_on_io(registry.page("greet", "list", &params));
+    let page = block_on_io(registry.page("greet", "list", &params, false));
     let tree = page["tree"].to_string();
     assert!(tree.contains("eggs") && tree.contains("milk"), "{tree}");
+    assert!(tree.contains("no key"), "{tree}");
+    let keyed = block_on_io(registry.page("greet", "list", &params, true));
+    assert!(keyed["tree"].to_string().contains("keyed"), "{keyed}");
     // Its buttons act in the repository the page shows.
     assert!(tree.contains("luau-repo/greet/drop"), "{tree}");
     block_on_io(registry.repo_action(

@@ -266,7 +266,10 @@ impl HostHalf for LuauPluginsHost {
                 plugin,
                 page,
                 params,
-            } => return Ok(Some(host.page(&plugin, &page, &params).await)),
+                jev,
+            } => {
+                return Ok(Some(host.page(&plugin, &page, &params, jev).await));
+            }
             Act::RepoAction {
                 plugin,
                 repo,

@@ -57,7 +57,6 @@ Plugins take an `Arc<dyn Jev>`. In tau's interface, `tau-ui` makes one
 `TypeSafe` from the TypeSafe key, wraps it to count requests and cost for
 the Plugins screen, and puts it in each run's services, where host halves
 find it. Used by
-`tau-constitution-host`, `tau-goal`, `tau-reasoning`,
 `tau-fast-compaction`, `tau-codemode-host`, `tau-luau-plugins-host`,
 `tau-ui` and `crates/evals/tau-output-pruning-eval`.
 

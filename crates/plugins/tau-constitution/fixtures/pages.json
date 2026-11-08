@@ -1,0 +1,1525 @@
+{
+  "constitution": {
+    "children": [
+      {
+        "children": [
+          {
+            "children": [
+              {
+                "piece": "rich",
+                "text": "**tau-constitution** checks every tool call and final answer against these rules before they run."
+              },
+              {
+                "action": "open",
+                "args": {},
+                "kind": "secondary",
+                "label": "Add a rule",
+                "piece": "button"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "children": [
+              {
+                "piece": "text",
+                "text": "Across 1 run:"
+              },
+              {
+                "piece": "pill",
+                "text": "5 checked",
+                "tone": "neutral"
+              },
+              {
+                "piece": "pill",
+                "text": "1 blocked",
+                "tone": "bad"
+              },
+              {
+                "piece": "pill",
+                "text": "1 flagged",
+                "tone": "warn"
+              },
+              {
+                "piece": "pill",
+                "text": "1 held",
+                "tone": "info"
+              },
+              {
+                "piece": "text",
+                "text": "Jev cost"
+              },
+              {
+                "piece": "mono",
+                "text": "$0.00015"
+              }
+            ],
+            "piece": "row"
+          }
+        ],
+        "piece": "stack"
+      },
+      {
+        "id": "rules-tabs",
+        "piece": "tabs",
+        "tabs": [
+          {
+            "children": [
+              {
+                "head": ["Rule", "", "Caught", ""],
+                "piece": "table",
+                "rows": [
+                  [
+                    {
+                      "piece": "mono",
+                      "text": "R1"
+                    },
+                    {
+                      "children": [
+                        {
+                          "piece": "text",
+                          "text": "Never delete outside target/ or rewrite published history."
+                        },
+                        {
+                          "piece": "text",
+                          "text": "Checks exec_command.cmd · flag 0.30 · block 0.60 · last: rm -rf target/debug/incremental"
+                        }
+                      ],
+                      "piece": "stack"
+                    },
+                    {
+                      "piece": "badge",
+                      "text": "1 flagged",
+                      "tone": "warn"
+                    },
+                    {
+                      "children": [
+                        {
+                          "action": "open",
+                          "args": {
+                            "rule": "R1"
+                          },
+                          "kind": "secondary",
+                          "label": "Edit",
+                          "piece": "button"
+                        },
+                        {
+                          "action": "remove",
+                          "args": {
+                            "id": "R1"
+                          },
+                          "kind": "danger",
+                          "label": "Remove",
+                          "piece": "button"
+                        }
+                      ],
+                      "piece": "row"
+                    }
+                  ],
+                  [
+                    {
+                      "piece": "mono",
+                      "text": "R2"
+                    },
+                    {
+                      "children": [
+                        {
+                          "piece": "text",
+                          "text": "Library code returns errors. No unwrap or expect outside tests."
+                        },
+                        {
+                          "piece": "text",
+                          "text": "Checks edit.newText, write.content · flag 0.30 · block 0.80 · last: let secs: u64 = header.to_str().unwrap().parse().unwrap();"
+                        }
+                      ],
+                      "piece": "stack"
+                    },
+                    {
+                      "piece": "badge",
+                      "text": "1 blocked",
+                      "tone": "bad"
+                    },
+                    {
+                      "children": [
+                        {
+                          "action": "open",
+                          "args": {
+                            "rule": "R2"
+                          },
+                          "kind": "secondary",
+                          "label": "Edit",
+                          "piece": "button"
+                        },
+                        {
+                          "action": "remove",
+                          "args": {
+                            "id": "R2"
+                          },
+                          "kind": "danger",
+                          "label": "Remove",
+                          "piece": "button"
+                        }
+                      ],
+                      "piece": "row"
+                    }
+                  ],
+                  [
+                    {
+                      "piece": "mono",
+                      "text": "R3"
+                    },
+                    {
+                      "children": [
+                        {
+                          "piece": "text",
+                          "text": "Every sqlx query uses the checked macros."
+                        },
+                        {
+                          "piece": "text",
+                          "text": "Checks edit.newText, write.content · flag 0.40 · block 0.85"
+                        }
+                      ],
+                      "piece": "stack"
+                    },
+                    {
+                      "piece": "badge",
+                      "text": "clear",
+                      "tone": "good"
+                    },
+                    {
+                      "children": [
+                        {
+                          "action": "open",
+                          "args": {
+                            "rule": "R3"
+                          },
+                          "kind": "secondary",
+                          "label": "Edit",
+                          "piece": "button"
+                        },
+                        {
+                          "action": "remove",
+                          "args": {
+                            "id": "R3"
+                          },
+                          "kind": "danger",
+                          "label": "Remove",
+                          "piece": "button"
+                        }
+                      ],
+                      "piece": "row"
+                    }
+                  ],
+                  [
+                    {
+                      "piece": "mono",
+                      "text": "R4"
+                    },
+                    {
+                      "children": [
+                        {
+                          "piece": "text",
+                          "text": "Comments explain why, not what the code does."
+                        },
+                        {
+                          "piece": "text",
+                          "text": "Checks edit.newText · flag 0.50 · block 0.90"
+                        }
+                      ],
+                      "piece": "stack"
+                    },
+                    {
+                      "piece": "badge",
+                      "text": "clear",
+                      "tone": "good"
+                    },
+                    {
+                      "children": [
+                        {
+                          "action": "open",
+                          "args": {
+                            "rule": "R4"
+                          },
+                          "kind": "secondary",
+                          "label": "Edit",
+                          "piece": "button"
+                        },
+                        {
+                          "action": "remove",
+                          "args": {
+                            "id": "R4"
+                          },
+                          "kind": "danger",
+                          "label": "Remove",
+                          "piece": "button"
+                        }
+                      ],
+                      "piece": "row"
+                    }
+                  ],
+                  [
+                    {
+                      "piece": "mono",
+                      "text": "R5"
+                    },
+                    {
+                      "children": [
+                        {
+                          "piece": "text",
+                          "text": "No network calls from tests except the fake server."
+                        },
+                        {
+                          "piece": "text",
+                          "text": "Checks write.content · flag 0.35 · block 0.80"
+                        }
+                      ],
+                      "piece": "stack"
+                    },
+                    {
+                      "piece": "badge",
+                      "text": "clear",
+                      "tone": "good"
+                    },
+                    {
+                      "children": [
+                        {
+                          "action": "open",
+                          "args": {
+                            "rule": "R5"
+                          },
+                          "kind": "secondary",
+                          "label": "Edit",
+                          "piece": "button"
+                        },
+                        {
+                          "action": "remove",
+                          "args": {
+                            "id": "R5"
+                          },
+                          "kind": "danger",
+                          "label": "Remove",
+                          "piece": "button"
+                        }
+                      ],
+                      "piece": "row"
+                    }
+                  ],
+                  [
+                    {
+                      "piece": "mono",
+                      "text": "R6"
+                    },
+                    {
+                      "children": [
+                        {
+                          "piece": "text",
+                          "text": "The final answer names the tests that ran and their result."
+                        },
+                        {
+                          "piece": "text",
+                          "text": "Checks final answer · flag 0.40 · block 0.75 · last: final answer, Make the HTTP client honor retry-after on 429s"
+                        }
+                      ],
+                      "piece": "stack"
+                    },
+                    {
+                      "piece": "badge",
+                      "text": "1 held",
+                      "tone": "info"
+                    },
+                    {
+                      "children": [
+                        {
+                          "action": "open",
+                          "args": {
+                            "rule": "R6"
+                          },
+                          "kind": "secondary",
+                          "label": "Edit",
+                          "piece": "button"
+                        },
+                        {
+                          "action": "remove",
+                          "args": {
+                            "id": "R6"
+                          },
+                          "kind": "danger",
+                          "label": "Remove",
+                          "piece": "button"
+                        }
+                      ],
+                      "piece": "row"
+                    }
+                  ]
+                ]
+              },
+              {
+                "children": [
+                  {
+                    "piece": "heading",
+                    "text": "Settings"
+                  },
+                  {
+                    "children": [
+                      {
+                        "children": [
+                          {
+                            "piece": "text",
+                            "text": "Refuse what Jev can't answer"
+                          },
+                          {
+                            "piece": "text",
+                            "text": "Calls it could not check run, and answers stand; each is noted."
+                          }
+                        ],
+                        "piece": "stack"
+                      },
+                      {
+                        "action": "settings",
+                        "args": {
+                          "blocks_unchecked": true,
+                          "max_holds": 3
+                        },
+                        "kind": "secondary",
+                        "label": "Off",
+                        "piece": "button"
+                      }
+                    ],
+                    "piece": "row"
+                  },
+                  {
+                    "children": [
+                      {
+                        "children": [
+                          {
+                            "piece": "text",
+                            "text": "Answers sent back per run"
+                          },
+                          {
+                            "piece": "text",
+                            "text": "Up to 3; past that, an answer that breaks a rule stands, flagged."
+                          }
+                        ],
+                        "piece": "stack"
+                      },
+                      {
+                        "action": "settings",
+                        "args": {
+                          "blocks_unchecked": false,
+                          "max_holds": 2
+                        },
+                        "kind": "secondary",
+                        "label": "−",
+                        "piece": "button"
+                      },
+                      {
+                        "piece": "mono",
+                        "text": "3"
+                      },
+                      {
+                        "action": "settings",
+                        "args": {
+                          "blocks_unchecked": false,
+                          "max_holds": 4
+                        },
+                        "kind": "secondary",
+                        "label": "+",
+                        "piece": "button"
+                      }
+                    ],
+                    "piece": "row"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "Jev sees only the fields a rule names, as the model wrote them. Never tool output or file contents."
+                  }
+                ],
+                "piece": "stack"
+              }
+            ],
+            "label": "Rules · 6"
+          },
+          {
+            "children": [
+              {
+                "children": [
+                  {
+                    "piece": "heading",
+                    "text": "Waiting for you · 1"
+                  },
+                  {
+                    "children": [
+                      {
+                        "children": [
+                          {
+                            "name": "runs",
+                            "piece": "icon",
+                            "tone": "neutral"
+                          },
+                          {
+                            "piece": "mono",
+                            "text": "exec_command"
+                          },
+                          {
+                            "piece": "text",
+                            "text": "in Make the HTTP client honor retry-after on 429s and 503s"
+                          },
+                          {
+                            "piece": "badge",
+                            "text": "p 0.41",
+                            "tone": "warn"
+                          }
+                        ],
+                        "piece": "row"
+                      },
+                      {
+                        "first_line": null,
+                        "lang": null,
+                        "piece": "code",
+                        "text": "rm -rf target/debug/incremental"
+                      },
+                      {
+                        "children": [
+                          {
+                            "piece": "mono",
+                            "text": "R1"
+                          },
+                          {
+                            "piece": "text",
+                            "text": "Never delete outside target/ or rewrite published history."
+                          }
+                        ],
+                        "piece": "row"
+                      },
+                      {
+                        "label": "p 0.41 · flags from 0.30, blocks from 0.60",
+                        "piece": "progress",
+                        "share": 0.41
+                      },
+                      {
+                        "piece": "text",
+                        "text": "It ran: its score is between this rule's flag and block marks."
+                      },
+                      {
+                        "children": [
+                          {
+                            "action": "open",
+                            "args": {
+                              "rule": "R1"
+                            },
+                            "kind": "secondary",
+                            "label": "Adjust rule",
+                            "piece": "button"
+                          },
+                          {
+                            "action": "tau.open_run",
+                            "args": {
+                              "run": "demo"
+                            },
+                            "kind": "secondary",
+                            "label": "Open in run",
+                            "piece": "button"
+                          },
+                          {
+                            "action": "fine",
+                            "args": {
+                              "id": "review/000000001"
+                            },
+                            "kind": "primary",
+                            "label": "Looks fine",
+                            "piece": "button"
+                          }
+                        ],
+                        "piece": "row"
+                      }
+                    ],
+                    "piece": "stack"
+                  },
+                  {
+                    "piece": "heading",
+                    "text": "Handled by the rules"
+                  },
+                  {
+                    "head": [],
+                    "piece": "table",
+                    "rows": [
+                      [
+                        {
+                          "name": "blocked",
+                          "piece": "icon",
+                          "tone": "bad"
+                        },
+                        {
+                          "children": [
+                            {
+                              "piece": "mono",
+                              "text": "edit let secs: u64 = header.to_str().unwrap().parse().unwrap();"
+                            },
+                            {
+                              "piece": "text",
+                              "text": "Make the HTTP client honor retry-after on 429s and 503s"
+                            }
+                          ],
+                          "piece": "stack"
+                        },
+                        {
+                          "piece": "mono",
+                          "text": "R2 · blocked"
+                        }
+                      ],
+                      [
+                        {
+                          "name": "chat",
+                          "piece": "icon",
+                          "tone": "info"
+                        },
+                        {
+                          "children": [
+                            {
+                              "piece": "mono",
+                              "text": "final answer"
+                            },
+                            {
+                              "piece": "text",
+                              "text": "Make the HTTP client honor retry-after on 429s and 503s"
+                            }
+                          ],
+                          "piece": "stack"
+                        },
+                        {
+                          "piece": "mono",
+                          "text": "R6 · held"
+                        }
+                      ]
+                    ]
+                  },
+                  {
+                    "piece": "text",
+                    "text": "Blocked calls need nothing from you: the model got the rule and changed the call. They show that a rule does its job."
+                  }
+                ],
+                "piece": "stack"
+              }
+            ],
+            "label": "Review · 1"
+          }
+        ]
+      }
+    ],
+    "piece": "stack"
+  },
+  "rule-editor": {
+    "children": [
+      {
+        "children": [
+          {
+            "piece": "heading",
+            "text": "New rule"
+          },
+          {
+            "action": "close",
+            "args": {},
+            "kind": "secondary",
+            "label": "Cancel",
+            "piece": "button"
+          },
+          {
+            "action": "save",
+            "args": {},
+            "kind": "primary",
+            "label": "Add rule",
+            "piece": "button"
+          }
+        ],
+        "piece": "row"
+      },
+      {
+        "children": [
+          {
+            "children": [
+              {
+                "piece": "heading",
+                "text": "Rule"
+              },
+              {
+                "piece": "text",
+                "text": "one sentence, the way you would tell a person"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "children": [
+              {
+                "piece": "text",
+                "text": "Rule:"
+              },
+              {
+                "piece": "mono",
+                "text": "Never run migrations against the production database."
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "id": "rule-text",
+            "keep": false,
+            "multiline": false,
+            "piece": "input",
+            "placeholder": "Type to write it again; Enter keeps it",
+            "submit": "write"
+          }
+        ],
+        "piece": "stack"
+      },
+      {
+        "children": [
+          {
+            "children": [
+              {
+                "piece": "heading",
+                "text": "Applies to"
+              },
+              {
+                "piece": "text",
+                "text": "what Jev reads for this rule"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "children": [
+              {
+                "action": "place",
+                "args": {
+                  "place": "exec_command.cmd"
+                },
+                "kind": "primary",
+                "label": "✓ exec_command · cmd",
+                "piece": "button"
+              },
+              {
+                "piece": "text",
+                "text": "the shell command"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "children": [
+              {
+                "action": "place",
+                "args": {
+                  "place": "edit.newText"
+                },
+                "kind": "secondary",
+                "label": "edit · newText",
+                "piece": "button"
+              },
+              {
+                "piece": "text",
+                "text": "each replacement"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "children": [
+              {
+                "action": "place",
+                "args": {
+                  "place": "write.content"
+                },
+                "kind": "secondary",
+                "label": "write · content",
+                "piece": "button"
+              },
+              {
+                "piece": "text",
+                "text": "the whole file"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "children": [
+              {
+                "action": "place",
+                "args": {
+                  "place": "final answer"
+                },
+                "kind": "secondary",
+                "label": "Final answer",
+                "piece": "button"
+              },
+              {
+                "piece": "text",
+                "text": "sent back when broken"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "id": "rule-on",
+            "keep": false,
+            "multiline": false,
+            "piece": "input",
+            "placeholder": "tool.field, then Enter to add it",
+            "submit": "add_place"
+          }
+        ],
+        "piece": "stack"
+      },
+      {
+        "children": [
+          {
+            "children": [
+              {
+                "piece": "heading",
+                "text": "Strictness"
+              },
+              {
+                "piece": "text",
+                "text": "how sure Jev must be that the rule is broken"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "children": [
+              {
+                "action": "preset",
+                "args": {
+                  "preset": "lenient"
+                },
+                "kind": "secondary",
+                "label": "Lenient",
+                "piece": "button"
+              },
+              {
+                "action": "preset",
+                "args": {
+                  "preset": "balanced"
+                },
+                "kind": "primary",
+                "label": "Balanced",
+                "piece": "button"
+              },
+              {
+                "action": "preset",
+                "args": {
+                  "preset": "strict"
+                },
+                "kind": "secondary",
+                "label": "Strict",
+                "piece": "button"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "label": "flags from 0.30, blocks from 0.80",
+            "piece": "progress",
+            "share": 0.8
+          },
+          {
+            "children": [
+              {
+                "children": [
+                  {
+                    "piece": "text",
+                    "text": "Flag at"
+                  },
+                  {
+                    "action": "nudge",
+                    "args": {
+                      "delta": -0.05,
+                      "mark": "review"
+                    },
+                    "kind": "secondary",
+                    "label": "−",
+                    "piece": "button"
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.30"
+                  },
+                  {
+                    "action": "nudge",
+                    "args": {
+                      "delta": 0.05,
+                      "mark": "review"
+                    },
+                    "kind": "secondary",
+                    "label": "+",
+                    "piece": "button"
+                  }
+                ],
+                "piece": "row"
+              },
+              {
+                "children": [
+                  {
+                    "piece": "text",
+                    "text": "Block at"
+                  },
+                  {
+                    "action": "nudge",
+                    "args": {
+                      "delta": -0.05,
+                      "mark": "block"
+                    },
+                    "kind": "secondary",
+                    "label": "−",
+                    "piece": "button"
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.80"
+                  },
+                  {
+                    "action": "nudge",
+                    "args": {
+                      "delta": 0.05,
+                      "mark": "block"
+                    },
+                    "kind": "secondary",
+                    "label": "+",
+                    "piece": "button"
+                  }
+                ],
+                "piece": "row"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "piece": "rows",
+            "rows": [
+              {
+                "key": "Below 0.30",
+                "value": "The call runs."
+              },
+              {
+                "key": "0.30 to 0.80",
+                "value": "It runs, and waits in Review for you."
+              },
+              {
+                "key": "0.80 and up",
+                "value": "Refused. The model gets the rule and tries again."
+              }
+            ]
+          }
+        ],
+        "piece": "stack"
+      },
+      {
+        "children": [
+          {
+            "children": [
+              {
+                "children": [
+                  {
+                    "piece": "heading",
+                    "text": "Try it"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "before it runs for real"
+                  }
+                ],
+                "piece": "row"
+              },
+              {
+                "action": "try",
+                "args": {},
+                "kind": "secondary",
+                "label": "Try again",
+                "piece": "button"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "children": [
+              {
+                "head": [],
+                "piece": "table",
+                "rows": [
+                  [
+                    {
+                      "piece": "mono",
+                      "text": "exec_command"
+                    },
+                    {
+                      "piece": "mono",
+                      "text": "rm -rf target/debug/incremental"
+                    },
+                    {
+                      "label": null,
+                      "piece": "progress",
+                      "share": 0.82
+                    },
+                    {
+                      "piece": "badge",
+                      "text": "0.82 would block",
+                      "tone": "bad"
+                    }
+                  ]
+                ]
+              },
+              {
+                "piece": "text",
+                "text": "1 call · $0.000. Only what a check shows went to Jev; nothing ran again."
+              }
+            ],
+            "piece": "stack"
+          }
+        ],
+        "piece": "stack"
+      },
+      {
+        "children": [
+          {
+            "piece": "text",
+            "text": "Adds it; runs check with it from their next tool call"
+          },
+          {
+            "action": "close",
+            "args": {},
+            "kind": "secondary",
+            "label": "Cancel",
+            "piece": "button"
+          },
+          {
+            "action": "save",
+            "args": {},
+            "kind": "primary",
+            "label": "Add rule",
+            "piece": "button"
+          }
+        ],
+        "piece": "row"
+      }
+    ],
+    "piece": "stack"
+  },
+  "rule-missing": {
+    "children": [
+      {
+        "children": [
+          {
+            "piece": "heading",
+            "text": "New rule"
+          },
+          {
+            "action": "close",
+            "args": {},
+            "kind": "secondary",
+            "label": "Cancel",
+            "piece": "button"
+          },
+          {
+            "action": "save",
+            "args": {},
+            "kind": "primary",
+            "label": "Add rule",
+            "piece": "button"
+          }
+        ],
+        "piece": "row"
+      },
+      {
+        "children": [
+          {
+            "children": [
+              {
+                "piece": "heading",
+                "text": "Rule"
+              },
+              {
+                "piece": "text",
+                "text": "one sentence, the way you would tell a person"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "children": [
+              {
+                "piece": "text",
+                "text": "Rule:"
+              },
+              {
+                "piece": "mono",
+                "text": "Never run migrations against the production database."
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "id": "rule-text",
+            "keep": false,
+            "multiline": false,
+            "piece": "input",
+            "placeholder": "Type to write it again; Enter keeps it",
+            "submit": "write"
+          }
+        ],
+        "piece": "stack"
+      },
+      {
+        "children": [
+          {
+            "children": [
+              {
+                "piece": "heading",
+                "text": "Applies to"
+              },
+              {
+                "piece": "text",
+                "text": "what Jev reads for this rule"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "children": [
+              {
+                "action": "place",
+                "args": {
+                  "place": "exec_command.cmd"
+                },
+                "kind": "secondary",
+                "label": "exec_command · cmd",
+                "piece": "button"
+              },
+              {
+                "piece": "text",
+                "text": "the shell command"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "children": [
+              {
+                "action": "place",
+                "args": {
+                  "place": "edit.newText"
+                },
+                "kind": "secondary",
+                "label": "edit · newText",
+                "piece": "button"
+              },
+              {
+                "piece": "text",
+                "text": "each replacement"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "children": [
+              {
+                "action": "place",
+                "args": {
+                  "place": "write.content"
+                },
+                "kind": "secondary",
+                "label": "write · content",
+                "piece": "button"
+              },
+              {
+                "piece": "text",
+                "text": "the whole file"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "children": [
+              {
+                "action": "place",
+                "args": {
+                  "place": "final answer"
+                },
+                "kind": "secondary",
+                "label": "Final answer",
+                "piece": "button"
+              },
+              {
+                "piece": "text",
+                "text": "sent back when broken"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "id": "rule-on",
+            "keep": false,
+            "multiline": false,
+            "piece": "input",
+            "placeholder": "tool.field, then Enter to add it",
+            "submit": "add_place"
+          }
+        ],
+        "piece": "stack"
+      },
+      {
+        "children": [
+          {
+            "name": "warning",
+            "piece": "icon",
+            "tone": "bad"
+          },
+          {
+            "piece": "text",
+            "text": "Pick at least one place, or Jev has nothing to check."
+          }
+        ],
+        "piece": "row"
+      },
+      {
+        "children": [
+          {
+            "children": [
+              {
+                "piece": "heading",
+                "text": "Strictness"
+              },
+              {
+                "piece": "text",
+                "text": "how sure Jev must be that the rule is broken"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "children": [
+              {
+                "action": "preset",
+                "args": {
+                  "preset": "lenient"
+                },
+                "kind": "secondary",
+                "label": "Lenient",
+                "piece": "button"
+              },
+              {
+                "action": "preset",
+                "args": {
+                  "preset": "balanced"
+                },
+                "kind": "primary",
+                "label": "Balanced",
+                "piece": "button"
+              },
+              {
+                "action": "preset",
+                "args": {
+                  "preset": "strict"
+                },
+                "kind": "secondary",
+                "label": "Strict",
+                "piece": "button"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "label": "flags from 0.30, blocks from 0.80",
+            "piece": "progress",
+            "share": 0.8
+          },
+          {
+            "children": [
+              {
+                "children": [
+                  {
+                    "piece": "text",
+                    "text": "Flag at"
+                  },
+                  {
+                    "action": "nudge",
+                    "args": {
+                      "delta": -0.05,
+                      "mark": "review"
+                    },
+                    "kind": "secondary",
+                    "label": "−",
+                    "piece": "button"
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.30"
+                  },
+                  {
+                    "action": "nudge",
+                    "args": {
+                      "delta": 0.05,
+                      "mark": "review"
+                    },
+                    "kind": "secondary",
+                    "label": "+",
+                    "piece": "button"
+                  }
+                ],
+                "piece": "row"
+              },
+              {
+                "children": [
+                  {
+                    "piece": "text",
+                    "text": "Block at"
+                  },
+                  {
+                    "action": "nudge",
+                    "args": {
+                      "delta": -0.05,
+                      "mark": "block"
+                    },
+                    "kind": "secondary",
+                    "label": "−",
+                    "piece": "button"
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.80"
+                  },
+                  {
+                    "action": "nudge",
+                    "args": {
+                      "delta": 0.05,
+                      "mark": "block"
+                    },
+                    "kind": "secondary",
+                    "label": "+",
+                    "piece": "button"
+                  }
+                ],
+                "piece": "row"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "piece": "rows",
+            "rows": [
+              {
+                "key": "Below 0.30",
+                "value": "The call runs."
+              },
+              {
+                "key": "0.30 to 0.80",
+                "value": "It runs, and waits in Review for you."
+              },
+              {
+                "key": "0.80 and up",
+                "value": "Refused. The model gets the rule and tries again."
+              }
+            ]
+          }
+        ],
+        "piece": "stack"
+      },
+      {
+        "children": [
+          {
+            "children": [
+              {
+                "children": [
+                  {
+                    "piece": "heading",
+                    "text": "Try it"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "before it runs for real"
+                  }
+                ],
+                "piece": "row"
+              },
+              {
+                "action": "try",
+                "args": {},
+                "kind": "secondary",
+                "label": "Try on recent calls",
+                "piece": "button"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "piece": "text",
+            "text": "Jev scores the latest calls and answers this rule would read, as a check would. Nothing runs again."
+          }
+        ],
+        "piece": "stack"
+      },
+      {
+        "children": [
+          {
+            "piece": "text",
+            "text": "Pick at least one place, or Jev has nothing to check."
+          },
+          {
+            "action": "close",
+            "args": {},
+            "kind": "secondary",
+            "label": "Cancel",
+            "piece": "button"
+          },
+          {
+            "action": "save",
+            "args": {},
+            "kind": "primary",
+            "label": "Add rule",
+            "piece": "button"
+          }
+        ],
+        "piece": "row"
+      }
+    ],
+    "piece": "stack"
+  },
+  "rules-broken": {
+    "children": [
+      {
+        "children": [
+          {
+            "children": [
+              {
+                "piece": "rich",
+                "text": "**tau-constitution** checks every tool call and final answer against these rules before they run."
+              },
+              {
+                "action": "open",
+                "args": {},
+                "kind": "secondary",
+                "label": "Add a rule",
+                "piece": "button"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "children": [
+              {
+                "piece": "text",
+                "text": "Nothing checked yet."
+              }
+            ],
+            "piece": "row"
+          }
+        ],
+        "piece": "stack"
+      },
+      {
+        "children": [
+          {
+            "children": [
+              {
+                "name": "blocked",
+                "piece": "icon",
+                "tone": "bad"
+              },
+              {
+                "piece": "heading",
+                "text": "The rules for tau-agent can't be read, so runs in tau-agent fail at start"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "piece": "text",
+            "text": "The constitution stored for tau-agent is not valid: Rule R4: review (0.95) is above block (0.9)"
+          },
+          {
+            "children": [
+              {
+                "action": "ask_reset",
+                "args": {
+                  "yes": true
+                },
+                "kind": "danger",
+                "label": "Remove these rules",
+                "piece": "button"
+              }
+            ],
+            "piece": "row"
+          }
+        ],
+        "piece": "stack"
+      }
+    ],
+    "piece": "stack"
+  },
+  "rules-empty": {
+    "children": [
+      {
+        "children": [
+          {
+            "name": "key",
+            "piece": "icon",
+            "tone": "info"
+          },
+          {
+            "children": [
+              {
+                "piece": "heading",
+                "text": "Rules aren't checked yet"
+              },
+              {
+                "piece": "text",
+                "text": "tau-constitution asks Jev, TypeSafe's scoring model. Add a TypeSafe key and every run checks these rules."
+              }
+            ],
+            "piece": "stack"
+          },
+          {
+            "label": "Add TypeSafe key",
+            "piece": "link",
+            "to": {
+              "page": "key",
+              "params": {},
+              "plugin": "tau-jev"
+            }
+          }
+        ],
+        "piece": "row"
+      },
+      {
+        "children": [
+          {
+            "name": "blocked",
+            "piece": "icon",
+            "tone": "neutral"
+          },
+          {
+            "piece": "heading",
+            "text": "No rules for tau-agent"
+          },
+          {
+            "piece": "text",
+            "text": "A rule is one sentence, checked where you say: a shell command, an edit, a written file, or the final answer. Past its block mark the call is refused and the model gets the rule back."
+          },
+          {
+            "children": [
+              {
+                "action": "open",
+                "args": {},
+                "kind": "primary",
+                "label": "New rule",
+                "piece": "button"
+              }
+            ],
+            "piece": "row"
+          }
+        ],
+        "piece": "stack"
+      }
+    ],
+    "piece": "stack"
+  }
+}

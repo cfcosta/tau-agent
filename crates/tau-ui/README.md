@@ -52,7 +52,7 @@ It builds on `tau-agent`, `tau-ai`, `tau-store` and `tau-store-sqlite`,
 `tau-remote`, `tau-ui-kit`, `tau-ui-plugin`, `tau-ui-remote`, and on every
 plugin. It is the host half's user: `hosted::halves` gives each plugin
 `tau-ui-remote` lists its host half (`tau-tools-host`, `tau-vcs-host`,
-`tau-memory-host`, `tau-constitution-host`, `tau-mcp-host`, and the light
+`tau-memory-host`, `tau-mcp-host`, and the light
 ones in the plugins' own crates). The Luau plugins' halves
 (`tau-codemode-host`, `tau-luau-plugins-host`) are left out so this crate
 builds while Luau's C++ does; the `tau` app adds them.

@@ -15,7 +15,6 @@ use tau_agent::{
     agent::Agent,
     event::{RunEvent, StopReason},
 };
-use tau_constitution::ui::Act;
 use tau_github_host::Token;
 use tau_store::Store;
 use tau_testing::{git::git, scripted::ScriptedModel};
@@ -371,7 +370,7 @@ fn new_chats_fork_the_repository_main_chat() {
 /// comes from what each plugin charged.
 #[test]
 fn every_jev_plugin_is_listed() {
-    let jev_plugins = [tau_fast_compaction::NAME, tau_constitution_host::NAME];
+    let jev_plugins = [tau_fast_compaction::NAME];
     let (host, _events) = host(ScriptedModel::new());
     let described = |catalog: &tau_ui_remote::catalog::Catalog, name: &str| {
         let plugin = catalog
@@ -1853,16 +1852,6 @@ fn repositories_are_listed_and_remembered() {
     host.block_on(host.set_closed(&first, true)).unwrap();
     host.block_on(host.set_closed(&second, true)).unwrap();
     host.block_on(host.set_closed(&second, false)).unwrap();
-    // So are flagged calls someone looked at.
-    for _ in 0..2 {
-        rules_act(
-            &host,
-            Act::Reviewed {
-                run: "a".into(),
-                key: "call-1".into(),
-            },
-        );
-    }
     drop(host);
 
     let (host, _events) = Host::new(config_on(data.path())).unwrap();
@@ -1870,13 +1859,6 @@ fn repositories_are_listed_and_remembered() {
     assert_eq!(names(&host), ["tau-plugins", "proj-2"]);
     let catalog = host.block_on(host.catalog());
     assert_eq!(catalog.closed_runs, std::slice::from_ref(&first));
-    let reviewed: tau_constitution::ui::Data = serde_json::from_value(
-        catalog.plugin_data[tau_constitution_host::NAME]
-            .json()
-            .clone(),
-    )
-    .unwrap();
-    assert_eq!(reviewed.reviewed, [("a".to_owned(), "call-1".to_owned())]);
     // Cloning a removed one lists it again, under its name.
     assert_eq!(
         host.block_on(host.clone_from_forge("a/proj")).unwrap().name,
@@ -2206,309 +2188,6 @@ fn a_finished_run_goes_on_in_its_workspace() {
     assert_eq!(prompts, ["write a.txt", "now b.txt"]);
 }
 
-/// Asks tau-constitution's host half to carry out `act`, as its page
-/// does; what it answers, if anything.
-fn rules_act(host: &Host, act: Act) -> Option<serde_json::Value> {
-    host.block_on(host.plugin_act(
-        tau_constitution_host::NAME,
-        serde_json::to_value(act).unwrap(),
-    ))
-    .unwrap()
-}
-
-/// A repository's constitution, as its page gets it.
-fn rules_of(
-    repo: &tau_ui_remote::catalog::Repo,
-) -> tau_constitution::ui::Rules {
-    serde_json::from_value(
-        repo.plugins[tau_constitution_host::NAME].json().clone(),
-    )
-    .unwrap()
-}
-
-/// What the checks did in `view`, as tau-constitution's fold leaves it.
-fn checks_of(
-    view: &tau_ui_remote::view::RunView,
-) -> tau_constitution::ui::State {
-    view.plugin_states
-        .get(tau_constitution_host::NAME)
-        .map(|state| serde_json::from_value(state.json().clone()).unwrap())
-        .unwrap_or_default()
-}
-
-/// A stored constitution that cannot be read can be removed from the
-/// UI, which no edit could do, and its settings are saved like its
-/// rules.
-#[test]
-fn a_broken_constitution_can_be_removed_and_settings_are_saved() {
-    let dir = tempfile::tempdir().unwrap();
-    let data = tempfile::tempdir().unwrap();
-    let db = data.path().join("runs.db");
-    let (host, _events) =
-        host_with_store(ScriptedModel::new(), dir.path(), &db);
-    let key = common::project(&host, REPO)
-        .root()
-        .canonicalize()
-        .unwrap()
-        .display()
-        .to_string();
-    let rules_db = host
-        .plugin_dir(tau_constitution_host::NAME)
-        .join("constitution.db");
-    let open = || {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let db = runtime
-            .block_on(tau_constitution_host::db::Db::open(&rules_db))
-            .unwrap();
-        (runtime, db)
-    };
-    // Flagged past where it blocks: it does not check.
-    let (runtime, written) = open();
-    runtime
-        .block_on(written.save_constitution(
-            &key,
-            &tau_constitution_host::StoredConstitution {
-                on_error: "allow".into(),
-                max_holds: 3,
-                rules: vec![tau_constitution_host::StoredRule {
-                    id: "R1".into(),
-                    text: "Name the tests.".into(),
-                    targets: vec!["final answer".into()],
-                    review: 0.9,
-                    block: 0.2,
-                }],
-            },
-        ))
-        .unwrap();
-    let constitution = || rules_of(&host.block_on(host.catalog()).repos[0]);
-    assert!(constitution().error.is_some());
-    let add = |host: &Host| {
-        rules_act(
-            host,
-            Act::Add {
-                repo: REPO.into(),
-                text: "No unwrap.".into(),
-                on: vec!["write.content".into()],
-                review: 0.5,
-                block: 0.8,
-            },
-        )
-    };
-    add(&host);
-    assert!(
-        constitution().error.is_some(),
-        "no edit gets past rules that cannot be read"
-    );
-
-    rules_act(&host, Act::Reset { repo: REPO.into() });
-    let reset = constitution();
-    assert_eq!((reset.error, reset.rules.len()), (None, 0));
-    add(&host);
-    assert_eq!(constitution().rules.len(), 1);
-
-    rules_act(
-        &host,
-        Act::Settings {
-            repo: REPO.into(),
-            blocks_unchecked: true,
-            max_holds: 5,
-        },
-    );
-    let saved = constitution();
-    assert!(saved.blocks_unchecked);
-    assert_eq!(saved.max_holds, 5);
-    let (runtime, read) = open();
-    let stored = runtime
-        .block_on(tau_constitution_host::db::load(&read, &key))
-        .unwrap();
-    assert_eq!(stored.on_error, tau_constitution_host::OnError::Block);
-    assert_eq!((stored.max_holds, stored.rules.len()), (5, 1));
-}
-
-#[test]
-fn the_constitution_blocks_a_call_that_breaks_a_rule() {
-    let dir = tempfile::tempdir().unwrap();
-    let llm = ScriptedModel::new()
-        .turn(|t| {
-            t.tool_call(
-                "write",
-                serde_json::json!({ "path": "a.txt", "content": "x.unwrap()" }),
-            )
-        })
-        .turn(|t| t.text("I could not write it."));
-    let data = tempfile::tempdir().unwrap();
-    let db = data.path().join("runs.db");
-    let (host, mut events) = host_with_store(llm, dir.path(), &db);
-    let host = host.with_service(tau_jev::Upstream(std::sync::Arc::new(
-        tau_jev::fake::FakeJev::nouls(|_| 0.95),
-    )));
-    // What the store holds for the repository, as a run would read it.
-    let root = common::project(&host, REPO).root().to_owned();
-    let rules_db = host
-        .plugin_dir(tau_constitution_host::NAME)
-        .join("constitution.db");
-    let stored = || {
-        let key = root.canonicalize().unwrap().display().to_string();
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async {
-                let db = tau_constitution_host::db::Db::open(&rules_db)
-                    .await
-                    .unwrap();
-                tau_constitution_host::db::load(&db, &key).await
-            })
-            .unwrap()
-    };
-    // A rule saved the way the Constitution page saves one.
-    rules_act(
-        &host,
-        Act::Add {
-            repo: REPO.into(),
-            text: "No unwrap.".into(),
-            on: vec!["write.content".into()],
-            review: 0.5,
-            block: 0.8,
-        },
-    );
-    let catalog = host.block_on(host.catalog());
-    let rules = &rules_of(&catalog.repos[0]);
-    assert_eq!(rules.rules.len(), 1);
-    assert_eq!(rules.rules[0].applies_to, ["write.content"]);
-    assert!(rules.error.is_none());
-    // Kept in the store, not in a file.
-    assert_eq!(stored().rules.len(), 1);
-    assert!(
-        !walk(dir.path()).any(|path| path.ends_with("constitution.toml")),
-        "no file is written"
-    );
-    assert!(catalog.plugins.iter().any(|p| p.name == "tau-constitution"));
-    let stats = jev_stats(&catalog);
-    assert_eq!((stats.requests, stats.failed), (0, 0));
-
-    let mut view = host
-        .block_on(host.start("write a.txt", &ModelChoice::default(), REPO))
-        .unwrap();
-    for event in until_end(&mut events) {
-        view.apply(&event);
-    }
-    wait_until_done(&host, &view.id);
-    assert!(!dir.path().join("a.txt").exists(), "the write was refused");
-    let blocked = |view: &tau_ui_remote::view::RunView| {
-        view.items.iter().any(|item| {
-            matches!(item, Item::Tool(card)
-                if matches!(&card.state, ToolState::Blocked { .. }))
-        }) && checks_of(view).stats.blocked == ["R1"]
-    };
-    assert!(blocked(&view), "the card shows the block live");
-    assert_eq!(checks_of(&view).stats.calls, 1);
-    // tau-jev counts the check Jev answered.
-    let stats = jev_stats(&host.block_on(host.catalog()));
-    assert!(stats.requests >= 1, "{stats:?}");
-    assert!(stats.input_tokens > 0 && stats.spent > 0.0);
-    assert_eq!((stats.model.as_str(), stats.failed), ("jev-fake", 0));
-    // And in history, from what the plugin recorded.
-    let history = host.block_on(host.history()).unwrap();
-    assert!(blocked(&history[0]));
-    assert_eq!(checks_of(&history[0]).stats, checks_of(&view).stats);
-
-    // Editing a rule saves over it, in place.
-    rules_act(
-        &host,
-        Act::Update {
-            repo: REPO.into(),
-            id: "R1".into(),
-            text: "No unwrap, ever.".into(),
-            on: vec!["write.content".into()],
-            review: 0.3,
-            block: 0.9,
-        },
-    );
-    let edited =
-        rules_of(&host.block_on(host.catalog()).repos[0]).rules[0].clone();
-    assert_eq!(
-        (edited.id.as_str(), edited.text.as_str()),
-        ("R1", "No unwrap, ever.")
-    );
-    assert_eq!(edited.block, 0.9);
-    // Trying a rule asks Jev about each past call it reads.
-    let calls = vec![
-        (
-            "write".to_owned(),
-            serde_json::json!({ "path": "a", "content": "x.unwrap()" }),
-        ),
-        (
-            "exec_command".to_owned(),
-            serde_json::json!({ "cmd": "ls" }),
-        ),
-    ];
-    let try_rule =
-        |text: &str, on: &str| -> tau_constitution::ui::TrialResult {
-            let reply = rules_act(
-                &host,
-                Act::Try {
-                    text: text.into(),
-                    on: vec![on.into()],
-                    review: 0.3,
-                    block: 0.8,
-                    calls: calls.clone(),
-                    answers: Vec::new(),
-                },
-            )
-            .expect("a trial answers");
-            serde_json::from_value(reply).unwrap()
-        };
-    let (trials, cost) = try_rule("No unwrap.", "write.content").unwrap();
-    assert_eq!(trials.len(), 1);
-    assert_eq!(trials[0].shown, "x.unwrap()");
-    assert!((trials[0].score - 0.95).abs() < 1e-9 && cost > 0.0);
-    assert!(
-        try_rule("x", "nowhere").is_err(),
-        "a place that names nothing is refused"
-    );
-
-    // The store's history counts the run, loaded or not.
-    let history = rules_of(&host.block_on(host.catalog()).repos[0]).history;
-    assert_eq!(history.len(), 1);
-    let (run, checks) = &history[0];
-    assert_eq!(**run, *view.id.0);
-    assert_eq!(
-        (checks.calls, checks.blocked.as_slice()),
-        (1, ["R1".to_owned()].as_slice())
-    );
-
-    // Removing a rule saves it.
-    rules_act(
-        &host,
-        Act::Remove {
-            repo: REPO.into(),
-            id: "R1".into(),
-        },
-    );
-    assert!(
-        rules_of(&host.block_on(host.catalog()).repos[0])
-            .rules
-            .is_empty()
-    );
-    assert!(stored().rules.is_empty());
-    // An edit the rules would refuse is not saved.
-    rules_act(
-        &host,
-        Act::Add {
-            repo: REPO.into(),
-            text: "x".into(),
-            on: vec!["write.content".into()],
-            review: 0.9,
-            block: 0.1,
-        },
-    );
-    assert!(stored().rules.is_empty());
-}
-
 /// A large `exec_command` output reaches the model pruned, with the whole of it
 /// archived in tau's directory for the repository, readable only by the
 /// user; the call's card says what was kept, live and from history.
@@ -2607,22 +2286,6 @@ fn a_large_output_is_pruned_into_tau_s_archive() {
 
     let history = host.block_on(host.history()).unwrap();
     assert_eq!(cut_of(&history[0]), Some(cut));
-}
-
-/// Every file under `dir`.
-fn walk(dir: &Path) -> impl Iterator<Item = std::path::PathBuf> {
-    let mut stack = vec![dir.to_owned()];
-    std::iter::from_fn(move || {
-        while let Some(path) = stack.pop() {
-            match std::fs::read_dir(&path) {
-                Ok(entries) => {
-                    stack.extend(entries.flatten().map(|entry| entry.path()))
-                }
-                Err(_) => return Some(path),
-            }
-        }
-        None
-    })
 }
 
 /// The credentials directory the test hosts use.
@@ -3938,12 +3601,6 @@ fn the_interfaces_state_comes_back_after_a_restart() {
     drop(first);
 
     assert_eq!(make().ui_state(), left);
-}
-
-/// What tau-jev says Jev did this session, from its data in `catalog`.
-fn jev_stats(catalog: &tau_ui_remote::catalog::Catalog) -> tau_jev::ui::Stats {
-    let data = catalog.plugin_data[tau_jev::NAME].json();
-    serde_json::from_value(data["stats"].clone()).expect("Jev is set up")
 }
 
 /// What tau-chatgpt says of the sign-ins, from its data in the host's

@@ -1647,6 +1647,17 @@ pub fn reasoning(fixture: &str) -> [Value; 2] {
 pub fn luau(plugin: &str, fixture: &str) -> [Value; 2] {
     let fixture: Value = serde_json::from_str(fixture)
         .expect("a Luau plugin's fixtures are JSON");
+    luau_records(plugin, &fixture)
+}
+
+/// [`luau`] of the `n`th of a fixture's steps (`[{ state, view }]`).
+pub fn luau_step(plugin: &str, fixture: &str, n: usize) -> [Value; 2] {
+    let steps: Value = serde_json::from_str(fixture)
+        .expect("a Luau plugin's fixtures are JSON");
+    luau_records(plugin, &steps[n])
+}
+
+fn luau_records(plugin: &str, fixture: &Value) -> [Value; 2] {
     let plugin = plugin.to_owned();
     [
         tau_luau_plugins::Record::State {
@@ -1661,22 +1672,26 @@ pub fn luau(plugin: &str, fixture: &str) -> [Value; 2] {
     .map(|record| serde_json::to_value(record).expect("plain JSON"))
 }
 
+/// The run's plugin list: tau-luau-plugins' line holds its plugins',
+/// tau-reasoning's (the first state) and tau-constitution's (the third),
+/// as the app's does (ADR 0050).
 fn plugins(states: [&str; 4]) -> Vec<PluginStatus> {
-    let names = [
-        tau_luau_plugins::NAME,
-        "tau-memory",
-        "tau-constitution",
-        tau_fast_compaction::NAME,
-    ];
-    names
-        .into_iter()
-        .zip(states)
-        .map(|(name, state)| PluginStatus {
-            name: name.into(),
-            state: state.into(),
-            tone: Tone::Quiet,
-        })
-        .collect()
+    let [reasoning, memory, constitution, compaction] = states;
+    let reasoning = reasoning.trim_start_matches("tau-reasoning: ");
+    let luau =
+        format!("tau-reasoning: {reasoning}; tau-constitution: {constitution}");
+    [
+        (tau_luau_plugins::NAME, luau.as_str()),
+        ("tau-memory", memory),
+        (tau_fast_compaction::NAME, compaction),
+    ]
+    .into_iter()
+    .map(|(name, state)| PluginStatus {
+        name: name.into(),
+        state: state.into(),
+        tone: Tone::Quiet,
+    })
+    .collect()
 }
 
 /// Builds the script step by step.
@@ -1778,22 +1793,14 @@ impl Script {
         );
     }
 
-    /// tau-constitution's check of a call (or, with `None`, the final
-    /// answer), with each rule's score, as the plugin reports it.
-    fn checked(&mut self, call: Option<(&str, &str)>, scores: &[(&str, f64)]) {
-        let mut body = json!({
-            "kind": "checked",
-            "scores": scores
-                .iter()
-                .map(|(rule, score)| json!({ "rule": rule, "score": score }))
-                .collect::<Vec<_>>(),
-            "cost": 0.00002,
-        });
-        if let Some((id, tool)) = call {
-            body["call_id"] = id.into();
-            body["tool"] = tool.into();
+    /// What tau-constitution, a Luau plugin (ADR 0050), left at its
+    /// `n`th check of the demo run: its state and view, from its fixture.
+    fn constitution(&mut self, n: usize) {
+        let records =
+            luau_step(tau_constitution::NAME, tau_constitution::DEMO_RUN, n);
+        for body in records {
+            self.report(tau_luau_plugins::NAME, body);
         }
-        self.verdict(body);
     }
 
     /// What a plugin charged to the run, as the run emits it.
@@ -1808,11 +1815,6 @@ impl Script {
                 usage,
             },
         );
-    }
-
-    /// A report from tau-constitution.
-    fn verdict(&mut self, body: Value) {
-        self.report("tau-constitution", body);
     }
 
     /// A plugin's report, as the run emits it.
@@ -2726,14 +2728,9 @@ pub fn script() -> Vec<Step> {
                   (\"Library code returns errors. No unwrap or expect outside \
                   tests.\"), violation probability 0.95. Change the call so it \
                   follows the rule, then try again.";
-    s.checked(Some(("c4", "edit")), &[("R2", 0.95), ("R4", 0.08)]);
-    s.verdict(json!({
-        "kind": "blocked", "rule": "R2", "score": 0.95,
-        "text": "Library code returns errors. No unwrap or expect outside tests.",
-        "call_id": "c4", "tool": "edit", "reason": reason,
-    }));
+    s.constitution(0);
     s.end_tool(500, "c4", ToolOutput::text(reason));
-    s.charged("tau-constitution", 0.00007);
+    s.charged(tau_luau_plugins::NAME, 0.00007);
     s.end_turn(21_400, 610, 0.027);
 
     s.turn();
@@ -2752,7 +2749,7 @@ pub fn script() -> Vec<Step> {
          \x20}\n",
     );
     s.start_tool("c5", "edit", args);
-    s.checked(Some(("c5", "edit")), &[("R2", 0.02), ("R4", 0.06)]);
+    s.constitution(1);
     s.end_tool(450, "c5", output);
     // The first test run fails: the date parser is not wired in yet.
     s.start_tool(
@@ -2766,12 +2763,7 @@ pub fn script() -> Vec<Step> {
         "exec_command",
         json!({ "cmd": "rm -rf target/debug/incremental" }),
     );
-    s.checked(Some(("c6", "exec_command")), &[("R1", 0.41)]);
-    s.verdict(json!({
-        "kind": "flagged", "rule": "R1", "score": 0.41,
-        "text": "Never delete outside target/ or rewrite published history.",
-        "call_id": "c6", "tool": "exec_command",
-    }));
+    s.constitution(2);
     s.end_tool(600, "c6", ToolOutput::text(""));
     s.at(
         0,
@@ -3001,20 +2993,15 @@ pub fn script() -> Vec<Step> {
     );
     s.end_turn(82_000, 700, 0.024);
     // tau-constitution holds the stop in `before_stop`.
-    s.checked(None, &[("R6", 0.91)]);
+    s.constitution(3);
     let held = "Your answer breaks rule R6 (\"The final answer names the \
                 tests that ran and their result.\"). Revise it so it follows \
                 the rule, then answer again.";
-    s.verdict(json!({
-        "kind": "held", "rule": "R6", "score": 0.91,
-        "text": "The final answer names the tests that ran and their result.",
-        "reason": held, "hold": 1, "max_holds": 3,
-    }));
     s.event(
         500,
         RunEvent::Continued {
             run: run.clone(),
-            plugin: Arc::from("tau-constitution"),
+            plugin: Arc::from(tau_luau_plugins::NAME),
             message: held.into(),
         },
     );
@@ -3035,8 +3022,8 @@ pub fn script() -> Vec<Step> {
          2. Logging a malformed header ~~every time~~ once per run.",
     );
     s.end_turn(82_600, 300, 0.012);
-    s.checked(None, &[("R6", 0.04)]);
-    s.charged("tau-constitution", 0.012);
+    s.constitution(4);
+    s.charged(tau_luau_plugins::NAME, 0.012);
     s.event(
         400,
         RunEvent::RunEnd {

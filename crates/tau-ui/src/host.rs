@@ -1556,7 +1556,7 @@ impl Host {
                         && *run == id
                         && let Some(stored) = stored.take()
                     {
-                        let _ = stored.send(());
+                        let _ = stored.send(Ok(()));
                     }
                     // Its end goes by before its outcome is stored: it
                     // stops in a moment (`Host::settle`). Marked here, by
@@ -1579,12 +1579,17 @@ impl Host {
                     }
                 }
             }
-            // It ended before its first turn stored anything: its caller
-            // hears so.
-            drop(stored.take());
             // The outcome is stored by the run; the events said it all,
             // but what its last request went with.
-            if let Ok(outcome) = run.outcome().await {
+            let outcome = run.outcome().await;
+            // It ended before its first turn stored anything: its caller
+            // hears so, and why when it failed, as a plugin that cannot
+            // check the run fails it.
+            if let Some(stored) = stored.take() {
+                let why = outcome.as_ref().err().map(ToString::to_string);
+                let _ = stored.send(Err(why));
+            }
+            if let Ok(outcome) = outcome {
                 Host::run_ended(&idle, &id, outcome.request);
             }
             runs.lock().expect("not poisoned").remove(&id);
@@ -1790,7 +1795,9 @@ impl Host {
 }
 
 /// A run [`Host::track`] follows, until it stored what it was asked.
-pub(crate) struct Started(Option<tokio::sync::oneshot::Receiver<()>>);
+pub(crate) struct Started(
+    Option<tokio::sync::oneshot::Receiver<Result<(), Option<String>>>>,
+);
 
 impl Started {
     /// Waits for the run to store the message it started on, as its first
@@ -1800,11 +1807,15 @@ impl Started {
         let Some(stored) = self.0.take() else {
             return Ok(());
         };
-        stored.await.map_err(|_| {
-            anyhow::anyhow!(
+        match stored.await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(Some(why))) => {
+                anyhow::bail!("The chat did not start: {why}")
+            }
+            _ => anyhow::bail!(
                 "The message could not be stored, so the chat did not take it"
-            )
-        })
+            ),
+        }
     }
 }
 
