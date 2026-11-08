@@ -61,7 +61,7 @@ tau-agent/
 │       │                         # filling `tau.title` (Luau)
 │       ├── tau-tools/            # read, exec_command, write_stdin, edit, ...
 │       ├── tau-tree-compaction/  # compaction into a tree of summaries the
-│       │                         # agent zooms into, after OptChat
+│       │                         # agent zooms into, after OptChat (Luau)
 │       ├── tau-vcs/              # version control on jj-lib, and landing runs
 │       └── tau-watcher/          # notes what you likely missed, every 6th step (Luau)
 │                                 # (ADR 0032)

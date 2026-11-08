@@ -3,9 +3,12 @@
 `tau-tree-compaction` (`crates/plugins/tau-tree-compaction`) compacts a
 run without losing what it drops. It implements OptChat's memory design
 ([the spec](https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449)),
-fitted to a run of tau's. It is off by default: the Plugins screen
-switches it on, and until an evaluation shows it does better than
-tau-compaction's summary, tau-compaction stays the default.
+fitted to a run of tau's. It is a Luau plugin tau comes with (ADR 0050):
+`luau/lib/tree.luau` holds the history and the view,
+`luau/lib/build.luau` the compactor, and `luau/plugin.luau` the hooks
+and `zoom`. It is off by default: its settings switch it on, and until
+an evaluation shows it does better than tau-compaction's summary,
+tau-compaction stays the default.
 
 [compaction.md](compaction.md) replaces the older messages with one
 summary, and what the summary leaves out is gone for the rest of the
@@ -16,33 +19,26 @@ made from, down to a message whole.
 
 ## Using it
 
-```rust
-use tau_compaction::Compaction;
-use tau_tree_compaction::TreeCompaction;
+tau-luau-plugins runs it after pruning and before tau-compaction, as
+tau comes with them. Context plugins are offered the context in order,
+and the first that rewrites wins: when building a line fails, tree
+compaction writes nothing, and tau-compaction summarizes in the same
+turn. An agent of its own adds both with `Active::built_in` in a
+`LuauPlugins`, the tree first.
 
-let agent = Agent::new(llm)
-    .plugin(TreeCompaction::default())
-    // After it: summarizes when a line cannot be built.
-    .plugin(Compaction::default());
-```
-
-Context plugins are offered the context in order, and the first that
-rewrites wins. Put tree compaction after pruning and before
-tau-compaction: when building a line fails, tree compaction writes
-nothing, and tau-compaction summarizes in the same turn.
-
-| Setting              | Default  | Meaning                                                        |
-| -------------------- | -------- | -------------------------------------------------------------- |
-| `reserve_tokens`     | 16,384   | Compacts once the estimate passes `context_window` minus this  |
-| `keep_recent_tokens` | 20,000   | The newest messages kept as they are, as tau-compaction keeps  |
-| `context_window`     | registry | For a model the registry does not know                         |
-| `view_bytes`         | 64,000   | The view's budget, in bytes of its lines (about 16,000 tokens) |
-| `jobs`               | 8        | Compactor requests at once                                     |
+| Setting              | Default | Meaning                                                        |
+| -------------------- | ------- | -------------------------------------------------------------- |
+| `on`                 | off     | Whether it folds, and whether the run has `zoom`               |
+| `reserve_tokens`     | 16,384  | Compacts once the estimate passes the window minus this        |
+| `keep_recent_tokens` | 20,000  | The newest messages kept as they are, as tau-compaction keeps  |
+| `window`             | 0       | For a model the registry does not know; 0 is the model's       |
+| `view_bytes`         | 64,000  | The view's budget, in bytes of its lines (about 16,000 tokens) |
+| `jobs`               | 8       | Compactor requests at once                                     |
 
 It triggers as tau-compaction does: after a turn past the threshold,
 before the first request of a run on an inherited transcript, and on an
 overflow. A failed compaction waits 2, 4, 8 and up to 32 turns before
-it tries again.
+it tries again; the failure is a line in the plugin's log.
 
 ## The history
 
@@ -101,8 +97,9 @@ then, while the view is over budget, the parents the fit will want,
 found by simulating it with each unbuilt line at the most it can be.
 Those parents are built a level at a time, `jobs` at once.
 
-Each line is one request to the run's model and effort, with
-`COMPACT_PROMPT` as instructions. It asks what OptChat's compactor
+Each line is one request to the run's model, at the effort the run
+started at, with `COMPACT_PROMPT` as instructions: `infer` with its own
+`instructions`, `jobs` of them at once in `parallel`. It asks what OptChat's compactor
 prompt asks, in tau's own words and for a run: the user's words first,
 in their own wording, then lasting effects and failures, then findings
 and replies, and tool output last, described rather than copied. The request is one user message with two
@@ -158,18 +155,16 @@ other message.
 
 ## What is stored
 
-- **The rewrite** is a `context` entry whose body is the view (its
-  nodes), how many entries it covers, the tokens before and the view
-  message's timestamp.
-- **A `folded` record per compaction** holds the entries it added, from
-  `first` on, and the lines it built. These are records, not the
-  rewrite, so each compaction stores only what it added.
-- **A `compacted` record** says what the compaction did, for the run's
-  plugin list: "312 messages in 140 lines".
+- **The rewrite** is a `context` entry from `tau-luau-plugins`, naming
+  `tau-tree-compaction`, whose details are the view (its nodes), how
+  many entries it covers and the tokens before.
+- **The plugin's state** holds the history: its entries, the lines built
+  over them and the view; and what the last compaction did, for the
+  run's plugin list: "312 messages in 140 lines".
 
-A fork or a resumed run rebuilds the history from its `folded` records
-and the last rewrite's view, so `zoom` still reaches everything folded
-before it.
+A fork or a resumed run inherits the state, so `zoom` still reaches
+everything folded before it. A transcript opens with the view when its
+first message is the person's with the view message's text.
 
 ## Deviations from OptChat
 

@@ -21,7 +21,8 @@ use tau_ai::message::{
 /// `transcript` as `rewrite_context` reads it: each message by its place
 /// (from 1), its role, its whole text (ADR 0050, gap B: a transcript too
 /// large for the VM is one no plugin can rewrite), its size in bytes,
-/// the loop's estimate of its tokens, and its images, when it has any.
+/// the loop's estimate of its tokens, and, when it has images, how many
+/// and its `parts`, its blocks in order.
 /// An answer has its thinking, when it has any, and its calls, each with
 /// its arguments, `order`, their names in the order the model gave them
 /// (a Luau table keeps none), and `json`, the arguments as the model
@@ -85,6 +86,7 @@ pub fn summary(transcript: &[Message]) -> Value {
             out["tokens"] = json!(estimate_message_tokens(message));
             if images > 0 {
                 out["images"] = json!(images);
+                out["parts"] = json!(parts(message));
             }
             out
         })
@@ -96,6 +98,26 @@ pub fn summary(transcript: &[Message]) -> Value {
 /// `rewrite_context` reads it ([`summary`]).
 pub fn transcript(transcript: &[Message]) -> Value {
     summary(transcript)
+}
+
+/// A message's blocks in order, `{ text }` or `{ image = true }`: where
+/// its images sit among its text.
+fn parts(message: &Message) -> Vec<Value> {
+    let blocks = match message {
+        Message::User(user) => match &user.content {
+            UserContent::Text(text) => return vec![json!({ "text": text })],
+            UserContent::Blocks(blocks) => blocks,
+        },
+        Message::ToolResult(result) => &result.content,
+        Message::Assistant(_) => return Vec::new(),
+    };
+    blocks
+        .iter()
+        .map(|block| match block {
+            InputBlock::Text(text) => json!({ "text": text.text }),
+            InputBlock::Image(_) => json!({ "image": true }),
+        })
+        .collect()
 }
 
 /// How many of `blocks` are images.

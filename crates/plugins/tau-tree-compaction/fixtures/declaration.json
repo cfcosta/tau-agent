@@ -1,0 +1,102 @@
+{
+  "name": "tau-tree-compaction",
+  "description": "Folds older context into one-line summaries the agent can zoom into",
+  "uses": {
+    "tools": [],
+    "jev": false,
+    "infer": true,
+    "change_args": false,
+    "network": [],
+    "secrets": [],
+    "model": null,
+    "store": false,
+    "transcript": false
+  },
+  "settings": {
+    "default": {
+      "jobs": 8,
+      "keep_recent_tokens": 20000,
+      "on": false,
+      "reserve_tokens": 16384,
+      "view_bytes": 64000,
+      "window": 0
+    },
+    "schema": {
+      "properties": {
+        "jobs": {
+          "type": "integer"
+        },
+        "keep_recent_tokens": {
+          "type": "integer"
+        },
+        "on": {
+          "type": "boolean"
+        },
+        "reserve_tokens": {
+          "type": "integer"
+        },
+        "view_bytes": {
+          "type": "integer"
+        },
+        "window": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "tools": [
+    {
+      "name": "zoom",
+      "description": "Open the line id+n of the compacted conversation (<chat>) into the two lines of n/2 under it; n = 1 gives the message whole.",
+      "parameters": {
+        "properties": {
+          "id": {
+            "description": "The line's first message: the `id` of `id+n`.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "n": {
+            "description": "How many messages the line covers: the `n` of `id+n`.",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": ["id", "n"],
+        "type": "object"
+      },
+      "card": false,
+      "when": "on"
+    }
+  ],
+  "hooks": {
+    "start": true,
+    "before_tool": false,
+    "before_request": false,
+    "after_tool_result": false,
+    "rewrite_context": true,
+    "rewritten": false,
+    "before_stop": false,
+    "turn_end": false,
+    "on_event": false,
+    "title": false,
+    "notify": false,
+    "repo_data": false,
+    "recover": false,
+    "run_end": false,
+    "view": true,
+    "settings_view": true
+  },
+  "actions": [],
+  "events": [],
+  "fills": [],
+  "compaction": null,
+  "forge": null,
+  "nav": null,
+  "commands": [],
+  "jobs": [],
+  "pages": [],
+  "repo_nav": null,
+  "picker_auto": null,
+  "continues": null
+}

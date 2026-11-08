@@ -124,6 +124,19 @@ pub struct ToolSpec {
     /// It draws its own card.
     #[serde(default)]
     pub card: bool,
+    /// The boolean setting it is offered while it is on: the model sees
+    /// it only then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<String>,
+}
+
+impl ToolSpec {
+    /// Whether a run on `settings` offers it.
+    pub fn offered(&self, settings: &Value) -> bool {
+        self.when
+            .as_ref()
+            .is_none_or(|key| settings[key.as_str()] == Value::Bool(true))
+    }
 }
 
 /// Which hooks a plugin has.

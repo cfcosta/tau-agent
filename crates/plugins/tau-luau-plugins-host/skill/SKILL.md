@@ -95,7 +95,8 @@ return tau.plugin {
 
 Every field but `name` is optional. `tools` adds tools the model can
 call, each with its arguments' JSON Schema, its `call` and, if it draws
-one, its `card`.
+one, its `card`. A tool with `when = "on"` is offered only while the
+boolean setting `on` is on.
 
 ### Hooks
 
@@ -145,7 +146,8 @@ one, its `card`.
   request overflowed, and while the run is idle: `messages` holds each
   message's `index` (from 1), `role` (`user`, `assistant`,
   `toolResult`), `text` (whole), `size` (its bytes), `tokens` (the
-  loop's estimate of it) and `images`, when it has any; an answer's
+  loop's estimate of it) and `images`, when it has any, with its
+  `parts`, `{ text }` or `{ image = true }` in order; an answer's
   `thinking`, when it has any, and `calls`, each `{ id, name, args,
 order, json }`, `json` the arguments as the model wrote them; a
   result's `call`, `name` and `ok`. `window` is the model's, `nil` when
@@ -237,7 +239,10 @@ limit or called a tool is refused: `{ ok = false, error, reason }`,
 With `instructions`, the request is the plugin's own: its instructions
 in place of `infer`'s, `task` as the message, as written, then
 `context` as JSON unless it is `json.null`, and the answer its text. It
-takes no `schema`, and no bound on the message but the VM's.
+takes no `schema`, and no bound on the message but the VM's. `messages`,
+`{ { role = "user" or "assistant", text } }`, go before the task, as a
+conversation that sends a reply back; a `task` or a `text` that is a
+list of texts is that many blocks.
 
 In `rewrite_context`, `conversation = true` asks in the run's own
 conversation: its messages go first, then `task` as written, then

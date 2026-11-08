@@ -1629,3 +1629,95 @@ fn user_text(message: Option<&Message>) -> String {
         other => panic!("not a user message: {other:?}"),
     }
 }
+
+const RETELLER: &str = r#"
+local tau = require("tau")
+return tau.plugin {
+  name = "reteller",
+  uses = { infer = true },
+  settings = { schema = { type = "object", properties = { on = { type = "boolean" } } }, default = { on = false } },
+  tools = {
+    peek = { description = "Peeks.", when = "on", call = function() return "peeked" end },
+  },
+  rewrite_context = function(view, ctx)
+    if ctx.state.asked then return nil end
+    ctx.state.asked = true
+    ctx.state.parts = view.messages[1].parts
+    ctx.state.answer = ctx.tools.infer({
+      instructions = "Be terse.",
+      messages = {
+        { role = "user", text = { "first block", "second block" } },
+        { role = "assistant", text = "too long" },
+      },
+      task = "Shorter.",
+    })
+  end,
+}
+"#;
+
+/// A run hook's request of its own may carry earlier turns, and a task
+/// of several blocks (ADR 0050, for tau-tree-compaction); a message with
+/// images says where they sit; and a tool `when` a setting is on is
+/// offered only then.
+#[test]
+fn a_request_of_its_own_carries_earlier_turns() {
+    use tau_ai::message::ImageContent;
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("exec_command", json!({ "cmd": "ls" })))
+        .turn(|t| t.text("short"))
+        .turn(|t| t.text("done"));
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
+    let plugins = LuauPlugins::new(
+        vec![active("reteller", RETELLER)],
+        json!({ "kind": "main", "repo": "r", "model": "m" }),
+        None,
+    );
+    let agent = Agent::new(llm.clone()).tool(ExecCommand).plugin(plugins);
+    let input =
+        tau_agent::agent::Input::new("look").images(vec![ImageContent {
+            data: String::new(),
+            mime_type: "image/png".into(),
+        }]);
+    let outcome = block_on_io(agent.run(input, &store)).unwrap();
+    assert_eq!(outcome.text, "done");
+    let requests = llm.requests();
+    assert!(
+        requests[0]
+            .settings
+            .tools
+            .iter()
+            .all(|tool| tool.name != "peek"),
+        "off, the tool is not offered"
+    );
+    let asked = &requests[1];
+    assert_eq!(asked.settings.instructions.as_deref(), Some("Be terse."));
+    let shown: Vec<(&str, String)> = asked
+        .transcript
+        .iter()
+        .map(|message| (message.role(), format!("{message:?}")))
+        .collect();
+    assert_eq!(shown.len(), 3);
+    assert_eq!(shown[0].0, "user");
+    let Message::User(first) = &asked.transcript[0] else {
+        unreachable!()
+    };
+    let UserContent::Blocks(blocks) = &first.content else {
+        panic!("two blocks: {first:?}")
+    };
+    assert_eq!(text(blocks), "first blocksecond block");
+    assert_eq!(shown[1].0, "assistant");
+    assert_eq!(user_text(asked.transcript.last()), "Shorter.");
+    let state = records(&store, &outcome.run)
+        .into_iter()
+        .rev()
+        .find_map(|record| match record {
+            Record::State { state, .. } => Some(state),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(state["answer"], json!({ "ok": true, "value": "short" }));
+    assert_eq!(
+        state["parts"],
+        json!([{ "text": "look" }, { "image": true }])
+    );
+}

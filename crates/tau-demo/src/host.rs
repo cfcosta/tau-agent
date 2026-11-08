@@ -340,6 +340,10 @@ fn luau_built_ins() -> (PluginInfo, PluginValue) {
             ),
             built_in(tau_goal::NAME, tau_goal::DEMO_DECLARATION),
             built_in(tau_compaction::NAME, tau_compaction::DEMO_DECLARATION),
+            built_in(
+                tau_tree_compaction::NAME,
+                tau_tree_compaction::DEMO_DECLARATION,
+            ),
             built_in(tau_reasoning::NAME, tau_reasoning::DEMO_DECLARATION),
         ],
         error: None,

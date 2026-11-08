@@ -29,7 +29,6 @@ tau-skills = { path = "../plugins/tau-skills", default-features = false }
 tau-mcp.workspace = true
 tau-memory.workspace = true
 tau-fast-compaction.workspace = true
-tau-tree-compaction.workspace = true
 # `exec_command` cards draw their output as a terminal
 # (docs/decisions/0010-terminal-rendering.md).
 tau-tools = { workspace = true, features = ["terminal"] }

@@ -624,6 +624,8 @@ function tau._describe(plugin)
 			description = tool.description or "",
 			parameters = tool.parameters or { type = "object", properties = {} },
 			card = tool.card ~= nil,
+			-- The boolean setting the tool is offered while it is on.
+			when = tool.when and tostring(tool.when) or nil,
 		})
 	end
 	table.sort(tools, function(a, b)

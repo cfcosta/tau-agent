@@ -18,16 +18,7 @@ use tau_store::Store;
 
 use crate::{
     E2eError,
-    arm::{
-        self,
-        Arm,
-        Folded,
-        IndexFactory,
-        MAX_TURNS,
-        RunSetup,
-        Transcript,
-        TreeRole,
-    },
+    arm::{self, Arm, IndexFactory, MAX_TURNS, RunSetup, Transcript},
     metrics::{self, Meter, RunMetrics, Trial},
     scenario::{Scenario, Variant},
 };
@@ -236,10 +227,6 @@ async fn run_trial(
     } else {
         None
     };
-    let folded = Folded::default();
-    let tree = |role: fn(Folded) -> TreeRole| {
-        (key.arm == Arm::Tree).then(|| role(folded.clone()))
-    };
     let store = tau_store_sqlite::memory().await?;
 
     // The first run.
@@ -254,7 +241,6 @@ async fn run_trial(
             context: None,
             limits: limits(config, budget),
             transcript: transcript.clone(),
-            tree: tree(TreeRole::Fold),
         },
         scenario.first.prompt,
         &store,
@@ -268,7 +254,6 @@ async fn run_trial(
         Arm::None => false,
         Arm::MemoryMd => arm::memory_md_context(&repo).is_some(),
         Arm::Transcripts => !transcript.is_empty(),
-        Arm::Tree => !folded.lock().expect("not poisoned").is_empty(),
         Arm::Memory | Arm::MemoryConsolidate => {
             let plugin = memory.as_ref().expect("a memory arm");
             !plugin
@@ -303,7 +288,6 @@ async fn run_trial(
             prompt,
             (config.index)(&dir.path().join("transcript-embeddings")),
         )?,
-        Arm::Tree => arm::tree_context(&folded),
     };
     let memory_given = match &memory {
         Some(plugin) => starts_with_memory(plugin, prompt)?,
@@ -319,7 +303,6 @@ async fn run_trial(
             context,
             limits: limits(config, budget),
             transcript: Transcript::default(),
-            tree: tree(TreeRole::Zoom),
         },
         prompt,
         &store,

@@ -321,9 +321,10 @@ impl UiPlugin for FastCompactionUi {
 
     fn declaration(&self) -> tau_ui_plugin::Declaration {
         // Pruning first: it is cheaper than a summary or a tree, and
-        // they follow when pruning cannot help.
+        // they follow when pruning cannot help; both are Luau, run by
+        // tau-luau-plugins.
         tau_ui_plugin::Declaration::new()
-            .before(&["tau-tree-compaction", "tau-luau-plugins"])
+            .before(&["tau-luau-plugins"])
             .seams(&[
                 tau_ui_plugin::Seam::Start,
                 tau_ui_plugin::Seam::AfterTool,

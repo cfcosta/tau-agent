@@ -553,6 +553,68 @@ What the port found besides:
   cut's snap, `,` for `, ` between arguments and a reversed sort of the
   files each failed it. It went with the Rust crate.
 
+### tau-tree-compaction
+
+OptChat's history, tree and view moved to `luau/lib/tree.luau`, the
+compactor to `luau/lib/build.luau`, and the plugin is `start`,
+`rewrite_context` and `zoom`. It runs between fast pruning and
+tau-compaction, as `BUILT_IN` lists them. It needed three things more,
+each any plugin's:
+
+- **A tool offered while a setting is on.** `tools.zoom.when = "on"`:
+  the run's model sees `zoom` only while the tree is on, as the Rust
+  plugin added it only then, and a call with it off is refused.
+- **A request's earlier turns.** `infer{ messages = { { role, text } } }`
+  goes before the task, and a `task` or a message's `text` may be a list
+  of texts, each its own block: a line over its limit goes back in the
+  same conversation, its first message the context and the step, as two
+  blocks.
+- **A message's parts.** A message with images has its `parts` in the
+  view, `{ text }` or `{ image = true }` in order, so an entry shows
+  `[image]` where the image was.
+
+What the port found besides:
+
+- **The history is the plugin's state.** The Rust plugin stored each
+  compaction's new entries and lines as a `folded` record and the view
+  as the rewrite's details, and a fork put them together again. The
+  Luau state holds the whole history, which a fork inherits, and is
+  stored again each time it changes. A transcript opens with the view
+  when its first message has the view message's text; the Rust plugin
+  compared its time too. The `compacted` report is the state's
+  `compacted`, which the status line reads.
+- **Lines are asked `jobs` at a time, in batches**, through `parallel`:
+  a batch waits for its slowest line, where the Rust stream started the
+  next line as each finished. The first failure is the first in the
+  batch's order, not the first to come back.
+- **Smaller differences.** A line the model cut off at its limit, or one
+  that called a tool, fails the build, where the Rust plugin took its
+  text. A line sent back carries the earlier tries' text, not their
+  thinking. White space is Unicode's, as Rust's `split_whitespace` and
+  `trim` read it, from a table, as tau-goal does. A failed line past
+  the threshold is a line in the plugin's log, not a plugin error of the
+  run, as with tau-compaction. The settings pane is the switch; the
+  window, reserve, kept tokens, view budget and jobs are settings it
+  does not show. The catalog's row is tau-luau-plugins', so it no longer
+  says "(off)".
+- **The memory evaluation lost its `tree` arm**, which folded the first
+  run with the Rust tree's library at its end and gave the second its
+  view and `zoom`. Folding a whole run as it ends is not what the
+  plugin does, and there is no Rust tree left to call.
+- **The parity check** ran the Rust history and builder, copied from
+  before the port, beside the Luau on drawn inputs: 400 transcripts
+  (tau-testing's, with thinking, images and nested arguments) made into
+  entries, and drawn texts of Unicode white space flattened, trimmed and
+  capped; 300 histories of drawn entries and built lines, short and past
+  1,200 characters, fitted, merged, rendered, zoomed into and asked for,
+  context and step; 300 texts cut at drawn byte limits and sent back;
+  and 200 histories grown against the same stand-in model, which
+  answers some lines over the limit and some with ties, comparing every
+  line, the view and every request. All equal. Ties going to the younger
+  pair, one Unicode space left out of the table, recent entries cut at
+  1,199 characters and the last of the shortest tries kept each failed
+  it. It went with the Rust crate.
+
 ## Alternatives considered
 
 - **Port the plugins and leave the gaps**, calling Jev over HTTP with

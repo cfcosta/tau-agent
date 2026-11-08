@@ -1333,13 +1333,19 @@ impl LuauPlugins {
             .active()
             .iter()
             .flat_map(|active| {
-                active.loaded.declaration.tools.iter().map(|spec| {
-                    Arc::new(LuauTool {
-                        plugins: self.clone(),
-                        plugin: active.loaded.declaration.name.clone(),
-                        spec: spec.clone(),
-                    }) as Arc<dyn AgentTool>
-                })
+                active
+                    .loaded
+                    .declaration
+                    .tools
+                    .iter()
+                    .filter(|spec| spec.offered(&active.settings))
+                    .map(|spec| {
+                        Arc::new(LuauTool {
+                            plugins: self.clone(),
+                            plugin: active.loaded.declaration.name.clone(),
+                            spec: spec.clone(),
+                        }) as Arc<dyn AgentTool>
+                    })
             })
             .collect()
     }
@@ -1397,12 +1403,9 @@ impl AgentTool for LuauTool {
         });
         let tool = Hook::Tool(self.spec.name.clone());
         let Some(active) = inner.plugin(&self.plugin).filter(|active| {
-            active
-                .loaded
-                .declaration
-                .tools
-                .iter()
-                .any(|spec| spec.name == self.spec.name)
+            active.loaded.declaration.tools.iter().any(|spec| {
+                spec.name == self.spec.name && spec.offered(&active.settings)
+            })
         }) else {
             return Err(format!(
                 "{} has no tool {} any more",
@@ -1749,13 +1752,9 @@ impl RunReach {
         &self,
         own: crate::infer::Own,
     ) -> Result<Value, Refused> {
-        use tau_ai::message::{UserContent, UserMessage};
-
         use crate::infer::answer_text;
-        let message = Message::User(UserMessage {
-            content: UserContent::Text(own.message),
-            timestamp: self.plugin.now(),
-        });
+        let now = self.plugin.now();
+        let message = crate::infer::said(true, own.blocks, now);
         let answer = match own.conversation {
             Some(first) => {
                 let asks = self.conversation.as_ref().ok_or(
@@ -1781,8 +1780,16 @@ impl RunReach {
                     instructions: own.instructions,
                     ..Default::default()
                 };
+                let mut input: Vec<Message> = own
+                    .earlier
+                    .into_iter()
+                    .map(|(person, blocks)| {
+                        crate::infer::said(person, blocks, now)
+                    })
+                    .collect();
+                input.push(message);
                 self.plugin
-                    .ask(settings, &[message])
+                    .ask(settings, &input)
                     .await
                     .map_err(|error| error.to_string())?
             }

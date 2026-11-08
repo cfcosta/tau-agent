@@ -36,7 +36,6 @@ The arms (`arm::Arm`) are what the second run knows of the first:
 | `transcripts`        | the best matches of a search over the first run's transcript   |
 | `memory`             | tau-memory, consolidation off                                  |
 | `memory_consolidate` | tau-memory with its pass after each run, as the app runs it    |
-| `tree`               | the first run as tau-tree-compaction's view, with `zoom`       |
 
 Each arm's agent is built as tau-ui builds one (the coding tools on the
 repository, compaction, the memory plugin), less what needs the app:
@@ -45,15 +44,13 @@ version control, Jev and the constitution.
 Per run (`metrics::RunMetrics`) it records success, turns, tool calls
 and failed calls, input, output and cached tokens, cost and wall time.
 Per trial (`metrics::Trial`) it adds whether memory was saved, given
-and read, and in the changed variant whether the old fact was used. In
-`tree`, the first run is folded as it ends, the requests that takes
-charged to it, and a `zoom` counts as reading memory.
+and read, and in the changed variant whether the old fact was used.
 `metrics::Summary` holds the means per arm and variant.
 
 ## How it fits
 
 It builds on `tau-memory-host` (the memory plugin, its notes and its
-indexes), `tau-compaction`, `tau-tree-compaction`, `tau-tools-host`, `tau-agent`, `tau-ai`,
+indexes), `tau-compaction` (run by `tau-luau-plugins-host`), `tau-tools-host`, `tau-agent`, `tau-ai`,
 `tau-store` and `tau-store-sqlite`. No other crate depends on it.
 
 ## Usage

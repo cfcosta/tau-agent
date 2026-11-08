@@ -9841,6 +9841,7 @@ dependencies = [
  "tau-store",
  "tau-testing",
  "tau-tools",
+ "tau-tree-compaction",
  "tau-ui",
  "tau-ui-kit",
  "tau-ui-plugin",
@@ -9995,6 +9996,7 @@ dependencies = [
  "tau-titles",
  "tau-todo",
  "tau-tools-host",
+ "tau-tree-compaction",
  "tau-ui-kit",
  "tau-ui-plugin",
  "tau-vcs-host",
@@ -10092,7 +10094,6 @@ dependencies = [
  "tau-store-sqlite",
  "tau-testing",
  "tau-tools-host",
- "tau-tree-compaction",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -10218,7 +10219,6 @@ dependencies = [
  "tau-skills",
  "tau-sqlite",
  "tau-tools",
- "tau-tree-compaction",
  "tau-ui-plugin",
  "tau-vcs",
 ]
@@ -10471,23 +10471,22 @@ dependencies = [
 name = "tau-tree-compaction"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "futures-util",
- "hegeltest",
- "regex",
  "schemars",
  "serde",
  "serde_json",
  "tau-agent",
  "tau-ai",
+ "tau-codemode-host",
+ "tau-compaction",
+ "tau-luau-plugins",
+ "tau-luau-plugins-host",
  "tau-store",
  "tau-store-sqlite",
  "tau-testing",
- "tau-ui-kit",
- "tau-ui-plugin",
- "thiserror 2.0.21",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

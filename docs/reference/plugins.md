@@ -1240,12 +1240,13 @@ Built: `crates/plugins/tau-compaction`, a Luau plugin tau comes with
 
 ### `tau-tree-compaction`: fold the context into a tree
 
-Built: `crates/plugins/tau-tree-compaction`, off by default. Its
-reference is [tree-compaction.md](tree-compaction.md).
+Built: `crates/plugins/tau-tree-compaction`, a Luau plugin tau comes
+with (ADR 0050), off by default. Its reference is
+[tree-compaction.md](tree-compaction.md).
 
 - **Seams:** `rewrite_context` (every trigger but `Idle`, which it
-  leaves to tau-compaction), and `start` to restore the history and
-  add the `zoom` tool.
+  leaves to tau-compaction), `start` (the effort its lines are built
+  at), and the `zoom` tool, offered while it is on.
 - **How** (after OptChat's memory):
   1. Past the threshold, fold the messages before tau-compaction's cut
      into a history of entries, kept word for word.
@@ -1253,12 +1254,11 @@ reference is [tree-compaction.md](tree-compaction.md).
      due first, until a view of the whole history fits its budget.
   3. Rewrite the transcript to the view, then the kept messages.
      `zoom(id, n)` opens a line, down to a message whole.
-- **Output:** a `Rewrite` with the view in `details`, and a `folded`
-  record per compaction with the entries and lines it added. When a
-  line cannot be built it rewrites nothing, and tau-compaction, after
-  it, summarizes.
-- **Forks** rebuild the history from the records and the last
-  rewrite's view.
+- **Output:** a rewrite with the view in its details. When a line
+  cannot be built it rewrites nothing, and tau-compaction, after it,
+  summarizes.
+- **State:** the history and the view, in the run's `ctx.state`, which
+  forks inherit.
 
 ### `tau-goal`: keep going until a goal holds
 

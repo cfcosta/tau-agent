@@ -30,6 +30,7 @@ tau-canvas = { workspace = true, features = ["demo"] }
 tau-chatgpt.workspace = true
 tau-codemode.workspace = true
 tau-compaction.workspace = true
+tau-tree-compaction.workspace = true
 tau-constitution.workspace = true
 tau-direnv.workspace = true
 tau-fast-compaction.workspace = true

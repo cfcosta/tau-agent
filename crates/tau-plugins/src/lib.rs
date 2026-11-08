@@ -27,7 +27,6 @@ pub fn plugins() -> Registry {
         .with(tau_skills::SkillsUi)
         .with(tau_sqlite::SqliteUi)
         .with(tau_tools::ui::ToolsUi)
-        .with(tau_tree_compaction::ui::TreeCompactionUi)
         .with(tau_vcs::ui::VcsUi)
         // Who fills each slot first when several plugins can, until the
         // person picks another on the Plugins screen (ADR 0045).

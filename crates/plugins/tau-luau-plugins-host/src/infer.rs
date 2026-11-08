@@ -94,11 +94,16 @@ pub(crate) fn conversation_of(
 }
 
 /// An `infer` request a run hook writes itself, with its `instructions`
-/// or in the run's `conversation`: the message goes as written, with no
-/// bound but the VM's on what it holds, and the answer is its text.
+/// or in the run's `conversation`: the message goes as written, after the
+/// earlier ones it gives, with no bound but the VM's on what it holds,
+/// and the answer is its text.
 pub(crate) struct Own {
-    /// The task, then the context as JSON unless it is null.
-    pub message: String,
+    /// The task's texts, each a block, the context as JSON after them
+    /// unless it is null.
+    pub blocks: Vec<String>,
+    /// What went before the task, in order: whether the person said it
+    /// or the model, and its blocks.
+    pub earlier: Vec<(bool, Vec<String>)>,
     pub instructions: Option<String>,
     /// How many of the run's messages go first.
     pub conversation: Option<usize>,
@@ -118,6 +123,7 @@ impl Own {
                     | "context"
                     | "instructions"
                     | "conversation"
+                    | "messages"
                     | "effort"
                     | "model"
             )
@@ -127,17 +133,38 @@ impl Own {
             )
             .into());
         }
-        let mut message = match fields.remove("task") {
-            Some(Value::String(task)) if !task.trim().is_empty() => task,
-            _ => return Err("task must be a string, not blank".into()),
-        };
+        let mut blocks = texts(fields.remove("task"))
+            .filter(|blocks| blocks.iter().any(|text| !text.trim().is_empty()))
+            .ok_or("task must be a text, or a list of texts, not blank")?;
         match fields.remove("context") {
             None | Some(Value::Null) => {}
             Some(context) => {
-                message.push_str("\n\n");
-                message.push_str(&context.to_string());
+                let last = blocks.last_mut().expect("a task has a text");
+                last.push_str("\n\n");
+                last.push_str(&context.to_string());
             }
         }
+        let earlier = match fields.remove("messages") {
+            None | Some(Value::Null) => Vec::new(),
+            // An empty list reaches the host as an empty object.
+            Some(Value::Object(empty)) if empty.is_empty() => Vec::new(),
+            Some(Value::Array(messages)) => messages
+                .into_iter()
+                .map(|message| {
+                    let person = match message["role"].as_str() {
+                        Some("user") => true,
+                        Some("assistant") => false,
+                        _ => return None,
+                    };
+                    Some((person, texts(Some(message["text"].clone()))?))
+                })
+                .collect::<Option<Vec<_>>>()
+                .ok_or(
+                    "each of `messages` is { role = \"user\" or \
+                     \"assistant\", text }",
+                )?,
+            Some(_) => return Err("messages must be a list".into()),
+        };
         let instructions = match fields.remove("instructions") {
             None | Some(Value::Null) => None,
             Some(Value::String(instructions)) => Some(instructions),
@@ -160,21 +187,93 @@ impl Own {
             }
         };
         if conversation.is_some()
-            && (instructions.is_some() || effort.is_some() || model.is_some())
+            && (instructions.is_some()
+                || effort.is_some()
+                || model.is_some()
+                || !earlier.is_empty()
+                || blocks.len() > 1)
         {
             return Err("in the run's conversation, `infer` asks with the \
-                        run's own settings: no instructions, effort or model"
+                        run's own settings, after its messages: no \
+                        instructions, effort, model or messages, and one \
+                        text"
                 .into());
         }
         if fields.contains_key("schema") {
             return Err("a request of the plugin's own takes no schema".into());
         }
         Ok(Self {
-            message,
+            blocks,
+            earlier,
             instructions,
             conversation,
             effort,
             model,
         })
     }
+}
+
+/// A text, or a list of texts, as blocks; `None` for anything else.
+fn texts(value: Option<Value>) -> Option<Vec<String>> {
+    match value? {
+        Value::String(text) => Some(vec![text]),
+        Value::Array(texts) if !texts.is_empty() => texts
+            .into_iter()
+            .map(|text| match text {
+                Value::String(text) => Some(text),
+                _ => None,
+            })
+            .collect(),
+        _ => None,
+    }
+}
+
+/// What the person (`person`) or the model said, as a message of
+/// `blocks`: one text as it is, several as blocks.
+pub(crate) fn said(
+    person: bool,
+    mut blocks: Vec<String>,
+    now: tau_ai::message::Timestamp,
+) -> tau_ai::message::Message {
+    use tau_ai::message::{
+        AssistantBlock,
+        InputBlock,
+        Message,
+        StopReason,
+        TextContent,
+        UserContent,
+        UserMessage,
+    };
+    let text = |text| TextContent {
+        text,
+        text_signature: None,
+    };
+    if !person {
+        return Message::Assistant(AssistantMessage {
+            content: blocks
+                .into_iter()
+                .map(|block| AssistantBlock::Text(text(block)))
+                .collect(),
+            model: String::new(),
+            response_id: None,
+            usage: Default::default(),
+            stop_reason: StopReason::Stop,
+            error_message: None,
+            timestamp: now,
+        });
+    }
+    let content = if blocks.len() == 1 {
+        UserContent::Text(blocks.remove(0))
+    } else {
+        UserContent::Blocks(
+            blocks
+                .into_iter()
+                .map(|block| InputBlock::Text(text(block)))
+                .collect(),
+        )
+    };
+    Message::User(UserMessage {
+        content,
+        timestamp: now,
+    })
 }

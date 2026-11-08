@@ -1395,12 +1395,10 @@ fn a_slash_lists_the_commands_that_work_here(cx: &mut TestAppContext) {
             .collect();
     skills.sort();
     let listed = skills.len();
-    // tau-luau-plugins comes after the Rust compactions, which run
-    // before its tau-compaction: after tau-skills, by name.
-    let mut expected: Vec<String> = ["/agent"].map(String::from).to_vec();
+    let mut expected: Vec<String> =
+        ["/agent", "/plugin", "/goal"].map(String::from).to_vec();
     expected.extend(skills);
-    expected
-        .extend(["/plugin", "/goal", "/model", "/attach"].map(String::from));
+    expected.extend(["/model", "/attach"].map(String::from));
     assert_eq!(names(composer_slash(&workspace, &mut cx, "/")), expected);
     // Only the main chat forks (ADR 0016).
     workspace.update(&mut cx, |ws, cx| {
