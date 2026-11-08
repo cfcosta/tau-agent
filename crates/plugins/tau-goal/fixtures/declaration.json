@@ -1,0 +1,192 @@
+{
+  "name": "tau-goal",
+  "description": "Keeps a conversation going until its /goal holds",
+  "uses": {
+    "tools": [],
+    "jev": true,
+    "infer": false,
+    "change_args": false,
+    "network": [],
+    "secrets": [],
+    "model": null,
+    "store": false,
+    "transcript": false
+  },
+  "settings": null,
+  "tools": [],
+  "hooks": {
+    "start": true,
+    "before_tool": false,
+    "before_request": false,
+    "after_tool_result": true,
+    "rewrite_context": false,
+    "rewritten": false,
+    "before_stop": true,
+    "turn_end": true,
+    "on_event": false,
+    "title": false,
+    "notify": false,
+    "repo_data": false,
+    "recover": false,
+    "run_end": true,
+    "view": true,
+    "settings_view": false
+  },
+  "actions": ["/goal", "act"],
+  "events": [],
+  "fills": [],
+  "compaction": null,
+  "forge": null,
+  "nav": null,
+  "commands": [
+    {
+      "name": "goal",
+      "description": "Keep working until a condition holds",
+      "args": "<condition>",
+      "icon": "target",
+      "popover": {
+        "jev": {
+          "children": [
+            {
+              "children": [
+                {
+                  "name": "target",
+                  "piece": "icon",
+                  "tone": "info"
+                },
+                {
+                  "piece": "mono",
+                  "text": "/goal"
+                },
+                {
+                  "piece": "mono",
+                  "text": "<condition>"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "piece": "text",
+              "text": "The agent keeps going until this holds. Each time it would stop, tau-goal asks Jev whether the goal is met; if not, the agent goes on."
+            },
+            {
+              "piece": "rule"
+            },
+            {
+              "children": [
+                {
+                  "piece": "text",
+                  "text": "Stop after"
+                },
+                {
+                  "id": "goal-continuations",
+                  "keep": false,
+                  "multiline": false,
+                  "piece": "input",
+                  "placeholder": "10",
+                  "submit": "tau.submit"
+                },
+                {
+                  "piece": "text",
+                  "text": "continuations"
+                },
+                {
+                  "piece": "text",
+                  "text": "Budget $"
+                },
+                {
+                  "id": "goal-budget",
+                  "keep": false,
+                  "multiline": false,
+                  "piece": "input",
+                  "placeholder": "2.00",
+                  "submit": "tau.submit"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "piece": "rich",
+              "text": "`Enter` set the goal and start · `Esc` close"
+            }
+          ],
+          "piece": "stack"
+        },
+        "no_jev": {
+          "children": [
+            {
+              "children": [
+                {
+                  "name": "target",
+                  "piece": "icon",
+                  "tone": "info"
+                },
+                {
+                  "piece": "mono",
+                  "text": "/goal"
+                },
+                {
+                  "piece": "mono",
+                  "text": "<condition>"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "detail": null,
+              "piece": "status",
+              "text": "Goals are checked with Jev: add a TypeSafe key on the Models screen first.",
+              "tone": "warn"
+            },
+            {
+              "piece": "rule"
+            },
+            {
+              "children": [
+                {
+                  "piece": "text",
+                  "text": "Stop after"
+                },
+                {
+                  "id": "goal-continuations",
+                  "keep": false,
+                  "multiline": false,
+                  "piece": "input",
+                  "placeholder": "10",
+                  "submit": "tau.submit"
+                },
+                {
+                  "piece": "text",
+                  "text": "continuations"
+                },
+                {
+                  "piece": "text",
+                  "text": "Budget $"
+                },
+                {
+                  "id": "goal-budget",
+                  "keep": false,
+                  "multiline": false,
+                  "piece": "input",
+                  "placeholder": "2.00",
+                  "submit": "tau.submit"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "piece": "rich",
+              "text": "`Enter` set the goal and start · `Esc` close"
+            }
+          ],
+          "piece": "stack"
+        }
+      }
+    }
+  ],
+  "jobs": [],
+  "pages": [],
+  "repo_nav": null,
+  "picker_auto": null,
+  "continues": 20
+}

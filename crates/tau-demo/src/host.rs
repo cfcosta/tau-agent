@@ -176,6 +176,13 @@ impl DemoHost {
         }
         catalog.plugins = plugins;
         catalog.plugin_data = data;
+        // tau's Luau plugins, which the demo cannot run: what they
+        // declare, from their fixtures (ADR 0050).
+        let (info, data) = luau_built_ins();
+        catalog.plugins.push(info);
+        catalog
+            .plugin_data
+            .insert(tau_luau_plugins::NAME.into(), data);
         for (info, data) in self.pinned.lock().expect("not poisoned").iter() {
             catalog.plugins.retain(|plugin| plugin.name != info.name);
             catalog.plugins.push(info.clone());
@@ -310,4 +317,59 @@ fn scripted_jev() -> FakeJev {
     FakeJev::nouls(move |_| {
         SCORES[next.fetch_add(1, Ordering::Relaxed) % SCORES.len()]
     })
+}
+
+/// tau-luau-plugins' entry, with the Luau plugins tau comes with that the
+/// demo draws: each as it declares itself, from its fixture.
+fn luau_built_ins() -> (PluginInfo, PluginValue) {
+    use tau_luau_plugins::{Entry, Overview, Standing};
+    let built_in = |name: &str, declared: &str| Entry {
+        name: name.into(),
+        description: String::new(),
+        standing: Standing::Active,
+        declaration: Some(
+            serde_json::from_str(declared)
+                .expect("a declaration's fixture is one"),
+        ),
+        tests: Vec::new(),
+        keeps_earlier: false,
+        built_in: true,
+    };
+    let overview = Overview {
+        commit: None,
+        plugins: vec![
+            built_in(tau_goal::NAME, tau_goal::DEMO_DECLARATION),
+            built_in(tau_reasoning::NAME, tau_reasoning::DEMO_DECLARATION),
+        ],
+        error: None,
+    };
+    let entries = overview
+        .plugins
+        .iter()
+        .map(|entry| tau_ui_plugin::CatalogEntry {
+            name: entry.name.clone(),
+            description: entry.description.clone(),
+            group: tau_ui_plugin::Group::Yours,
+            seams: entry
+                .declaration
+                .as_ref()
+                .map(tau_luau_plugins::Declaration::seams)
+                .unwrap_or_default(),
+            note: None,
+        })
+        .collect();
+    let info = PluginInfo {
+        name: tau_luau_plugins::NAME.into(),
+        description: "Plugins written in Luau: 2 active".into(),
+        group: tau_ui_plugin::Group::Yours,
+        page: Some(tau_ui_plugin::Link::page(tau_luau_plugins::ui::PAGE)),
+        reach: Default::default(),
+        spend: 0.0,
+        note: None,
+        entries,
+        settings: true,
+        ui: true,
+        rewrites_keep_transcript: false,
+    };
+    (info, PluginValue::typed(overview))
 }

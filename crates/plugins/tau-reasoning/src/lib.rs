@@ -28,3 +28,7 @@ pub const FILES: &[(&str, &str)] = &[
 /// the plugin leaves and draws.
 pub const DEMO_CHOSE: &str = include_str!("../fixtures/chose.json");
 pub const DEMO_KEPT: &str = include_str!("../fixtures/kept.json");
+
+/// What the plugin declares, as the demo lists it among tau's Luau
+/// plugins.
+pub const DEMO_DECLARATION: &str = include_str!("../fixtures/declaration.json");

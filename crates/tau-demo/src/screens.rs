@@ -1716,18 +1716,23 @@ fn effort_kept(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
     }
 }
 
-/// The demo run working on [`GOAL`], with the records tau-goal
-/// published by `state`.
+/// The demo run working on [`GOAL`], as tau-goal left it at `state`:
+/// working, met or stopped, from its fixtures (ADR 0050).
 fn goal_at(
     workspace: &mut Workspace,
     state: &str,
     cx: &mut Context<Workspace>,
 ) {
     workspace.navigate(Route::Run(run_id()), cx);
-    for body in tau_goal::demo::records(GOAL, state) {
+    let fixture = match state {
+        "met" => tau_goal::DEMO_MET,
+        "stopped" => tau_goal::DEMO_STOPPED,
+        _ => tau_goal::DEMO_WORKING,
+    };
+    for body in crate::luau(tau_goal::NAME, fixture) {
         let event = RunEvent::PluginReport {
             run: run_id(),
-            plugin: tau_goal::NAME.into(),
+            plugin: tau_luau_plugins::NAME.into(),
             body,
         };
         workspace.apply(HostUpdate::Event(event), cx);

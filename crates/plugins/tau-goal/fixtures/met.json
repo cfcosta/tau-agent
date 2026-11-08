@@ -1,0 +1,433 @@
+{
+  "state": {
+    "checks": true,
+    "goal": {
+      "budget": 2,
+      "checks": [
+        {
+          "continuation": 1,
+          "cost": 0.00001722,
+          "met": false,
+          "n": 1,
+          "p": 0.03,
+          "spent": 0.12001722,
+          "turn": 8
+        },
+        {
+          "continuation": 2,
+          "cost": 0.00001722,
+          "met": false,
+          "n": 2,
+          "p": 0.08,
+          "spent": 0.24003444,
+          "turn": 10
+        },
+        {
+          "cost": 0.00001722,
+          "met": true,
+          "n": 3,
+          "p": 0.96,
+          "spent": 0.36005165999999994,
+          "turn": 11
+        }
+      ],
+      "condition": "All tests in tau-ai pass and cargo clippy is clean",
+      "continuations": 2,
+      "max_continuations": 10,
+      "spent": 0.36005165999999994,
+      "status": "met"
+    },
+    "held": {
+      "1": true,
+      "2": true
+    },
+    "notes": {
+      "g0": {
+        "detail": "check 1 · turn 8 · p 0.03 · continuing 1 of 10",
+        "text": "the goal is not met yet",
+        "tone": "warn"
+      },
+      "g1": {
+        "detail": "check 2 · turn 10 · p 0.08 · continuing 2 of 10",
+        "text": "the goal is not met yet",
+        "tone": "warn"
+      },
+      "g2": {
+        "detail": "check 3 · turn 11 · p 0.96 · the run stops",
+        "text": "the goal is met",
+        "tone": "good"
+      }
+    },
+    "said": {
+      "/goal All tests in tau-ai pass and cargo clippy is clean": {
+        "goal": "All tests in tau-ai pass and cargo clippy is clean",
+        "text": "/goal All tests in tau-ai pass and cargo clippy is clean"
+      },
+      "/goal All tests in tau-ai pass and cargo clippy is clean\n\nThis is your goal. Keep working until it holds. Each time you stop, tau-goal checks it against your last answer and your recent tool results, and sends you back if it does not hold yet, so run what proves it before you stop.": {
+        "goal": "All tests in tau-ai pass and cargo clippy is clean",
+        "text": "/goal All tests in tau-ai pass and cargo clippy is clean\n\nThis is your goal. Keep working until it holds. Each time you stop, tau-goal checks it against your last answer and your recent tool results, and sends you back if it does not hold yet, so run what proves it before you stop."
+      },
+      "tau-goal: the goal is not met yet (check 1, probability 0.03).\nGoal: All tests in tau-ai pass and cargo clippy is clean\n\nKeep working toward it, and run what proves it. Continuation 1 of 10.": {
+        "continuation": 1,
+        "text": "tau-goal: the goal is not met yet (check 1, probability 0.03).\nGoal: All tests in tau-ai pass and cargo clippy is clean\n\nKeep working toward it, and run what proves it. Continuation 1 of 10."
+      },
+      "tau-goal: the goal is not met yet (check 2, probability 0.08).\nGoal: All tests in tau-ai pass and cargo clippy is clean\n\nKeep working toward it, and run what proves it. Continuation 2 of 10.": {
+        "continuation": 2,
+        "text": "tau-goal: the goal is not met yet (check 2, probability 0.08).\nGoal: All tests in tau-ai pass and cargo clippy is clean\n\nKeep working toward it, and run what proves it. Continuation 2 of 10."
+      }
+    },
+    "turn": 11,
+    "unchecked": 0
+  },
+  "view": {
+    "banner": {
+      "children": [
+        {
+          "name": "target",
+          "piece": "icon",
+          "tone": "good"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "piece": "badge",
+                  "text": "goal",
+                  "tone": "good"
+                },
+                {
+                  "piece": "text",
+                  "text": "All tests in tau-ai pass and cargo clippy is clean"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "piece": "mono",
+              "text": "met at check 3 · 2 continuations · $0.360"
+            }
+          ],
+          "piece": "stack"
+        },
+        {
+          "action": "act",
+          "args": {
+            "what": "edit"
+          },
+          "kind": "secondary",
+          "label": "New goal",
+          "piece": "button"
+        },
+        {
+          "action": "act",
+          "args": {
+            "what": "clear"
+          },
+          "kind": "secondary",
+          "label": "Clear",
+          "piece": "button"
+        }
+      ],
+      "piece": "row"
+    },
+    "inspector": {
+      "children": [
+        {
+          "children": [
+            {
+              "piece": "heading",
+              "text": "Goal"
+            },
+            {
+              "piece": "pill",
+              "text": "met",
+              "tone": "good"
+            }
+          ],
+          "piece": "row"
+        },
+        {
+          "piece": "rich",
+          "text": "All tests in tau-ai pass and cargo clippy is clean"
+        },
+        {
+          "piece": "text",
+          "text": "Checked when the agent stops · met at p ≥ 0.7 · up to 10 continuations and $2.00"
+        },
+        {
+          "piece": "heading",
+          "text": "Limits"
+        },
+        {
+          "label": "Continuations · 2 / 10",
+          "piece": "progress",
+          "share": 0.2
+        },
+        {
+          "label": "Cost · $0.360 / $2.00",
+          "piece": "progress",
+          "share": 0.18002582999999997
+        },
+        {
+          "piece": "heading",
+          "text": "Checks"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "piece": "mono",
+                  "text": "#3"
+                },
+                {
+                  "piece": "badge",
+                  "text": "met",
+                  "tone": "good"
+                },
+                {
+                  "piece": "text",
+                  "text": "the run stopped"
+                },
+                {
+                  "piece": "mono",
+                  "text": "turn 11 · p 0.96"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "children": [
+                {
+                  "piece": "mono",
+                  "text": "#2"
+                },
+                {
+                  "piece": "badge",
+                  "text": "not met",
+                  "tone": "warn"
+                },
+                {
+                  "piece": "text",
+                  "text": "sent back, 2 of 10"
+                },
+                {
+                  "piece": "mono",
+                  "text": "turn 10 · p 0.08"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "children": [
+                {
+                  "piece": "mono",
+                  "text": "#1"
+                },
+                {
+                  "piece": "badge",
+                  "text": "not met",
+                  "tone": "warn"
+                },
+                {
+                  "piece": "text",
+                  "text": "sent back, 1 of 10"
+                },
+                {
+                  "piece": "mono",
+                  "text": "turn 8 · p 0.03"
+                }
+              ],
+              "piece": "row"
+            }
+          ],
+          "piece": "stack"
+        },
+        {
+          "piece": "rows",
+          "rows": [
+            {
+              "key": "checked by",
+              "value": "tau-goal · Jev"
+            },
+            {
+              "key": "Jev cost",
+              "value": "$0.00005"
+            }
+          ]
+        },
+        {
+          "piece": "text",
+          "text": "Jev reads the goal, the agent's last answer and its last tool results. When they fall short, the agent is sent back."
+        }
+      ],
+      "piece": "stack"
+    },
+    "messages": {
+      "/goal All tests in tau-ai pass and cargo clippy is clean": {
+        "children": [
+          {
+            "children": [
+              {
+                "name": "target",
+                "piece": "icon",
+                "tone": "info"
+              },
+              {
+                "piece": "mono",
+                "text": "/goal"
+              },
+              {
+                "piece": "rich",
+                "text": "All tests in tau-ai pass and cargo clippy is clean"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "children": [
+              {
+                "piece": "badge",
+                "text": "up to 10 continuations",
+                "tone": "neutral"
+              },
+              {
+                "piece": "badge",
+                "text": "$2.00 budget",
+                "tone": "neutral"
+              },
+              {
+                "piece": "badge",
+                "text": "checked by Jev",
+                "tone": "neutral"
+              }
+            ],
+            "piece": "row"
+          }
+        ],
+        "piece": "stack"
+      },
+      "/goal All tests in tau-ai pass and cargo clippy is clean\n\nThis is your goal. Keep working until it holds. Each time you stop, tau-goal checks it against your last answer and your recent tool results, and sends you back if it does not hold yet, so run what proves it before you stop.": {
+        "children": [
+          {
+            "children": [
+              {
+                "name": "target",
+                "piece": "icon",
+                "tone": "info"
+              },
+              {
+                "piece": "mono",
+                "text": "/goal"
+              },
+              {
+                "piece": "rich",
+                "text": "All tests in tau-ai pass and cargo clippy is clean"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "children": [
+              {
+                "piece": "badge",
+                "text": "up to 10 continuations",
+                "tone": "neutral"
+              },
+              {
+                "piece": "badge",
+                "text": "$2.00 budget",
+                "tone": "neutral"
+              },
+              {
+                "piece": "badge",
+                "text": "checked by Jev",
+                "tone": "neutral"
+              }
+            ],
+            "piece": "row"
+          }
+        ],
+        "piece": "stack"
+      },
+      "tau-goal: the goal is not met yet (check 1, probability 0.03).\nGoal: All tests in tau-ai pass and cargo clippy is clean\n\nKeep working toward it, and run what proves it. Continuation 1 of 10.": {
+        "children": [],
+        "piece": "stack"
+      },
+      "tau-goal: the goal is not met yet (check 2, probability 0.08).\nGoal: All tests in tau-ai pass and cargo clippy is clean\n\nKeep working toward it, and run what proves it. Continuation 2 of 10.": {
+        "children": [],
+        "piece": "stack"
+      }
+    },
+    "notes": {
+      "g0": {
+        "children": [
+          {
+            "name": "target",
+            "piece": "icon",
+            "tone": "warn"
+          },
+          {
+            "piece": "text",
+            "text": "the goal is not met yet"
+          },
+          {
+            "piece": "mono",
+            "text": "check 1 · turn 8 · p 0.03 · continuing 1 of 10"
+          }
+        ],
+        "piece": "row"
+      },
+      "g1": {
+        "children": [
+          {
+            "name": "target",
+            "piece": "icon",
+            "tone": "warn"
+          },
+          {
+            "piece": "text",
+            "text": "the goal is not met yet"
+          },
+          {
+            "piece": "mono",
+            "text": "check 2 · turn 10 · p 0.08 · continuing 2 of 10"
+          }
+        ],
+        "piece": "row"
+      },
+      "g2": {
+        "children": [
+          {
+            "name": "target",
+            "piece": "icon",
+            "tone": "good"
+          },
+          {
+            "piece": "text",
+            "text": "the goal is met"
+          },
+          {
+            "piece": "mono",
+            "text": "check 3 · turn 11 · p 0.96 · the run stops"
+          }
+        ],
+        "piece": "row"
+      }
+    },
+    "row": {
+      "count": "met",
+      "icon": "target",
+      "line": "goal met · All tests in tau-ai pass and cargo clippy is clean",
+      "phone_line": "goal · met at check 3 · 2 continuations · $0.360",
+      "tone": "good"
+    },
+    "status": {
+      "detail": null,
+      "piece": "status",
+      "text": "met at check 3",
+      "tone": "neutral"
+    }
+  }
+}

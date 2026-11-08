@@ -613,6 +613,17 @@ fn luau_action(
         .plugins
         .get(plugin)
         .map_or_else(|| json!({}), |part| part.state.clone());
+    let live = view
+        .run
+        .filter(|info| info.id.0.as_ref() == run)
+        .map_or_else(
+            || {
+                view.runs()
+                    .iter()
+                    .any(|(info, _)| info.id.0.as_ref() == run && info.live)
+            },
+            |info| info.live,
+        );
     view.handle.act(Act::Action {
         plugin: plugin.to_owned(),
         action: action.to_owned(),
@@ -621,6 +632,8 @@ fn luau_action(
         repo,
         state,
         settings: view.settings.plugins.get(plugin).cloned(),
+        live,
+        jev: tau_jev::keyed(view),
     });
 }
 
@@ -653,10 +666,14 @@ impl UiPlugin for LuauPluginsUi {
     /// What an action left.
     fn reply(&self, reply: Value, handle: &Handle) {
         if let Ok(done) = serde_json::from_value::<ActionDone>(reply.clone()) {
-            // What an action left, with the run it was carried out on.
-            let run = RunId(done.run.as_str().into());
-            for record in done.records() {
-                handle.record(&run, record);
+            // What an action left, with the run it was carried out on;
+            // a command typed outside a chat has none to keep it.
+            let run =
+                (!done.run.is_empty()).then(|| RunId(done.run.as_str().into()));
+            if let Some(run) = &run {
+                for record in done.records() {
+                    handle.record(run, record);
+                }
             }
             // What it asked the interface to do, on its run.
             if let Some(asked) = &done.interface {
@@ -664,7 +681,7 @@ impl UiPlugin for LuauPluginsUi {
                 kernel_action(
                     &format!("tau.{action}"),
                     &asked["args"],
-                    Some(&run),
+                    run.as_ref(),
                     handle,
                 );
             }
@@ -759,10 +776,10 @@ impl UiPlugin for LuauPluginsUi {
     }
 
     fn declaration(&self) -> tau_ui_plugin::Declaration {
-        // The person's plugins come after the rules and the goal, so
-        // theirs hold first.
+        // The person's plugins come after the rules, so theirs hold
+        // first.
         tau_ui_plugin::Declaration::new()
-            .after(&["tau-constitution", "tau-goal"])
+            .after(&["tau-constitution"])
             .seams(&[
                 tau_ui_plugin::Seam::Tools,
                 tau_ui_plugin::Seam::Start,
@@ -1101,11 +1118,10 @@ fn run_command(
     else {
         return;
     };
-    let Some(run) = view.run.map(|run| run.id.0.to_string()) else {
-        view.handle
-            .note(format!("/{command} runs in a chat: open one first"));
-        return;
-    };
+    // Outside a chat, on no run and no state: what it keeps is dropped,
+    // and what it asks the interface, such as sending a message, starts
+    // a chat.
+    let run = view.run.map(|run| run.id.0.to_string()).unwrap_or_default();
     // A run no plugin has drawn in yet starts from no state.
     let state = view.state.cloned().unwrap_or_default();
     luau_action(

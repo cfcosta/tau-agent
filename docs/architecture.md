@@ -42,7 +42,7 @@ tau-agent/
 │       ├── tau-direnv/           # agent commands in the repository's
 │       │                         # direnv environment (ADR 0025)
 │       ├── tau-fast-compaction/  # Jev-driven pruning of tool history
-│       ├── tau-goal/             # keeps a chat going until its /goal holds
+│       ├── tau-goal/             # keeps a chat going until its /goal holds (Luau)
 │       ├── tau-jev/              # TypeSafe's Jev client, and the plugin that
 │       │                         # keeps its key and gives it to plugins
 │       ├── tau-luau-plugins/     # plugins written in Luau, run in codemode's

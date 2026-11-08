@@ -1237,17 +1237,20 @@ reference is [tree-compaction.md](tree-compaction.md).
 
 ### `tau-goal`: keep going until a goal holds
 
-Built: `crates/plugins/tau-goal`. Its reference is [goal.md](goal.md).
+Built: `crates/plugins/tau-goal`, a Luau plugin tau comes with (ADR
+0050). Its reference is [goal.md](goal.md).
 
-- **Seams:** `start` (a `/goal` input sets the goal),
-  `after_tool_result` (the latest results, as evidence), `on_event`
-  (what the turns cost), and `before_stop` (the check).
-- **How:** one `Noul` per stop: does the goal hold, judged from the
+- **Seams:** `start` (a `/goal` input sets the goal, and gives the
+  model its own message), `after_tool_result` (the latest results, as
+  evidence), `turn_end` (what the turns cost), and `before_stop` (the
+  check; it declares `continues = 20`).
+- **How:** one `noul` per stop: does the goal hold, judged from the
   model's last answer and its recent tool results. Not yet sends the
   model back with the goal, within the goal's continuations and budget.
-- **State:** records only. The goal belongs to the conversation, so a
-  resumed run keeps it; an interface pauses, extends or clears it by
-  storing a record, which the plugin reads at its next check.
+- **State:** the run's `ctx.state`. The goal belongs to the
+  conversation, so a resumed run keeps it; its banner's buttons and the
+  `/goal` command pause, extend or clear it, and the plugin reads the
+  state again at its next check.
 
 ### `tau-watcher`: notes what you missed
 

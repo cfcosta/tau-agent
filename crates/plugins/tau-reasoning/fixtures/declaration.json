@@ -1,0 +1,70 @@
+{
+  "name": "tau-reasoning",
+  "description": "Picks each message's reasoning effort on auto",
+  "uses": {
+    "tools": [],
+    "jev": true,
+    "infer": false,
+    "change_args": false,
+    "network": [],
+    "secrets": [],
+    "model": null,
+    "store": false,
+    "transcript": true
+  },
+  "settings": {
+    "default": {
+      "redecide": false,
+      "threshold": 0.7
+    },
+    "schema": {
+      "properties": {
+        "redecide": {
+          "description": "Jev looks again when a step's effort runs out, not only as each message comes in. Each change resends the whole context uncached, so it pays only on long tool chains.",
+          "title": "Decide again between steps",
+          "type": "boolean"
+        },
+        "threshold": {
+          "description": "Below it, a message runs at the effort the last one ran at.",
+          "title": "Confidence to change the effort",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "tools": [],
+  "hooks": {
+    "start": true,
+    "before_tool": false,
+    "before_request": true,
+    "after_tool_result": false,
+    "rewrite_context": false,
+    "rewritten": true,
+    "before_stop": false,
+    "turn_end": false,
+    "on_event": false,
+    "title": false,
+    "notify": false,
+    "repo_data": false,
+    "recover": false,
+    "run_end": true,
+    "view": true,
+    "settings_view": false
+  },
+  "actions": [],
+  "events": [],
+  "fills": [],
+  "compaction": null,
+  "forge": null,
+  "nav": null,
+  "commands": [],
+  "jobs": [],
+  "pages": [],
+  "repo_nav": null,
+  "picker_auto": {
+    "jev": "Auto lets tau-reasoning pick the effort for each message, with Jev.",
+    "no_jev": "Auto leaves the effort to the model: tau-reasoning needs a TypeSafe key (Models)."
+  },
+  "continues": null
+}

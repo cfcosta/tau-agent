@@ -120,12 +120,15 @@ impl Asked {
                 self.closed.insert(run.clone());
             }
             WorkspaceEvent::PluginRecord { run, plugin, body }
-                if plugin == tau_goal::NAME =>
+                if plugin == tau_luau_plugins::NAME =>
             {
-                if let Some(tau_goal::Record::Set { goal, .. }) =
-                    tau_goal::Record::parse(body)
+                // tau-goal's state with a goal (ADR 0050).
+                if let Ok(tau_luau_plugins::Record::State { plugin, state }) =
+                    serde_json::from_value(body.clone())
+                    && plugin == tau_goal::NAME
+                    && let Some(goal) = state["goal"]["condition"].as_str()
                 {
-                    self.goals.insert(run.clone(), goal);
+                    self.goals.insert(run.clone(), goal.to_owned());
                 }
             }
             WorkspaceEvent::HideModel { id, hidden } => {
@@ -280,16 +283,17 @@ impl Asked {
             assert!(computer.closed.contains(run), "{run:?} is not closed");
         }
         for (run, goal) in &self.goals {
-            let state: tau_goal::ui::State = computer
+            let shown = computer
                 .runs
                 .iter()
                 .find(|view| &view.id == run)
-                .and_then(|view| view.plugin_states.get(tau_goal::NAME))
-                .map(|state| {
-                    serde_json::from_value(state.json().clone()).unwrap()
-                })
-                .unwrap_or_default();
-            let shown = state.goal.map(|shown| shown.condition);
+                .and_then(|view| view.plugin_states.get(tau_luau_plugins::NAME))
+                .and_then(|state| {
+                    state.json()["plugins"][tau_goal::NAME]["state"]["goal"]
+                        ["condition"]
+                        .as_str()
+                        .map(str::to_owned)
+                });
             assert_eq!(shown.as_ref(), Some(goal), "{run:?}'s goal");
         }
         for run in &self.ending {
@@ -488,13 +492,18 @@ impl Tau {
         let run = pick(&tc, &runs);
         let goal = self.prompt();
         let device = self.device(who);
-        let record = tau_goal::Record::Set {
-            goal,
-            continuations: 1,
-            budget: 1.0,
+        // As tau-goal's command leaves it: its state, kept by
+        // tau-luau-plugins (ADR 0050).
+        let record = tau_luau_plugins::Record::State {
+            plugin: tau_goal::NAME.into(),
+            state: serde_json::json!({ "goal": {
+                "condition": goal, "max_continuations": 1, "budget": 1.0,
+                "status": "active", "continuations": 0, "spent": 0, "checks": [],
+            } }),
         };
         device.workspace.update(&mut device.cx, |ws, cx| {
-            ws.plugin_handle(tau_goal::NAME).record(&run, record);
+            ws.plugin_handle(tau_luau_plugins::NAME)
+                .record(&run, record);
             ws.drain_plugin_requests(cx);
         });
         device.cx.run_until_parked();

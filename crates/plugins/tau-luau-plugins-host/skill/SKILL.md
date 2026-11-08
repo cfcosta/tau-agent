@@ -243,7 +243,7 @@ new reach.
 
 | Field              | What it is                                                                                                                                                                       |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ctx.run`          | `{ id, kind = "main" or "chat" or "sub_agent", repo, model, turn }`                                                                                                              |
+| `ctx.run`          | `{ id, kind = "main" or "chat" or "sub_agent", repo, model, turn }`; in an action, `{ id, live, jev }`: whether the run is going on, and a Jev key is saved                      |
 | `ctx.now`          | `{ unix, iso, weekday }`; `weekday` is `"Monday"` and so on                                                                                                                      |
 | `ctx.settings`     | what the person set, over `settings.default`; per repository when one keeps its own copy                                                                                         |
 | `ctx.state`        | the plugin's table for this run; what a hook leaves in it is kept                                                                                                                |
@@ -377,7 +377,10 @@ it did to the state is kept, tau does that on the action's run.
 A plugin's `commands` are slash commands in the composer's menu, each
 with its `description`, what follows it (`args`, such as
 `"<version>"`) and an `icon`. Typed in a chat, `/name text` runs
-`run(text, ctx)` on that chat's state, as an action does; in tests,
+`run(text, ctx)` on that chat's state, as an action does. Typed
+outside a chat, it runs with `ctx.run.id` empty and no state: what it
+keeps is dropped, and `tau.interface("send", { text })` starts a chat
+with `text`. In tests,
 `run:action("/name", { text = "..." })`. A chat started with `/name
 text` takes its title from `text`, its leading `--flag value` pairs
 dropped.

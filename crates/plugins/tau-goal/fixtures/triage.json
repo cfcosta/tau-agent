@@ -1,0 +1,370 @@
+{
+  "state": {
+    "checks": true,
+    "goal": {
+      "budget": 2,
+      "checks": [
+        {
+          "continuation": 1,
+          "cost": 0.000016548,
+          "met": false,
+          "n": 1,
+          "p": 0.2,
+          "spent": 0.120016548,
+          "turn": 6
+        },
+        {
+          "cost": 0.000016548,
+          "met": true,
+          "n": 2,
+          "p": 0.96,
+          "spent": 0.240033096,
+          "turn": 9
+        }
+      ],
+      "condition": "Every mutant in retry.rs is caught",
+      "continuations": 1,
+      "max_continuations": 10,
+      "spent": 0.240033096,
+      "status": "met"
+    },
+    "held": {
+      "1": true
+    },
+    "notes": {
+      "g0": {
+        "detail": "check 1 · turn 6 · p 0.20 · continuing 1 of 10",
+        "text": "the goal is not met yet",
+        "tone": "warn"
+      },
+      "g1": {
+        "detail": "check 2 · turn 9 · p 0.96 · the run stops",
+        "text": "the goal is met",
+        "tone": "good"
+      }
+    },
+    "said": {
+      "/goal Every mutant in retry.rs is caught": {
+        "goal": "Every mutant in retry.rs is caught",
+        "text": "/goal Every mutant in retry.rs is caught"
+      },
+      "/goal Every mutant in retry.rs is caught\n\nThis is your goal. Keep working until it holds. Each time you stop, tau-goal checks it against your last answer and your recent tool results, and sends you back if it does not hold yet, so run what proves it before you stop.": {
+        "goal": "Every mutant in retry.rs is caught",
+        "text": "/goal Every mutant in retry.rs is caught\n\nThis is your goal. Keep working until it holds. Each time you stop, tau-goal checks it against your last answer and your recent tool results, and sends you back if it does not hold yet, so run what proves it before you stop."
+      },
+      "tau-goal: the goal is not met yet (check 1, probability 0.20).\nGoal: Every mutant in retry.rs is caught\n\nKeep working toward it, and run what proves it. Continuation 1 of 10.": {
+        "continuation": 1,
+        "text": "tau-goal: the goal is not met yet (check 1, probability 0.20).\nGoal: Every mutant in retry.rs is caught\n\nKeep working toward it, and run what proves it. Continuation 1 of 10."
+      }
+    },
+    "turn": 9,
+    "unchecked": 0
+  },
+  "view": {
+    "banner": {
+      "children": [
+        {
+          "name": "target",
+          "piece": "icon",
+          "tone": "good"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "piece": "badge",
+                  "text": "goal",
+                  "tone": "good"
+                },
+                {
+                  "piece": "text",
+                  "text": "Every mutant in retry.rs is caught"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "piece": "mono",
+              "text": "met at check 2 · 1 continuations · $0.240"
+            }
+          ],
+          "piece": "stack"
+        },
+        {
+          "action": "act",
+          "args": {
+            "what": "edit"
+          },
+          "kind": "secondary",
+          "label": "New goal",
+          "piece": "button"
+        },
+        {
+          "action": "act",
+          "args": {
+            "what": "clear"
+          },
+          "kind": "secondary",
+          "label": "Clear",
+          "piece": "button"
+        }
+      ],
+      "piece": "row"
+    },
+    "inspector": {
+      "children": [
+        {
+          "children": [
+            {
+              "piece": "heading",
+              "text": "Goal"
+            },
+            {
+              "piece": "pill",
+              "text": "met",
+              "tone": "good"
+            }
+          ],
+          "piece": "row"
+        },
+        {
+          "piece": "rich",
+          "text": "Every mutant in retry.rs is caught"
+        },
+        {
+          "piece": "text",
+          "text": "Checked when the agent stops · met at p ≥ 0.7 · up to 10 continuations and $2.00"
+        },
+        {
+          "piece": "heading",
+          "text": "Limits"
+        },
+        {
+          "label": "Continuations · 1 / 10",
+          "piece": "progress",
+          "share": 0.1
+        },
+        {
+          "label": "Cost · $0.240 / $2.00",
+          "piece": "progress",
+          "share": 0.120016548
+        },
+        {
+          "piece": "heading",
+          "text": "Checks"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "piece": "mono",
+                  "text": "#2"
+                },
+                {
+                  "piece": "badge",
+                  "text": "met",
+                  "tone": "good"
+                },
+                {
+                  "piece": "text",
+                  "text": "the run stopped"
+                },
+                {
+                  "piece": "mono",
+                  "text": "turn 9 · p 0.96"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "children": [
+                {
+                  "piece": "mono",
+                  "text": "#1"
+                },
+                {
+                  "piece": "badge",
+                  "text": "not met",
+                  "tone": "warn"
+                },
+                {
+                  "piece": "text",
+                  "text": "sent back, 1 of 10"
+                },
+                {
+                  "piece": "mono",
+                  "text": "turn 6 · p 0.20"
+                }
+              ],
+              "piece": "row"
+            }
+          ],
+          "piece": "stack"
+        },
+        {
+          "piece": "rows",
+          "rows": [
+            {
+              "key": "checked by",
+              "value": "tau-goal · Jev"
+            },
+            {
+              "key": "Jev cost",
+              "value": "$0.00003"
+            }
+          ]
+        },
+        {
+          "piece": "text",
+          "text": "Jev reads the goal, the agent's last answer and its last tool results. When they fall short, the agent is sent back."
+        }
+      ],
+      "piece": "stack"
+    },
+    "messages": {
+      "/goal Every mutant in retry.rs is caught": {
+        "children": [
+          {
+            "children": [
+              {
+                "name": "target",
+                "piece": "icon",
+                "tone": "info"
+              },
+              {
+                "piece": "mono",
+                "text": "/goal"
+              },
+              {
+                "piece": "rich",
+                "text": "Every mutant in retry.rs is caught"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "children": [
+              {
+                "piece": "badge",
+                "text": "up to 10 continuations",
+                "tone": "neutral"
+              },
+              {
+                "piece": "badge",
+                "text": "$2.00 budget",
+                "tone": "neutral"
+              },
+              {
+                "piece": "badge",
+                "text": "checked by Jev",
+                "tone": "neutral"
+              }
+            ],
+            "piece": "row"
+          }
+        ],
+        "piece": "stack"
+      },
+      "/goal Every mutant in retry.rs is caught\n\nThis is your goal. Keep working until it holds. Each time you stop, tau-goal checks it against your last answer and your recent tool results, and sends you back if it does not hold yet, so run what proves it before you stop.": {
+        "children": [
+          {
+            "children": [
+              {
+                "name": "target",
+                "piece": "icon",
+                "tone": "info"
+              },
+              {
+                "piece": "mono",
+                "text": "/goal"
+              },
+              {
+                "piece": "rich",
+                "text": "Every mutant in retry.rs is caught"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "children": [
+              {
+                "piece": "badge",
+                "text": "up to 10 continuations",
+                "tone": "neutral"
+              },
+              {
+                "piece": "badge",
+                "text": "$2.00 budget",
+                "tone": "neutral"
+              },
+              {
+                "piece": "badge",
+                "text": "checked by Jev",
+                "tone": "neutral"
+              }
+            ],
+            "piece": "row"
+          }
+        ],
+        "piece": "stack"
+      },
+      "tau-goal: the goal is not met yet (check 1, probability 0.20).\nGoal: Every mutant in retry.rs is caught\n\nKeep working toward it, and run what proves it. Continuation 1 of 10.": {
+        "children": [],
+        "piece": "stack"
+      }
+    },
+    "notes": {
+      "g0": {
+        "children": [
+          {
+            "name": "target",
+            "piece": "icon",
+            "tone": "warn"
+          },
+          {
+            "piece": "text",
+            "text": "the goal is not met yet"
+          },
+          {
+            "piece": "mono",
+            "text": "check 1 · turn 6 · p 0.20 · continuing 1 of 10"
+          }
+        ],
+        "piece": "row"
+      },
+      "g1": {
+        "children": [
+          {
+            "name": "target",
+            "piece": "icon",
+            "tone": "good"
+          },
+          {
+            "piece": "text",
+            "text": "the goal is met"
+          },
+          {
+            "piece": "mono",
+            "text": "check 2 · turn 9 · p 0.96 · the run stops"
+          }
+        ],
+        "piece": "row"
+      }
+    },
+    "row": {
+      "count": "met",
+      "icon": "target",
+      "line": "goal met · Every mutant in retry.rs is caught",
+      "phone_line": "goal · met at check 2 · 1 continuations · $0.240",
+      "tone": "good"
+    },
+    "status": {
+      "detail": null,
+      "piece": "status",
+      "text": "met at check 2",
+      "tone": "neutral"
+    }
+  }
+}

@@ -36,6 +36,10 @@ pub const BUILT_IN: &[registry::BuiltIn] = &[
         name: tau_reasoning::NAME,
         files: tau_reasoning::FILES,
     },
+    registry::BuiltIn {
+        name: tau_goal::NAME,
+        files: tau_goal::FILES,
+    },
 ];
 
 pub mod parity;

@@ -108,13 +108,9 @@ fn edit_of(event: &WorkspaceEvent) -> Option<(Reg, Value)> {
             event.value.clone().unwrap_or(Value::Null),
         ),
         WorkspaceEvent::PluginRecord { run, plugin, body }
-            if plugin == tau_goal::NAME =>
+            if plugin == tau_luau_plugins::NAME =>
         {
-            let Some(tau_goal::Record::Set { goal, .. }) =
-                tau_goal::Record::parse(body)
-            else {
-                return None;
-            };
+            let goal = goal_set(body)?;
             (Reg::Goal(run.clone()), json!(goal))
         }
         WorkspaceEvent::SetDefaultModel { agent, choice }
@@ -139,16 +135,25 @@ fn edit_of(event: &WorkspaceEvent) -> Option<(Reg, Value)> {
     })
 }
 
+/// The goal a record of tau-luau-plugins' sets, when it is tau-goal's
+/// state with one.
+fn goal_set(body: &Value) -> Option<String> {
+    let Ok(tau_luau_plugins::Record::State { plugin, state }) =
+        serde_json::from_value(body.clone())
+    else {
+        return None;
+    };
+    (plugin == tau_goal::NAME)
+        .then(|| state["goal"]["condition"].as_str().map(str::to_owned))?
+}
+
 /// `run`'s goal, as `synced` shows it.
 fn goal(synced: &Synced, run: &RunId) -> Option<String> {
-    let state: tau_goal::ui::State = synced
-        .runs
-        .iter()
-        .find(|view| &view.id == run)
-        .and_then(|view| view.plugin_states.get(tau_goal::NAME))
-        .map(|state| serde_json::from_value(state.json().clone()).unwrap())
-        .unwrap_or_default();
-    state.goal.map(|goal| goal.condition)
+    let view = synced.runs.iter().find(|view| &view.id == run)?;
+    let luau = view.plugin_states.get(tau_luau_plugins::NAME)?.json();
+    luau["plugins"][tau_goal::NAME]["state"]["goal"]["condition"]
+        .as_str()
+        .map(str::to_owned)
 }
 
 /// What `synced` shows for `reg`, as an edit would set it.
@@ -449,13 +454,18 @@ impl Tau {
         let goal = format!("goal {}", self.next());
         self.made(Reg::Goal(run.clone()), json!(goal));
         let device = self.device(who);
-        let record = tau_goal::Record::Set {
-            goal,
-            continuations: 1,
-            budget: 1.0,
+        // As tau-goal's command leaves it: its state, kept by
+        // tau-luau-plugins (ADR 0050).
+        let record = tau_luau_plugins::Record::State {
+            plugin: tau_goal::NAME.into(),
+            state: json!({ "goal": {
+                "condition": goal, "max_continuations": 1, "budget": 1.0,
+                "status": "active", "continuations": 0, "spent": 0, "checks": [],
+            } }),
         };
         device.workspace.update(&mut device.cx, |ws, cx| {
-            ws.plugin_handle(tau_goal::NAME).record(&run, record);
+            ws.plugin_handle(tau_luau_plugins::NAME)
+                .record(&run, record);
             ws.drain_plugin_requests(cx);
         });
         device.cx.run_until_parked();

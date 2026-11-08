@@ -340,6 +340,55 @@ What the port found besides:
   step and the lease: all equal. The `replay` example and its test run
   on the Luau plugin.
 
+### Gap F, and tau-goal
+
+Gap F closed as written: a declaration's `continues` (1 to 20) is how
+often that plugin's `before_stop` may keep a run going, counted for
+each plugin, no longer for all together; `turn_end` gets the turn's
+`cost`; and `tau.start{ input }` gives the model a message in place of
+the run's, the first plugin's that gives one. tau-goal needed four
+things more:
+
+- **A view draws the person's messages it knows**: `messages = {
+  [text] = pieces }`, for the message whose text is exactly `text`,
+  and an empty stack draws nothing. A `/goal` draws as the goal it set,
+  typed or as the model reads it, and a continuation a check's note
+  says draws as nothing. The point (`tau.run.user_message`) left
+  `NOT_YET`.
+- **A command has an icon and a popover**: `popover = { jev, no_jev }`,
+  whose inputs' drafts reach `run` as `ctx.drafts`; an input whose
+  `submit` is `"tau.submit"` sends the composer and keeps what it says.
+  A listed command may now have a popover (`Manifest::listed_popover`).
+- **A command works outside a chat**: it runs on no run and no state,
+  and what it asks the interface, `tau.send`, starts a chat. An
+  action's `ctx.run` says whether its run is going on (`live`) and a
+  Jev key is saved (`jev`), as the interface sees them.
+- **A command's prompt titles its chat**: `/name args` reads as `args`,
+  its leading `--flag value` pairs dropped and one quoted string
+  unquoted, for any command word, as tau-ui reads titles without Luau.
+
+What the port found besides:
+
+- **The parity check** ran `goal.parse`, `set_message`, `set_input`,
+  `tail` and `usd` against the Rust ones on 8 000 drawn inputs: text
+  with Unicode white space (`\u{a0}`, `\u{2028}`, `\u{3000}`), quotes
+  and escapes, `+5`, `0x10`, `1e400`, `-0`, `inf` and `nan` as limits.
+  All equal. Luau has no Unicode white space table, so `goal.luau`
+  keeps Rust's `char::is_whitespace` set; its budget reads Rust's float
+  syntax, not `tonumber`'s, which takes hex.
+- **Records gave way to the run's state.** The interface no longer
+  stores `paused`, `extended` or `cleared`: the banner's buttons are the
+  plugin's `act` action, and the host keeps the state it leaves. The
+  popover's budget takes what a budget does, a finite amount of at
+  least zero, where Rust's took any number.
+- **The phone's bar** is the banner itself, buttons and all, as Luau
+  draws one tree for wide and compact; the Rust bar had a chevron to
+  the run's details instead.
+- **The catalog's row** is one of tau-luau-plugins', and "needs a
+  TypeSafe key" moved to the banner and the popover. The demo lists the
+  built-in plugins from fixtures of their declarations, which their
+  tests check.
+
 ## Alternatives considered
 
 - **Port the plugins and leave the gaps**, calling Jev over HTTP with

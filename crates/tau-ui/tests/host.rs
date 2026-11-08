@@ -366,79 +366,12 @@ fn new_chats_fork_the_repository_main_chat() {
     llm.assert_exhausted();
 }
 
-/// A run shows its prompt's first line until a model writes its title;
-/// a written title comes back with history.
-/// A new chat forks the main chat, and with it the goal set there, which
-/// tau-goal goes on checking: the chat shows it from the start.
-#[test]
-fn a_new_chat_shows_the_goal_it_inherits() {
-    let dir = tempfile::tempdir().unwrap();
-    let llm = ScriptedModel::new()
-        .turn(|t| t.text("hi"))
-        .turn(|t| t.text("ok"));
-    let (host, mut events) = host_on(llm, dir.path());
-    let main = host.block_on(host.main_of(REPO)).unwrap();
-    host.block_on(
-        host.store_plugin_record(
-            &main,
-            tau_goal::NAME,
-            &serde_json::to_value(&tau_goal::Record::Set {
-                goal: "the docs build".into(),
-                continuations: 4,
-                budget: 1.0,
-            })
-            .unwrap(),
-        ),
-    )
-    .unwrap();
-    // A turn after it: new chats fork from there, the goal before.
-    on_main(&host, "hello");
-    until_end(&mut events);
-    wait_until_done(&host, &main);
-    let view = host
-        .block_on(host.start("look around", &ModelChoice::default(), REPO))
-        .unwrap();
-    let state = goal_of(&view);
-    let goal = state.goal.expect("the inherited goal shows");
-    assert_eq!(goal.condition, "the docs build");
-    assert_eq!(goal.max_continuations, 4);
-    assert!(!state.checks, "no key: nothing checks it");
-    until_end(&mut events);
-    wait_until_done(&host, &view.id);
-}
-
-/// tau-goal's state in `view`, as its fold leaves it.
-fn goal_of(view: &tau_ui_remote::view::RunView) -> tau_goal::ui::State {
-    view.plugin_states
-        .get(tau_goal::NAME)
-        .map(|state| serde_json::from_value(state.json().clone()).unwrap())
-        .unwrap_or_default()
-}
-
-/// The text of tau-goal's notes in `view`'s transcript, in order.
-fn goal_notes(view: &tau_ui_remote::view::RunView) -> Vec<String> {
-    let state = goal_of(view);
-    view.items
-        .iter()
-        .filter_map(|item| match item {
-            Item::Anchor { plugin, key } if plugin == tau_goal::NAME => {
-                Some(state.notes[key].text.clone())
-            }
-            _ => None,
-        })
-        .collect()
-}
-
 /// The Plugins screen lists every plugin that asks Jev, with a key or
 /// without one, which it says it needs; with a key, it does not. Spend
 /// comes from what each plugin charged.
 #[test]
 fn every_jev_plugin_is_listed() {
-    let jev_plugins = [
-        tau_fast_compaction::NAME,
-        tau_constitution_host::NAME,
-        tau_goal::NAME,
-    ];
+    let jev_plugins = [tau_fast_compaction::NAME, tau_constitution_host::NAME];
     let (host, _events) = host(ScriptedModel::new());
     let described = |catalog: &tau_ui_remote::catalog::Catalog, name: &str| {
         let plugin = catalog
@@ -461,10 +394,12 @@ fn every_jev_plugin_is_listed() {
         tau_jev::fake::FakeJev::nouls(|_| 0.5),
     )));
     let catalog = host.block_on(host.catalog());
-    let description = described(&catalog, tau_goal::NAME);
+    let description = described(&catalog, tau_fast_compaction::NAME);
     assert!(!description.contains("needs"), "{description}");
 }
 
+/// A run shows its prompt's first line until a model writes its title;
+/// a written title comes back with history.
 #[test]
 fn written_titles_come_back_in_history() {
     let llm = ScriptedModel::new().turn(|t| t.text("Hello from tau"));
@@ -2693,123 +2628,6 @@ fn walk(dir: &Path) -> impl Iterator<Item = std::path::PathBuf> {
 /// The credentials directory the test hosts use.
 fn host_credentials(host: &Host) -> tau_ui::accounts::Credentials {
     host.credentials().clone()
-}
-
-#[test]
-fn a_goal_keeps_the_chat_going_until_it_holds() {
-    let dir = tempfile::tempdir().unwrap();
-    let llm = ScriptedModel::new()
-        .turn(|t| t.text("tried"))
-        .turn(|t| t.text("tests pass now"))
-        .turn(|t| t.text("paused, so it stops"))
-        .turn(|t| t.text("done for real"));
-    let (host, mut events) = host_on(llm.clone(), dir.path());
-    // Not met, then met; then not met on every later check.
-    let answers =
-        std::sync::Arc::new(std::sync::Mutex::new(vec![0.1, 0.95, 0.2]));
-    // Only the goal's question: tau-reasoning asks too, for "auto".
-    let jev = tau_jev::fake::FakeJev::new(move |request| {
-        if !request.questions.contains_key("met") {
-            return Err(tau_jev::JevError::Status(400));
-        }
-        let mut answers = answers.lock().unwrap();
-        let p = if answers.len() > 1 {
-            answers.remove(0)
-        } else {
-            answers[0]
-        };
-        let answers = request
-            .questions
-            .keys()
-            .map(|id| (id.clone(), tau_jev::Answer::Noul { noul: p }))
-            .collect();
-        Ok(tau_jev::fake::response(answers, request))
-    });
-    let host =
-        host.with_service(tau_jev::Upstream(std::sync::Arc::new(jev.clone())));
-    assert!(
-        host.block_on(host.catalog())
-            .plugins
-            .iter()
-            .any(|p| p.name == tau_goal::NAME)
-    );
-
-    let prompt = "/goal --continuations 3 the tests pass";
-    let mut view = host
-        .block_on(host.start(prompt, &ModelChoice::default(), REPO))
-        .unwrap();
-    assert_eq!(view.title, "the tests pass");
-    assert!(goal_of(&view).checks, "with a key, tau-goal checks the run");
-    for event in until_end(&mut events) {
-        view.apply(&event);
-    }
-    wait_until_done(&host, &view.id);
-    assert_eq!(llm.requests().len(), 2, "sent back once");
-    let goal = goal_of(&view).goal.expect("the goal shows live");
-    assert_eq!(goal.condition, "the tests pass");
-    assert_eq!(goal.status, tau_goal::Status::Met);
-    assert_eq!((goal.continuations, goal.max_continuations), (1, 3));
-    assert_eq!(
-        goal_notes(&view),
-        ["the goal is not met yet", "the goal is met"]
-    );
-
-    // History has the goal: the message that set it, the same notes as
-    // live, and the state from the records; the check's note holds the
-    // continuation it sent.
-    let history = host.block_on(host.history()).unwrap();
-    let stored = &history[0];
-    assert_eq!(goal_of(stored).goal, goal_of(&view).goal);
-    assert!(matches!(&stored.items[0], Item::User(text)
-        if tau_goal::set_message(text).as_deref() == Some("the tests pass")));
-    assert_eq!(goal_notes(stored), goal_notes(&view));
-    assert_eq!(goal_of(stored).held, [1].into());
-
-    // A met goal is not checked again; a new one is, until paused. This
-    // one runs out at once, then gets one more continuation, paused.
-    let goal_checks = || {
-        jev.requests()
-            .iter()
-            .filter(|request| request.questions.contains_key("met"))
-            .count()
-    };
-    let asked = goal_checks();
-    host.block_on(host.resume(
-        &view.id,
-        "/goal --continuations 0 it is released",
-        &ModelChoice::default(),
-    ))
-    .unwrap();
-    until_end(&mut events);
-    wait_until_done(&host, &view.id);
-    assert_eq!(goal_checks(), asked + 1);
-    for record in [
-        tau_goal::Record::Extended { by: 1 },
-        tau_goal::Record::Paused,
-    ] {
-        host.block_on(host.store_plugin_record(
-            &view.id,
-            tau_goal::NAME,
-            &serde_json::to_value(&record).unwrap(),
-        ))
-        .unwrap();
-    }
-    host.block_on(host.resume(
-        &view.id,
-        "one more thing",
-        &ModelChoice::default(),
-    ))
-    .unwrap();
-    until_end(&mut events);
-    wait_until_done(&host, &view.id);
-    assert_eq!(goal_checks(), asked + 1, "paused: not checked");
-    let goal = goal_of(&host.block_on(host.history()).unwrap()[0])
-        .goal
-        .unwrap();
-    assert_eq!(goal.condition, "it is released");
-    assert_eq!(goal.status, tau_goal::Status::Paused);
-    assert_eq!(goal.max_continuations, 1);
-    llm.assert_exhausted();
 }
 
 #[test]

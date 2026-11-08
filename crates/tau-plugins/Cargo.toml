@@ -23,7 +23,6 @@ tau-notify = { path = "../plugins/tau-notify", default-features = false }
 tau-phones = { path = "../plugins/tau-phones", default-features = false }
 tau-sqlite = { path = "../plugins/tau-sqlite", default-features = false }
 tau-chatgpt = { path = "../plugins/tau-chatgpt", default-features = false }
-tau-goal.workspace = true
 tau-jev.workspace = true
 tau-schedule = { path = "../plugins/tau-schedule", default-features = false }
 tau-luau-plugins.workspace = true

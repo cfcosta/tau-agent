@@ -308,6 +308,8 @@ impl HostHalf for LuauPluginsHost {
                 repo,
                 state,
                 settings,
+                live,
+                jev,
             } => {
                 let done = host
                     .action(crate::registry::ActionCall {
@@ -319,6 +321,8 @@ impl HostHalf for LuauPluginsHost {
                         state: &state,
                         settings: settings.as_ref(),
                         chats,
+                        live,
+                        jev,
                     })
                     .await;
                 return Ok(Some(serde_json::to_value(done)?));

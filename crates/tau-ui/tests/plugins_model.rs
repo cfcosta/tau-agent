@@ -1352,7 +1352,7 @@ impl Tau {
         if let Some(title) = dialog {
             assert_eq!(
                 (plugin.as_str(), title.as_str()),
-                (tau_goal::NAME, "Goals need Jev"),
+                (tau_luau_plugins::NAME, "Goals need Jev"),
                 "{label} opened a dialog"
             );
             device
@@ -1407,28 +1407,26 @@ impl Tau {
         self.host_settles();
     }
 
-    /// A goal is set on the run, through tau-goal's records: a plugin
-    /// tau has draws its banner, with its own buttons.
+    /// A goal is on the run, working, met or stopped, as tau-goal's
+    /// state and view (ADR 0050): a plugin tau has draws its banner,
+    /// with its own buttons.
     #[rule]
     fn set_goal(&mut self, tc: TestCase) {
-        let goal: String = tc.draw(gs::sampled_from(vec![
-            "it ships".to_owned(),
-            "the tests pass".to_owned(),
+        let fixture = tc.draw(gs::sampled_from(vec![
+            tau_goal::DEMO_WORKING,
+            tau_goal::DEMO_MET,
+            tau_goal::DEMO_STOPPED,
         ]));
-        let body = serde_json::to_value(tau_goal::Record::Set {
-            goal,
-            continuations: 3,
-            budget: 2.0,
-        })
-        .unwrap();
-        self.inbox.borrow_mut().push_back((
-            None,
-            WorkspaceEvent::PluginRecord {
-                run: main_run(),
-                plugin: tau_goal::NAME.into(),
-                body,
-            },
-        ));
+        for body in tau_demo::luau(tau_goal::NAME, fixture) {
+            self.inbox.borrow_mut().push_back((
+                None,
+                WorkspaceEvent::PluginRecord {
+                    run: main_run(),
+                    plugin: tau_luau_plugins::NAME.into(),
+                    body,
+                },
+            ));
+        }
         self.host_settles();
     }
 

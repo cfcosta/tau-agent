@@ -189,3 +189,20 @@ fn the_demo_is_what_the_plugin_leaves_and_draws() {
         assert_eq!(fixture, drawn, "{name}: run with BLESS_FIXTURES=1");
     }
 }
+
+/// What the demo lists of the plugin is what it declares.
+/// `BLESS_FIXTURES=1` writes it anew from the plugin.
+#[test]
+fn the_demo_lists_what_the_plugin_declares() {
+    let declared = serde_json::to_value(&loaded().declaration).unwrap();
+    if std::env::var_os("BLESS_FIXTURES").is_some() {
+        let path =
+            format!("{}/fixtures/declaration.json", env!("CARGO_MANIFEST_DIR"));
+        let text = serde_json::to_string_pretty(&declared).unwrap() + "\n";
+        std::fs::write(path, text).unwrap();
+        return;
+    }
+    let fixture: Value =
+        serde_json::from_str(tau_reasoning::DEMO_DECLARATION).unwrap();
+    assert_eq!(fixture, declared, "run with BLESS_FIXTURES=1");
+}

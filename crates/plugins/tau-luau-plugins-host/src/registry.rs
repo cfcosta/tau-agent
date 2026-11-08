@@ -111,6 +111,10 @@ pub struct ActionCall<'a> {
     pub settings: Option<&'a serde_json::Value>,
     /// What it asks of the chats goes to.
     pub chats: Option<&'a dyn tau_ui_plugin::Conversations>,
+    /// Whether the run is going on, and a Jev key saved, as the
+    /// interface that asked sees them: `ctx.run.live` and `ctx.run.jev`.
+    pub live: bool,
+    pub jev: bool,
 }
 
 /// A Luau plugin tau comes with: its name, and its files by their paths
@@ -967,6 +971,8 @@ impl Registry {
             state,
             settings,
             chats,
+            live,
+            jev,
         } = call;
 
         let hook = Hook::Action(action.to_owned());
@@ -1002,7 +1008,7 @@ impl Registry {
             return done;
         }
         let mut context = Context {
-            run: serde_json::json!({ "id": run }),
+            run: serde_json::json!({ "id": run, "live": live, "jev": jev }),
             now: crate::agent::now(),
             settings: tau_luau_plugins::settings::effective(
                 &loaded.declaration,

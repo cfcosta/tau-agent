@@ -552,6 +552,12 @@ pub enum Act {
         repo: Option<String>,
         state: Value,
         settings: Option<Value>,
+        /// Whether the run is going on, as the interface sees it.
+        #[serde(default)]
+        live: bool,
+        /// Whether a Jev key is saved, as the interface sees it.
+        #[serde(default)]
+        jev: bool,
     },
 }
 

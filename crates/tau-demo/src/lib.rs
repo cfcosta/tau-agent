@@ -102,7 +102,7 @@ pub fn retry_after() -> RunView {
 }
 
 /// The condition the demo's goals share.
-pub const GOAL: &str = "All tests in tau-ai pass and cargo clippy is clean";
+pub const GOAL: &str = tau_goal::DEMO_GOAL;
 
 /// Finished runs for the run list: a run with a fork to compare, and
 /// older runs with only their outcome.
@@ -235,18 +235,12 @@ pub fn history() -> Vec<RunView> {
             // Goals, as history has them.
             match title {
                 "mutants-triage" => view.restate(
-                    tau_goal::NAME,
-                    &tau_goal::demo::records(
-                        "Every mutant in retry.rs is caught",
-                        "met",
-                    ),
+                    tau_luau_plugins::NAME,
+                    &luau(tau_goal::NAME, tau_goal::DEMO_TRIAGE),
                 ),
                 "lane-audit" => view.restate(
-                    tau_goal::NAME,
-                    &tau_goal::demo::records(
-                        "Every lane has an owner in lanes.toml",
-                        "stopped",
-                    ),
+                    tau_luau_plugins::NAME,
+                    &luau(tau_goal::NAME, tau_goal::DEMO_LANES),
                 ),
                 _ => {}
             }
@@ -1641,13 +1635,19 @@ pub fn models() -> tau_ui_remote::models::Models {
 }
 
 /// What tau-reasoning, a Luau plugin (ADR 0050), publishes of one of
-/// its fixtures: its state, then the view it draws from it, as
-/// tau-luau-plugins' records. The demo cannot run Luau; tau-reasoning's
-/// tests check the fixtures against the plugin.
+/// its fixtures ([`luau`]).
 pub fn reasoning(fixture: &str) -> [Value; 2] {
+    luau(tau_reasoning::NAME, fixture)
+}
+
+/// What the Luau plugin `plugin` (ADR 0050) publishes of one of its
+/// fixtures: its state, then the view it draws from it, as
+/// tau-luau-plugins' records. The demo cannot run Luau; each plugin's
+/// tests check its fixtures against the plugin.
+pub fn luau(plugin: &str, fixture: &str) -> [Value; 2] {
     let fixture: Value = serde_json::from_str(fixture)
-        .expect("tau-reasoning's fixtures are JSON");
-    let plugin = tau_reasoning::NAME.to_owned();
+        .expect("a Luau plugin's fixtures are JSON");
+    let plugin = plugin.to_owned();
     [
         tau_luau_plugins::Record::State {
             plugin: plugin.clone(),

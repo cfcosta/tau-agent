@@ -403,17 +403,22 @@ fn a_phone_draws_what_the_computer_builds(cx: &mut TestAppContext) {
     assert!(!on_computer.is_empty());
     assert_eq!(phone.read_with(&pcx, |ws, _| statuses(ws)), on_computer);
 
-    // A goal set on the computer: what changed comes to the phone
-    // pushed, and the phone draws the goal's banner from its tree.
+    // A Luau plugin's banner drawn on the computer: what changed comes
+    // to the phone pushed, and the phone draws the banner from its tree.
+    let view = serde_json::json!({ "banner": { "piece": "row", "children": [
+        { "piece": "text", "text": "it ships" },
+        { "piece": "button", "label": "", "action": "tau.details", "args": {}, "kind": "secondary" },
+        { "piece": "button", "label": "Edit", "action": "tau.composer",
+          "args": { "text": "/goal it ships" }, "kind": "secondary" },
+    ] } });
     computer.update(&mut ccx, |ws, cx| {
         ws.apply(
             HostUpdate::PluginFold {
                 run: demo::run_id(),
-                plugin: tau_goal::NAME.into(),
-                body: serde_json::to_value(tau_goal::Record::Set {
-                    goal: "it ships".into(),
-                    continuations: 3,
-                    budget: 2.0,
+                plugin: tau_luau_plugins::NAME.into(),
+                body: serde_json::to_value(tau_luau_plugins::Record::View {
+                    plugin: "ships".into(),
+                    view,
                 })
                 .unwrap(),
             },
@@ -447,7 +452,11 @@ fn a_phone_draws_what_the_computer_builds(cx: &mut TestAppContext) {
             .collect::<Vec<_>>()
     };
     let on_phone = phone.read_with(&pcx, |ws, _| banners(ws));
-    assert!(on_phone.iter().any(|(plugin, _)| *plugin == tau_goal::NAME));
+    assert!(
+        on_phone
+            .iter()
+            .any(|(plugin, _)| *plugin == tau_luau_plugins::NAME)
+    );
     let layout = phone.read_with(&pcx, |ws, _| ws.view_layout());
     let built = computer.read_with(&ccx, |ws, _| {
         ws.build_view(&ViewKey {
@@ -481,8 +490,7 @@ fn a_phone_draws_what_the_computer_builds(cx: &mut TestAppContext) {
 
     // A click on the phone runs on the computer, where the phone drew
     // it: the banner's chevron opens the phone's run details, not the
-    // computer's; Edit fills the phone's composer; Pause records with
-    // the run, and gives the phone nothing to do.
+    // computer's; Edit fills the phone's composer, and records nothing.
     let banner = serde_json::to_value(&on_phone).unwrap();
     let chevron = find_button(&banner, "").expect("the banner's chevron");
     let calls: Rc<RefCell<Vec<WorkspaceEvent>>> = Rc::default();
@@ -519,7 +527,13 @@ fn a_phone_draws_what_the_computer_builds(cx: &mut TestAppContext) {
             params: Default::default(),
         };
         phone.update(pcx, |ws, cx| {
-            ws.plugin_action(tau_goal::NAME, &action, &args, &origin, cx)
+            ws.plugin_action(
+                tau_luau_plugins::NAME,
+                &action,
+                &args,
+                &origin,
+                cx,
+            )
         });
         pcx.run_until_parked();
         let asked: Vec<WorkspaceEvent> = calls.borrow_mut().drain(..).collect();
@@ -552,8 +566,8 @@ fn a_phone_draws_what_the_computer_builds(cx: &mut TestAppContext) {
     assert!(phone.read_with(&pcx, |ws, _| ws.sheet_is_open()));
     assert!(!computer.read_with(&ccx, |ws, _| ws.sheet_is_open()));
     // The computer's own banner's buttons, sent from the phone.
-    let act = |what: &str| ("act".to_owned(), serde_json::json!(what));
-    click(act("Edit"), &mut pcx, &mut ccx);
+    let edit = find_button(&banner, "Edit").expect("the banner's Edit");
+    click(edit, &mut pcx, &mut ccx);
     assert_eq!(
         phone.read_with(&pcx, |ws, cx| ws.composer_text(cx).to_owned()),
         "/goal it ships"
@@ -563,8 +577,6 @@ fn a_phone_draws_what_the_computer_builds(cx: &mut TestAppContext) {
         ""
     );
     assert!(records.borrow().is_empty());
-    click(act("Pause"), &mut pcx, &mut ccx);
-    assert_eq!(*records.borrow(), [serde_json::json!({ "kind": "paused" })]);
 }
 
 /// The action and arguments of the button labelled `label` in `tree`'s

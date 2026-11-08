@@ -35,7 +35,7 @@ tau-constitution-host = { workspace = true, features = ["demo"] }
 tau-direnv.workspace = true
 tau-fast-compaction.workspace = true
 tau-github.workspace = true
-tau-goal = { workspace = true, features = ["demo"] }
+tau-goal.workspace = true
 tau-jev.workspace = true
 tau-luau-plugins.workspace = true
 tau-mcp = { workspace = true, features = ["demo"] }

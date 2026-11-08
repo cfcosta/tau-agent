@@ -1,0 +1,466 @@
+{
+  "state": {
+    "checks": true,
+    "goal": {
+      "budget": 2,
+      "checks": [
+        {
+          "continuation": 1,
+          "cost": 0.000016674,
+          "met": false,
+          "n": 1,
+          "p": 0.12,
+          "spent": 0.12001667399999999,
+          "turn": 9
+        },
+        {
+          "continuation": 2,
+          "cost": 0.000016674,
+          "met": false,
+          "n": 2,
+          "p": 0.11,
+          "spent": 0.24003334799999998,
+          "turn": 11
+        },
+        {
+          "cost": 0.000016674,
+          "met": false,
+          "n": 3,
+          "p": 0.11,
+          "spent": 0.36005002199999997,
+          "turn": 13
+        }
+      ],
+      "condition": "Every lane has an owner in lanes.toml",
+      "continuations": 2,
+      "exhausted": "continuations",
+      "max_continuations": 2,
+      "spent": 0.36005002199999997,
+      "status": "stopped"
+    },
+    "held": {
+      "1": true,
+      "2": true
+    },
+    "notes": {
+      "g0": {
+        "detail": "check 1 · turn 9 · p 0.12 · continuing 1 of 2",
+        "text": "the goal is not met yet",
+        "tone": "warn"
+      },
+      "g1": {
+        "detail": "check 2 · turn 11 · p 0.11 · continuing 2 of 2",
+        "text": "the goal is not met yet",
+        "tone": "warn"
+      },
+      "g2": {
+        "detail": "check 3 · turn 13 · p 0.11 · not continuing",
+        "text": "the goal is not met yet",
+        "tone": "warn"
+      },
+      "g3": {
+        "detail": "before_stop",
+        "text": "stopped the goal: out of continuations, and it is not met",
+        "tone": "bad"
+      }
+    },
+    "said": {
+      "/goal --continuations 2 Every lane has an owner in lanes.toml": {
+        "goal": "Every lane has an owner in lanes.toml",
+        "text": "/goal --continuations 2 Every lane has an owner in lanes.toml"
+      },
+      "/goal Every lane has an owner in lanes.toml\n\nThis is your goal. Keep working until it holds. Each time you stop, tau-goal checks it against your last answer and your recent tool results, and sends you back if it does not hold yet, so run what proves it before you stop.": {
+        "goal": "Every lane has an owner in lanes.toml",
+        "text": "/goal Every lane has an owner in lanes.toml\n\nThis is your goal. Keep working until it holds. Each time you stop, tau-goal checks it against your last answer and your recent tool results, and sends you back if it does not hold yet, so run what proves it before you stop."
+      },
+      "tau-goal: the goal is not met yet (check 1, probability 0.12).\nGoal: Every lane has an owner in lanes.toml\n\nKeep working toward it, and run what proves it. Continuation 1 of 2.": {
+        "continuation": 1,
+        "text": "tau-goal: the goal is not met yet (check 1, probability 0.12).\nGoal: Every lane has an owner in lanes.toml\n\nKeep working toward it, and run what proves it. Continuation 1 of 2."
+      },
+      "tau-goal: the goal is not met yet (check 2, probability 0.11).\nGoal: Every lane has an owner in lanes.toml\n\nKeep working toward it, and run what proves it. Continuation 2 of 2.": {
+        "continuation": 2,
+        "text": "tau-goal: the goal is not met yet (check 2, probability 0.11).\nGoal: Every lane has an owner in lanes.toml\n\nKeep working toward it, and run what proves it. Continuation 2 of 2."
+      }
+    },
+    "turn": 13,
+    "unchecked": 0
+  },
+  "view": {
+    "banner": {
+      "children": [
+        {
+          "name": "target",
+          "piece": "icon",
+          "tone": "bad"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "piece": "badge",
+                  "text": "goal",
+                  "tone": "bad"
+                },
+                {
+                  "piece": "text",
+                  "text": "Every lane has an owner in lanes.toml"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "piece": "mono",
+              "text": "stopped: 2 of 2 continuations used · not met · $0.360"
+            }
+          ],
+          "piece": "stack"
+        },
+        {
+          "action": "act",
+          "args": {
+            "what": "keep_going"
+          },
+          "kind": "primary",
+          "label": "Keep going · +10",
+          "piece": "button"
+        },
+        {
+          "action": "act",
+          "args": {
+            "what": "edit"
+          },
+          "kind": "secondary",
+          "label": "Edit",
+          "piece": "button"
+        },
+        {
+          "action": "act",
+          "args": {
+            "what": "clear"
+          },
+          "kind": "secondary",
+          "label": "Clear",
+          "piece": "button"
+        }
+      ],
+      "piece": "row"
+    },
+    "inspector": {
+      "children": [
+        {
+          "children": [
+            {
+              "piece": "heading",
+              "text": "Goal"
+            },
+            {
+              "piece": "pill",
+              "text": "stopped · not met",
+              "tone": "bad"
+            }
+          ],
+          "piece": "row"
+        },
+        {
+          "piece": "rich",
+          "text": "Every lane has an owner in lanes.toml"
+        },
+        {
+          "piece": "text",
+          "text": "Checked when the agent stops · met at p ≥ 0.7 · up to 2 continuations and $2.00"
+        },
+        {
+          "piece": "heading",
+          "text": "Limits"
+        },
+        {
+          "label": "Continuations · 2 / 2",
+          "piece": "progress",
+          "share": 1
+        },
+        {
+          "label": "Cost · $0.360 / $2.00",
+          "piece": "progress",
+          "share": 0.18002501099999998
+        },
+        {
+          "piece": "heading",
+          "text": "Checks"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "piece": "mono",
+                  "text": "#3"
+                },
+                {
+                  "piece": "badge",
+                  "text": "not met",
+                  "tone": "warn"
+                },
+                {
+                  "piece": "text",
+                  "text": "stopped here"
+                },
+                {
+                  "piece": "mono",
+                  "text": "turn 13 · p 0.11"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "children": [
+                {
+                  "piece": "mono",
+                  "text": "#2"
+                },
+                {
+                  "piece": "badge",
+                  "text": "not met",
+                  "tone": "warn"
+                },
+                {
+                  "piece": "text",
+                  "text": "sent back, 2 of 2"
+                },
+                {
+                  "piece": "mono",
+                  "text": "turn 11 · p 0.11"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "children": [
+                {
+                  "piece": "mono",
+                  "text": "#1"
+                },
+                {
+                  "piece": "badge",
+                  "text": "not met",
+                  "tone": "warn"
+                },
+                {
+                  "piece": "text",
+                  "text": "sent back, 1 of 2"
+                },
+                {
+                  "piece": "mono",
+                  "text": "turn 9 · p 0.12"
+                }
+              ],
+              "piece": "row"
+            }
+          ],
+          "piece": "stack"
+        },
+        {
+          "piece": "rows",
+          "rows": [
+            {
+              "key": "checked by",
+              "value": "tau-goal · Jev"
+            },
+            {
+              "key": "Jev cost",
+              "value": "$0.00005"
+            }
+          ]
+        },
+        {
+          "piece": "text",
+          "text": "Jev reads the goal, the agent's last answer and its last tool results. When they fall short, the agent is sent back."
+        }
+      ],
+      "piece": "stack"
+    },
+    "messages": {
+      "/goal --continuations 2 Every lane has an owner in lanes.toml": {
+        "children": [
+          {
+            "children": [
+              {
+                "name": "target",
+                "piece": "icon",
+                "tone": "info"
+              },
+              {
+                "piece": "mono",
+                "text": "/goal"
+              },
+              {
+                "piece": "rich",
+                "text": "Every lane has an owner in lanes.toml"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "children": [
+              {
+                "piece": "badge",
+                "text": "up to 2 continuations",
+                "tone": "neutral"
+              },
+              {
+                "piece": "badge",
+                "text": "$2.00 budget",
+                "tone": "neutral"
+              },
+              {
+                "piece": "badge",
+                "text": "checked by Jev",
+                "tone": "neutral"
+              }
+            ],
+            "piece": "row"
+          }
+        ],
+        "piece": "stack"
+      },
+      "/goal Every lane has an owner in lanes.toml\n\nThis is your goal. Keep working until it holds. Each time you stop, tau-goal checks it against your last answer and your recent tool results, and sends you back if it does not hold yet, so run what proves it before you stop.": {
+        "children": [
+          {
+            "children": [
+              {
+                "name": "target",
+                "piece": "icon",
+                "tone": "info"
+              },
+              {
+                "piece": "mono",
+                "text": "/goal"
+              },
+              {
+                "piece": "rich",
+                "text": "Every lane has an owner in lanes.toml"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "children": [
+              {
+                "piece": "badge",
+                "text": "up to 2 continuations",
+                "tone": "neutral"
+              },
+              {
+                "piece": "badge",
+                "text": "$2.00 budget",
+                "tone": "neutral"
+              },
+              {
+                "piece": "badge",
+                "text": "checked by Jev",
+                "tone": "neutral"
+              }
+            ],
+            "piece": "row"
+          }
+        ],
+        "piece": "stack"
+      },
+      "tau-goal: the goal is not met yet (check 1, probability 0.12).\nGoal: Every lane has an owner in lanes.toml\n\nKeep working toward it, and run what proves it. Continuation 1 of 2.": {
+        "children": [],
+        "piece": "stack"
+      },
+      "tau-goal: the goal is not met yet (check 2, probability 0.11).\nGoal: Every lane has an owner in lanes.toml\n\nKeep working toward it, and run what proves it. Continuation 2 of 2.": {
+        "children": [],
+        "piece": "stack"
+      }
+    },
+    "notes": {
+      "g0": {
+        "children": [
+          {
+            "name": "target",
+            "piece": "icon",
+            "tone": "warn"
+          },
+          {
+            "piece": "text",
+            "text": "the goal is not met yet"
+          },
+          {
+            "piece": "mono",
+            "text": "check 1 · turn 9 · p 0.12 · continuing 1 of 2"
+          }
+        ],
+        "piece": "row"
+      },
+      "g1": {
+        "children": [
+          {
+            "name": "target",
+            "piece": "icon",
+            "tone": "warn"
+          },
+          {
+            "piece": "text",
+            "text": "the goal is not met yet"
+          },
+          {
+            "piece": "mono",
+            "text": "check 2 · turn 11 · p 0.11 · continuing 2 of 2"
+          }
+        ],
+        "piece": "row"
+      },
+      "g2": {
+        "children": [
+          {
+            "name": "target",
+            "piece": "icon",
+            "tone": "warn"
+          },
+          {
+            "piece": "text",
+            "text": "the goal is not met yet"
+          },
+          {
+            "piece": "mono",
+            "text": "check 3 · turn 13 · p 0.11 · not continuing"
+          }
+        ],
+        "piece": "row"
+      },
+      "g3": {
+        "children": [
+          {
+            "name": "target",
+            "piece": "icon",
+            "tone": "bad"
+          },
+          {
+            "piece": "text",
+            "text": "stopped the goal: out of continuations, and it is not met"
+          },
+          {
+            "piece": "mono",
+            "text": "before_stop"
+          }
+        ],
+        "piece": "row"
+      }
+    },
+    "row": {
+      "count": "2/2",
+      "icon": "target",
+      "line": "goal not met · Every lane has an owner in lanes.toml",
+      "phone_line": "goal · stopped: 2 of 2 continuations used · not met · $0.360",
+      "tone": "bad"
+    },
+    "status": {
+      "detail": null,
+      "piece": "status",
+      "text": "stopped, not met",
+      "tone": "neutral"
+    }
+  }
+}

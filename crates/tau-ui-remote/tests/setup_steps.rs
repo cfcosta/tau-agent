@@ -472,7 +472,7 @@ fn a_plugin_s_page_says_what_it_reads(cx: &mut TestAppContext) {
     );
     assert!(
         plugins::registry()
-            .get("tau-goal")
+            .get("tau-luau-plugins")
             .unwrap()
             .reads()
             .is_empty()

@@ -9957,21 +9957,11 @@ dependencies = [
 name = "tau-goal"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "async-trait",
- "futures-util",
- "hegeltest",
- "schemars",
- "serde",
  "serde_json",
- "tau-agent",
- "tau-ai",
  "tau-jev",
- "tau-store",
- "tau-store-sqlite",
+ "tau-luau-plugins-host",
  "tau-testing",
- "tau-ui-kit",
- "tau-ui-plugin",
+ "tokio-util",
 ]
 
 [[package]]
@@ -10021,6 +10011,7 @@ dependencies = [
  "tau-codemode",
  "tau-codemode-host",
  "tau-compaction-chain",
+ "tau-goal",
  "tau-jev",
  "tau-luau-plugins",
  "tau-plugins",
@@ -10246,7 +10237,6 @@ dependencies = [
  "tau-direnv",
  "tau-fast-compaction",
  "tau-github",
- "tau-goal",
  "tau-jev",
  "tau-luau-plugins",
  "tau-mcp",

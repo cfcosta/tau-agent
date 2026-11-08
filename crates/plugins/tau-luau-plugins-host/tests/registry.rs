@@ -364,6 +364,8 @@ return tau.plugin {
                 state: &state,
                 settings: Some(&serde_json::json!({ "step": 5 })),
                 chats: None,
+                live: false,
+                jev: false,
             },
         ))
     };

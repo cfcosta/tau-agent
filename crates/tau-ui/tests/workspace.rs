@@ -1396,7 +1396,7 @@ fn a_slash_lists_the_commands_that_work_here(cx: &mut TestAppContext) {
     skills.sort();
     let listed = skills.len();
     let mut expected: Vec<String> =
-        ["/agent", "/goal", "/plugin"].map(String::from).to_vec();
+        ["/agent", "/plugin", "/goal"].map(String::from).to_vec();
     expected.extend(skills);
     expected.extend(["/model", "/attach"].map(String::from));
     assert_eq!(names(composer_slash(&workspace, &mut cx, "/")), expected);
@@ -1454,46 +1454,6 @@ fn a_slash_lists_the_commands_that_work_here(cx: &mut TestAppContext) {
     );
 }
 
-/// tau-goal's state in `run`, as its fold leaves it.
-fn goal_of(
-    ws: &Workspace,
-    run: &tau_agent::tool::RunId,
-) -> tau_goal::ui::State {
-    ws.run(run)
-        .unwrap()
-        .plugin_states
-        .get(tau_goal::NAME)
-        .map(|state| serde_json::from_value(state.json().clone()).unwrap())
-        .unwrap_or_default()
-}
-
-/// The records tau-goal's UI stored, by run.
-fn goal_records(events: &[WorkspaceEvent]) -> Vec<(String, tau_goal::Record)> {
-    events
-        .iter()
-        .filter_map(|event| match event {
-            WorkspaceEvent::PluginRecord { run, plugin, body }
-                if plugin == tau_goal::NAME =>
-            {
-                Some((run.0.to_string(), tau_goal::Record::parse(body)?))
-            }
-            _ => None,
-        })
-        .collect()
-}
-
-/// Whether tau-goal checks `run` now, as the host says when it goes on.
-fn goal_checks(
-    run: &tau_agent::tool::RunId,
-    checks: bool,
-) -> tau_ui_remote::update::HostUpdate {
-    tau_ui_remote::update::HostUpdate::PluginFold {
-        run: run.clone(),
-        plugin: tau_goal::NAME.into(),
-        body: serde_json::json!({ "kind": "starting", "checks": checks }),
-    }
-}
-
 /// `/plugin` starts a chat in tau's plugins repository that loads the
 /// skill for writing one, wherever it is written; alone, it waits to be
 /// written.
@@ -1525,256 +1485,85 @@ fn slash_plugin_starts_a_chat_in_the_plugins_repository(
     );
 }
 
+/// A Luau plugin's command, typed in a chat, reaches its plugin on that
+/// chat with what its popover's inputs say (ADR 0050); typed outside a
+/// chat, it reaches it on no run, and what it sends starts one.
 #[gpui::test]
-fn slash_goal_sets_the_conversations_goal(cx: &mut TestAppContext) {
+fn a_luau_command_reaches_its_plugin_with_its_drafts(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_demo(cx);
     let done = tau_agent::tool::RunId("plugin-docs".into());
+    let draft = tau_ui_plugin::tree::draft_key(&format!(
+        "{}/goal-continuations",
+        tau_goal::NAME
+    ));
     workspace.update(&mut cx, |ws, cx| {
         ws.navigate(Route::Run(done.clone()), cx);
-        // /goal alone is not a goal yet: it stays, to be written.
-        ws.set_composer("/goal ", cx);
-        ws.submit_prompt("/goal".into(), cx);
-    });
-    workspace.update(&mut cx, |ws, cx| {
-        assert_eq!(ws.composer_text(cx), "/goal ");
-        ws.set_composer("", cx);
-        ws.submit_prompt(
-            "/goal Every lane has an owner in lanes.toml".into(),
+        ws.set_plugin_ui(
+            tau_luau_plugins::NAME,
+            draft.clone(),
+            Some(serde_json::json!("4")),
             cx,
         );
-    });
-    workspace.update(&mut cx, |ws, cx| {
-        // The host says the run went on with tau-goal.
-        ws.apply(goal_checks(&done, true), cx);
-        // Going on now: a new goal is stored for its next stop, and the
-        // model is told. Typed limits win over the popover's.
-        ws.set_composer("", cx);
-        ws.submit_prompt("/goal --continuations 3 it ships".into(), cx);
+        ws.submit_prompt("/goal it ships".into(), cx);
     });
     cx.run_until_parked();
-    {
-        let events = events.borrow();
-        let prompts: Vec<&str> = events
-            .iter()
-            .filter_map(|event| match event {
-                WorkspaceEvent::Say { text, .. } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect();
-        // The first goal went on with the run; the new one is told to
-        // the model, which reads it as its next turn starts.
-        assert_eq!(
-            prompts,
-            [
-                "/goal --continuations 10 --budget 2.00 Every lane has an \
-                 owner in lanes.toml",
-                &tau_goal::set_input("it ships"),
-            ]
-        );
-        assert_eq!(
-            goal_records(&events),
-            [(
-                "plugin-docs".to_owned(),
-                tau_goal::Record::Set {
-                    goal: "it ships".into(),
-                    continuations: 3,
-                    budget: 2.0,
-                }
-            )]
-        );
-    }
-    events.borrow_mut().clear();
-
-    // Going on without tau-goal (started before the key): the goal is
-    // kept for the next message, and the model is not told it is
-    // checked now.
     workspace.update(&mut cx, |ws, cx| {
-        ws.apply(goal_checks(&done, false), cx);
-        ws.set_composer("", cx);
-        ws.submit_prompt("/goal it ships later".into(), cx);
-    });
-    workspace.update(&mut cx, |ws, cx| {
-        assert!(ws.alert().is_some());
-        let goal = goal_of(ws, &done).goal.unwrap();
-        assert_eq!(goal.condition, "it ships later");
-        ws.dismiss_alert(cx);
-    });
-    {
-        let events = events.borrow();
-        assert!(goal_records(&events).iter().any(|(_, record)| matches!(
-            record,
-            tau_goal::Record::Set { goal, .. } if goal == "it ships later"
-        )));
-        assert!(
-            !events
-                .iter()
-                .any(|event| matches!(event, WorkspaceEvent::Say { .. })),
-            "the model is not told"
-        );
-    }
-    events.borrow_mut().clear();
-
-    // Without a TypeSafe key, the goal is not sent: nothing would check it.
-    workspace.update(&mut cx, |ws, cx| {
-        // The demo's bare catalog has no word from tau-jev: no key.
-        ws.set_catalog(demo::catalog(), cx);
         ws.navigate(Route::NewRun, cx);
         ws.submit_prompt("/goal it ships".into(), cx);
     });
-    workspace.update(&mut cx, |ws, cx| {
-        assert!(ws.alert().is_some());
-        assert_eq!(ws.composer_text(cx), "/goal it ships");
-    });
-    assert!(events.borrow().is_empty(), "{:?}", events.borrow());
-}
-
-/// Carries out a goal button's `act` on `run`, as a click does.
-fn goal_act(
-    workspace: &Entity<Workspace>,
-    cx: &mut VisualTestContext,
-    run: &tau_agent::tool::RunId,
-    act: tau_goal::ui::Act,
-) {
-    workspace.update(cx, |ws, cx| {
-        let goal = goal_of(ws, run).goal.unwrap();
-        let info = ws.run(run).unwrap().info();
-        let jev = ws
-            .catalog()
-            .plugin_data
-            .get(tau_jev::NAME)
-            .and_then(|data| data.json()["keyed"].as_bool())
-            .unwrap_or(false);
-        let handle = ws.plugin_handle(tau_goal::NAME);
-        tau_goal::ui::act(act, &info, &goal, jev, &handle);
-        ws.drain_plugin_requests(cx);
-    });
     cx.run_until_parked();
-}
-
-#[gpui::test]
-fn goal_buttons_store_changes_and_keep_going(cx: &mut TestAppContext) {
-    use tau_goal::{Record, Status, ui::Act};
-    let (workspace, mut cx, events) = open_demo(cx);
-    let stopped = tau_agent::tool::RunId("lane-audit".into());
-    let met = tau_agent::tool::RunId("mutants-triage".into());
-    workspace.update(&mut cx, |ws, cx| {
-        assert!(goal_of(ws, &stopped).goal.is_some());
-        let done = tau_agent::tool::RunId("plugin-docs".into());
-        assert!(goal_of(ws, &done).goal.is_none());
-        ws.navigate(Route::Run(stopped.clone()), cx);
-    });
-    // Keep going: more continuations, and the conversation goes on.
-    goal_act(&workspace, &mut cx, &stopped, Act::KeepGoing);
-    workspace.update(&mut cx, |ws, _| {
-        let goal = goal_of(ws, &stopped).goal.unwrap();
-        assert_eq!(goal.status, Status::Active);
-        assert_eq!(goal.max_continuations, 12);
-    });
-    // Edit puts the goal back in the composer.
-    goal_act(&workspace, &mut cx, &stopped, Act::Edit);
-    workspace.update(&mut cx, |ws, cx| {
-        assert_eq!(
-            ws.composer_text(cx),
-            "/goal Every lane has an owner in lanes.toml"
-        );
-    });
-    goal_act(&workspace, &mut cx, &stopped, Act::Pause);
-    goal_act(&workspace, &mut cx, &met, Act::Clear);
-    workspace.update(&mut cx, |ws, _| {
-        assert_eq!(goal_of(ws, &stopped).goal.unwrap().status, Status::Paused);
-        assert!(goal_of(ws, &met).goal.is_none());
-    });
-    let events = events.borrow();
+    let acts: Vec<(String, String, serde_json::Value)> = events
+        .borrow()
+        .iter()
+        .filter_map(|event| match event {
+            WorkspaceEvent::PluginAct { plugin, action, .. }
+                if plugin == tau_luau_plugins::NAME =>
+            {
+                match serde_json::from_value(action.clone()).ok()? {
+                    tau_luau_plugins::Act::Action {
+                        plugin,
+                        action,
+                        args,
+                        run,
+                        ..
+                    } if plugin == tau_goal::NAME => Some((action, run, args)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+        .collect();
     assert_eq!(
-        goal_records(&events),
+        acts,
         [
-            ("lane-audit".to_owned(), Record::Extended { by: 10 }),
-            ("lane-audit".to_owned(), Record::Paused),
-            ("mutants-triage".to_owned(), Record::Cleared),
+            (
+                "/goal".to_owned(),
+                "plugin-docs".to_owned(),
+                serde_json::json!({
+                    "text": "it ships",
+                    "drafts": { "goal-continuations": "4" },
+                })
+            ),
+            (
+                "/goal".to_owned(),
+                String::new(),
+                serde_json::json!({
+                    "text": "it ships",
+                    "drafts": { "goal-continuations": "4" },
+                })
+            ),
         ]
+    );
+    // tau-goal sends it, with the popover's limit: on the finished chat,
+    // which goes on, and outside a chat, which starts one.
+    let sent = "/goal --continuations 4 --budget 2.00 it ships";
+    let events = events.borrow();
+    assert!(
+        events.iter().any(|event| matches!(event,
+        WorkspaceEvent::Say { run, text, .. } if run == &done && text == sent))
     );
     assert!(events.iter().any(|event| matches!(event,
-        WorkspaceEvent::Say { run, text, .. }
-            if run == &stopped && text == tau_goal::ui::KEEP_GOING)));
-}
-
-/// Without a TypeSafe key a goal is not checked: the banner says so,
-/// Keep going says why it does not go on, and a change the host could
-/// not save is put back as stored.
-#[gpui::test]
-fn an_unchecked_goal_says_so(cx: &mut TestAppContext) {
-    use tau_goal::{Record, Status, ui::Act};
-    let (workspace, mut cx, events) = open_demo(cx);
-    let stopped = tau_agent::tool::RunId("lane-audit".into());
-    let set = || {
-        vec![
-            serde_json::to_value(Record::Set {
-                goal: "Every lane has an owner in lanes.toml".into(),
-                continuations: 10,
-                budget: 2.0,
-            })
-            .unwrap(),
-        ]
-    };
-    workspace.update(&mut cx, |ws, cx| {
-        let mut catalog = ws.catalog().clone();
-        catalog.plugin_data.insert(
-            tau_jev::NAME.into(),
-            tau_ui_plugin::PluginValue::typed(tau_jev::ui::Data::default()),
-        );
-        ws.set_catalog(catalog, cx);
-        ws.navigate(Route::Run(stopped.clone()), cx);
-        // A goal still to be met, then paused.
-        ws.apply(
-            tau_ui_remote::update::HostUpdate::PluginRestate {
-                run: stopped.clone(),
-                plugin: tau_goal::NAME.into(),
-                records: set(),
-            },
-            cx,
-        );
-    });
-    goal_act(&workspace, &mut cx, &stopped, Act::Pause);
-    workspace.update(&mut cx, |ws, _| {
-        let goal = goal_of(ws, &stopped).goal.unwrap();
-        assert_eq!(goal.status, Status::Paused);
-        let live = ws.run(&stopped).unwrap().info().live;
-        assert!(tau_goal::ui::unchecked(&goal, false, live, false).is_some());
-        assert!(tau_goal::ui::unchecked(&goal, true, live, false).is_none());
-    });
-    // The demo's host answered the pause with its catalog, which has a
-    // key: without one again.
-    workspace.update(&mut cx, |ws, cx| {
-        let mut catalog = ws.catalog().clone();
-        catalog.plugin_data.insert(
-            tau_jev::NAME.into(),
-            tau_ui_plugin::PluginValue::typed(tau_jev::ui::Data::default()),
-        );
-        ws.set_catalog(catalog, cx);
-    });
-    goal_act(&workspace, &mut cx, &stopped, Act::KeepGoing);
-    workspace.update(&mut cx, |ws, _| {
-        assert!(ws.alert().is_some(), "says it needs a key");
-    });
-    assert!(
-        !events
-            .borrow()
-            .iter()
-            .any(|event| matches!(event, WorkspaceEvent::Say { .. })),
-        "nothing goes on unchecked"
-    );
-    // The pause could not be saved: the host puts back what is stored.
-    workspace.update(&mut cx, |ws, cx| {
-        ws.apply(
-            tau_ui_remote::update::HostUpdate::PluginRestate {
-                run: stopped.clone(),
-                plugin: tau_goal::NAME.into(),
-                records: set(),
-            },
-            cx,
-        );
-        assert_eq!(goal_of(ws, &stopped).goal.unwrap().status, Status::Active);
-    });
+        WorkspaceEvent::NewRun { prompt, .. } if prompt == sent)));
 }
 
 /// What the person opens and picks in a transcript, against a model:
@@ -3587,7 +3376,7 @@ fn a_plugins_ui_state_set_on_a_phone_reaches_the_computer(
 
     phone.update(&mut phone_cx, |ws, cx| {
         ws.set_plugin_ui(
-            tau_goal::NAME,
+            tau_luau_plugins::NAME,
             "open",
             Some(serde_json::json!(true)),
             cx,
@@ -3595,7 +3384,10 @@ fn a_plugins_ui_state_set_on_a_phone_reaches_the_computer(
     });
     phone_cx.run_until_parked();
     let shown = |ws: &tau_ui_remote::workspace::Workspace| {
-        ws.synced().ui_state.get(tau_goal::NAME, "open").cloned()
+        ws.synced()
+            .ui_state
+            .get(tau_luau_plugins::NAME, "open")
+            .cloned()
     };
     assert_eq!(
         phone.update(&mut phone_cx, |ws, _| shown(ws)),

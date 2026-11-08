@@ -1161,7 +1161,17 @@ function test.run(spec)
 		state = spec.state or {},
 		logs = {},
 		data = {
-			run = { id = spec.id or "test", kind = spec.kind or "main", repo = "test", model = "test", turn = 1 },
+			-- `live` and `jev`, as an action sees them: `spec.live`, and
+			-- whether there is `spec.jev`.
+			run = {
+				id = spec.id or "test",
+				kind = spec.kind or "main",
+				repo = "test",
+				model = "test",
+				turn = 1,
+				live = spec.live == true,
+				jev = spec.jev ~= nil,
+			},
 			now = { unix = unix_of(now), iso = now, weekday = weekday(now) },
 			settings = spec.settings or defaults,
 			models = spec.models or array({}),
