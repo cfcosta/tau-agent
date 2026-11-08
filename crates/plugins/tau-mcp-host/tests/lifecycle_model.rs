@@ -847,11 +847,23 @@ async fn a_watch_survives_an_http_restart(legacy: bool) {
         connection.subscriptions(),
         fixture.subscribed_uris()
     );
-    // The same watch hears the restarted server's changes.
-    fixture.set_status("red").await;
-    let heard =
-        tokio::time::timeout(Duration::from_secs(5), watch.changed()).await;
-    assert_eq!(heard, Ok(true), "the watch heard the change");
+    // The same watch hears the restarted server's changes. The server
+    // holds a listen a moment before a change sent on it arrives (see
+    // `became_live`), so it says so until one is heard.
+    let mut heard = None;
+    for round in 0..25 {
+        fixture.set_status(&format!("red {round}")).await;
+        match tokio::time::timeout(Duration::from_millis(200), watch.changed())
+            .await
+        {
+            Ok(changed) => {
+                heard = Some(changed);
+                break;
+            }
+            Err(_) => continue,
+        }
+    }
+    assert_eq!(heard, Some(true), "the watch heard the change");
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -104,6 +104,9 @@ impl HttpServer {
     /// Forgets every session and ends their streams; from now on a
     /// request in one gets `unknown`.
     pub fn restart(&self, unknown: Unknown) {
+        // Before any new session can open one: a listen of the old ones
+        // takes nothing from here on.
+        self.state.sinks.lock().unwrap().clear();
         let (_, stop) = std::mem::replace(
             &mut *self.service.lock().unwrap(),
             Self::service(&self.state),

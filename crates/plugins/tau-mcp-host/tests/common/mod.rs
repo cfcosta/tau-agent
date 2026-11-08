@@ -111,7 +111,7 @@ pub struct State {
     /// order they came.
     pub order: Mutex<Vec<&'static str>>,
     peers: Mutex<Vec<Peer<RoleServer>>>,
-    sinks: Mutex<Vec<SubscriptionSink>>,
+    pub sinks: Mutex<Vec<SubscriptionSink>>,
     /// Stops the current connection's server.
     stop: Mutex<CancellationToken>,
     /// Stops each connection's server, the current one's last.
