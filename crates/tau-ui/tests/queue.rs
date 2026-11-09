@@ -153,8 +153,10 @@ fn setup(cx: &mut TestAppContext, llm: ScriptedModel) -> Setup {
 
 impl Setup {
     fn start(&mut self, prompt: &str) -> RunId {
-        let before =
-            self.workspace.read_with(&self.cx, |ws, _| ws.runs().len());
+        let main = self.main.clone();
+        let before: Vec<RunId> = self.workspace.read_with(&self.cx, |ws, _| {
+            ws.runs().iter().map(|run| run.id.clone()).collect()
+        });
         self.workspace.update(&mut self.cx, |ws, cx| {
             // A chat forked from main, as "New run" asks for once main
             // was talked to; on an untouched main the composer goes to main.
@@ -166,11 +168,18 @@ impl Setup {
             });
         });
         let workspace = self.workspace.clone();
+        // Not by counting: the main chat may reach the list first.
+        let started = move |ws: &Workspace| {
+            ws.runs()
+                .iter()
+                .map(|run| run.id.clone())
+                .find(|id| *id != main && !before.contains(id))
+        };
         until(&mut self.cx, "the run to start", |cx| {
-            workspace.read_with(cx, |ws, _| ws.runs().len() > before)
+            workspace.read_with(cx, |ws, _| started(ws).is_some())
         });
         self.workspace
-            .read_with(&self.cx, |ws, _| ws.runs()[0].id.clone())
+            .read_with(&self.cx, |ws, _| started(ws).expect("it started"))
     }
 
     fn finished(&mut self, run: &RunId) {
