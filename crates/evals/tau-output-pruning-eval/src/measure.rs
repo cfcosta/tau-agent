@@ -117,7 +117,7 @@ pub fn render(
     }
     format!(
         "{}\n{body}\n\n[full output: {archive} (read or grep it if needed)]",
-        tau_fast_compaction::HEADER
+        tau_luau_plugins::names::PRUNED_HEADER
     )
 }
 

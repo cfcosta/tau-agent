@@ -134,7 +134,7 @@ impl Llm for SharedLlm {
 /// tau-compaction as tau runs it (a Luau plugin, ADR 0050), by the
 /// window of the run's model, `model`, working in `repo`.
 pub async fn compaction(model: &str, repo: &Path) -> LuauPlugins {
-    let active = Active::built_in(tau_compaction::NAME)
+    let active = Active::built_in(tau_luau_plugins::names::COMPACTION)
         .await
         .expect("tau-compaction loads");
     LuauPlugins::new(

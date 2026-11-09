@@ -23,15 +23,7 @@ use serde_json::{Value, json};
 use tau_agent::{event::RunEvent, tool::RunId};
 use tau_demo as demo;
 use tau_luau_plugins::{Act, ActionDone, Record};
-use tau_luau_plugins_host::runtime::{
-    Context,
-    Files,
-    Hook,
-    Loaded,
-    NoReach,
-    PLUGIN,
-    load,
-};
+use tau_luau_plugins_host::runtime::{Context, Hook, Loaded, NoReach, load};
 use tau_testing::{block_on_io, git::git, scripted::ScriptedModel};
 use tau_ui::{
     accounts::Credentials,
@@ -144,7 +136,10 @@ fn host_on(llm: &ScriptedModel) -> (Host, UnboundedReceiver<RunEvent>) {
 fn ask_of(view: &RunView) -> Value {
     view.plugin_states
         .get(tau_luau_plugins::NAME)
-        .map(|state| state.json()["plugins"][tau_ask::NAME]["state"].clone())
+        .map(|state| {
+            state.json()["plugins"][tau_luau_plugins::names::ASK]["state"]
+                .clone()
+        })
         .unwrap_or_default()
 }
 
@@ -181,7 +176,7 @@ fn act(
     state: &Value,
 ) -> (Option<String>, Value) {
     let act = Act::Action {
-        plugin: tau_ask::NAME.into(),
+        plugin: tau_luau_plugins::names::ASK.into(),
         action: action.into(),
         args,
         run: run.0.to_string(),
@@ -314,16 +309,10 @@ type Events = Rc<RefCell<Vec<WorkspaceEvent>>>;
 
 /// tau-ask's Luau, as tau loads it.
 fn plugin() -> Loaded {
-    let paths: Vec<(String, Vec<u8>)> = tau_ask::FILES
-        .iter()
-        .filter(|(path, _)| !path.starts_with("tests/"))
-        .map(|(path, text)| ((*path).to_owned(), text.as_bytes().to_vec()))
-        .collect();
-    block_on_io(load(
-        tau_ask::NAME,
-        Files::from_paths(&paths, PLUGIN).unwrap(),
-    ))
-    .unwrap()
+    let files =
+        tau_luau_plugins_host::built_in::files(tau_luau_plugins::names::ASK)
+            .unwrap();
+    block_on_io(load(tau_luau_plugins::names::ASK, files)).unwrap()
 }
 
 /// `hook` with `input` on `state`, in `run`: its value and the state it
@@ -366,11 +355,11 @@ fn publish(
     let (view, _) = call(loaded, Hook::View, Value::Null, run, state.clone());
     for record in [
         Record::State {
-            plugin: tau_ask::NAME.into(),
+            plugin: tau_luau_plugins::names::ASK.into(),
             state,
         },
         Record::View {
-            plugin: tau_ask::NAME.into(),
+            plugin: tau_luau_plugins::names::ASK.into(),
             view,
         },
     ] {
@@ -452,7 +441,7 @@ impl Serving {
                 else {
                     continue;
                 };
-                assert_eq!(plugin, tau_ask::NAME);
+                assert_eq!(plugin, tau_luau_plugins::names::ASK);
                 let run = RunId(run.as_str().into());
                 let (value, after) = call(
                     &self.loaded,
@@ -609,7 +598,7 @@ fn the_panel_does_not_take_the_keys_from_a_message_being_written(
         };
         ws.plugin_action(
             tau_luau_plugins::NAME,
-            &format!("luau/{}/tau.cancel", tau_ask::NAME),
+            &format!("luau/{}/tau.cancel", tau_luau_plugins::names::ASK),
             &json!({}),
             &origin,
             cx,
@@ -686,7 +675,7 @@ fn two_waiting_runs_keep_their_own_answers(cx: &mut TestAppContext) {
             };
             ws.plugin_action(
                 tau_luau_plugins::NAME,
-                &format!("luau/{}/send", tau_ask::NAME),
+                &format!("luau/{}/send", tau_luau_plugins::names::ASK),
                 &json!({}),
                 &origin,
                 cx,

@@ -1966,9 +1966,9 @@ mod tests {
         let steps = tc.draw(gs::vecs(hegel::tuples!(
             gs::booleans(),
             gs::sampled_from(vec![
-                tau_goal::NAME,
+                tau_luau_plugins::names::GOAL,
                 "tau-constitution",
-                tau_reasoning::NAME,
+                tau_luau_plugins::names::REASONING,
             ]),
             // Multiples of 1/1024, so sums are exact.
             gs::integers::<u32>()
@@ -2829,7 +2829,7 @@ mod tests {
         // A summary replaced what came before it; an estimate over the
         // count is scaled down to it.
         view.items.push(Item::Rewrite {
-            plugin: tau_compaction::NAME.into(),
+            plugin: tau_luau_plugins::names::COMPACTION.into(),
             tokens: Some((5_000, 100)),
             key: None,
             idle: false,

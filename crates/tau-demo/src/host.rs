@@ -37,12 +37,12 @@ use tokio::{runtime::Runtime, sync::mpsc};
 /// What the demo's runs cost each plugin over the last 30 days, as the
 /// store would add it up.
 const SPEND: [(&str, f64); 7] = [
-    (tau_reasoning::NAME, 0.004),
+    (tau_luau_plugins::names::REASONING, 0.004),
     (tau_memory_host::NAME, 0.212),
-    (tau_constitution::NAME, 0.031),
-    (tau_fast_compaction::NAME, 0.046),
-    (tau_compaction::NAME, 0.061),
-    (tau_goal::NAME, 0.009),
+    (tau_luau_plugins::names::CONSTITUTION, 0.031),
+    (tau_luau_plugins::names::FAST_COMPACTION, 0.046),
+    (tau_luau_plugins::names::COMPACTION, 0.061),
+    (tau_luau_plugins::names::GOAL, 0.009),
     (tau_codemode::PLUGIN, 0.002),
 ];
 
@@ -319,13 +319,13 @@ fn scripted_jev() -> FakeJev {
 /// demo draws: each as it declares itself, from its fixture.
 fn luau_built_ins() -> (PluginInfo, PluginValue) {
     use tau_luau_plugins::{Entry, Overview, Standing};
-    let built_in = |name: &str, declared: &str| Entry {
+    let built_in = |name: &str| Entry {
         name: name.into(),
         description: String::new(),
         version: String::new(),
         standing: Standing::Active,
         declaration: Some(
-            serde_json::from_str(declared)
+            serde_json::from_value(crate::luau_fixture(name, "declaration"))
                 .expect("a declaration's fixture is one"),
         ),
         tests: Vec::new(),
@@ -335,22 +335,13 @@ fn luau_built_ins() -> (PluginInfo, PluginValue) {
     let overview = Overview {
         commit: None,
         plugins: vec![
-            built_in(
-                tau_constitution::NAME,
-                tau_constitution::DEMO_DECLARATION,
-            ),
-            built_in(tau_goal::NAME, tau_goal::DEMO_DECLARATION),
-            built_in(tau_ask::NAME, tau_ask::DEMO_DECLARATION),
-            built_in(
-                tau_fast_compaction::NAME,
-                tau_fast_compaction::DEMO_DECLARATION,
-            ),
-            built_in(tau_compaction::NAME, tau_compaction::DEMO_DECLARATION),
-            built_in(
-                tau_tree_compaction::NAME,
-                tau_tree_compaction::DEMO_DECLARATION,
-            ),
-            built_in(tau_reasoning::NAME, tau_reasoning::DEMO_DECLARATION),
+            built_in(tau_luau_plugins::names::CONSTITUTION),
+            built_in(tau_luau_plugins::names::GOAL),
+            built_in(tau_luau_plugins::names::ASK),
+            built_in(tau_luau_plugins::names::FAST_COMPACTION),
+            built_in(tau_luau_plugins::names::COMPACTION),
+            built_in(tau_luau_plugins::names::TREE_COMPACTION),
+            built_in(tau_luau_plugins::names::REASONING),
         ],
         error: None,
     };
@@ -398,11 +389,12 @@ fn luau_page(plugin: &str, action: &Value) -> Option<Value> {
     else {
         return None;
     };
-    if plugin != tau_luau_plugins::NAME || luau != tau_constitution::NAME {
+    if plugin != tau_luau_plugins::NAME
+        || luau != tau_luau_plugins::names::CONSTITUTION
+    {
         return None;
     }
-    let pages: Value = serde_json::from_str(tau_constitution::DEMO_PAGES)
-        .expect("the pages' fixture is JSON");
+    let pages = crate::luau_fixture(&luau, "pages");
     let screen = params.get("demo").map_or("constitution", String::as_str);
     let repo = params.get("repo").map_or("", String::as_str);
     let tree = tau_luau_plugins::ui::embed_repo(&pages[screen], &luau, repo);

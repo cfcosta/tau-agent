@@ -140,14 +140,15 @@ fn reasoning_of(view: &RunView) -> Value {
     view.plugin_states
         .get(tau_luau_plugins::NAME)
         .map(|state| {
-            state.json()["plugins"][tau_reasoning::NAME]["state"].clone()
+            state.json()["plugins"][tau_luau_plugins::names::REASONING]["state"]
+                .clone()
         })
         .unwrap_or_default()
 }
 
 /// The key a note of tau-reasoning's is anchored at, if `key` is one.
 fn note_key(key: &str) -> Option<&str> {
-    key.strip_prefix(&format!("note-{}-", tau_reasoning::NAME))
+    key.strip_prefix(&format!("note-{}-", tau_luau_plugins::names::REASONING))
 }
 
 /// A Jev that scores each request with `probabilities`, one per level,
@@ -200,7 +201,7 @@ fn it_is_listed_among_the_luau_plugins() {
     let entry = luau
         .entries
         .iter()
-        .find(|entry| entry.name == tau_reasoning::NAME)
+        .find(|entry| entry.name == tau_luau_plugins::names::REASONING)
         .unwrap_or_else(|| panic!("tau-reasoning is a row: {luau:?}"));
     assert_eq!(entry.note, None, "it loads and passes its tests");
 }
@@ -270,7 +271,7 @@ fn reasoning_settings_reach_the_plugin() {
     settings.plugins.insert(
         tau_luau_plugins::NAME.into(),
         json!({ "plugins": {
-            tau_reasoning::NAME: { "redecide": true, "threshold": 0.9 },
+            tau_luau_plugins::names::REASONING: { "redecide": true, "threshold": 0.9 },
         } }),
     );
     host.block_on(host.save_settings(settings)).unwrap();

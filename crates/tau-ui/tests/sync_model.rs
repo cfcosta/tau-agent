@@ -125,7 +125,7 @@ impl Asked {
                 // tau-goal's state with a goal (ADR 0050).
                 if let Ok(tau_luau_plugins::Record::State { plugin, state }) =
                     serde_json::from_value(body.clone())
-                    && plugin == tau_goal::NAME
+                    && plugin == tau_luau_plugins::names::GOAL
                     && let Some(goal) = state["goal"]["condition"].as_str()
                 {
                     self.goals.insert(run.clone(), goal.to_owned());
@@ -289,7 +289,7 @@ impl Asked {
                 .find(|view| &view.id == run)
                 .and_then(|view| view.plugin_states.get(tau_luau_plugins::NAME))
                 .and_then(|state| {
-                    state.json()["plugins"][tau_goal::NAME]["state"]["goal"]
+                    state.json()["plugins"][tau_luau_plugins::names::GOAL]["state"]["goal"]
                         ["condition"]
                         .as_str()
                         .map(str::to_owned)
@@ -495,7 +495,7 @@ impl Tau {
         // As tau-goal's command leaves it: its state, kept by
         // tau-luau-plugins (ADR 0050).
         let record = tau_luau_plugins::Record::State {
-            plugin: tau_goal::NAME.into(),
+            plugin: tau_luau_plugins::names::GOAL.into(),
             state: serde_json::json!({ "goal": {
                 "condition": goal, "max_continuations": 1, "budget": 1.0,
                 "status": "active", "continuations": 0, "spent": 0, "checks": [],

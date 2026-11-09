@@ -161,7 +161,7 @@ fn wait_until_done(host: &Host, run: &RunId) {
 /// does.
 fn page_act(host: &Host, action: &str, args: Value) {
     let act = tau_luau_plugins::Act::RepoAction {
-        plugin: tau_constitution::NAME.into(),
+        plugin: tau_luau_plugins::names::CONSTITUTION.into(),
         repo: REPO.into(),
         action: action.into(),
         args,
@@ -176,7 +176,7 @@ fn page_act(host: &Host, action: &str, args: Value) {
 /// The rules page, as text.
 fn page(host: &Host) -> String {
     let act = tau_luau_plugins::Act::Page {
-        plugin: tau_constitution::NAME.into(),
+        plugin: tau_luau_plugins::names::CONSTITUTION.into(),
         page: "rules".into(),
         params: [("repo".to_owned(), REPO.to_owned())].into(),
         jev: true,
@@ -195,7 +195,9 @@ fn page(host: &Host) -> String {
 fn kept(host: &Host) -> Value {
     let catalog = host.block_on(host.catalog());
     let repo = catalog.repos.iter().find(|repo| repo.name == REPO).unwrap();
-    repo.plugins[tau_luau_plugins::NAME].json()[tau_constitution::NAME].clone()
+    repo.plugins[tau_luau_plugins::NAME].json()
+        [tau_luau_plugins::names::CONSTITUTION]
+        .clone()
 }
 
 /// tau-constitution's state in `view`, as tau-luau-plugins' fold keeps it.
@@ -203,7 +205,7 @@ fn checks_of(view: &RunView) -> Value {
     view.plugin_states
         .get(tau_luau_plugins::NAME)
         .map(|state| {
-            state.json()["plugins"][tau_constitution::NAME]["state"].clone()
+            state.json()["plugins"][tau_luau_plugins::names::CONSTITUTION]["state"].clone()
         })
         .unwrap_or_default()
 }
@@ -315,7 +317,10 @@ fn a_broken_constitution_can_be_removed_and_settings_are_saved() {
         host.plugin_dir(tau_luau_plugins::NAME).join("stores"),
     );
     host.block_on(async {
-        let kv = stores.of(tau_constitution::NAME, REPO).await.unwrap();
+        let kv = stores
+            .of(tau_luau_plugins::names::CONSTITUTION, REPO)
+            .await
+            .unwrap();
         let mut session = kv.session().await;
         session.put(
             "constitution",
@@ -348,7 +353,7 @@ fn a_broken_constitution_can_be_removed_and_settings_are_saved() {
     page_act(&host, "write", json!({ "text": "No unwrap." }));
     page_act(&host, "place", json!({ "place": "write.content" }));
     let act = tau_luau_plugins::Act::RepoAction {
-        plugin: tau_constitution::NAME.into(),
+        plugin: tau_luau_plugins::names::CONSTITUTION.into(),
         repo: REPO.into(),
         action: "save".into(),
         args: json!({}),

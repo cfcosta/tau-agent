@@ -499,7 +499,7 @@ fn a_large_output_is_pruned_into_tau_s_archive() {
         view.plugin_states[tau_luau_plugins::NAME].json().clone(),
     )
     .unwrap();
-    let pruning = &luau.plugins[tau_fast_compaction::NAME];
+    let pruning = &luau.plugins[tau_luau_plugins::names::FAST_COMPACTION];
     assert_eq!(pruning.state["on"], true);
     assert_eq!(pruning.state["outputs"].as_array().unwrap().len(), 1);
 

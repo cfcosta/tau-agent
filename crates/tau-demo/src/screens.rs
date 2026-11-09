@@ -28,7 +28,11 @@ pub static SCREENS: &[(&str, Screen)] = &[
     // under tau-luau-plugins.
     ("plugins-compaction", |ws, _, cx| {
         ws.navigate(Route::Plugins, cx);
-        ws.pick_plugin(tau_luau_plugins::NAME, Some(tau_compaction::NAME), cx);
+        ws.pick_plugin(
+            tau_luau_plugins::NAME,
+            Some(tau_luau_plugins::names::COMPACTION),
+            cx,
+        );
     }),
     ("models", |ws, _, cx| ws.navigate(Route::Models, cx)),
     ("plan", |ws, _, cx| ws.navigate(Route::Plan(run_id()), cx)),
@@ -135,7 +139,7 @@ pub static SCREENS: &[(&str, Screen)] = &[
             page: tau_luau_plugins::ui::PAGE.into(),
             params: [(
                 tau_ui_plugin::ENTRY.to_owned(),
-                tau_fast_compaction::NAME.to_owned(),
+                tau_luau_plugins::names::FAST_COMPACTION.to_owned(),
             )]
             .into(),
         };
@@ -443,15 +447,9 @@ pub static SCREENS: &[(&str, Screen)] = &[
     ("ask-review", |ws, _, cx| ask(ws, "ask-review", cx)),
     // tau-watcher (ADR 0032): a new note with its band, the note with
     // its explanation open, and the note answered "knew this".
-    ("watcher", |ws, _, cx| {
-        watcher(ws, tau_watcher::DEMO_NEW, cx)
-    }),
-    ("watcher-open", |ws, _, cx| {
-        watcher(ws, tau_watcher::DEMO_LEARNED, cx)
-    }),
-    ("watcher-known", |ws, _, cx| {
-        watcher(ws, tau_watcher::DEMO_KNEW, cx)
-    }),
+    ("watcher", |ws, _, cx| watcher(ws, "new", cx)),
+    ("watcher-open", |ws, _, cx| watcher(ws, "learned", cx)),
+    ("watcher-known", |ws, _, cx| watcher(ws, "knew", cx)),
     // tau-direnv (ADR 0025): the question in the composer's place, the
     // environment loading, a load that failed, and the repository
     // menu's toggle.
@@ -558,7 +556,8 @@ pub static SCREENS: &[(&str, Screen)] = &[
     // Its chart is a section of the note, open in the UI state (ADR 0045).
     ("note-open", |ws, _, cx| {
         ws.toggle_note(&run_id(), 1, cx);
-        let open = format!("{}/note-n0.open", tau_reasoning::NAME);
+        let open =
+            format!("{}/note-n0.open", tau_luau_plugins::names::REASONING);
         ws.set_plugin_ui(tau_luau_plugins::NAME, open, Some(json!(true)), cx);
     }),
     // tau-reasoning keeping a long conversation's effort over Jev's
@@ -574,7 +573,7 @@ pub static SCREENS: &[(&str, Screen)] = &[
             page: tau_luau_plugins::ui::PAGE.into(),
             params: [(
                 tau_ui_plugin::ENTRY.to_owned(),
-                tau_reasoning::NAME.to_owned(),
+                tau_luau_plugins::names::REASONING.to_owned(),
             )]
             .into(),
         };
@@ -1682,7 +1681,7 @@ fn rules_at(
         other => (other, 0),
     };
     let link = tau_luau_plugins::ui::repo_page_link(
-        tau_constitution::NAME,
+        tau_luau_plugins::names::CONSTITUTION,
         "rules",
         "tau-agent",
     )
@@ -1697,7 +1696,8 @@ fn rules_at(
     );
     // The second tab: what waits for review, in the UI state (ADR 0045).
     if tab > 0 {
-        let tabs = format!("{}/rules-tabs", tau_constitution::NAME);
+        let tabs =
+            format!("{}/rules-tabs", tau_luau_plugins::names::CONSTITUTION);
         workspace.set_plugin_ui(
             tau_luau_plugins::NAME,
             tau_ui_plugin::tree::tab_key(&tabs),
@@ -1711,7 +1711,7 @@ fn rules_at(
 /// of high, its conversation's prefix being 48k tokens: tau-reasoning's
 /// state and view from its fixture (ADR 0050).
 fn effort_kept(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
-    for body in crate::reasoning(tau_reasoning::DEMO_KEPT) {
+    for body in crate::reasoning("kept") {
         let event = RunEvent::PluginReport {
             run: run_id(),
             plugin: tau_luau_plugins::NAME.into(),
@@ -1730,11 +1730,11 @@ fn goal_at(
 ) {
     workspace.navigate(Route::Run(run_id()), cx);
     let fixture = match state {
-        "met" => tau_goal::DEMO_MET,
-        "stopped" => tau_goal::DEMO_STOPPED,
-        _ => tau_goal::DEMO_WORKING,
+        "met" => "met",
+        "stopped" => "stopped",
+        _ => "working",
     };
-    for body in crate::luau(tau_goal::NAME, fixture) {
+    for body in crate::luau(tau_luau_plugins::names::GOAL, fixture) {
         let event = RunEvent::PluginReport {
             run: run_id(),
             plugin: tau_luau_plugins::NAME.into(),
@@ -1850,11 +1850,11 @@ fn ask(workspace: &mut Workspace, open: &str, cx: &mut Context<Workspace>) {
     let run = run_id();
     workspace.navigate(Route::Run(run.clone()), cx);
     let fixture = match open {
-        "ask-note" => tau_ask::DEMO_NOTE,
-        "ask-review" => tau_ask::DEMO_REVIEW,
-        _ => tau_ask::DEMO_ASK,
+        "ask-note" => "note",
+        "ask-review" => "review",
+        _ => "ask",
     };
-    for body in crate::luau(tau_ask::NAME, fixture) {
+    for body in crate::luau(tau_luau_plugins::names::ASK, fixture) {
         workspace.apply(
             HostUpdate::PluginFold {
                 run: run.clone(),
@@ -1881,10 +1881,9 @@ fn watcher(
     // for the script to play out.
     let played: std::time::Duration =
         crate::script().iter().map(|(wait, _)| *wait).sum();
-    let fixture: serde_json::Value =
-        serde_json::from_str(shown).expect("tau-watcher's fixtures are JSON");
+    let fixture = crate::luau_fixture(tau_luau_plugins::names::WATCHER, shown);
     let record = tau_luau_plugins::Record::View {
-        plugin: tau_watcher::NAME.into(),
+        plugin: tau_luau_plugins::names::WATCHER.into(),
         view: fixture["view"].clone(),
     };
     cx.spawn(async move |this, cx| {
@@ -2201,7 +2200,7 @@ fn sidebar_states(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         ),
         cx,
     );
-    for body in crate::luau(tau_ask::NAME, tau_ask::DEMO_SWEEP) {
+    for body in crate::luau(tau_luau_plugins::names::ASK, "sweep") {
         workspace.apply(
             HostUpdate::PluginFold {
                 run: RunId("sweep-workspaces".into()),

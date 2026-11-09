@@ -114,7 +114,7 @@ fn the_sidebar_says_what_each_chat_needs(cx: &mut TestAppContext) {
         run: id("asks"),
         plugin: tau_luau_plugins::NAME.into(),
         body: serde_json::to_value(tau_luau_plugins::Record::View {
-            plugin: tau_ask::NAME.into(),
+            plugin: tau_luau_plugins::names::ASK.into(),
             view: asks,
         })
         .unwrap(),

@@ -218,7 +218,7 @@ fn the_model_text_marks_what_was_left_out() {
     let mut view = started();
     let seen = format!(
         "{}\nStarting\n[1960 lines omitted]\nSummary\n\n[full output: /a.txt (read or grep it if needed)]",
-        tau_fast_compaction::HEADER
+        tau_luau_plugins::names::PRUNED_HEADER
     );
     view.apply(&RunEvent::ToolEnd {
         run: run(),
@@ -232,7 +232,7 @@ fn the_model_text_marks_what_was_left_out() {
     });
     // fast-compaction's view says the card's output was cut (ADR 0050).
     let record = tau_luau_plugins::Record::View {
-        plugin: tau_fast_compaction::NAME.into(),
+        plugin: tau_luau_plugins::names::FAST_COMPACTION.into(),
         view: json!({ "calls": { "c1": { "cut": {
             "kept": 4, "lines": 1964, "archive": "/a.txt",
             "tokens_before": 9000, "tokens_after": 40, "cost": 0.0,

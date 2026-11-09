@@ -369,7 +369,7 @@ fn titles_are_written_with_the_persons_model_and_booked_to_tau_titles() {
     let booked = host
         .block_on(store.query("SELECT plugin FROM plugin_usage", 10))
         .unwrap();
-    assert_eq!(booked.rows, [[tau_titles::NAME]]);
+    assert_eq!(booked.rows, [[tau_luau_plugins::names::TITLES]]);
 }
 
 /// The host's store is opened by what fills `tau.store`, tau-sqlite, at
@@ -415,9 +415,9 @@ fn the_chain_compacts() {
         rewriters,
         [
             tau_luau_plugins::NAME,
-            tau_fast_compaction::NAME,
-            tau_tree_compaction::NAME,
-            tau_compaction::NAME,
+            tau_luau_plugins::names::FAST_COMPACTION,
+            tau_luau_plugins::names::TREE_COMPACTION,
+            tau_luau_plugins::names::COMPACTION,
         ]
     );
 }

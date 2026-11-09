@@ -136,14 +136,17 @@ fn wait_until_done(host: &Host, run: &RunId) {
 fn goal_of(view: &RunView) -> Value {
     view.plugin_states
         .get(tau_luau_plugins::NAME)
-        .map(|state| state.json()["plugins"][tau_goal::NAME]["state"].clone())
+        .map(|state| {
+            state.json()["plugins"][tau_luau_plugins::names::GOAL]["state"]
+                .clone()
+        })
         .unwrap_or_default()
 }
 
 /// The text of tau-goal's notes in `view`'s transcript, in order.
 fn goal_notes(view: &RunView) -> Vec<String> {
     let state = goal_of(view);
-    let prefix = format!("note-{}-", tau_goal::NAME);
+    let prefix = format!("note-{}-", tau_luau_plugins::names::GOAL);
     view.items
         .iter()
         .filter_map(|item| match item {
@@ -159,7 +162,7 @@ fn goal_notes(view: &RunView) -> Vec<String> {
 /// Stores `state` as tau-goal's with `run`, as an interface does.
 fn store_state(host: &Host, run: &RunId, state: Value) {
     let record = tau_luau_plugins::Record::State {
-        plugin: tau_goal::NAME.into(),
+        plugin: tau_luau_plugins::names::GOAL.into(),
         state,
     };
     host.block_on(host.store_plugin_record(
@@ -174,7 +177,7 @@ fn store_state(host: &Host, run: &RunId, state: Value) {
 /// `state`, and stores what it left, as the interface does.
 fn click(host: &Host, run: &RunId, what: &str, state: Value) {
     let act = tau_luau_plugins::Act::Action {
-        plugin: tau_goal::NAME.into(),
+        plugin: tau_luau_plugins::names::GOAL.into(),
         action: "act".into(),
         args: json!({ "what": what }),
         run: run.0.to_string(),

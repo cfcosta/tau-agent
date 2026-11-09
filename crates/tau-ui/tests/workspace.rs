@@ -589,7 +589,8 @@ fn reasoning_draws_its_own_ui(cx: &mut TestAppContext) {
         let plan = ws.run_plan(&view);
         assert!(plan.iter().any(|field| field.name == "reasoning"
             && field.value == "high"
-            && field.set_by.as_deref() == Some(tau_reasoning::NAME)));
+            && field.set_by.as_deref()
+                == Some(tau_luau_plugins::names::REASONING)));
         let statuses = ws.run_statuses(&view);
         assert!(
             statuses
@@ -604,7 +605,7 @@ fn reasoning_draws_its_own_ui(cx: &mut TestAppContext) {
                 page: tau_luau_plugins::ui::PAGE.into(),
                 params: [(
                     tau_ui_plugin::ENTRY.to_owned(),
-                    tau_reasoning::NAME.to_owned(),
+                    tau_luau_plugins::names::REASONING.to_owned(),
                 )]
                 .into(),
             },
@@ -1494,7 +1495,7 @@ fn a_luau_command_reaches_its_plugin_with_its_drafts(cx: &mut TestAppContext) {
     let done = tau_agent::tool::RunId("plugin-docs".into());
     let draft = tau_ui_plugin::tree::draft_key(&format!(
         "{}/goal-continuations",
-        tau_goal::NAME
+        tau_luau_plugins::names::GOAL
     ));
     workspace.update(&mut cx, |ws, cx| {
         ws.navigate(Route::Run(done.clone()), cx);
@@ -1526,7 +1527,9 @@ fn a_luau_command_reaches_its_plugin_with_its_drafts(cx: &mut TestAppContext) {
                         args,
                         run,
                         ..
-                    } if plugin == tau_goal::NAME => Some((action, run, args)),
+                    } if plugin == tau_luau_plugins::names::GOAL => {
+                        Some((action, run, args))
+                    }
                     _ => None,
                 }
             }

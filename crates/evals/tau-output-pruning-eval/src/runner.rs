@@ -22,9 +22,8 @@ use tau_agent::{
     tool::{AgentTool, ToolCtx, ToolOutput},
 };
 use tau_ai::message::{InputBlock, Message};
-use tau_fast_compaction::NAME;
 use tau_jev::{Jev, JevError, Request, Response};
-use tau_luau_plugins::Record;
+use tau_luau_plugins::{Record, names::FAST_COMPACTION as NAME};
 use tau_luau_plugins_host::agent::{Active, LuauPlugins};
 use tau_testing::scripted::ScriptedModel;
 use tau_tools_host::truncate::{MAX_BYTES, MAX_LINES, truncate_tail};

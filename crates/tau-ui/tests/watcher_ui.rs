@@ -13,15 +13,7 @@ use std::sync::Arc;
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use serde_json::{Value, json};
 use tau_demo as demo;
-use tau_luau_plugins_host::runtime::{
-    Context,
-    Files,
-    Hook,
-    Loaded,
-    NoReach,
-    PLUGIN,
-    load,
-};
+use tau_luau_plugins_host::runtime::{Context, Hook, Loaded, NoReach, load};
 use tau_ui_plugin::points::{self, AtAnchor, AtRun};
 use tau_ui_remote::{
     Workspace,
@@ -51,12 +43,12 @@ fn open(cx: &mut TestAppContext) -> (Entity<Workspace>, VisualTestContext) {
 }
 
 fn watcher() -> Loaded {
-    let paths: Vec<(String, Vec<u8>)> = tau_watcher::FILES
-        .iter()
-        .map(|(path, source)| ((*path).to_owned(), source.as_bytes().to_vec()))
-        .collect();
-    let files = Files::from_paths(&paths, PLUGIN).unwrap();
-    tau_testing::block_on_io(load(tau_watcher::NAME, files)).unwrap()
+    let files = tau_luau_plugins_host::built_in::files(
+        tau_luau_plugins::names::WATCHER,
+    )
+    .unwrap();
+    tau_testing::block_on_io(load(tau_luau_plugins::names::WATCHER, files))
+        .unwrap()
 }
 
 /// A run's watcher state with one note, `status`, written past
@@ -97,7 +89,7 @@ fn fold(
     ));
     assert_eq!(view.error, None);
     let record = tau_luau_plugins::Record::View {
-        plugin: tau_watcher::NAME.into(),
+        plugin: tau_luau_plugins::names::WATCHER.into(),
         view: view.value,
     };
     let update = HostUpdate::PluginFold {
@@ -119,7 +111,7 @@ fn drawn(
         let run = ws.run(&demo::run_id()).unwrap().info();
         let anchor = AtAnchor {
             run: run.clone(),
-            key: format!("note-{}-n0", tau_watcher::NAME),
+            key: format!("note-{}-n0", tau_luau_plugins::names::WATCHER),
             index: 0,
         };
         (

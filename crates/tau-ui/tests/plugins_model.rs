@@ -1412,12 +1412,9 @@ impl Tau {
     /// with its own buttons.
     #[rule]
     fn set_goal(&mut self, tc: TestCase) {
-        let fixture = tc.draw(gs::sampled_from(vec![
-            tau_goal::DEMO_WORKING,
-            tau_goal::DEMO_MET,
-            tau_goal::DEMO_STOPPED,
-        ]));
-        for body in tau_demo::luau(tau_goal::NAME, fixture) {
+        let fixture =
+            tc.draw(gs::sampled_from(vec!["working", "met", "stopped"]));
+        for body in tau_demo::luau(tau_luau_plugins::names::GOAL, fixture) {
             self.inbox.borrow_mut().push_back((
                 None,
                 WorkspaceEvent::PluginRecord {

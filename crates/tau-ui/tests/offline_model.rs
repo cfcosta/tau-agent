@@ -143,7 +143,7 @@ fn goal_set(body: &Value) -> Option<String> {
     else {
         return None;
     };
-    (plugin == tau_goal::NAME)
+    (plugin == tau_luau_plugins::names::GOAL)
         .then(|| state["goal"]["condition"].as_str().map(str::to_owned))?
 }
 
@@ -151,7 +151,7 @@ fn goal_set(body: &Value) -> Option<String> {
 fn goal(synced: &Synced, run: &RunId) -> Option<String> {
     let view = synced.runs.iter().find(|view| &view.id == run)?;
     let luau = view.plugin_states.get(tau_luau_plugins::NAME)?.json();
-    luau["plugins"][tau_goal::NAME]["state"]["goal"]["condition"]
+    luau["plugins"][tau_luau_plugins::names::GOAL]["state"]["goal"]["condition"]
         .as_str()
         .map(str::to_owned)
 }
@@ -457,7 +457,7 @@ impl Tau {
         // As tau-goal's command leaves it: its state, kept by
         // tau-luau-plugins (ADR 0050).
         let record = tau_luau_plugins::Record::State {
-            plugin: tau_goal::NAME.into(),
+            plugin: tau_luau_plugins::names::GOAL.into(),
             state: json!({ "goal": {
                 "condition": goal, "max_continuations": 1, "budget": 1.0,
                 "status": "active", "continuations": 0, "spent": 0, "checks": [],

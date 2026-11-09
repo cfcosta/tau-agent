@@ -413,7 +413,7 @@ impl UiPlugin for AgentsUi {
             },
             first_files: crate::repository::first_files,
             sandboxed: true,
-            without: &[tau_ask::NAME],
+            without: &[tau_luau_plugins::names::ASK],
         }]
     }
 

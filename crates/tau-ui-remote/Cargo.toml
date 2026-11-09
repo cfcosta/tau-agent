@@ -16,14 +16,9 @@ tempfile.workspace = true
 tau-plugins.workspace = true
 tau-chatgpt = { path = "../plugins/tau-chatgpt", default-features = false }
 tau-codemode.workspace = true
-tau-compaction.workspace = true
-tau-fast-compaction.workspace = true
-tau-reasoning.workspace = true
 tau-memory.workspace = true
-tau-ask.workspace = true
 tau-luau-plugins.workspace = true
 tau-tools.workspace = true
-tau-goal.workspace = true
 tau-vcs.workspace = true
 tau-agents.workspace = true
 

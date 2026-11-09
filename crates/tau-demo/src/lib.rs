@@ -93,8 +93,7 @@ pub fn retry_after() -> RunView {
         before: None,
     };
     // fast-compaction runs with it, a Luau plugin (ADR 0050).
-    for record in
-        luau_step(tau_fast_compaction::NAME, tau_fast_compaction::DEMO_RUN, 0)
+    for record in luau_step(tau_luau_plugins::names::FAST_COMPACTION, "run", 0)
     {
         view.fold(tau_luau_plugins::NAME, &record);
     }
@@ -103,7 +102,7 @@ pub fn retry_after() -> RunView {
 }
 
 /// The condition the demo's goals share.
-pub const GOAL: &str = tau_goal::DEMO_GOAL;
+pub const GOAL: &str = "All tests in tau-ai pass and cargo clippy is clean";
 
 /// Finished runs for the run list: a run with a fork to compare, and
 /// older runs with only their outcome.
@@ -237,11 +236,11 @@ pub fn history() -> Vec<RunView> {
             match title {
                 "mutants-triage" => view.restate(
                     tau_luau_plugins::NAME,
-                    &luau(tau_goal::NAME, tau_goal::DEMO_TRIAGE),
+                    &luau(tau_luau_plugins::names::GOAL, "triage"),
                 ),
                 "lane-audit" => view.restate(
                     tau_luau_plugins::NAME,
-                    &luau(tau_goal::NAME, tau_goal::DEMO_LANES),
+                    &luau(tau_luau_plugins::names::GOAL, "lanes"),
                 ),
                 _ => {}
             }
@@ -1638,7 +1637,7 @@ pub fn models() -> tau_ui_remote::models::Models {
 /// What tau-reasoning, a Luau plugin (ADR 0050), publishes of one of
 /// its fixtures ([`luau`]).
 pub fn reasoning(fixture: &str) -> [Value; 2] {
-    luau(tau_reasoning::NAME, fixture)
+    luau(tau_luau_plugins::names::REASONING, fixture)
 }
 
 /// What the Luau plugin `plugin` (ADR 0050) publishes of one of its
@@ -1646,16 +1645,20 @@ pub fn reasoning(fixture: &str) -> [Value; 2] {
 /// tau-luau-plugins' records. The demo cannot run Luau; each plugin's
 /// tests check its fixtures against the plugin.
 pub fn luau(plugin: &str, fixture: &str) -> [Value; 2] {
-    let fixture: Value = serde_json::from_str(fixture)
-        .expect("a Luau plugin's fixtures are JSON");
-    luau_records(plugin, &fixture)
+    luau_records(plugin, &luau_fixture(plugin, fixture))
+}
+
+/// The fixture `name` of the Luau plugin `plugin`, read from its package
+/// (ADR 0051).
+pub fn luau_fixture(plugin: &str, name: &str) -> Value {
+    let text = tau_luau_plugins::packages::fixture(plugin, name)
+        .unwrap_or_else(|error| panic!("the demo needs a fixture: {error}"));
+    serde_json::from_str(&text).expect("a Luau plugin's fixtures are JSON")
 }
 
 /// [`luau`] of the `n`th of a fixture's steps (`[{ state, view }]`).
 pub fn luau_step(plugin: &str, fixture: &str, n: usize) -> [Value; 2] {
-    let steps: Value = serde_json::from_str(fixture)
-        .expect("a Luau plugin's fixtures are JSON");
-    luau_records(plugin, &steps[n])
+    luau_records(plugin, &luau_fixture(plugin, fixture)[n])
 }
 
 fn luau_records(plugin: &str, fixture: &Value) -> [Value; 2] {
@@ -1799,7 +1802,7 @@ impl Script {
     /// `n`th check of the demo run: its state and view, from its fixture.
     fn constitution(&mut self, n: usize) {
         let records =
-            luau_step(tau_constitution::NAME, tau_constitution::DEMO_RUN, n);
+            luau_step(tau_luau_plugins::names::CONSTITUTION, "run", n);
         for body in records {
             self.report(tau_luau_plugins::NAME, body);
         }
@@ -1808,11 +1811,8 @@ impl Script {
     /// What tau-fast-compaction, a Luau plugin (ADR 0050), left at its
     /// `n`th step of the demo run: its state and view, from its fixture.
     fn fast_compaction(&mut self, n: usize) {
-        let records = luau_step(
-            tau_fast_compaction::NAME,
-            tau_fast_compaction::DEMO_RUN,
-            n,
-        );
+        let records =
+            luau_step(tau_luau_plugins::names::FAST_COMPACTION, "run", n);
         for body in records {
             self.report(tau_luau_plugins::NAME, body);
         }
@@ -2622,7 +2622,7 @@ pub fn script() -> Vec<Step> {
     );
 
     // tau-reasoning and tau-memory run in `start`, before the session.
-    for record in reasoning(tau_reasoning::DEMO_CHOSE) {
+    for record in reasoning("chose") {
         s.report(tau_luau_plugins::NAME, record);
     }
     // tau-memory found notes for the task as the run started.
@@ -2827,7 +2827,7 @@ pub fn script() -> Vec<Step> {
                  [2634 lines omitted]\n\
                  \x20    Summary [  88.514s] 4,391 tests run: 4,391 passed, 12 skipped\n\n\
                  [full output: {archive} (read or grep it if needed)]",
-                tau_fast_compaction::HEADER
+                tau_luau_plugins::names::PRUNED_HEADER
             )),
         ),
     );
@@ -3176,7 +3176,8 @@ mod tests {
             .filter(|item| matches!(item, Item::Tool(_)))
             .count();
         let luau = view.plugin_states[tau_luau_plugins::NAME].json();
-        let pruning = &luau["plugins"][tau_fast_compaction::NAME]["state"];
+        let pruning =
+            &luau["plugins"][tau_luau_plugins::names::FAST_COMPACTION]["state"];
         assert_eq!(pruning["ledger"].as_array().unwrap().len(), calls);
         let detail = pruning["passes"][0]["detail"].as_str().unwrap();
         assert!(detail.contains("$0.0011"), "the pass's cost: {detail}");
@@ -3201,7 +3202,8 @@ mod tests {
             .collect();
         assert_eq!(anchored, [tau_luau_plugins::NAME, tau_memory_host::NAME]);
         let luau = view.plugin_states[tau_luau_plugins::NAME].json();
-        let reasoning = &luau["plugins"][tau_reasoning::NAME]["state"];
+        let reasoning =
+            &luau["plugins"][tau_luau_plugins::names::REASONING]["state"];
         assert_eq!(reasoning["plan"], "high");
         let memory: tau_memory::ui::State = serde_json::from_value(
             view.plugin_states[tau_memory_host::NAME].json().clone(),

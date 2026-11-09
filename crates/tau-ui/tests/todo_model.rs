@@ -81,7 +81,7 @@ impl Todo {
             .join("plugins")
             .join(LUAU)
             .join("stores")
-            .join(tau_todo::NAME)
+            .join(tau_luau_plugins::names::TODO)
             .join(format!("{REPO}.db"));
         let store =
             Arc::new(block_on_io(Kv::open(&path, Fuse::never())).unwrap());

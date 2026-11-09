@@ -59,7 +59,7 @@ impl Board {
             .join("plugins")
             .join(LUAU)
             .join("stores")
-            .join(tau_todo::NAME)
+            .join(tau_luau_plugins::names::TODO)
             .join(format!("{REPO}.db"));
         let store =
             Arc::new(block_on_io(Kv::open(&path, Fuse::never())).unwrap());
@@ -101,7 +101,7 @@ impl Board {
     /// button or drag does.
     fn act(&mut self, who: Who, action: &str, args: Value) {
         let act = json!({
-            "act": "repo_action", "plugin": tau_todo::NAME, "repo": REPO,
+            "act": "repo_action", "plugin": tau_luau_plugins::names::TODO, "repo": REPO,
             "action": action, "args": args,
         });
         let device = self.net.device(who);
