@@ -5,117 +5,39 @@
 
 use std::path::Path;
 
+use tau_luau_plugins::packages::{self, Example};
+
 /// The skill's name, and its folder's.
 pub const NAME: &str = crate::SKILL;
 
 const TEMPLATE: &str = include_str!("../skill/SKILL.md");
 
-/// The worked agents: each one's name and files, by their paths in its
-/// repository.
-pub const EXAMPLES: [(&str, &[(&str, &str)]); 5] = [
-    (
-        "morning-digest",
-        &[
-            (
-                "tau.toml",
-                include_str!("../skill/examples/morning-digest/tau.toml"),
-            ),
-            (
-                "src/agent.luau",
-                include_str!("../skill/examples/morning-digest/src/agent.luau"),
-            ),
-            (
-                "tests/triggers.luau",
-                include_str!(
-                    "../skill/examples/morning-digest/tests/triggers.luau"
-                ),
-            ),
-        ],
-    ),
-    (
-        "release-watch",
-        &[
-            (
-                "tau.toml",
-                include_str!("../skill/examples/release-watch/tau.toml"),
-            ),
-            (
-                "src/agent.luau",
-                include_str!("../skill/examples/release-watch/src/agent.luau"),
-            ),
-            (
-                "src/releases.luau",
-                include_str!(
-                    "../skill/examples/release-watch/src/releases.luau"
-                ),
-            ),
-            (
-                "tests/poll.luau",
-                include_str!("../skill/examples/release-watch/tests/poll.luau"),
-            ),
-        ],
-    ),
-    (
-        "build-watch",
-        &[
-            (
-                "tau.toml",
-                include_str!("../skill/examples/build-watch/tau.toml"),
-            ),
-            (
-                "src/agent.luau",
-                include_str!("../skill/examples/build-watch/src/agent.luau"),
-            ),
-            (
-                "tests/parse.luau",
-                include_str!("../skill/examples/build-watch/tests/parse.luau"),
-            ),
-        ],
-    ),
-    (
-        "main-status",
-        &[
-            (
-                "tau.toml",
-                include_str!("../skill/examples/main-status/tau.toml"),
-            ),
-            (
-                "src/agent.luau",
-                include_str!("../skill/examples/main-status/src/agent.luau"),
-            ),
-            (
-                "tests/triggers.luau",
-                include_str!(
-                    "../skill/examples/main-status/tests/triggers.luau"
-                ),
-            ),
-        ],
-    ),
-    (
-        "review-desk",
-        &[
-            (
-                "tau.toml",
-                include_str!("../skill/examples/review-desk/tau.toml"),
-            ),
-            (
-                "src/agent.luau",
-                include_str!("../skill/examples/review-desk/src/agent.luau"),
-            ),
-            (
-                "tests/triggers.luau",
-                include_str!(
-                    "../skill/examples/review-desk/tests/triggers.luau"
-                ),
-            ),
-        ],
-    ),
+/// The worked agents, by their folders under `plugins/examples` (ADR 0051).
+/// They are read as the skill is, so editing one compiles nothing.
+pub const EXAMPLES: [&str; 5] = [
+    "morning-digest",
+    "release-watch",
+    "build-watch",
+    "review-desk",
+    "main-status",
 ];
 
+/// The worked agents' files, as this install has them.
+pub fn examples() -> std::io::Result<Vec<Example>> {
+    EXAMPLES
+        .iter()
+        .map(|name| packages::example(name).map_err(std::io::Error::other))
+        .collect()
+}
+
 /// `SKILL.md`, each `{{example}}` replaced by that agent's files.
-pub fn render() -> String {
+pub fn render() -> std::io::Result<String> {
+    Ok(rendered(&examples()?))
+}
+
+fn rendered(examples: &[Example]) -> String {
     let mut text = TEMPLATE.to_owned();
-    for (name, files) in EXAMPLES {
+    for Example { name, files } in examples {
         let shown: Vec<String> = files
             .iter()
             .map(|(path, source)| {
@@ -139,13 +61,15 @@ pub fn render() -> String {
 /// agents under `examples/` to copy from. What was there is replaced.
 /// It blocks: call it from `spawn_blocking`.
 pub fn install(dir: &Path) -> std::io::Result<()> {
+    // Read first: a missing folder leaves the last install as it was.
+    let examples = examples()?;
     let root = dir.join(NAME);
     if root.exists() {
         std::fs::remove_dir_all(&root)?;
     }
     std::fs::create_dir_all(&root)?;
-    std::fs::write(root.join("SKILL.md"), render())?;
-    for (name, files) in EXAMPLES {
+    std::fs::write(root.join("SKILL.md"), rendered(&examples))?;
+    for Example { name, files } in &examples {
         for (path, source) in files {
             let file = root.join("examples").join(name).join(path);
             if let Some(parent) = file.parent() {
@@ -163,10 +87,10 @@ mod tests {
 
     #[test]
     fn every_example_is_inlined() {
-        let text = render();
+        let text = render().unwrap();
         assert!(!text.contains("{{"), "{text}");
-        for (name, files) in EXAMPLES {
-            for (path, source) in files {
+        for Example { name, files } in examples().unwrap() {
+            for (path, source) in &files {
                 assert!(text.contains(&format!("`{name}/{path}`")));
                 assert!(text.contains(source.trim_end()));
             }

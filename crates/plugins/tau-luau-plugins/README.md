@@ -52,7 +52,7 @@ Used by:
 ## Usage
 
 A plugin's `src/plugin.luau`, shortened from the skill's worked example in
-`tau-luau-plugins-host/skill/examples/no-friday-deploys`:
+`plugins/examples/no-friday-deploys`:
 
 ```lua
 local tau = require("tau")

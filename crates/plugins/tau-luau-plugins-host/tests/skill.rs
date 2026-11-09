@@ -6,26 +6,25 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
+use tau_luau_plugins::packages::Example;
 use tau_luau_plugins_host::{
     runtime::{Files, load},
-    skill::{self, EXAMPLES},
+    skill,
 };
 use tau_testing::block_on_io;
 use tokio_util::sync::CancellationToken;
 
 #[test]
 fn the_skills_plugins_pass_their_tests() {
-    for (name, files) in EXAMPLES {
+    for Example { name, files } in skill::examples().unwrap() {
         let paths: Vec<(String, Vec<u8>)> = files
             .iter()
-            .map(|(path, source)| {
-                ((*path).to_owned(), source.as_bytes().to_vec())
-            })
+            .map(|(path, source)| (path.clone(), source.as_bytes().to_vec()))
             .collect();
         let files =
             Files::from_paths(&paths, tau_luau_plugins_host::runtime::PLUGIN)
                 .unwrap();
-        let loaded = block_on_io(load(name, files))
+        let loaded = block_on_io(load(&name, files))
             .unwrap_or_else(|error| panic!("{name}: {error}"));
         let tests = block_on_io(loaded.test(CancellationToken::new()));
         assert!(tests.len() >= 3, "{name}: {tests:?}");
@@ -43,10 +42,10 @@ fn the_skill_installs_where_skills_are_read() {
     let folder = dir.path().join(skill::NAME);
     let text = std::fs::read_to_string(folder.join("SKILL.md")).unwrap();
     assert!(text.starts_with("---\nname: tau-plugins\n"));
-    for (name, files) in EXAMPLES {
+    for Example { name, files } in skill::examples().unwrap() {
         for (path, source) in files {
-            let copied = folder.join("examples").join(name).join(path);
-            assert_eq!(std::fs::read_to_string(copied).unwrap(), *source);
+            let copied = folder.join("examples").join(&name).join(path);
+            assert_eq!(std::fs::read_to_string(copied).unwrap(), source);
         }
     }
 }

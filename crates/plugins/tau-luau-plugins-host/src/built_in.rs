@@ -29,7 +29,8 @@ struct List {
 }
 
 /// The names `dir` lists, in order, checked against what it holds: it
-/// holds each, and no package it does not list. It blocks.
+/// holds each, and no package it does not list, the skills' examples
+/// aside. It blocks.
 pub fn listed(dir: &Path) -> Result<Vec<String>, String> {
     let path = dir.join(LIST);
     let text = std::fs::read_to_string(&path)
@@ -56,6 +57,7 @@ pub fn listed(dir: &Path) -> Result<Vec<String>, String> {
         let name = folder.to_string_lossy();
         if entry.path().is_dir()
             && !name.starts_with('.')
+            && name != packages::EXAMPLES
             && !names.contains(name.as_ref())
         {
             return Err(format!(

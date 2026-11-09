@@ -105,7 +105,7 @@ cargo nextest run --release -p tau-luau-plugins-host
 - `tests/registry.rs`: activation, waiting and fallback against a
   temporary jj repository.
 - `tests/skill.rs`: the skill's six worked plugins in
-  `skill/examples` load and pass their own tests.
+  `plugins/examples` load and pass their own tests.
 - `tests/parity.rs`: every seam, slot, point and service the kernel has
   is one a Luau plugin reaches through a hook the skill names, or left
   out with a reason.

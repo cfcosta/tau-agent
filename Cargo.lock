@@ -9583,6 +9583,7 @@ dependencies = [
  "tau-agents",
  "tau-ai",
  "tau-artifacts",
+ "tau-luau-plugins",
  "tau-luau-plugins-host",
  "tau-schedule",
  "tau-skills",

@@ -526,6 +526,20 @@ crate, which needed it first. `src/` and `tests/` files, fixtures and all,
 moved unchanged, byte for byte against `main`: each `src/plugin.luau` lost only
 its `name` and `description` lines. No fixture was blessed anew.
 
+### Examples
+
+The skills' worked plugins and agents began in `skill/examples/` of their host
+crates, embedded. They moved after, at the person's asking: every package is
+under `plugins/`, the examples in `plugins/examples/`, and nothing under
+`crates/` has a `tau.toml`, which a test holds. Moved and still embedded they
+would have broken the promise that a Luau edit compiles nothing, so the skills
+read them as they install, from the folder `packages::find` gives, and the
+package ships them. A missing folder fails as a missing built-in does: the host
+does not start, and the last install stays as it was. `built-in.toml` does not
+name them, so none runs. `SKILL.md` stays with its crate, prose rather than a
+package, and embedded. `tau-luau-plugins/src/tau.luau`, the module every plugin
+requires, stays embedded too: it is the host's interface, not a package.
+
 ### Measured
 
 On 2026-11-08, on the machine of the Context's figures, after the crates went.

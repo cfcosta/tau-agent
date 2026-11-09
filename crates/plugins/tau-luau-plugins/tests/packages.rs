@@ -8,8 +8,10 @@ use std::{
 
 use hegel::generators as gs;
 use tau_luau_plugins::packages::{
+    EXAMPLES,
     INSTALLED,
     OVERRIDE,
+    example_from,
     find,
     find_from,
     fixture,
@@ -96,4 +98,27 @@ fn tests_read_the_source_tree() {
     let error = fixture("tau-goal", "no-such-fixture").unwrap_err();
     assert!(error.contains("no-such-fixture.json"), "{error}");
     assert!(fixture("tau-goal", "working").unwrap().starts_with('{'));
+}
+
+#[test]
+fn an_example_is_its_folders_files_with_the_manifest_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join(EXAMPLES).join("one");
+    fs::create_dir_all(folder.join("src")).unwrap();
+    fs::write(folder.join("tau.toml"), "manifest").unwrap();
+    fs::write(folder.join("src/plugin.luau"), "entry").unwrap();
+    fs::write(folder.join("README.md"), "readme").unwrap();
+
+    let example = example_from(dir.path(), "one").unwrap();
+    assert_eq!(example.name, "one");
+    assert_eq!(
+        example.files,
+        [
+            ("tau.toml".to_owned(), "manifest".to_owned()),
+            ("README.md".to_owned(), "readme".to_owned()),
+            ("src/plugin.luau".to_owned(), "entry".to_owned()),
+        ]
+    );
+    let missing = example_from(dir.path(), "two").unwrap_err();
+    assert!(missing.contains("two"), "{missing}");
 }

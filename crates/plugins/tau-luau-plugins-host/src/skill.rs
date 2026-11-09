@@ -5,134 +5,40 @@
 
 use std::path::Path;
 
+use tau_luau_plugins::packages::{self, Example};
+
 /// The skill's name, and its folder's.
 pub const NAME: &str = crate::SKILL;
 
 const TEMPLATE: &str = include_str!("../skill/SKILL.md");
 
-/// The worked plugins: each one's name and files, by their paths in its
-/// folder.
-pub const EXAMPLES: [(&str, &[(&str, &str)]); 6] = [
-    (
-        "no-friday-deploys",
-        &[
-            (
-                "tau.toml",
-                include_str!("../skill/examples/no-friday-deploys/tau.toml"),
-            ),
-            (
-                "src/plugin.luau",
-                include_str!(
-                    "../skill/examples/no-friday-deploys/src/plugin.luau"
-                ),
-            ),
-            (
-                "tests/rule.luau",
-                include_str!(
-                    "../skill/examples/no-friday-deploys/tests/rule.luau"
-                ),
-            ),
-        ],
-    ),
-    (
-        "word-count",
-        &[
-            (
-                "tau.toml",
-                include_str!("../skill/examples/word-count/tau.toml"),
-            ),
-            (
-                "src/plugin.luau",
-                include_str!("../skill/examples/word-count/src/plugin.luau"),
-            ),
-            (
-                "src/words.luau",
-                include_str!("../skill/examples/word-count/src/words.luau"),
-            ),
-            (
-                "tests/tool.luau",
-                include_str!("../skill/examples/word-count/tests/tool.luau"),
-            ),
-        ],
-    ),
-    (
-        "say-the-tests",
-        &[
-            (
-                "tau.toml",
-                include_str!("../skill/examples/say-the-tests/tau.toml"),
-            ),
-            (
-                "src/plugin.luau",
-                include_str!("../skill/examples/say-the-tests/src/plugin.luau"),
-            ),
-            (
-                "tests/stop.luau",
-                include_str!("../skill/examples/say-the-tests/tests/stop.luau"),
-            ),
-        ],
-    ),
-    (
-        "forget-old-calls",
-        &[
-            (
-                "tau.toml",
-                include_str!("../skill/examples/forget-old-calls/tau.toml"),
-            ),
-            (
-                "src/plugin.luau",
-                include_str!(
-                    "../skill/examples/forget-old-calls/src/plugin.luau"
-                ),
-            ),
-            (
-                "tests/rewrite.luau",
-                include_str!(
-                    "../skill/examples/forget-old-calls/tests/rewrite.luau"
-                ),
-            ),
-        ],
-    ),
-    (
-        "short-titles",
-        &[
-            (
-                "tau.toml",
-                include_str!("../skill/examples/short-titles/tau.toml"),
-            ),
-            (
-                "src/plugin.luau",
-                include_str!("../skill/examples/short-titles/src/plugin.luau"),
-            ),
-            (
-                "tests/title.luau",
-                include_str!("../skill/examples/short-titles/tests/title.luau"),
-            ),
-        ],
-    ),
-    (
-        "todo-page",
-        &[
-            (
-                "tau.toml",
-                include_str!("../skill/examples/todo-page/tau.toml"),
-            ),
-            (
-                "src/plugin.luau",
-                include_str!("../skill/examples/todo-page/src/plugin.luau"),
-            ),
-            (
-                "tests/page.luau",
-                include_str!("../skill/examples/todo-page/tests/page.luau"),
-            ),
-        ],
-    ),
+/// The worked plugins, by their folders under `plugins/examples` (ADR 0051).
+/// They are read as the skill is, so editing one compiles nothing.
+pub const EXAMPLES: [&str; 6] = [
+    "no-friday-deploys",
+    "word-count",
+    "say-the-tests",
+    "forget-old-calls",
+    "short-titles",
+    "todo-page",
 ];
 
+/// The worked plugins' files, as this install has them.
+pub fn examples() -> std::io::Result<Vec<Example>> {
+    EXAMPLES
+        .iter()
+        .map(|name| packages::example(name).map_err(std::io::Error::other))
+        .collect()
+}
+
 /// `SKILL.md`, each `{{example}}` replaced by that plugin's files.
-pub fn render() -> String {
+pub fn render() -> std::io::Result<String> {
+    Ok(rendered(&examples()?))
+}
+
+fn rendered(examples: &[Example]) -> String {
     let mut text = TEMPLATE.to_owned();
-    for (name, files) in EXAMPLES {
+    for Example { name, files } in examples {
         let shown: Vec<String> = files
             .iter()
             .map(|(path, source)| {
@@ -156,13 +62,15 @@ pub fn render() -> String {
 /// plugins under `examples/` to copy from. What was there is replaced.
 /// It blocks: call it from `spawn_blocking`.
 pub fn install(dir: &Path) -> std::io::Result<()> {
+    // Read first: a missing folder leaves the last install as it was.
+    let examples = examples()?;
     let root = dir.join(NAME);
     if root.exists() {
         std::fs::remove_dir_all(&root)?;
     }
     std::fs::create_dir_all(&root)?;
-    std::fs::write(root.join("SKILL.md"), render())?;
-    for (name, files) in EXAMPLES {
+    std::fs::write(root.join("SKILL.md"), rendered(&examples))?;
+    for Example { name, files } in &examples {
         for (path, source) in files {
             let file = root.join("examples").join(name).join(path);
             if let Some(parent) = file.parent() {
@@ -180,10 +88,10 @@ mod tests {
 
     #[test]
     fn every_example_is_inlined() {
-        let text = render();
+        let text = render().unwrap();
         assert!(!text.contains("{{"), "{text}");
-        for (name, files) in EXAMPLES {
-            for (path, source) in files {
+        for Example { name, files } in examples().unwrap() {
+            for (path, source) in &files {
                 assert!(text.contains(&format!("`{name}/{path}`")));
                 assert!(text.contains(source.trim_end()));
             }

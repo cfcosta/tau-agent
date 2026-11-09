@@ -230,6 +230,7 @@
                   $out/bin/tau --check-plugins
                   $out/bin/tau --plugin-test $out/share/tau/plugins/tau-titles
                   test -f $out/share/tau/plugins/tau-goal/fixtures/working.json
+                  test -f $out/share/tau/plugins/examples/word-count/tau.toml
                   runHook postInstallCheck
                 '';
 

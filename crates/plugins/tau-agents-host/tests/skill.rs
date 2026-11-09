@@ -8,22 +8,18 @@
 
 use std::{sync::Arc, time::Duration};
 
-use tau_agents_host::{
-    AGENT,
-    skill::{self, EXAMPLES},
-};
+use tau_agents_host::{AGENT, skill};
+use tau_luau_plugins::packages::{self, Example};
 use tau_luau_plugins_host::runtime::{Files, evaluate, run_tests};
 use tau_testing::block_on_io;
 use tokio_util::sync::CancellationToken;
 
 #[test]
 fn the_skills_agents_pass_their_tests() {
-    for (name, files) in EXAMPLES {
+    for Example { name, files } in skill::examples().unwrap() {
         let paths: Vec<(String, Vec<u8>)> = files
             .iter()
-            .map(|(path, source)| {
-                ((*path).to_owned(), source.as_bytes().to_vec())
-            })
+            .map(|(path, source)| (path.clone(), source.as_bytes().to_vec()))
             .collect();
         let files = Files::from_paths(&paths, AGENT).unwrap();
         let modules = Arc::new(
@@ -33,7 +29,7 @@ fn the_skills_agents_pass_their_tests() {
         );
         // It declares what the host reads.
         let described = block_on_io(evaluate(
-            name,
+            &name,
             modules.clone(),
             "local tau = require(\"tau\")\n\
              return tau._describe_agent(require(\"agent\"))\n"
@@ -45,7 +41,7 @@ fn the_skills_agents_pass_their_tests() {
         assert!(described["triggers"].is_array(), "{name}: {described}");
         assert_eq!(files.manifest.name, name);
         let tests = block_on_io(run_tests(
-            name,
+            &name,
             modules,
             &files,
             CancellationToken::new(),
@@ -72,11 +68,29 @@ fn the_skill_installs_where_skills_are_read() {
     assert!(std::fs::symlink_metadata(&stale).is_err(), "left behind");
     let text = std::fs::read_to_string(folder.join("SKILL.md")).unwrap();
     assert!(text.starts_with("---\nname: tau-agents\n"));
-    assert_eq!(text, skill::render());
-    for (name, files) in EXAMPLES {
+    assert_eq!(text, skill::render().unwrap());
+    for Example { name, files } in skill::examples().unwrap() {
         for (path, source) in files {
-            let copied = folder.join("examples").join(name).join(path);
-            assert_eq!(std::fs::read_to_string(copied).unwrap(), *source);
+            let copied = folder.join("examples").join(&name).join(path);
+            assert_eq!(std::fs::read_to_string(copied).unwrap(), source);
         }
     }
+}
+
+/// Every folder under `plugins/examples` is a skill's: none is left unread.
+#[test]
+fn every_example_belongs_to_a_skill() {
+    let dir = packages::find().unwrap().join(packages::EXAMPLES);
+    let mut found: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    found.sort();
+    let mut named: Vec<String> = skill::EXAMPLES
+        .iter()
+        .chain(&tau_luau_plugins_host::skill::EXAMPLES)
+        .map(|name| (*name).to_owned())
+        .collect();
+    named.sort();
+    assert_eq!(found, named);
 }

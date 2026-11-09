@@ -842,7 +842,9 @@ an agent's the same: `tau.toml` (`name`, `version`, `description`, `entry`),
 `src/`, `tests/`, and for tau's own the `fixtures/` the demo reads.
 `plugins/built-in.toml` lists tau's own, in the order they are active: the
 compactions rewrite in that order. Adding one is a folder and a line, with
-nothing to compile.
+nothing to compile. `plugins/examples/` holds the worked plugins and agents
+the `tau-plugins` and `tau-agents` skills teach, read as the skills install;
+no package lives under `crates/`.
 
 | Command                                             | What it does                                        |
 | --------------------------------------------------- | --------------------------------------------------- |

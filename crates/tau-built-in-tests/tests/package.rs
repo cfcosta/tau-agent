@@ -17,9 +17,24 @@ fn walk(dir: &Path, keep: &dyn Fn(&Path) -> bool, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// Where `relative` from `dir` lands, as `include_str!` reads it.
+fn resolve(dir: &Path, relative: &str) -> PathBuf {
+    let mut path = dir.canonicalize().unwrap();
+    for part in relative.split('/') {
+        match part {
+            "." => {}
+            ".." => {
+                path.pop();
+            }
+            part => path.push(part),
+        }
+    }
+    path
+}
+
 /// Nothing Cargo tracks points at `plugins/`, so editing one rebuilds no
-/// crate. Each plugin crate's own `plugins`-less paths are fine, as
-/// `crates/plugins/...`; a path up and into the root's `plugins/` is not.
+/// crate. An embed from `crates/plugins/...` is fine; one that lands in the
+/// root's `plugins/` is not.
 #[test]
 fn no_rust_embeds_or_watches_a_plugin() {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
@@ -30,6 +45,7 @@ fn no_rust_embeds_or_watches_a_plugin() {
         &mut files,
     );
     assert!(files.len() > 100, "the sources are read");
+    let plugins = crates.join("../plugins").canonicalize().unwrap();
     let mut naming = Vec::new();
     for file in files {
         // This file spells what it looks for.
@@ -39,12 +55,21 @@ fn no_rust_embeds_or_watches_a_plugin() {
         let name = file.display().to_string();
         let is_build = file.ends_with("build.rs");
         let text = std::fs::read_to_string(&file).unwrap();
-        for line in text.lines() {
-            let embeds = line.contains("include_str!")
-                || line.contains("include_bytes!");
-            let points =
-                line.contains("../plugins/") || line.contains("plugins/tau-");
-            if (embeds && points) || (is_build && line.contains("plugins")) {
+        // A long path wraps onto its own line: an embed is read to its `)`.
+        for embed in ["include_str!", "include_bytes!"] {
+            for (at, _) in text.match_indices(embed) {
+                let call = text[at..].split(')').next().unwrap_or("");
+                let Some(literal) = call.split('"').nth(1) else {
+                    continue;
+                };
+                let target = resolve(file.parent().unwrap(), literal);
+                if target.starts_with(&plugins) {
+                    naming.push(format!("{name}: {literal}"));
+                }
+            }
+        }
+        if is_build {
+            for line in text.lines().filter(|line| line.contains("plugins")) {
                 naming.push(format!("{name}: {line}"));
             }
         }
@@ -71,4 +96,17 @@ fn the_flake_ships_the_plugins_and_checks_them() {
         code.contains("toString ./") || code.contains("toString .")
     });
     assert_eq!(copying, None, "flake.nix must not copy a path by toString");
+}
+
+/// No Luau package lives among the Rust: `plugins/` holds them all.
+#[test]
+fn no_package_is_inside_a_crate() {
+    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut found = Vec::new();
+    walk(
+        &crates,
+        &|path| path.file_name().is_some_and(|name| name == "tau.toml"),
+        &mut found,
+    );
+    assert_eq!(found, Vec::<PathBuf>::new());
 }
