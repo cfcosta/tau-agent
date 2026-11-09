@@ -365,7 +365,7 @@ client id (`GrantKey`):
 
 ### Logs
 
-rmcp 3.5's sign-in code logs, at debug level, the authorization code
+rmcp 3.9's sign-in code logs, at debug level, the authorization code
 (`start exchange code for token`) and the whole token response
 (`exchange token result`), whose extra fields may hold an ID token, in
 the targets `rmcp::transport::auth` and `rmcp::transport::common::auth`

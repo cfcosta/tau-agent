@@ -19,7 +19,7 @@ reqwest.workspace = true
 # The MCP client (docs/research/codemode-libraries.md). Its API moves
 # between majors, so only `src/client.rs` touches it. No default
 # features; reqwest's TLS is the workspace's `rustls-no-provider`.
-rmcp = { version = "3.5.0", default-features = false, features = [
+rmcp = { version = "3.9.0", default-features = false, features = [
   # OAuth sign-in (docs/reference/mcp.md, "Signing in"). Not
   # `auth-client-credentials-jwt`: it pulls aws-lc-rs.
   "auth",
@@ -59,7 +59,7 @@ tau-ui-plugin = { workspace = true, features = ["testing"] }
 hegeltest.workspace = true
 mlua.workspace = true
 tempfile.workspace = true
-rmcp = { version = "3.5.0", default-features = false, features = [
+rmcp = { version = "3.9.0", default-features = false, features = [
   "client",
   "macros",
   "server",

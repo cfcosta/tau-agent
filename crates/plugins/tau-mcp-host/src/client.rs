@@ -1702,6 +1702,9 @@ fn transient_source(error: &(dyn std::error::Error + 'static)) -> bool {
     {
         return match error {
             StreamableHttpError::Client(error) => transient_reqwest(error),
+            StreamableHttpError::HttpStatus(error) => {
+                transient_status(error.status)
+            }
             StreamableHttpError::UnexpectedServerResponse(text) => {
                 response_status(text).is_some_and(transient_status)
             }
