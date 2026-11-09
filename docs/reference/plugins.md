@@ -835,6 +835,22 @@ See
 [ADR 0017](../decisions/0017-plugins-bring-their-ui.md), and its "As
 built" section for the interface as it is.
 
+## Luau packages
+
+tau's Luau plugins are packages under `plugins/` (ADR 0051), a person's and
+an agent's the same: `tau.toml` (`name`, `version`, `description`, `entry`),
+`src/`, `tests/`, and for tau's own the `fixtures/` the demo reads.
+`plugins/built-in.toml` lists tau's own, in the order they are active: the
+compactions rewrite in that order. Adding one is a folder and a line, with
+nothing to compile.
+
+| Command                                             | What it does                                        |
+| --------------------------------------------------- | --------------------------------------------------- |
+| `tau --plugin-test <folder>`                        | Loads a package and runs its Luau tests             |
+| `tau --check-plugins`                               | Reads and loads tau's own, as starting does         |
+| `cargo nextest run --release -p tau-built-in-tests` | The tests that need Rust: fixtures, the real loop   |
+| `BLESS_FIXTURES=1 cargo nextest ...` of that crate  | Writes the fixtures anew from what the plugins draw |
+
 ## The first four plugins
 
 Token estimates and overflow detection, which the loop uses for

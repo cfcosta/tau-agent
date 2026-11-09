@@ -517,6 +517,70 @@ against the figures in the Context, on the same machine:
   `tau-built-in-tests` run.
 - The package's closure, and the binary's size.
 
+## As built
+
+Commits, in order: tau-ui's unused dependencies; the layout, still embedded,
+with agents; reading at startup, with the flags and the flake; the test crate;
+the dependents; the crates gone. `tau_luau_plugins::names` came with the test
+crate, which needed it first. `src/` and `tests/` files, fixtures and all,
+moved unchanged, byte for byte against `main`: each `src/plugin.luau` lost only
+its `name` and `description` lines. No fixture was blessed anew.
+
+### Measured
+
+On 2026-11-08, on the machine of the Context's figures, after the crates went.
+A `.luau` touched, then edited with a comment added, in
+`plugins/tau-goal/src/goal.luau`:
+
+| Build                          | Before                  | After                   |
+| ------------------------------ | ----------------------- | ----------------------- |
+| `cargo build --release -p tau` | 20 s wall, 238 s CPU    | 0.36 s wall, 0.35 s CPU |
+| `--workspace --all-targets`    | 104 s wall, 2,408 s CPU | 0.57 s wall, 0.57 s CPU |
+| Crates recompiled              | 20                      | 0                       |
+
+What is left is Cargo checking that nothing changed. Touching a fixture or
+`plugins/built-in.toml` recompiles nothing either.
+
+- **A clean build was not measured.** It needs a target directory of its own,
+  about 30 GB, and the disk had 30 GB free with a 15 GB floor.
+- **Startup**, by `tau --check-plugins`, which does what starting does to the
+  folder: reading 11 packages takes 1.3 to 1.9 ms warm, and 10.5 to 11 ms with
+  their pages evicted (`posix_fadvise`; the directories stayed cached, so this
+  is not a cold boot). Loading them takes 44 to 46 ms either way, as the VMs'
+  work did before. So startup's new I/O is a few milliseconds.
+- **`tau --plugin-test`**: `tau-todo`, the largest by source, 0.68 s for 26
+  tests. `tau-fast-compaction` takes 14.3 s for 29, its properties being slow.
+- **`tau-built-in-tests`**: all 68 run in 15.2 s (22 s wall through Cargo). A
+  change to the crate rebuilds and links its one binary in 9.7 s wall, 47 s CPU.
+  The 20 binaries' link time was not measured before they went, so this has no
+  figure to stand against.
+- **The package**: 108 files and 948 KB in `plugins/`, 395 KB of it entries and
+  modules. The closure is 2.0 GiB.
+
+### The package
+
+`nix build .#tau` passed once at the end, tests and install check included, in
+the sandbox: `--check-plugins` read the store path and `--plugin-test` ran
+tau-titles' tests. Earlier, a build at the third commit compiled but failed its
+check phase, so its install check never ran, on tau-ui's
+`a_queued_chat_with_new_conflicts_waits_for_confirmation`, "has no parent", while
+other test runs shared the machine. It does not touch these files and passed in
+the final build, so it reads as a load flake of `cargo test` under `nix build`.
+A build at the fifth commit with `doCheck` off ran the install check.
+
+### What the work found
+
+- **The gate has its own flake under load.** tau-ui's
+  `a_large_output_is_pruned_into_tau_s_archive` saw 1201 lines for 1200 once,
+  with a `nix build` beside it; it passed six times alone and in each later gate.
+  Neither flake is new or closed here.
+- **`Files::read` goes through `from_paths`**, so a folder and a commit cannot
+  read differently; a property holds them to one digest.
+- **The agents' `VERSION_TRIGGER` is `tau_agents::ENTRY`**, so the trigger a
+  failed version's event carries is `src/agent.luau` now.
+- **`tau-goal` and `tau-reasoning`'s READMEs** still described Rust crates from
+  before ADR 0050, with Rust usage; they moved rewritten to what is there.
+
 ## Alternatives considered
 
 - **Embed them with a generated list.** A `build.rs` walking `plugins/`,
