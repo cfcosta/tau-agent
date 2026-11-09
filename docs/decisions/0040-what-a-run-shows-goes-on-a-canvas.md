@@ -1,6 +1,6 @@
 # 0040: What a run shows the person goes on a canvas beside it
 
-- Status: accepted. Built: `tau-canvas` (`crates/plugins/tau-canvas`)
+- Status: accepted. Built: `tau-canvas` (`plugins/tau-canvas`, Luau since ADR 0050)
   and the `PANE` point in `tau-ui-plugin`, which `tau-ui-remote` draws
   beside a run's transcript. Reference: [canvas.md](../reference/canvas.md).
 - Date: 2026-10-13

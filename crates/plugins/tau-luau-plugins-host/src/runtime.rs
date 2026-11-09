@@ -32,6 +32,7 @@ use tau_codemode_host::{
     ToolReply,
 };
 use tau_jev::Jev;
+use tau_luau_plugins::TAU_TEST_MODULE;
 use tokio_util::sync::CancellationToken;
 
 use crate::{Declaration, TAU_MODULE, TestResult};
@@ -346,7 +347,7 @@ impl Files {
         let mut plugin_deps =
             BTreeMap::from([("tau".to_owned(), tau.version().to_owned())]);
         for name in self.libs.keys() {
-            if name == "tau" || name == module {
+            if name == "tau" || name == "tau_test" || name == module {
                 return Err(format!("src/{name}.luau: `{name}` is taken"));
             }
         }
@@ -391,6 +392,14 @@ impl Files {
         )
         .map_err(|error| format!("{file}: {error}"))?;
         modules.insert(module.into(), root);
+        // The test harness, which only tests load.
+        let harness = Definition::new(
+            "tau_test".into(),
+            TAU_TEST_MODULE.into(),
+            json!({}),
+            BTreeMap::from([("tau".to_owned(), tau.version().to_owned())]),
+        )?;
+        modules.insert("tau_test".into(), harness);
         modules.insert("tau".into(), tau);
         Ok(modules)
     }
@@ -1050,6 +1059,7 @@ pub async fn run_tests(
         // its errors keep their line numbers.
         let script = format!(
             "local __test = function() {source}\nend\n\
+             require(\"tau_test\")\n\
              require(\"tau\").test.{subject} = require(\"{module}\")\n\
              __test()\n\
              return {{ cases = require(\"tau\")._run_tests(), \
@@ -1135,6 +1145,7 @@ struct PropertySource<'a> {
 fn property_script(source: &str, module: &str, subject: &str) -> String {
     format!(
         "local __test = function() {source}\nend\n\
+         require(\"tau_test\")\n\
          require(\"tau\").test.{subject} = require(\"{module}\")\n\
          __test()\n\
          return require(\"tau\")._run_cases(__property)\n"
@@ -1251,6 +1262,8 @@ struct Reaches {
     transcript: bool,
     /// Files of what it cuts (`uses.archive`).
     archive: bool,
+    /// Folders it reads (`uses.files`).
+    files: bool,
     /// The property case its draws come from, while a property runs
     /// (ADR 0049).
     hegel: Option<crate::hegel::Shared>,
@@ -1286,6 +1299,7 @@ impl Reaches {
             store: None,
             transcript: uses.transcript,
             archive: uses.archive,
+            files: !uses.files.is_empty(),
             hegel: None,
             job: None,
         }
@@ -1301,6 +1315,7 @@ impl Reaches {
             store: None,
             transcript: false,
             archive: false,
+            files: false,
             hegel: None,
             job: None,
         }
@@ -1348,6 +1363,7 @@ async fn run(
         store: reaches.store,
         transcript: reaches.transcript,
         archive: reaches.archive,
+        files: reaches.files,
         hegel: reaches.hegel,
         job: reaches.job,
     });
@@ -1414,6 +1430,8 @@ struct PluginHost {
     transcript: bool,
     /// Whether it keeps files of what it cuts (`uses.archive`).
     archive: bool,
+    /// Whether its tools read folders it declares (`uses.files`).
+    files: bool,
     /// The case a property's draws come from, while one runs.
     hegel: Option<crate::hegel::Shared>,
     job: Option<Arc<JobReaches>>,
@@ -1477,6 +1495,7 @@ impl PluginHost {
             || (self.infer && name == "infer")
             || (self.transcript && name == "transcript")
             || (self.archive && matches!(name, "archive_path" | "archive_write"))
+            || (self.files && crate::files::Files::handles(name))
             // Sizes only, where the hook holds the run's conversation.
             || name == "measure"
     }

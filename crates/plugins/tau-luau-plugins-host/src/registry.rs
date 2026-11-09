@@ -78,6 +78,8 @@ struct Shared {
     model: Option<tau_ui_plugin::Model>,
     /// Each plugin's store in each repository.
     stores: Arc<crate::store::Stores>,
+    /// Where each plugin's blobs are kept (`ctx.blobs`).
+    blobs: PathBuf,
     /// What runs' tools ask the person to allow, waiting for an answer.
     allows: crate::chats::Allows,
     /// The forms runs' tools ask the person, waiting for the answers.
@@ -157,6 +159,8 @@ impl PluginHost for Registry {
             crate::store::Stores::at(cx.plugin_dir(crate::NAME).join("stores"))
                 .with_changed(Arc::new(move || changer.refresh())),
         ));
+        let registry =
+            registry.with_blobs(cx.plugin_dir(crate::NAME).join("blobs"));
         registry.load_built_in().await;
         let watcher = registry.clone();
         cx.runtime.spawn(async move { watcher.watch().await });
@@ -187,6 +191,7 @@ impl Registry {
             runtime: None,
             model: None,
             stores: Arc::new(crate::store::Stores::memory()),
+            blobs: std::env::temp_dir().join("tau-luau-blobs"),
             allows: crate::chats::Allows::default(),
             forms: crate::forms::Forms::default(),
             chats: None,
@@ -218,6 +223,22 @@ impl Registry {
     /// Each plugin's store in each repository.
     pub fn stores(&self) -> Arc<crate::store::Stores> {
         self.0.stores.clone()
+    }
+
+    /// The registry, keeping each plugin's blobs under `dir`
+    /// (`ctx.blobs`).
+    pub fn with_blobs(self, dir: PathBuf) -> Self {
+        let shared = Arc::into_inner(self.0)
+            .expect("the blobs are given before the registry is shared");
+        Self(Arc::new(Shared {
+            blobs: dir,
+            ..shared
+        }))
+    }
+
+    /// Where each plugin's blobs are, by plugin and repository.
+    pub fn blobs(&self) -> PathBuf {
+        self.0.blobs.clone()
     }
 
     /// What runs' tools ask the person to allow, waiting for an answer.

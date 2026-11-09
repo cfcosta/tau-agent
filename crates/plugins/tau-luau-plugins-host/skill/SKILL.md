@@ -67,7 +67,8 @@ local ui = tau.ui
 return tau.plugin {
   uses = { tools = { "exec_command" }, jev = false, infer = false,
            network = { "ntfy.sh" }, secrets = { "ntfy" },
-           transcript = false, archive = false, chats = false },
+           transcript = false, archive = false, chats = false,
+           files = { "workspace" } },
   settings = { schema = { ... }, default = { ... }, view = function(settings, ctx) end },
   tools = { name = { description, parameters, call, card } },
   start = function(plan, ctx) end,
@@ -308,6 +309,8 @@ new reach.
 | `ctx.archive`                                  | with `uses.archive`: `ctx.archive.path(kind)` names a new file in tau's archive of the repository, and `ctx.archive.write(path, text)` writes it, once, for its owner alone                    |
 | `ctx.measure`                                  | in `rewrite_context`: `ctx.measure(rewrite)`, the bytes of JSON before and after `rewrite` (above)                                                                                             |
 | `ctx.models`                                   | the plan's models, newest of each family: `{ id, family, efforts }`                                                                                                                            |
+| `ctx.files`                                    | in a tool's `call`, with `uses.files`: `read(path, { bytes, limit })`, `list(path)` and `image(path)` under the folders it names, read-only (below)                                            |
+| `ctx.blobs`                                    | in a tool's `call`, with `uses.files`: `put_file(path)` keeps a file's bytes in the run's repository, for `ui.image` (below)                                                                   |
 | `ctx.repos()`, `ctx.stores(repo)`, `ctx.chats` | in a job, with `uses.chats`: the repositories the plugin keeps a store in, each one's store, and `ctx.chats.wake(run, text)` (below)                                                           |
 
 `ctx.state` is stored with the run: a resumed or forked run keeps it.
@@ -383,6 +386,9 @@ Plain tables, drawn by tau on the computer and on the phone:
   state
 - `ui.due(id, at)`: the time left until `at` (milliseconds since 1970),
   `in 5m`, then `now`
+- `ui.image(blob, mime, repo, height)`: a blob `ctx.blobs.put_file` kept
+  in the repository `repo` (`ctx.run.repo`), `height` rems tall; the
+  interface asks for its bytes once and keeps them
 - `ui.graph(nodes, edges, height)`: a small map of nodes
   (`{ id, label, x, y, tone, focus, page }`, `x` and `y` from 0 to 1)
   joined by `{ from, to }` edges
@@ -425,6 +431,10 @@ read the state: it has no tools. What it returns goes in three places:
   buttons there act on that run.
 - `banner`: pieces across the top of the run.
 - `inspector`: pieces in the run's inspector, beside the transcript.
+- `pane`: `{ title, fresh, body }`, the run's pane beside the transcript:
+  its bar says `title`, and it opens by itself when `fresh`, a number,
+  grew since the run was last drawn. Only one plugin's draws, the first
+  by name.
 - `band`: pieces just above the composer.
 - `composer`: pieces in the composer's place, while the run goes on: a
   form the run waits on. Only one plugin's draws, the first by name;
@@ -433,9 +443,10 @@ read the state: it has no tools. What it returns goes in three places:
   under its title in the sidebar; `tone` is `"good"`, `"warn"` or
   `"bad"`, `icon` one of the interface's icons, and `phone_line` the
   line on a phone, when it differs.
-- `calls`: `{ [call_id] = { badge?, body?, mark?, reason?, dropped?, cut? } }`,
-  pieces on another tool's card: `badge` beside its title, `body` under
-  it, such as why a check flagged or blocked the call. `mark =
+- `calls`: `{ [call_id] = { head?, label?, badge?, body?, mark?, reason?, dropped?, cut? } }`,
+  pieces on a tool's card, its own or another's: `head` in place of its
+  arguments, `label` at the header's end, `badge` beside its title,
+  `body` under it, such as why a check flagged or blocked the call. `mark =
 "blocked"` (with the `reason` the model got) or `"flagged"` marks the
   card so, as the phone and the run's review list show it. `dropped =
 "result"` or `"call"` shows that a rewrite cut its result or dropped
@@ -462,8 +473,8 @@ the run the tree is drawn in (or its page shows):
 message; `tau.steer` cuts into a turn going on; `tau.composer` puts
 `text` in the composer; `tau.start` starts a run in `repo` with `text`;
 `tau.alert` shows `title` and `message`; `tau.details` opens the run's
-details; `tau.open_run` opens the run `run`; `tau.cancel` stops the
-run, as its Stop button does. An action of the
+details; `tau.pane` opens the run's pane; `tau.open_run` opens the run
+`run`; `tau.cancel` stops the run, as its Stop button does. An action of the
 plugin's own may end in one of them as well: it answers `tau.interface("composer", { text = "..." })`, and once what
 it did to the state is kept, tau does that on the action's run.
 
@@ -572,6 +583,23 @@ Then `actions[action]` is called in the run with `{ call, answers }` or
 `{ call, declined = true }`, and the model reads what it answers. A
 run cancelled first ends the call with an error.
 
+### Files and blobs
+
+With `uses = { files = { "workspace", "~/Pictures" } }`, a plugin's tools
+read the folders it names, read-only: `"workspace"` the run's own, `"~"`
+or `"~/x"` under the home folder, or an absolute path. In a tool's
+`call`, a path is relative to the run's workspace, `~/` from home, or
+absolute, and is read where it really is: through `..` or a link it
+must still land in one of the folders. `ctx.files.read(path)` gives the
+text, `{ bytes = true }` the bytes in base64 and `limit` the most bytes
+it reads (8 MiB without one); `ctx.files.list(path)` what a folder
+holds, `{ name, dir, size }` each; `ctx.files.image(path)` its `size`
+and, when tau draws it, its `mime`, `width` and `height` (none for an
+SVG). `ctx.blobs.put_file(path)` keeps a file of at most 8 MiB in the
+run's repository and gives `{ id, digest, size_bytes }`, for
+`ui.image`: its bytes never pass through the plugin. Each folder is new
+reach.
+
 ### Settings
 
 What the person can set lives in `settings`:
@@ -627,6 +655,8 @@ t.case("what it checks", function()
     stores = { other = { ... } },  -- a job's ctx.stores, by repository; the run's own is "test"
     wake = "started",              -- what ctx.chats.wake answers: a value, or a function of run and text
     job_state = { ... },           -- a job's own state, else {}
+    files = { ["plot.png"] = { size = 120, image = { mime = "image/png", width = 4, height = 3 } },
+              ["notes.md"] = "text" },  -- what ctx.files reads, by path; a blob is its path
   }
   t.equal(run:before_tool { name = "exec_command", args = { cmd = "ls" } }, nil)
 end)

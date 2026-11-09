@@ -1,14 +1,18 @@
 //! tau-canvas in the workspace: the run's pane opens as something new
 //! lands on its canvas, stays closed for a run first drawn with a canvas
 //! until a plugin opens it, and an image on it is asked of the host
-//! once.
+//! once. tau-canvas is Luau (ADR 0050): its state, and the view it draws
+//! from it, fold into the run as the host publishes them.
 
 use std::sync::Arc;
 
 use gpui::{Entity, TestAppContext, VisualTestContext};
+use serde_json::{Value, json};
 use tau_agent::tool::RunId;
-use tau_canvas::{Blob, Content, ImageRef, Record};
 use tau_demo as demo;
+use tau_luau_plugins::Record;
+use tau_luau_plugins_host::runtime::{Context, Hook, Loaded, NoReach, load};
+use tau_testing::block_on_io;
 use tau_ui_remote::{
     Workspace,
     WorkspaceEvent,
@@ -16,6 +20,7 @@ use tau_ui_remote::{
     route::Route,
     update::HostUpdate,
 };
+use tokio_util::sync::CancellationToken;
 
 type Events = std::rc::Rc<std::cell::RefCell<Vec<WorkspaceEvent>>>;
 
@@ -60,46 +65,105 @@ fn open_with(
     )
 }
 
-fn document(call: &str, item: u32, text: &str) -> HostUpdate {
-    fold(revised(call, item, text))
+/// tau-canvas's Luau, as tau loads it.
+fn plugin() -> Loaded {
+    let files =
+        tau_luau_plugins_host::built_in::files(tau_luau_plugins::names::CANVAS)
+            .unwrap();
+    block_on_io(load(tau_luau_plugins::names::CANVAS, files)).unwrap()
 }
 
-fn revised(call: &str, item: u32, text: &str) -> Record {
-    Record::Revised {
-        call: call.into(),
-        item,
-        title: "Plan".into(),
-        content: Content::Document { text: text.into() },
+/// A run's canvas holding `revisions`, each `(call, item, content)`, in
+/// order, as the plugin keeps it.
+fn canvas(revisions: &[(&str, u32, Value)]) -> Value {
+    let mut items: Vec<Value> = Vec::new();
+    for (call, item, content) in revisions {
+        let revision = json!({ "call": call, "content": content });
+        match items.iter_mut().find(|found| found["id"] == json!(item)) {
+            Some(found) => {
+                found["revisions"].as_array_mut().unwrap().push(revision)
+            }
+            None => items.push(json!({
+                "id": item,
+                "title": "Plan",
+                "revisions": [revision],
+            })),
+        }
     }
+    json!({ "canvas": {
+        "items": items,
+        "fresh": revisions.len(),
+        "last": revisions.last().map(|(_, item, _)| *item),
+    } })
 }
 
-fn image(call: &str) -> HostUpdate {
-    fold(Record::Revised {
-        call: call.into(),
-        item: 9,
-        title: "Chart".into(),
-        content: Content::Image {
-            image: ImageRef {
-                blob: Blob {
-                    id: "0190f0c0-0000-7000-8000-000000000001".into(),
-                    digest: "ab".repeat(32),
-                    size_bytes: 10,
-                },
-                mime: "image/png".into(),
-                width: Some(4),
-                height: Some(3),
-                path: "chart.png".into(),
-            },
-            caption: String::new(),
+fn text(text: &str) -> Value {
+    json!({ "type": "document", "text": text })
+}
+
+fn chart() -> Value {
+    json!({ "type": "image", "caption": "", "image": {
+        "blob": {
+            "id": "0190f0c0-0000-7000-8000-000000000001",
+            "digest": "ab".repeat(32),
+            "size_bytes": 10,
         },
-    })
+        "mime": "image/png",
+        "width": 4,
+        "height": 3,
+        "path": "chart.png",
+    } })
 }
 
-fn fold(record: Record) -> HostUpdate {
-    HostUpdate::PluginFold {
-        run: demo::run_id(),
-        plugin: tau_canvas::NAME.into(),
-        body: serde_json::to_value(record).unwrap(),
+/// The run `run` with `state`, and the view the plugin draws from it, as
+/// the host publishes them.
+fn records(loaded: &Loaded, run: &RunId, state: Value) -> [Value; 2] {
+    let context = Context {
+        run: json!({ "id": run.0.as_ref(), "kind": "main", "repo": "tau-agent" }),
+        now: json!({}),
+        settings: json!({}),
+        state: state.clone(),
+        secrets: None,
+        store: None,
+        job: None,
+    };
+    let outcome = block_on_io(loaded.call(
+        &Hook::View,
+        Value::Null,
+        &context,
+        Arc::new(NoReach),
+        CancellationToken::new(),
+    ));
+    assert_eq!(outcome.error, None);
+    [
+        Record::State {
+            plugin: tau_luau_plugins::names::CANVAS.into(),
+            state,
+        },
+        Record::View {
+            plugin: tau_luau_plugins::names::CANVAS.into(),
+            view: outcome.value,
+        },
+    ]
+    .map(|record| serde_json::to_value(record).unwrap())
+}
+
+/// Folds the canvas of `revisions` into the demo run.
+fn publish(
+    ws: &mut Workspace,
+    loaded: &Loaded,
+    revisions: &[(&str, u32, Value)],
+    cx: &mut gpui::Context<Workspace>,
+) {
+    for body in records(loaded, &demo::run_id(), canvas(revisions)) {
+        ws.apply(
+            HostUpdate::PluginFold {
+                run: demo::run_id(),
+                plugin: tau_luau_plugins::NAME.into(),
+                body,
+            },
+            cx,
+        );
     }
 }
 
@@ -127,7 +191,7 @@ fn fetches(events: &Events) -> usize {
             // The pane's and the card's image are the interface's, which
             // fetches it as a picture (ADR 0045).
             matches!(event, WorkspaceEvent::PluginFetch { plugin, action, .. }
-                if plugin == tau_canvas::NAME && action["action"] == "fetch")
+                if plugin == tau_luau_plugins::NAME && action["act"] == "blob")
         })
         .count()
 }
@@ -137,6 +201,7 @@ fn the_pane_opens_as_something_new_lands_while_the_run_is_in_view(
     cx: &mut TestAppContext,
 ) {
     let (workspace, mut cx, events) = open(cx);
+    let loaded = plugin();
     workspace.update(&mut cx, |ws, cx| {
         ws.navigate(Route::Run(demo::run_id()), cx)
     });
@@ -146,7 +211,8 @@ fn the_pane_opens_as_something_new_lands_while_the_run_is_in_view(
         "an empty canvas has no pane"
     );
 
-    workspace.update(&mut cx, |ws, cx| ws.apply(document("a", 1, "one"), cx));
+    let mut landed = vec![("a", 1, text("one"))];
+    workspace.update(&mut cx, |ws, cx| publish(ws, &loaded, &landed, cx));
     cx.run_until_parked();
     assert!(open_pane(&workspace, &mut cx), "a new document opens it");
 
@@ -154,7 +220,8 @@ fn the_pane_opens_as_something_new_lands_while_the_run_is_in_view(
     workspace.update(&mut cx, |ws, cx| ws.toggle_pane(cx));
     cx.run_until_parked();
     assert!(!open_pane(&workspace, &mut cx));
-    workspace.update(&mut cx, |ws, cx| ws.apply(document("b", 1, "two"), cx));
+    landed.push(("b", 1, text("two")));
+    workspace.update(&mut cx, |ws, cx| publish(ws, &loaded, &landed, cx));
     cx.run_until_parked();
     assert!(
         open_pane(&workspace, &mut cx),
@@ -163,7 +230,8 @@ fn the_pane_opens_as_something_new_lands_while_the_run_is_in_view(
 
     // An image shows at once in the pane and its card, and is asked of
     // the host once for both, however often they draw.
-    workspace.update(&mut cx, |ws, cx| ws.apply(image("c"), cx));
+    landed.push(("c", 9, chart()));
+    workspace.update(&mut cx, |ws, cx| publish(ws, &loaded, &landed, cx));
     cx.run_until_parked();
     workspace.update(&mut cx, |_, cx| cx.notify());
     cx.run_until_parked();
@@ -184,10 +252,12 @@ fn a_run_first_drawn_with_a_canvas_keeps_its_pane_closed_until_asked(
             "gpt-5.5",
         )
         .in_repo("tau-agent");
-        view.fold(
-            tau_canvas::NAME,
-            &serde_json::to_value(revised("a", 1, "one")).unwrap(),
-        );
+        let loaded = plugin();
+        for body in
+            records(&loaded, &view.id.clone(), canvas(&[("a", 1, text("one"))]))
+        {
+            view.fold(tau_luau_plugins::NAME, &body);
+        }
         vec![view]
     });
     cx.run_until_parked();
@@ -196,9 +266,9 @@ fn a_run_first_drawn_with_a_canvas_keeps_its_pane_closed_until_asked(
     cx.run_until_parked();
     assert!(!pane_of(&workspace, &other, &mut cx));
 
-    // A card's click opens it, through the plugin's handle.
+    // A card's click opens it, through the plugins' handle.
     workspace.update(&mut cx, |ws, cx| {
-        ws.plugin_handle(tau_canvas::NAME).open_pane();
+        ws.plugin_handle(tau_luau_plugins::NAME).open_pane();
         ws.drain_plugin_requests(cx)
     });
     cx.run_until_parked();
@@ -210,13 +280,14 @@ fn what_landed_while_the_run_was_away_opens_its_pane_on_return(
     cx: &mut TestAppContext,
 ) {
     let (workspace, mut cx, _) = open(cx);
+    let loaded = plugin();
     workspace.update(&mut cx, |ws, cx| {
         ws.navigate(Route::Run(demo::run_id()), cx)
     });
     cx.run_until_parked();
     workspace.update(&mut cx, |ws, cx| {
         ws.navigate(Route::History, cx);
-        ws.apply(document("a", 1, "one"), cx);
+        publish(ws, &loaded, &[("a", 1, text("one"))], cx);
     });
     cx.run_until_parked();
     workspace.update(&mut cx, |ws, cx| {

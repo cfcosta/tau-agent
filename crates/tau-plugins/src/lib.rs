@@ -10,7 +10,6 @@ use tau_ui_plugin::Registry;
 pub fn plugins() -> Registry {
     Registry::new()
         .with(tau_agents::AgentsUi)
-        .with(tau_canvas::CanvasUi)
         .with(tau_chatgpt::ChatGptUi)
         .with(tau_codemode::CodemodeUi)
         .with(tau_direnv::DirenvUi)

@@ -116,6 +116,13 @@ impl HostHalf for LuauPluginsHost {
         // What they cut from the context, archived in tau's directory
         // for the repository, readable by the person alone.
         let luau = luau.with_archive(run.repo.dir.join("archive"));
+        // What their tools read, relative to the run's workspace, and
+        // the blobs they keep (`uses.files`).
+        let workspace = run
+            .services
+            .get::<tau_ui_plugin::WorkspaceDir>()
+            .map_or_else(|| run.repo.checkout.clone(), |dir| dir.0.clone());
+        let luau = luau.with_files(Some(workspace), host.blobs());
         // What their tools ask the person, carried out once allowed.
         let luau = luau.with_dispatch(crate::agent::Dispatch {
             allows: host.allows(),
@@ -319,6 +326,16 @@ impl HostHalf for LuauPluginsHost {
                 .cloned()
         };
         match action {
+            Act::Blob { plugin, repo, blob } => {
+                let dir =
+                    crate::files::blobs_dir(&host.blobs(), &plugin, &repo);
+                return Ok(Some(match crate::files::blob(dir, &blob).await {
+                    Ok(data) => serde_json::json!({ "data": data }),
+                    Err(error) => {
+                        serde_json::json!({ "error": format!("{error:#}") })
+                    }
+                }));
+            }
             Act::Allow { plugin } => host.allow(&plugin).await?,
             Act::Page {
                 plugin,

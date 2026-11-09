@@ -45,6 +45,10 @@ pub const SKILL: &str = "tau-plugins";
 /// answers hooks give, the view pieces.
 pub const TAU_MODULE: &str = include_str!("tau.luau");
 
+/// The `tau_test` module the tests run with: `tau.test`, apart from
+/// `tau`, which every hook loads.
+pub const TAU_TEST_MODULE: &str = include_str!("tau_test.luau");
+
 /// What a plugin may reach. The host refuses anything else.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Uses {
@@ -82,6 +86,23 @@ pub struct Uses {
     /// every repository (ADR 0050, gap D).
     #[serde(default)]
     pub chats: bool,
+    /// The folders its tools read, read-only (`ctx.files`, ADR 0050, gap
+    /// G): [`WORKSPACE`] for the run's own, `~` or `~/x` under the home
+    /// folder, or an absolute path.
+    #[serde(default)]
+    pub files: Vec<String>,
+}
+
+/// What `uses.files` names the run's workspace by.
+pub const WORKSPACE: &str = "workspace";
+
+/// What a folder of `uses.files` is, in words for the Allow.
+pub fn folder_words(folder: &str) -> String {
+    if folder == WORKSPACE {
+        "reading the run's workspace".to_owned()
+    } else {
+        format!("reading files in `{folder}`")
+    }
 }
 
 impl Uses {
@@ -109,6 +130,12 @@ impl Uses {
         if self.transcript && !before.transcript {
             grown.push("reading the run's conversation".into());
         }
+        grown.extend(
+            self.files
+                .iter()
+                .filter(|folder| !before.files.contains(folder))
+                .map(|folder| folder_words(folder)),
+        );
         if self.chats && !before.chats {
             grown.push("waking chats".into());
         }
@@ -577,6 +604,14 @@ pub enum Act {
         action: String,
         args: Value,
     },
+    /// The bytes of `plugin`'s blob `blob` in the repository `repo`, for
+    /// a `ui.image` the interface draws: `{ data }` in base64, or
+    /// `{ error }`.
+    Blob {
+        plugin: String,
+        repo: String,
+        blob: Value,
+    },
     /// The person's answer to what the call `call` of `run` asked them
     /// to allow (`tau.allow`): from whichever device answers first.
     Answer {
@@ -810,6 +845,7 @@ mod tests {
                 transcript: false,
                 archive: false,
                 chats: false,
+                files: Vec::new(),
             },
             settings: None,
             tools: Vec::new(),

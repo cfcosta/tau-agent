@@ -432,12 +432,12 @@ pub static SCREENS: &[(&str, Screen)] = &[
     // tau-canvas: a chart and a plan on the demo run's canvas, its
     // pane open on the plan, on the chart, then on the plan's earlier
     // revision.
-    ("canvas", |ws, host, cx| canvas(ws, host, None, cx)),
+    ("canvas", |ws, host, cx| canvas(ws, host, "canvas", cx)),
     ("canvas-image", |ws, host, cx| {
-        canvas(ws, host, Some((1, 0)), cx)
+        canvas(ws, host, "canvas-image", cx)
     }),
     ("canvas-document", |ws, host, cx| {
-        canvas(ws, host, Some((2, 0)), cx)
+        canvas(ws, host, "canvas-document", cx)
     }),
     // Uploads: a message the person sent with a picture, and another
     // image attached in the composer.
@@ -1744,75 +1744,107 @@ fn goal_at(
     }
 }
 
-/// The demo run with tau-canvas's calls replayed on it, the chart kept
-/// in the repository's canvas storage, and its pane open: on the item
-/// revised last, or on `pick`'s item and revision.
+/// The demo run's canvas: a chart, and a plan written then edited, the
+/// pane on what `fixture` picks. tau-canvas is Luau (ADR 0050): its calls,
+/// state and view come from its fixtures, which its tests check against
+/// the plugin; the chart is kept in its blobs as a call would keep it.
 fn canvas(
     workspace: &mut Workspace,
     host: &DemoHost,
-    pick: Option<(u32, usize)>,
+    fixture: &str,
     cx: &mut Context<Workspace>,
 ) {
     use tau_agent::{event::RunEvent, tool::ToolOutput};
     let run = run_id();
-    let Some(repo) = host.repo("tau-agent") else {
-        return;
-    };
-    let calls = match host.block_on(tau_canvas::demo::seed(&repo.dir)) {
-        Ok(calls) => calls,
+    let mut fixture =
+        crate::luau_fixture(tau_luau_plugins::names::CANVAS, fixture);
+    let dir = tau_luau_plugins_host::files::blobs_dir(
+        &host.luau_blobs(),
+        tau_luau_plugins::names::CANVAS,
+        "tau-agent",
+    );
+    let blob = match host.block_on(tau_luau_plugins_host::files::put_bytes(
+        dir,
+        crate::chart::chart(1200, 640),
+    )) {
+        Ok(blob) => blob,
         Err(error) => {
             eprintln!("the demo's canvas: {error:#}");
             return;
         }
     };
+    let placeholder = fixture["blob"].clone();
+    for part in ["state", "view"] {
+        put_blob(&mut fixture[part], &placeholder, &blob);
+    }
     workspace.navigate(Route::Run(run.clone()), cx);
-    let fresh = calls.len() as u64;
-    for call in calls {
+    for call in fixture["calls"].as_array().cloned().unwrap_or_default() {
+        let id = call["id"].as_str().unwrap_or_default().to_owned();
         workspace.apply_event(
             &RunEvent::ToolStart {
                 run: run.clone(),
-                call_id: call.id.into(),
-                tool: Arc::from(call.tool),
-                args: call.args,
+                call_id: id.clone(),
+                tool: Arc::from(call["tool"].as_str().unwrap_or_default()),
+                args: call["args"].clone(),
                 parent: None,
-            },
-            cx,
-        );
-        workspace.apply(
-            HostUpdate::PluginFold {
-                run: run.clone(),
-                plugin: tau_canvas::NAME.into(),
-                body: serde_json::to_value(&call.record)
-                    .expect("a record serializes"),
             },
             cx,
         );
         workspace.apply_event(
             &RunEvent::ToolEnd {
                 run: run.clone(),
-                call_id: call.id.into(),
-                output: Arc::new(ToolOutput::text(call.text)),
+                call_id: id,
+                output: Arc::new(ToolOutput::text(
+                    call["text"].as_str().unwrap_or_default(),
+                )),
                 is_error: false,
                 parent: None,
             },
             cx,
         );
     }
-    // What the pane shows is tau-canvas's UI state (ADR 0045).
-    if let Some((item, revision)) = pick {
-        let picked = tau_canvas::ui::Pick {
-            item,
-            revision,
-            fresh,
-        };
-        workspace.set_plugin_ui(
-            tau_canvas::NAME,
-            tau_canvas::ui::pick_key(&run),
-            serde_json::to_value(picked).ok(),
+    for body in
+        crate::luau_records_of(tau_luau_plugins::names::CANVAS, &fixture)
+    {
+        workspace.apply(
+            HostUpdate::PluginFold {
+                run: run.clone(),
+                plugin: tau_luau_plugins::NAME.into(),
+                body,
+            },
             cx,
         );
     }
     workspace.open_pane(cx);
+}
+
+/// `node` with each blob `placeholder` names, as an object or its id,
+/// in `blob`'s place.
+fn put_blob(
+    node: &mut serde_json::Value,
+    placeholder: &serde_json::Value,
+    blob: &serde_json::Value,
+) {
+    match node {
+        serde_json::Value::Object(fields) => {
+            if fields.get("id") == Some(placeholder) {
+                *node = blob.clone();
+                return;
+            }
+            if fields.get("key") == Some(placeholder) {
+                fields.insert("key".into(), blob["id"].clone());
+            }
+            for child in fields.values_mut() {
+                put_blob(child, placeholder, blob);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                put_blob(item, placeholder, blob);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// The demo run steered with a message and a picture, and an image
@@ -1838,7 +1870,7 @@ fn uploads(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         cx,
     );
     let shot = std::env::temp_dir().join("tau-demo-dashboard.png");
-    if std::fs::write(&shot, tau_canvas::demo::chart(640, 360)).is_ok() {
+    if std::fs::write(&shot, crate::chart::chart(640, 360)).is_ok() {
         workspace.attach_path(&shot, cx);
     }
 }

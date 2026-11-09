@@ -25,13 +25,16 @@ tau-ui-plugin.workspace = true
 tau-ui-remote.workspace = true
 # The plugins whose screens it shows, with their demo data.
 tau-agents.workspace = true
-tau-canvas = { workspace = true, features = ["demo"] }
 tau-chatgpt.workspace = true
 tau-codemode.workspace = true
 tau-direnv.workspace = true
 tau-github.workspace = true
 tau-jev.workspace = true
 tau-luau-plugins.workspace = true
+# Where the canvas keeps the demo's chart, as a call would.
+tau-luau-plugins-host.workspace = true
+# The demo's chart, drawn as a PNG.
+image = { workspace = true, features = ["png"] }
 tau-mcp = { workspace = true, features = ["demo"] }
 tau-mcp-host.workspace = true
 tau-memory.workspace = true

@@ -538,6 +538,23 @@ fn embed_as(piece: &Value, plugin: &str, mark: &str) -> Node {
         },
         Node::Due { id, at } => Node::Due { id: own(id), at },
         Node::Ago { id, at } => Node::Ago { id: own(id), at },
+        // A blob of the plugin's, which its host half reads.
+        Node::Image {
+            key,
+            mime,
+            fetch,
+            height,
+        } => Node::Image {
+            key: own(key),
+            mime,
+            fetch: serde_json::to_value(crate::Act::Blob {
+                plugin: plugin.to_owned(),
+                repo: fetch["repo"].as_str().unwrap_or_default().to_owned(),
+                blob: fetch["blob"].clone(),
+            })
+            .unwrap_or_default(),
+            height,
+        },
         Node::Button {
             label,
             action,
@@ -608,6 +625,7 @@ fn kernel_action(
         "start" => handle.start(text("repo"), text("text")),
         "alert" => handle.alert(text("title"), text("message")),
         "details" => handle.run_details(),
+        "pane" => handle.open_pane(),
         "open_run" => handle.open_run(&RunId(text("run").into())),
         // Stops the run, as its Stop button does.
         "cancel" => {
@@ -939,6 +957,7 @@ impl UiPlugin for LuauPluginsUi {
                 })
             })
             // What each plugin's `view` draws at the run's places.
+            .contribute(points::PANE, |_: &AtRun, view| pane(view.state?))
             .contribute(points::RUN_BANNER, |_: &AtRun, view| {
                 drawn(view.state?, "banner")
             })
@@ -991,6 +1010,11 @@ impl UiPlugin for LuauPluginsUi {
                         body: Some(allow_card(ask, at)),
                         ..CardView::default()
                     });
+                }
+                if let Some(header) =
+                    view.state.and_then(|state| card_header(state, &at.call_id))
+                {
+                    return Some(header);
                 }
                 let details = at.data.result.as_ref()?.details.as_ref()?;
                 let plugin = details.get("plugin")?.as_str()?;
@@ -1576,6 +1600,48 @@ fn first_drawn(state: &State, key: &str) -> Option<Node> {
 /// What the plugins' views draw on another tool's card, the call
 /// `call_id`: `place` (`badge`, beside its title, or `body`, under it) of
 /// each view's `calls[call_id]`, together.
+/// The run's pane, from the first plugin by name whose view has one:
+/// `pane = { title, fresh, body }`, `fresh` growing with each new thing
+/// it shows.
+fn pane(state: &State) -> Option<tau_ui_plugin::points::PaneView> {
+    state
+        .plugins
+        .iter()
+        .filter(|(_, plugin)| plugin.off.is_none())
+        .find_map(|(name, plugin)| {
+            let pane =
+                plugin.view.get("pane").filter(|pane| !pane.is_null())?;
+            Some(tau_ui_plugin::points::PaneView {
+                title: pane["title"].as_str().unwrap_or(name).to_owned(),
+                fresh: pane["fresh"].as_u64().unwrap_or_default(),
+                body: embed(&pane["body"], name),
+            })
+        })
+}
+
+/// What the first plugin by name whose view draws on the card of
+/// `call_id` puts in place of its head and at its header's end:
+/// `calls = { [call_id] = { head, label } }`.
+fn card_header(state: &State, call_id: &str) -> Option<CardView> {
+    state
+        .plugins
+        .iter()
+        .filter(|(_, plugin)| plugin.off.is_none())
+        .find_map(|(name, plugin)| {
+            let call = plugin.view.get("calls")?.get(call_id)?;
+            let head = call.get("head").filter(|head| !head.is_null());
+            let label = call.get("label").and_then(Value::as_str);
+            if head.is_none() && label.is_none() {
+                return None;
+            }
+            Some(CardView {
+                head: head.map(|head| embed(head, name)),
+                label: label.map(str::to_owned),
+                ..CardView::default()
+            })
+        })
+}
+
 fn on_card(state: &State, call_id: &str, place: &str) -> Option<Node> {
     let mut trees: Vec<Node> = state
         .plugins

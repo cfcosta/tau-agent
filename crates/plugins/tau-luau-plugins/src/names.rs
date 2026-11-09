@@ -3,6 +3,7 @@
 //! the list: `plugins/built-in.toml` is what tau comes with.
 
 pub const ASK: &str = "tau-ask";
+pub const CANVAS: &str = "tau-canvas";
 pub const COMPACTION: &str = "tau-compaction";
 pub const COMPACTION_CHAIN: &str = "tau-compaction-chain";
 pub const CONSTITUTION: &str = "tau-constitution";

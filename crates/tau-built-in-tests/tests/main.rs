@@ -12,6 +12,7 @@ use std::path::PathBuf;
 
 mod ask;
 mod binaries;
+mod canvas;
 mod compaction;
 mod compaction_chain;
 mod constitution;

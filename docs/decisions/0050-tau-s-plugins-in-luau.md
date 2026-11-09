@@ -865,6 +865,60 @@ What the port found besides:
   at most for each such close. Deleting a chat's due wake-ups before
   waking it fails it.
 
+### Gap G, and tau-canvas
+
+Gap G closed with the run's workspace among the folders, as tau-canvas
+shows what a run made there:
+
+- **`uses.files`** names folders a plugin's tools read, read-only:
+  `"workspace"` the run's own, `"~"` or `"~/x"` under home, or an
+  absolute path. Each is new reach, allowed as any other. In a tool's
+  `call`, `ctx.files.read(path, { bytes, limit })`, `list(path)` and
+  `image(path)`; a path relative to the workspace, `~/` from home or
+  absolute is read where it really is, so `..` and links that leave the
+  folders are refused, as the host tests check with the check taken out.
+- **`ctx.files.image`** says a file's size and, by its first bytes,
+  which image it is and its size in pixels: the host's, with the image
+  crate, as the Rust plugin had it.
+- **Blobs**: `ctx.blobs.put_file(path)` keeps a file of at most 8 MiB as
+  a blob of the plugin's in the run's repository (`tau-artifacts`, under
+  tau-luau-plugins' directory), its bytes never through the VM.
+  `ui.image(blob, mime, repo, height)` draws one; tau-luau-plugins' host
+  half answers the interface's fetch (`Act::Blob`), once a window.
+- **Of gap E**: `pane = { title, fresh, body }` fills `PANE`; `calls`
+  gains `head` and `label`, so a plugin draws its own tools' cards from
+  its state; `tau.pane` opens the pane, also as an action's
+  `tau.interface` answer.
+- **`tau_test`**: the test harness left `tau.luau` for a module of its
+  own, which only tests load. With gap G `tau.luau` passed codemode's
+  64 KiB a module may have.
+
+What the port found besides:
+
+- **The canvas is the run's state**, not records: the items, their
+  revisions, `fresh` and `last` as the Rust fold had them. What the
+  pane shows when the person picked is in the state too, so every
+  device shows the same, where the Rust pick was each window's.
+- **Cards** draw from the state, so a stored run shows them as the live
+  one did. A call that failed, or is still going, and `canvas_read`'s
+  have the loop's card: the Rust plugin drew `canvas · <title>` and
+  `canvas · read item N` for them.
+- **Smaller differences.** The results carry no `details` or structured
+  value, only their text. A field a tool does not take is refused in
+  Luau's words. A path past the workspace and home is refused, where
+  the Rust plugin read any file. A Luau plugin's views go to every
+  device with its state, so a document's text does too, as the Rust
+  records did.
+- **The parity check** ran the Rust plugin beside the Luau in real runs
+  on one workspace: 600 runs of up to 8 calls, showing images, notes
+  and missing files by paths padded, marked with `@` or `file://`,
+  absolute and through `..`, replacing items of the wrong kind or none,
+  writing documents empty, Markdown and past 256 KiB, editing with
+  empty, missing, repeated and overlapping text, and reading revisions
+  past either end; comparing every result and whether it failed. All
+  equal; a result's wording changed fails it. It went with the Rust
+  crate.
+
 ## Alternatives considered
 
 - **Port the plugins and leave the gaps**, calling Jev over HTTP with

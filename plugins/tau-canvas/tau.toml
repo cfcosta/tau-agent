@@ -1,0 +1,4 @@
+name = "tau-canvas"
+version = "0.1.0"
+description = "What a run makes for you to look at, in a pane beside it"
+entry = "src/plugin.luau"

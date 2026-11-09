@@ -25,6 +25,11 @@ sqlx.workspace = true
 tau-tools-host.workspace = true
 # The host's local time, which `ctx.now` and `ctx.time` read (ADR 0050, gap D).
 tau-clock.workspace = true
+# The bytes of the files Luau plugins keep (`ctx.blobs`), and what
+# images they are (`ctx.files.image`, ADR 0050 gap G).
+tau-artifacts.workspace = true
+image.workspace = true
+base64.workspace = true
 tau-luau-plugins.workspace = true
 # Where the skill tau ships is installed.
 tau-skills = { path = "../tau-skills", default-features = false }
@@ -36,6 +41,7 @@ tokio-util.workspace = true
 toml.workspace = true
 
 [dev-dependencies]
+image = { workspace = true, features = ["png"] }
 hegeltest.workspace = true
 tau-plugins.workspace = true
 tau-store-sqlite.workspace = true

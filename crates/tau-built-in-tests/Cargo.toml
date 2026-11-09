@@ -13,6 +13,8 @@ name = "built_in"
 path = "tests/main.rs"
 
 [dev-dependencies]
+base64.workspace = true
+image = { workspace = true, features = ["png"] }
 anyhow.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true

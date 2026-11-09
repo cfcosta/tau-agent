@@ -12,7 +12,8 @@
     "store": false,
     "transcript": true,
     "archive": false,
-    "chats": false
+    "chats": false,
+    "files": []
   },
   "settings": {
     "default": {

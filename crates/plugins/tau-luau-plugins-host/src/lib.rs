@@ -12,6 +12,7 @@ pub mod agent;
 pub mod archive;
 pub mod built_in;
 pub mod chats;
+pub mod files;
 pub mod forms;
 mod half;
 pub mod hegel;

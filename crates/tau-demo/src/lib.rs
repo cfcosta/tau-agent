@@ -49,18 +49,18 @@ pub use self::{
     screens::{SCREENS, Screen, open},
 };
 
+mod chart;
 mod host;
 mod screens;
 
 /// One scripted update, and how long to wait before it.
 pub type Step = (Duration, RunUpdate);
 
-/// The base64 of the image the demo's uploads screen sent: tau-canvas's
+/// The base64 of the image the demo's uploads screen sent: the canvas's
 /// chart, small.
 pub fn upload_data() -> String {
     use base64::Engine as _;
-    base64::engine::general_purpose::STANDARD
-        .encode(tau_canvas::demo::chart(900, 480))
+    base64::engine::general_purpose::STANDARD.encode(chart::chart(900, 480))
 }
 
 /// The picture the demo's uploads screen sent.
@@ -1659,6 +1659,11 @@ pub fn luau_fixture(plugin: &str, name: &str) -> Value {
 /// [`luau`] of the `n`th of a fixture's steps (`[{ state, view }]`).
 pub fn luau_step(plugin: &str, fixture: &str, n: usize) -> [Value; 2] {
     luau_records(plugin, &luau_fixture(plugin, fixture)[n])
+}
+
+/// [`luau`] of a fixture already read, as `{ state, view }`.
+pub fn luau_records_of(plugin: &str, fixture: &Value) -> [Value; 2] {
+    luau_records(plugin, fixture)
 }
 
 fn luau_records(plugin: &str, fixture: &Value) -> [Value; 2] {

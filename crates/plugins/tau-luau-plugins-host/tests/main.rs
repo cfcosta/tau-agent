@@ -5,6 +5,7 @@
 mod agent;
 mod agents;
 mod dispatch;
+mod files;
 mod forms;
 mod infer;
 mod package;

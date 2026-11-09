@@ -1,0 +1,167 @@
+{
+  "name": "tau-canvas",
+  "description": "What a run makes for you to look at, in a pane beside it",
+  "uses": {
+    "tools": [],
+    "jev": false,
+    "infer": false,
+    "change_args": false,
+    "network": [],
+    "secrets": [],
+    "model": null,
+    "store": false,
+    "transcript": false,
+    "archive": false,
+    "chats": false,
+    "files": ["workspace", "~"]
+  },
+  "settings": null,
+  "tools": [
+    {
+      "name": "canvas_edit",
+      "description": "Revises a document on the canvas by exact replacements: each `old` must occur exactly once in the text as the edits before it left it, and becomes `new`. The result is a new revision; the person can step back through earlier ones.",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "edits": {
+            "description": "Replacements made in turn.",
+            "items": {
+              "description": "An exact replacement in a document.",
+              "properties": {
+                "new": {
+                  "description": "What replaces it.",
+                  "type": "string"
+                },
+                "old": {
+                  "description": "Text that occurs exactly once in the document, as the edits before this one left it.",
+                  "type": "string"
+                }
+              },
+              "required": ["old", "new"],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "item": {
+            "description": "The document to revise, by its number.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": {
+            "description": "A new title, if it changes.",
+            "type": "string"
+          }
+        },
+        "required": ["item", "edits"],
+        "type": "object"
+      },
+      "card": false
+    },
+    {
+      "name": "canvas_read",
+      "description": "Reads a document's text from the canvas: its latest revision, or `revision`, numbered from 1. An image reads as its title, caption and file.",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "item": {
+            "description": "The document to read, by its number.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "revision": {
+            "description": "The revision to read, from 1. Leave it out for the latest.",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": ["item"],
+        "type": "object"
+      },
+      "card": false
+    },
+    {
+      "name": "canvas_show",
+      "description": "Shows the person an image file on the canvas, a pane beside the conversation. Use it for a picture they should look at: a chart you plotted, a screenshot, a diagram you rendered. The file must be PNG, JPEG, GIF, WebP, BMP or SVG, at most 8 MiB. The canvas keeps a copy, so the file may change afterwards. Give `item` to replace an image on the canvas with a new version; leave it out to add one.",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "caption": {
+            "description": "A line under the image saying what it shows.",
+            "type": "string"
+          },
+          "item": {
+            "description": "The image on the canvas to replace with a new version, by its number. Leave it out to add a new image.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "path": {
+            "description": "The image file: relative to the workspace, absolute, or from home with `~/`.",
+            "type": "string"
+          },
+          "title": {
+            "description": "A short title for the image.",
+            "type": "string"
+          }
+        },
+        "required": ["path", "title"],
+        "type": "object"
+      },
+      "card": false
+    },
+    {
+      "name": "canvas_write",
+      "description": "Writes a Markdown document on the canvas, a pane beside the conversation, for the person to read: a plan, a report, a draft, anything longer than a reply that they will want to keep open while you talk. Give `item` to replace a document's whole text with a new revision; leave it out to start a new document. To change part of a document, use canvas_edit.",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "item": {
+            "description": "The document on the canvas whose text this replaces, as a new revision, by its number. Leave it out to start a new document.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "text": {
+            "description": "The whole document, in Markdown.",
+            "type": "string"
+          },
+          "title": {
+            "description": "The document's title.",
+            "type": "string"
+          }
+        },
+        "required": ["title", "text"],
+        "type": "object"
+      },
+      "card": false
+    }
+  ],
+  "hooks": {
+    "start": false,
+    "before_tool": false,
+    "before_request": false,
+    "after_tool_result": false,
+    "rewrite_context": false,
+    "rewritten": false,
+    "before_stop": false,
+    "turn_end": false,
+    "on_event": false,
+    "title": false,
+    "notify": false,
+    "repo_data": false,
+    "recover": false,
+    "run_end": false,
+    "view": true,
+    "settings_view": false
+  },
+  "actions": ["open", "pick"],
+  "events": [],
+  "fills": [],
+  "compaction": null,
+  "forge": null,
+  "nav": null,
+  "commands": [],
+  "jobs": [],
+  "pages": [],
+  "repo_nav": null,
+  "picker_auto": null,
+  "continues": null
+}

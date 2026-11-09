@@ -1,0 +1,326 @@
+{
+  "blob": "demo-chart",
+  "calls": [
+    {
+      "id": "canvas-show",
+      "tool": "canvas_show",
+      "args": {
+        "path": "target/plots/retry-latency.png",
+        "title": "Retry latency",
+        "caption": "p50 and p99 latency per attempt, before and after the backoff change"
+      },
+      "text": "Image 1, \"Retry latency\", is on the canvas (1200×640 PNG)."
+    },
+    {
+      "id": "canvas-write",
+      "tool": "canvas_write",
+      "args": {
+        "title": "Canvas plan",
+        "text": "## What changes\n\n- `canvas_show` keeps a copy of the image in the repository's blobs, so it still shows once the file changes.\n- `canvas_write` and `canvas_edit` keep every revision of a document.\n- The pane opens beside the transcript when something new arrives.\n\n## Open questions\n\n1. Should the person edit a document in place?\n2. Should uploads land on the canvas too?\n"
+      },
+      "text": "Document 2, \"Canvas plan\", is on the canvas."
+    },
+    {
+      "id": "canvas-edit",
+      "tool": "canvas_edit",
+      "args": {
+        "item": 2,
+        "edits": [
+          {
+            "old": "2. Should uploads land on the canvas too?",
+            "new": "2. Uploads land on the canvas too: the person's images go to the model as input."
+          }
+        ]
+      },
+      "text": "Document 2, \"Canvas plan\", is at revision 2."
+    }
+  ],
+  "state": {
+    "canvas": {
+      "fresh": 3,
+      "items": [
+        {
+          "id": 1,
+          "revisions": [
+            {
+              "call": "canvas-show",
+              "content": {
+                "caption": "p50 and p99 latency per attempt, before and after the backoff change",
+                "image": {
+                  "blob": {
+                    "digest": "demo-chart",
+                    "id": "demo-chart",
+                    "size_bytes": 0
+                  },
+                  "height": 640,
+                  "mime": "image/png",
+                  "path": "target/plots/retry-latency.png",
+                  "width": 1200
+                },
+                "type": "image"
+              }
+            }
+          ],
+          "title": "Retry latency"
+        },
+        {
+          "id": 2,
+          "revisions": [
+            {
+              "call": "canvas-write",
+              "content": {
+                "text": "## What changes\n\n- `canvas_show` keeps a copy of the image in the repository's blobs, so it still shows once the file changes.\n- `canvas_write` and `canvas_edit` keep every revision of a document.\n- The pane opens beside the transcript when something new arrives.\n\n## Open questions\n\n1. Should the person edit a document in place?\n2. Should uploads land on the canvas too?\n",
+                "type": "document"
+              }
+            },
+            {
+              "call": "canvas-edit",
+              "content": {
+                "text": "## What changes\n\n- `canvas_show` keeps a copy of the image in the repository's blobs, so it still shows once the file changes.\n- `canvas_write` and `canvas_edit` keep every revision of a document.\n- The pane opens beside the transcript when something new arrives.\n\n## Open questions\n\n1. Should the person edit a document in place?\n2. Uploads land on the canvas too: the person's images go to the model as input.\n",
+                "type": "document"
+              }
+            }
+          ],
+          "title": "Canvas plan"
+        }
+      ],
+      "last": 2
+    },
+    "pick": {
+      "fresh": 3,
+      "item": 2,
+      "revision": 1
+    }
+  },
+  "view": {
+    "calls": {
+      "canvas-edit": {
+        "body": {
+          "children": [
+            {
+              "children": [
+                {
+                  "piece": "text",
+                  "text": "What changes"
+                },
+                {
+                  "piece": "text",
+                  "text": "- canvas_show keeps a copy of the image in the repository's blobs, so it still shows once the file changes."
+                },
+                {
+                  "piece": "text",
+                  "text": "- canvas_write and canvas_edit keep every revision of a document."
+                },
+                {
+                  "piece": "text",
+                  "text": "- The pane opens beside the transcript when something new arrives."
+                },
+                {
+                  "piece": "text",
+                  "text": "Open questions"
+                },
+                {
+                  "piece": "text",
+                  "text": "1. Should the person edit a document in place?"
+                }
+              ],
+              "piece": "card"
+            },
+            {
+              "action": "open",
+              "args": {
+                "fresh": 3,
+                "item": 2,
+                "revision": 2
+              },
+              "kind": "secondary",
+              "label": "Open on the canvas",
+              "piece": "button"
+            }
+          ],
+          "piece": "stack"
+        },
+        "head": {
+          "piece": "mono",
+          "text": "document 2 · Canvas plan"
+        },
+        "label": "revision 2 · 72 words"
+      },
+      "canvas-show": {
+        "body": {
+          "children": [
+            {
+              "fetch": {
+                "blob": {
+                  "digest": "demo-chart",
+                  "id": "demo-chart",
+                  "size_bytes": 0
+                },
+                "repo": "tau-agent"
+              },
+              "height": 10,
+              "key": "demo-chart",
+              "mime": "image/png",
+              "piece": "image"
+            },
+            {
+              "action": "open",
+              "args": {
+                "fresh": 3,
+                "item": 1,
+                "revision": 1
+              },
+              "kind": "secondary",
+              "label": "Open on the canvas",
+              "piece": "button"
+            }
+          ],
+          "piece": "stack"
+        },
+        "head": {
+          "piece": "mono",
+          "text": "image 1 · Retry latency"
+        },
+        "label": "1200×640 PNG"
+      },
+      "canvas-write": {
+        "body": {
+          "children": [
+            {
+              "children": [
+                {
+                  "piece": "text",
+                  "text": "What changes"
+                },
+                {
+                  "piece": "text",
+                  "text": "- canvas_show keeps a copy of the image in the repository's blobs, so it still shows once the file changes."
+                },
+                {
+                  "piece": "text",
+                  "text": "- canvas_write and canvas_edit keep every revision of a document."
+                },
+                {
+                  "piece": "text",
+                  "text": "- The pane opens beside the transcript when something new arrives."
+                },
+                {
+                  "piece": "text",
+                  "text": "Open questions"
+                },
+                {
+                  "piece": "text",
+                  "text": "1. Should the person edit a document in place?"
+                }
+              ],
+              "piece": "card"
+            },
+            {
+              "action": "open",
+              "args": {
+                "fresh": 3,
+                "item": 2,
+                "revision": 1
+              },
+              "kind": "secondary",
+              "label": "Open on the canvas",
+              "piece": "button"
+            }
+          ],
+          "piece": "stack"
+        },
+        "head": {
+          "piece": "mono",
+          "text": "document 2 · Canvas plan"
+        },
+        "label": "revision 1 · 64 words"
+      }
+    },
+    "pane": {
+      "body": {
+        "children": [
+          {
+            "children": [
+              {
+                "action": "pick",
+                "args": {
+                  "fresh": 3,
+                  "item": 1,
+                  "revision": 1
+                },
+                "kind": "secondary",
+                "label": "Image · Retry latency",
+                "piece": "button"
+              },
+              {
+                "action": "pick",
+                "args": {
+                  "fresh": 3,
+                  "item": 2,
+                  "revision": 2
+                },
+                "kind": "primary",
+                "label": "Document · Canvas plan",
+                "piece": "button"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "children": [
+              {
+                "name": "back",
+                "piece": "icon",
+                "tone": "neutral"
+              },
+              {
+                "action": "pick",
+                "args": {
+                  "fresh": 3,
+                  "item": 2,
+                  "revision": 2
+                },
+                "icon": "chevron",
+                "kind": "secondary",
+                "label": "",
+                "piece": "button"
+              },
+              {
+                "piece": "text",
+                "text": "Revision 1 of 2"
+              },
+              {
+                "piece": "text",
+                "text": "· not the latest"
+              }
+            ],
+            "piece": "row"
+          },
+          {
+            "children": [
+              {
+                "piece": "title",
+                "text": "Canvas plan"
+              },
+              {
+                "piece": "markdown",
+                "text": "## What changes\n\n- `canvas_show` keeps a copy of the image in the repository's blobs, so it still shows once the file changes.\n- `canvas_write` and `canvas_edit` keep every revision of a document.\n- The pane opens beside the transcript when something new arrives.\n\n## Open questions\n\n1. Should the person edit a document in place?\n2. Should uploads land on the canvas too?\n"
+              }
+            ],
+            "height": 80,
+            "piece": "scroll"
+          }
+        ],
+        "piece": "stack"
+      },
+      "fresh": 3,
+      "title": "Canvas"
+    },
+    "status": {
+      "detail": null,
+      "piece": "status",
+      "text": "2 items on the canvas",
+      "tone": "neutral"
+    }
+  }
+}

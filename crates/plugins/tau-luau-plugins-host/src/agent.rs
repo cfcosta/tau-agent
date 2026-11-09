@@ -131,6 +131,10 @@ struct Inner {
     /// Where `ctx.archive` keeps its files: tau's archive of the run's
     /// repository, else the system's temporary directory.
     archive: std::path::PathBuf,
+    /// The run's workspace, which `ctx.files` reads relative paths in,
+    /// and where each plugin's blobs are kept (`uses.files`).
+    workspace: Option<std::path::PathBuf>,
+    blobs: Option<std::path::PathBuf>,
     /// What carries out what a tool asked once the person allows it.
     dispatch: Option<Dispatch>,
     /// The state of each run going on, by run.
@@ -184,6 +188,8 @@ impl LuauPlugins {
             config: None,
             stores: None,
             archive: std::env::temp_dir(),
+            workspace: None,
+            blobs: None,
             dispatch: None,
             runs: Mutex::default(),
         }))
@@ -202,6 +208,20 @@ impl LuauPlugins {
         Arc::get_mut(&mut self.0)
             .expect("the archive is given before the plugins are shared")
             .archive = dir;
+        self
+    }
+
+    /// The plugins, `ctx.files` reading relative paths in the run's
+    /// `workspace` and keeping blobs under `blobs`.
+    pub fn with_files(
+        mut self,
+        workspace: Option<std::path::PathBuf>,
+        blobs: std::path::PathBuf,
+    ) -> Self {
+        let inner = Arc::get_mut(&mut self.0)
+            .expect("the files are given before the plugins are shared");
+        inner.workspace = workspace;
+        inner.blobs = Some(blobs);
         self
     }
 
@@ -239,6 +259,8 @@ impl LuauPlugins {
             config: None,
             stores: None,
             archive: std::env::temp_dir(),
+            workspace: None,
+            blobs: None,
             dispatch: None,
             runs: Mutex::default(),
         }))
@@ -1447,11 +1469,6 @@ impl AgentTool for LuauTool {
         };
         let shared = inner.run_state(&ctx.run);
         let mut state = shared.lock().await;
-        let reach: Arc<dyn Reach> = Arc::new(ToolReach {
-            ctx: ctx.clone(),
-            plugin: plugin.clone(),
-            jev: inner.jev.clone(),
-        });
         let tool = Hook::Tool(self.spec.name.clone());
         let Some(active) = inner.plugin(&self.plugin).filter(|active| {
             active.loaded.declaration.tools.iter().any(|spec| {
@@ -1464,6 +1481,26 @@ impl AgentTool for LuauTool {
             )
             .into());
         };
+        let uses = &active.loaded.declaration.uses;
+        let files = (!uses.files.is_empty()).then(|| {
+            let blobs =
+                inner.blobs.as_ref().zip(inner.run["repo"].as_str()).map(
+                    |(root, repo)| {
+                        crate::files::blobs_dir(root, &self.plugin, repo)
+                    },
+                );
+            Arc::new(crate::files::Files::new(
+                &uses.files,
+                inner.workspace.clone(),
+                blobs,
+            ))
+        });
+        let reach: Arc<dyn Reach> = Arc::new(ToolReach {
+            ctx: ctx.clone(),
+            plugin: plugin.clone(),
+            jev: inner.jev.clone(),
+            files,
+        });
         let failures = state.failures.get(&self.plugin).copied().unwrap_or(0);
         let outcome = inner
             .run_hook_of(
@@ -1738,12 +1775,15 @@ struct ToolReach {
     ctx: ToolCtx,
     plugin: PluginCtx,
     jev: Option<Arc<dyn Jev>>,
+    /// What `ctx.files` and `ctx.blobs` reach, with `uses.files`.
+    files: Option<Arc<crate::files::Files>>,
 }
 
 #[async_trait]
 impl Reach for ToolReach {
     fn tools(&self) -> Vec<ToolEntry> {
-        self.ctx
+        let mut tools: Vec<ToolEntry> = self
+            .ctx
             .catalog()
             .tools()
             .iter()
@@ -1755,10 +1795,19 @@ impl Reach for ToolReach {
                 namespace: None,
                 sequential: false,
             })
-            .collect()
+            .collect();
+        if self.files.is_some() {
+            tools.extend(crate::files::Files::entries());
+        }
+        tools
     }
 
     async fn call(&self, call: ScriptCall) -> Result<ToolReply, String> {
+        if let Some(files) = &self.files
+            && crate::files::Files::handles(&call.name)
+        {
+            return files.call(&call.name, &call.args).await;
+        }
         match self.ctx.call(&call.name, call.args).await {
             Ok(output) => Ok(ToolReply::success(
                 output

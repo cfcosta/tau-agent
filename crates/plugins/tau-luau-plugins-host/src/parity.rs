@@ -91,6 +91,7 @@ pub fn point(name: &str) -> Option<Luau> {
         (USER_MESSAGE.name, "messages"),
         (CARD_BODY.name, "calls"),
         (COMPOSER.name, "composer"),
+        (PANE.name, "pane"),
     ];
     if let Some((_, hook)) = hooks.iter().find(|(point, _)| *point == name) {
         return Some(Luau::Hook(hook));
@@ -130,7 +131,6 @@ pub fn point(name: &str) -> Option<Luau> {
         (REWRITE.name, NOT_YET),
         (CONTEXT.name, NOT_YET),
         (CHANGES.name, NOT_YET),
-        (PANE.name, NOT_YET),
     ];
     excluded
         .iter()
@@ -143,7 +143,8 @@ pub fn point(name: &str) -> Option<Luau> {
 pub fn service(name: &str) -> Option<Luau> {
     let luau = match name {
         tau_jev::SERVICE => Luau::Hook("ctx.jev"),
-        names::WORKSPACE_DIR | names::IDENTITY => Luau::Excluded(
+        names::WORKSPACE_DIR => Luau::Hook("ctx.files"),
+        names::IDENTITY => Luau::Excluded(
             "the host's own, to check and land the plugins repository",
         ),
         names::TURN_HOOKS
