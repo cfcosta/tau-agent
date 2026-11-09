@@ -431,7 +431,9 @@ async fn a_websockets_messages_are_frames_and_it_opens_again() {
 }
 
 /// A busy stream writes its agent's file about once a second, not once a
-/// frame, and what it keeps is written all the same.
+/// frame, and what it keeps is written all the same. Each turn the frames
+/// start writes once of its own, and the ticks here start one whenever a
+/// frame waits, so those writes are not the stream's.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_busy_stream_writes_its_agent_s_file_seldom() {
     const FRAMES: usize = 60;
@@ -459,10 +461,11 @@ async fn a_busy_stream_writes_its_agent_s_file_seldom() {
         f.heard().len() >= FRAMES
     })
     .await;
-    let writes = f.agents.kept_writes() - before;
+    let turns = f.host.conversation.turns.lock().unwrap().len() as u64;
+    let writes = f.agents.kept_writes() - before - turns;
     assert!(
         writes < FRAMES as u64 / 2,
-        "{writes} writes for {FRAMES} frames"
+        "{writes} writes for {FRAMES} frames, besides {turns} turns"
     );
     // What it keeps is written within a second, or at once when asked.
     f.agents.flush().await;
