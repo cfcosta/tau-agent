@@ -110,6 +110,20 @@ impl Fold for State {
     fn apply(&mut self, record: Record, run: &mut dyn RunCx) {
         match record {
             Record::State { plugin, state } => self.of(plugin).state = state,
+            Record::Acted {
+                plugin,
+                on,
+                state,
+                view,
+            } => {
+                let current = self.plugins.get(&plugin).map(|part| &part.state);
+                if crate::still_on(current, &on) {
+                    self.of(plugin.clone()).state = state;
+                    if let Some(view) = view {
+                        self.apply(Record::View { plugin, view }, run);
+                    }
+                }
+            }
             Record::View { plugin, view } => {
                 // A note goes where the run is when it first draws, and
                 // stays there as later ones come.
@@ -2070,6 +2084,7 @@ mod tests {
         let done = ActionDone {
             plugin: "p".into(),
             run: "r1".into(),
+            on: json!({}),
             state: json!({ "answered": true }),
             changed: true,
             view: None,
@@ -2609,6 +2624,7 @@ mod tests {
         let done = ActionDone {
             plugin: "p".into(),
             run: "r1".into(),
+            on: json!({}),
             state: json!({ "n": 2 }),
             changed: true,
             view: Some(json!({ "status": { "text": "2" } })),
@@ -2636,6 +2652,36 @@ mod tests {
             record,
             Record::Log { .. } | Record::Error { .. }
         )));
+    }
+
+    /// An action carried out on a state the run has since left is dropped,
+    /// state and view; on the state as it is, or a run with none yet, it
+    /// is taken.
+    #[test]
+    fn an_action_on_a_state_left_behind_is_dropped() {
+        let acted = |on: Value, n: i64| Record::Acted {
+            plugin: "p".into(),
+            on,
+            state: json!({ "n": n }),
+            view: Some(json!({ "status": { "text": n.to_string() } })),
+        };
+        let mut state = State::default();
+        let mut fold = |record| {
+            state
+                .apply(record, &mut tau_ui_plugin::testing::FakeRun::default());
+            let part = &state.plugins["p"];
+            (part.state["n"].clone(), part.view["status"]["text"].clone())
+        };
+        assert_eq!(fold(acted(json!({}), 1)), (json!(1), json!("1")));
+        assert_eq!(fold(acted(json!({ "n": 1 }), 2)), (json!(2), json!("2")));
+        assert_eq!(fold(acted(json!({ "n": 1 }), 3)), (json!(2), json!("2")));
+
+        let records = [
+            serde_json::to_value(acted(json!({}), 1)).unwrap(),
+            serde_json::to_value(acted(json!({ "n": 1 }), 2)).unwrap(),
+            serde_json::to_value(acted(json!({ "n": 1 }), 3)).unwrap(),
+        ];
+        assert_eq!(crate::last_states(&records)["p"], json!({ "n": 2 }));
     }
 
     /// Records fold into each plugin's part: its state and view, its log

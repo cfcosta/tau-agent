@@ -266,6 +266,80 @@ fn a_waiting_run_is_answered_from_whichever_device_first() {
     );
 }
 
+/// A key from a device that had not yet seen the answers, stored after the
+/// run took them, changes nothing: the first call keeps its reply, the run
+/// goes on to its second question, and that one takes its answers too.
+#[test]
+fn a_late_key_does_not_take_back_the_answers() {
+    let single = json!({ "questions": [{
+        "question": "Which lane?",
+        "header": "Lane",
+        "options": [
+            { "label": "Left", "description": "l" },
+            { "label": "Right", "description": "r" }
+        ]
+    }]});
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("ask", single.clone()))
+        .turn(|t| t.tool_call("ask", single.clone()))
+        .turn(|t| t.text("Both answered."));
+    let (host, mut events) = host_on(&llm);
+    let mut view = host
+        .block_on(host.start("ask me", &ModelChoice::default(), REPO))
+        .unwrap();
+    let run = view.id.clone();
+    fold_until(&mut view, &mut events, |view| {
+        ask_of(view)["calls"][0].is_object()
+    });
+    let stored = |host: &Host| {
+        host.block_on(host.history())
+            .unwrap()
+            .iter()
+            .find(|stored| stored.id == run)
+            .map(ask_of)
+            .unwrap()
+    };
+    let behind = ask_of(&view);
+    let (error, _) = act(&host, &run, "key", json!({ "key": "1" }), &behind);
+    assert_eq!(error, None);
+    let picked = stored(&host);
+    let (error, _) =
+        act(&host, &run, "key", json!({ "key": "enter" }), &picked);
+    assert_eq!(error, None, "the answers take the first call");
+    fold_until(&mut view, &mut events, |view| {
+        ask_of(view)["calls"][1].is_object()
+    });
+
+    // The other device still has the state from before the answers.
+    let (late, left) = act(&host, &run, "key", json!({ "key": "2" }), &behind);
+    assert_eq!(late, None);
+    assert_ne!(left, behind, "the key changed what that device had");
+
+    let now = stored(&host);
+    assert_eq!(
+        now["calls"][0]["reply"]["answers"][0]["picked"],
+        json!(["Left"])
+    );
+    assert!(now["calls"][1].is_object(), "{now}");
+
+    let (error, picked) = act(&host, &run, "key", json!({ "key": "2" }), &now);
+    assert_eq!(error, None);
+    let (error, _) =
+        act(&host, &run, "key", json!({ "key": "enter" }), &picked);
+    assert_eq!(error, None, "the second call still takes its answers");
+    fold_until(&mut view, &mut events, |_| false);
+    llm.assert_exhausted();
+    let last = stored(&host);
+    assert_eq!(
+        last["calls"][0]["reply"]["answers"][0]["picked"],
+        json!(["Left"])
+    );
+    assert_eq!(
+        last["calls"][1]["reply"]["answers"][0]["picked"],
+        json!(["Right"])
+    );
+}
+
 /// tau-ask's `ask` holds a turn open for the person; an agent's runs,
 /// which no one watches, leave it out (ADR 0037): they ask through
 /// tau-agents', whose answer comes back as an event.
@@ -630,6 +704,34 @@ fn the_persons_own_answer_counts(cx: &mut TestAppContext) {
     assert_eq!(answers[1]["picked"], json!(["Notification"]));
 }
 
+/// Away to a chat with no question and back: the panel has the keys again.
+#[gpui::test]
+fn a_waiting_question_takes_the_keys_again_on_coming_back(
+    cx: &mut TestAppContext,
+) {
+    let second = RunId("second".into());
+    let mut other = demo::retry_after();
+    other.id = second.clone();
+    other.title = "second".into();
+    let (workspace, mut cx, mut serving) =
+        open(cx, vec![demo::retry_after(), other]);
+    let go = |run: &RunId, cx: &mut VisualTestContext| {
+        workspace.update(cx, |ws, cx| ws.navigate(Route::Run(run.clone()), cx));
+        cx.run_until_parked();
+    };
+    go(&demo::run_id(), &mut cx);
+    serving.ask(&workspace, &mut cx, &demo::run_id(), questions());
+    go(&second, &mut cx);
+    go(&demo::run_id(), &mut cx);
+    keys(&mut serving, &workspace, &mut cx, "2");
+    keys(&mut serving, &workspace, &mut cx, "1 right enter");
+    assert_eq!(serving.sent.len(), 1, "{:?}", serving.sent);
+    assert_eq!(
+        serving.sent[0].1["answers"][0]["picked"],
+        json!(["End the turn"])
+    );
+}
+
 /// Two runs waiting at once, on calls with the same id: each keeps its
 /// own answers as the person goes between them, and each reply goes to
 /// its own run.
@@ -664,9 +766,11 @@ fn two_waiting_runs_keep_their_own_answers(cx: &mut TestAppContext) {
     // Back to the first: it is where it was left, on its checklist.
     go(&demo::run_id(), &mut cx);
     keys(&mut serving, &workspace, &mut cx, "1 right enter");
-    // The first answered, the composer has the keys again: the second
-    // run's panel is on its review, and its Send sends.
+    // The first answered, the composer has the keys again, until the
+    // second run's panel is back in its place: it is on its review, and
+    // Enter sends.
     go(&second, &mut cx);
+    keys(&mut serving, &workspace, &mut cx, "enter");
     let send = |cx: &mut VisualTestContext| {
         workspace.update(cx, |ws, cx| {
             let origin = tau_ui_remote::plugins::Origin {
@@ -682,8 +786,7 @@ fn two_waiting_runs_keep_their_own_answers(cx: &mut TestAppContext) {
             );
         });
     };
-    send(&mut cx);
-    serving.serve(&workspace, &mut cx);
+    assert_eq!(serving.sent.len(), 2, "{:?}", serving.sent);
     // A second Send, once answered, sends nothing more.
     send(&mut cx);
     serving.serve(&workspace, &mut cx);

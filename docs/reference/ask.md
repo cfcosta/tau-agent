@@ -113,6 +113,11 @@ the computer started.
 - **Review:** each header and its answer; Edit goes back to that
   question. Send answers waits until all are answered; Decline to
   answer and Cancel run are always there.
+- **A panel takes the keys** whenever it comes back to the composer's place,
+  as on returning to a chat that waits, unless a message is being written.
+- **A key that crosses the answers** is dropped: an action counts only on the
+  state it was carried out on, so a device that had not seen the answers cannot
+  take them back.
 - **Sending** leaves the state as it is: the run takes the answers, and
   the panel goes once the call has them. Answers the host refuses (the
   call stopped waiting, or another device answered first) are the

@@ -723,8 +723,11 @@ impl Workspace {
             )
             .child({
                 // A plugin that needs the person's input more than a
-                // message draws in the composer's place; once none does,
-                // the composer takes the keys back.
+                // message draws in the composer's place, taking the keys
+                // as it comes back there; once none does, the composer
+                // takes them back.
+                self.tree_widgets.borrow_mut().composer_anew =
+                    !self.composer_replaced.get();
                 let instead = self
                     .current()
                     .filter(|_| self.route != Route::NewRun)
@@ -735,6 +738,7 @@ impl Workspace {
                             .into_iter()
                             .next()
                     });
+                self.tree_widgets.borrow_mut().composer_anew = false;
                 if self.composer_replaced.replace(instead.is_some())
                     && instead.is_none()
                 {

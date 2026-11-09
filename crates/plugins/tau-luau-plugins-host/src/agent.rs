@@ -457,17 +457,7 @@ impl Inner {
         let Ok(records) = ctx.records().await else {
             return;
         };
-        let mut last: HashMap<String, Value> = HashMap::new();
-        for record in records {
-            if let Ok(Record::State {
-                plugin,
-                state: stored,
-            }) = serde_json::from_value::<Record>(record)
-            {
-                last.insert(plugin, stored);
-            }
-        }
-        for (plugin, stored) in last {
+        for (plugin, stored) in tau_luau_plugins::last_states(&records) {
             if state.stored.get(&plugin) != Some(&stored) {
                 state.states.insert(plugin.clone(), stored.clone());
                 state.stored.insert(plugin, stored);
@@ -908,14 +898,7 @@ impl Plugin for LuauPlugins {
 /// The state a fork, a resumed or an idle run inherits: each plugin's
 /// last.
 fn inherit(plan: &RunPlan, state: &mut RunState) {
-    for record in plan.records() {
-        let Ok(Record::State {
-            plugin,
-            state: kept,
-        }) = serde_json::from_value::<Record>(record.clone())
-        else {
-            continue;
-        };
+    for (plugin, kept) in tau_luau_plugins::last_states(plan.records()) {
         state.stored.insert(plugin.clone(), kept.clone());
         state.states.insert(plugin, kept);
     }

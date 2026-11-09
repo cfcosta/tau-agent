@@ -975,6 +975,7 @@ impl Registry {
         let mut done = crate::ActionDone {
             plugin: plugin.to_owned(),
             run: run.to_owned(),
+            on: state.clone(),
             state: state.clone(),
             changed: false,
             view: None,

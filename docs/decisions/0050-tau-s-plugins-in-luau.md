@@ -758,13 +758,17 @@ What the port found besides:
   answers the host refuses, as when another device answered first, are
   the action's error. What the panel sends always fits what was asked,
   as a property checks; only the host checks it in a run.
-- **Two devices can still cross.** The interface records what a key or
-  click left, and the run takes the last state recorded. A key from one
-  device whose record arrives after another device's answers took the
-  call puts back a state without the reply: the model has already read
-  the answers, but the call's card and state say otherwise, until
-  `run_end` closes it as unanswered. Any action on a live run's state
-  has this race; nothing here closes it.
+- **Two devices cannot undo an answer.** An action's result is recorded with
+  the state it was carried out on (`Record::Acted`), and every reader of the
+  run's records takes it only if the plugin's state is still that one. A key
+  from a device that had not seen the answers is dropped, on the computer, on
+  phones and in the run alike. This holds for every Luau plugin's actions. The
+  cost: an action whose state moved on meanwhile loses its change, not only
+  its stale copy. Two keys pressed before the first's result returns keep the
+  first and lose the second, where they kept the second and lost the first; and
+  a slow action on a live run, as one calling Jev, loses its change if a hook
+  changes that plugin's state while it runs. What such an action did outside
+  its state stands.
 - **The card** is drawn from the state, on the call's card body: what
   was asked and each answer with its note. Its title is the tool's, not
   `ask · Waiting · Surfaces`, with no "2 answered" label or edge, and a

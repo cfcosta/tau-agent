@@ -50,6 +50,9 @@ pub struct TreeWidgets {
     /// Each area that takes the keys: its focus, and the focus number it
     /// last took them for.
     areas: HashMap<String, (gpui::FocusHandle, Option<u64>)>,
+    /// While the composer's place is drawn after holding the composer: an
+    /// area drawn there takes the keys, whatever its focus number.
+    pub(crate) composer_anew: bool,
 }
 
 /// A tree's image, as far as the window has it.
@@ -174,11 +177,13 @@ fn area(
     let id = format!("{}\u{0}{}", handle.plugin(), spec.key);
     let (focus, refocus) = {
         let mut all = widgets.borrow_mut();
+        let composer_anew = all.composer_anew;
         let (focus, last) = all
             .areas
             .entry(id)
             .or_insert_with(|| (cx.focus_handle(), None));
-        let refocus = spec.focus.is_some() && spec.focus != *last;
+        let refocus =
+            spec.focus.is_some() && (spec.focus != *last || composer_anew);
         *last = spec.focus;
         (focus.clone(), refocus)
     };
