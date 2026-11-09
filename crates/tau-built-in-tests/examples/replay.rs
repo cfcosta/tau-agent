@@ -150,6 +150,7 @@ pub async fn replay(
                     state: state.clone(),
                     secrets: None,
                     store: None,
+                    job: None,
                 };
                 let call = |hook: Hook, input: Value, state: Value| {
                     let reach = reach.clone();

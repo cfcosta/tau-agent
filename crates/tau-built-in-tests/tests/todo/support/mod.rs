@@ -318,6 +318,7 @@ impl Plugin {
             state: json!({}),
             secrets: None,
             store: Some(StoreRef(store.clone())),
+            job: None,
         };
         let outcome = self
             .loaded

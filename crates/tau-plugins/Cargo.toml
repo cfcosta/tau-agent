@@ -21,7 +21,6 @@ tau-phones = { path = "../plugins/tau-phones", default-features = false }
 tau-sqlite = { path = "../plugins/tau-sqlite", default-features = false }
 tau-chatgpt = { path = "../plugins/tau-chatgpt", default-features = false }
 tau-jev.workspace = true
-tau-schedule = { path = "../plugins/tau-schedule", default-features = false }
 tau-luau-plugins.workspace = true
 tau-agents.workspace = true
 tau-skills = { path = "../plugins/tau-skills", default-features = false }

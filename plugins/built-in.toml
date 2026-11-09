@@ -10,6 +10,7 @@ plugins = [
   "tau-goal",
   "tau-constitution",
   "tau-ask",
+  "tau-schedule",
   "tau-fast-compaction",
   "tau-tree-compaction",
   "tau-compaction",

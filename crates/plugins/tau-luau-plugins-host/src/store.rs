@@ -288,6 +288,10 @@ impl Session {
 pub struct Stores {
     dir: Option<PathBuf>,
     open: tokio::sync::Mutex<HashMap<(String, String), Arc<Kv>>>,
+    /// By plugin, the repositories its folder held when first looked at:
+    /// what it gets since is opened here, so a job that asks each second
+    /// reads the folder once.
+    on_disk: tokio::sync::Mutex<HashMap<String, Vec<String>>>,
     fuse: Mutex<Option<Arc<Fuse>>>,
     changed: Option<Changed>,
 }
@@ -356,6 +360,7 @@ impl Stores {
     }
 
     /// The repositories `plugin` keeps a store in: on disk, and opened.
+    /// The folder is read the first time; stores made since are opened.
     pub async fn repos_of(&self, plugin: &str) -> Vec<String> {
         let mut repos: Vec<String> = self
             .open
@@ -365,17 +370,27 @@ impl Stores {
             .filter(|(of, _)| of == plugin)
             .map(|(_, repo)| repo.clone())
             .collect();
-        if let Some(dir) = &self.dir
-            && let Ok(mut files) = tokio::fs::read_dir(dir.join(plugin)).await
-        {
-            while let Ok(Some(file)) = files.next_entry().await {
-                let name = file.file_name().to_string_lossy().into_owned();
-                if let Some(repo) =
-                    name.strip_suffix(".db").and_then(unsafe_name)
-                    && !repos.contains(&repo)
-                {
-                    repos.push(repo);
+        let mut on_disk = self.on_disk.lock().await;
+        if !on_disk.contains_key(plugin) {
+            let mut found = Vec::new();
+            if let Some(dir) = &self.dir
+                && let Ok(mut files) =
+                    tokio::fs::read_dir(dir.join(plugin)).await
+            {
+                while let Ok(Some(file)) = files.next_entry().await {
+                    let name = file.file_name().to_string_lossy().into_owned();
+                    if let Some(repo) =
+                        name.strip_suffix(".db").and_then(unsafe_name)
+                    {
+                        found.push(repo);
+                    }
                 }
+            }
+            on_disk.insert(plugin.to_owned(), found);
+        }
+        for repo in &on_disk[plugin] {
+            if !repos.contains(repo) {
+                repos.push(repo.clone());
             }
         }
         repos.sort();
@@ -385,6 +400,7 @@ impl Stores {
     /// Forgets the stores opened, as a new process would.
     pub async fn close(&self) {
         self.open.lock().await.clear();
+        self.on_disk.lock().await.clear();
     }
 }
 

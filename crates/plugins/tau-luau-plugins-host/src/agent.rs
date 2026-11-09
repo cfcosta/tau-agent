@@ -19,7 +19,6 @@
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use async_trait::async_trait;
@@ -345,6 +344,7 @@ impl Inner {
                 .as_deref()
                 .map(|config| crate::runtime::secrets_of(config, name)),
             store: None,
+            job: None,
         }
     }
 
@@ -1989,12 +1989,17 @@ impl RunReach {
     }
 }
 
-/// `{ unix, iso, weekday }` for now, in UTC.
+/// `{ unix, iso, weekday }` for now, in UTC, with the host's `local`
+/// time (`YYYY-MM-DD HH:MM`) and its `offset` from UTC, in seconds
+/// (ADR 0050, gap D).
 pub fn now() -> Value {
-    let unix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs() as i64);
-    at(unix)
+    use tau_clock::Clock as _;
+    let clock = tau_clock::SystemClock;
+    let unix = clock.now();
+    let mut now = at(unix);
+    now["local"] = json!(tau_clock::local(&clock, unix));
+    now["offset"] = json!(clock.offset(unix));
+    now
 }
 
 /// `{ unix, iso, weekday }` for `unix`, in UTC.

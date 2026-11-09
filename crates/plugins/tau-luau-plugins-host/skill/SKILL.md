@@ -67,7 +67,7 @@ local ui = tau.ui
 return tau.plugin {
   uses = { tools = { "exec_command" }, jev = false, infer = false,
            network = { "ntfy.sh" }, secrets = { "ntfy" },
-           transcript = false, archive = false },
+           transcript = false, archive = false, chats = false },
   settings = { schema = { ... }, default = { ... }, view = function(settings, ctx) end },
   tools = { name = { description, parameters, call, card } },
   start = function(plan, ctx) end,
@@ -293,20 +293,22 @@ new reach.
 
 ### `ctx`
 
-| Field              | What it is                                                                                                                                                                       |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ctx.run`          | `{ id, kind = "main" or "chat" or "sub_agent", repo, model, turn }`; in an action, `{ id, live, jev }`: whether the run is going on, and a Jev key is saved                      |
-| `ctx.now`          | `{ unix, iso, weekday }`; `weekday` is `"Monday"` and so on                                                                                                                      |
-| `ctx.settings`     | what the person set, over `settings.default`; per repository when one keeps its own copy                                                                                         |
-| `ctx.state`        | the plugin's table for this run; what a hook leaves in it is kept                                                                                                                |
-| `ctx.tools`        | in a tool's `call`: the tools `uses.tools` names, called as `ctx.tools.read({ path = "a" })`; in every hook, `infer` when `uses.infer`, which a fake run's `tools` stands in for |
-| `ctx.jev`          | Jev, when `uses.jev`: in a tool's `call` and every run hook but `on_event`, booked to the run; each call gives what it cost as its second value                                  |
-| `ctx.log`          | `ctx.log(text)`: a line on the plugin's page, never for the model                                                                                                                |
-| `ctx.store`        | with `uses.store`: the plugin's store in the repository the hook works in (below)                                                                                                |
-| `ctx.transcript()` | with `uses.transcript`, in `before_request`, `after_tool_result` and `rewrite_context`: the run's conversation, whole (below)                                                    |
-| `ctx.archive`      | with `uses.archive`: `ctx.archive.path(kind)` names a new file in tau's archive of the repository, and `ctx.archive.write(path, text)` writes it, once, for its owner alone      |
-| `ctx.measure`      | in `rewrite_context`: `ctx.measure(rewrite)`, the bytes of JSON before and after `rewrite` (above)                                                                               |
-| `ctx.models`       | the plan's models, newest of each family: `{ id, family, efforts }`                                                                                                              |
+| Field                                          | What it is                                                                                                                                                                                     |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ctx.run`                                      | `{ id, kind = "main" or "chat" or "sub_agent", repo, model, turn }`; in an action, `{ id, live, jev }`: whether the run is going on, and a Jev key is saved                                    |
+| `ctx.now`                                      | `{ unix, iso, weekday, local, offset }`; `weekday` is `"Monday"` and so on, `local` the host's time as `YYYY-MM-DD HH:MM`, `offset` its seconds from UTC                                       |
+| `ctx.time`                                     | the host's local time: `local(at)` writes `at` (seconds since 1970) as `YYYY-MM-DD HH:MM`, `parse(text)` reads one back and `duration(text)` reads `90m`, `2h` or `3d`, nil when they are none |
+| `ctx.settings`                                 | what the person set, over `settings.default`; per repository when one keeps its own copy                                                                                                       |
+| `ctx.state`                                    | the plugin's table for this run; what a hook leaves in it is kept                                                                                                                              |
+| `ctx.tools`                                    | in a tool's `call`: the tools `uses.tools` names, called as `ctx.tools.read({ path = "a" })`; in every hook, `infer` when `uses.infer`, which a fake run's `tools` stands in for               |
+| `ctx.jev`                                      | Jev, when `uses.jev`: in a tool's `call` and every run hook but `on_event`, booked to the run; each call gives what it cost as its second value                                                |
+| `ctx.log`                                      | `ctx.log(text)`: a line on the plugin's page, never for the model                                                                                                                              |
+| `ctx.store`                                    | with `uses.store`: the plugin's store in the repository the hook works in (below)                                                                                                              |
+| `ctx.transcript()`                             | with `uses.transcript`, in `before_request`, `after_tool_result` and `rewrite_context`: the run's conversation, whole (below)                                                                  |
+| `ctx.archive`                                  | with `uses.archive`: `ctx.archive.path(kind)` names a new file in tau's archive of the repository, and `ctx.archive.write(path, text)` writes it, once, for its owner alone                    |
+| `ctx.measure`                                  | in `rewrite_context`: `ctx.measure(rewrite)`, the bytes of JSON before and after `rewrite` (above)                                                                                             |
+| `ctx.models`                                   | the plan's models, newest of each family: `{ id, family, efforts }`                                                                                                                            |
+| `ctx.repos()`, `ctx.stores(repo)`, `ctx.chats` | in a job, with `uses.chats`: the repositories the plugin keeps a store in, each one's store, and `ctx.chats.wake(run, text)` (below)                                                           |
 
 `ctx.state` is stored with the run: a resumed or forked run keeps it.
 JSON has no empty array: use `array({})` for one that must stay a list.
@@ -379,6 +381,8 @@ Plain tables, drawn by tau on the computer and on the phone:
 - `ui.ticker(id, since, stopped)`: the time since `since` (milliseconds
   since 1970), counting until `stopped` is given; keep `since` in the
   state
+- `ui.due(id, at)`: the time left until `at` (milliseconds since 1970),
+  `in 5m`, then `now`
 - `ui.graph(nodes, edges, height)`: a small map of nodes
   (`{ id, label, x, y, tone, focus, page }`, `x` and `y` from 0 to 1)
   joined by `{ from, to }` edges
@@ -391,9 +395,10 @@ Plain tables, drawn by tau on the computer and on the phone:
   opens and closes what is under it
 - `ui.tabs(id, { { "label", { ... } }, ... })`: one tab shown at a
   time
-- `ui.button(label, action, args, kind)`: carries out
+- `ui.button(label, action, args, kind, icon)`: carries out
   `actions[action](args, ctx)` on the run's state, then draws `view`
-  again; `kind` is `"primary"`, `"secondary"` or `"danger"`
+  again; `kind` is `"primary"`, `"secondary"` or `"danger"`, and `icon`
+  one of tau's icons, alone when `label` is empty
 - `ui.input(id, { placeholder = "...", multiline = true, submit = "action" })`:
   a text input; Enter carries out `submit` with `{ text = ... }` and
   empties it, or keeps what it holds with `keep = true`
@@ -484,12 +489,23 @@ An action of a plugin with `uses.jev`, a button's or a page's, has
 `ctx.jev` too, the host's, and a tool's time for it.
 
 A plugin's `jobs` are work it does by itself while tau runs: each
-`run(ctx)` once `every` seconds passed since it last ran (at least 60),
-tau's restarts or not, shown with the person's other jobs. Its
-`ctx.state` is its own, kept from run to run; `ctx.run` is empty. A job
-reaches what the plugin's other hooks outside a run do: HTTP to its
-hosts, and `infer` with `uses.model`. A new job is new reach. In tests,
-`run:job(name)`.
+`run(ctx)` once `every` seconds passed since it last ran (at least 1),
+tau's restarts or not, shown with the person's other jobs. One that
+runs more often than every minute is a tick: it is not shown, and when
+it last ran is kept only while tau runs. Its `ctx.state` is its own,
+kept from run to run; `ctx.run` is empty. A job reaches what the
+plugin's other hooks outside a run do: HTTP to its hosts, and `infer`
+with `uses.model`. A new job is new reach. In tests, `run:job(name)`.
+
+With `uses = { chats = true }`, a job reaches every chat: `ctx.repos()`
+lists the repositories the plugin keeps a store in, `ctx.stores(repo)`
+is one's store, as `ctx.store` is in a hook, and `ctx.chats.wake(run,
+text)` starts a turn of the chat `run` on tau's message `text`. It
+answers `"started"`, `"busy"` when a turn of the chat is going, or
+`"gone"` when the chat takes no more messages, and fails when the turn
+could not start; what the job wrote to its stores is kept just before,
+as the turn may read them. `uses.chats` is new reach: the plugin starts
+turns, which cost.
 
 A plugin with `nav`, `{ label, icon? }`, has an entry in the sidebar that
 opens its page; `icon` names one of the interface's icons.
@@ -607,6 +623,10 @@ t.case("what it checks", function()
     transcript = { ... },          -- what ctx.transcript() gives, with uses.transcript
     models = { ... },              -- what ctx.models lists, else none
     jev = { ask = function(req) ... end },  -- what ctx.jev is, else none
+    offset = 3 * 3600,             -- the host's seconds from UTC, else 0
+    stores = { other = { ... } },  -- a job's ctx.stores, by repository; the run's own is "test"
+    wake = "started",              -- what ctx.chats.wake answers: a value, or a function of run and text
+    job_state = { ... },           -- a job's own state, else {}
   }
   t.equal(run:before_tool { name = "exec_command", args = { cmd = "ls" } }, nil)
 end)
@@ -622,7 +642,8 @@ end)
   `run:run_end(run)`, `run:title(run)`, `run:notify(notice)`,
   `run:job(name)`,
   `run:view()`; each takes what the hook is given.
-- `run.state` is the state the last hook left; `run.logs` its log lines.
+- `run.state` is the state the last hook left; `run.logs` its log lines;
+  `run.job_state` a job's; `run.woken` each `{ run, text }` a job woke.
 - `t.equal(got, want, what)` compares tables by what they hold.
 
 Test what the plugin decides, on the days, commands and states where

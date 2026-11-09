@@ -29,6 +29,7 @@ pub(crate) fn context(
         state: json!({}),
         secrets: registry.secrets_of(&active.loaded.declaration.name),
         store: None,
+        job: None,
     }
 }
 

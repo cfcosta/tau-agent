@@ -1,0 +1,165 @@
+{
+  "now": 1791806400,
+  "state": {
+    "cards": {
+      "[scheduled · look-at-415 · 2026-10-12 14:00]\nRead #415's review. Answer what you can; if a change is asked for, make it and push.": [
+        {
+          "due": "2026-10-12 14:00",
+          "name": "look-at-415",
+          "note": "Read #415's review. Answer what you can; if a change is asked for, make it and push."
+        }
+      ]
+    },
+    "waiting": [
+      {
+        "at": 1791813600,
+        "made": 1791806400,
+        "name": "recheck-415",
+        "note": "If #415 has its second approval, land it; if CI is red, read the failing job before touching anything.",
+        "run": "scheduled-review"
+      },
+      {
+        "at": 1791900000,
+        "made": 1791806400,
+        "name": "release-notes",
+        "note": "Tomorrow's release: check the notes mention the plugins tree change from #412.",
+        "run": "scheduled-review"
+      }
+    ]
+  },
+  "view": {
+    "inspector": {
+      "children": [
+        {
+          "piece": "heading",
+          "text": "Scheduled"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "name": "clock",
+                  "piece": "icon",
+                  "tone": "neutral"
+                },
+                {
+                  "piece": "text",
+                  "text": "recheck-415"
+                },
+                {
+                  "piece": "spacer"
+                },
+                {
+                  "at": 1791813600000,
+                  "id": "scheduled-review-recheck-415",
+                  "piece": "due"
+                },
+                {
+                  "action": "cancel",
+                  "args": {
+                    "name": "recheck-415"
+                  },
+                  "icon": "close",
+                  "kind": "secondary",
+                  "label": "",
+                  "piece": "button"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "piece": "text",
+              "text": "If #415 has its second approval, land it; if CI is red, read the failing job before touching anything."
+            }
+          ],
+          "piece": "stack"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "name": "clock",
+                  "piece": "icon",
+                  "tone": "neutral"
+                },
+                {
+                  "piece": "text",
+                  "text": "release-notes"
+                },
+                {
+                  "piece": "spacer"
+                },
+                {
+                  "at": 1791900000000,
+                  "id": "scheduled-review-release-notes",
+                  "piece": "due"
+                },
+                {
+                  "action": "cancel",
+                  "args": {
+                    "name": "release-notes"
+                  },
+                  "icon": "close",
+                  "kind": "secondary",
+                  "label": "",
+                  "piece": "button"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "piece": "text",
+              "text": "Tomorrow's release: check the notes mention the plugins tree change from #412."
+            }
+          ],
+          "piece": "stack"
+        }
+      ],
+      "piece": "stack"
+    },
+    "messages": {
+      "[scheduled · look-at-415 · 2026-10-12 14:00]\nRead #415's review. Answer what you can; if a change is asked for, make it and push.": {
+        "children": [
+          {
+            "children": [
+              {
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "name": "clock",
+                        "piece": "icon",
+                        "tone": "info"
+                      },
+                      {
+                        "piece": "text",
+                        "text": "Scheduled · look-at-415"
+                      },
+                      {
+                        "piece": "spacer"
+                      },
+                      {
+                        "piece": "mono",
+                        "text": "2026-10-12 14:00"
+                      }
+                    ],
+                    "piece": "row"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "Read #415's review. Answer what you can; if a change is asked for, make it and push."
+                  }
+                ],
+                "piece": "stack"
+              }
+            ],
+            "piece": "stack"
+          }
+        ],
+        "piece": "card"
+      }
+    }
+  }
+}

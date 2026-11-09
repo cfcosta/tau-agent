@@ -109,6 +109,7 @@ fn context(weekday: &str) -> Context {
         state: json!({}),
         secrets: None,
         store: None,
+        job: None,
     }
 }
 
@@ -138,6 +139,7 @@ async fn a_plugin_declares_what_it_is() {
             store: false,
             transcript: false,
             archive: false,
+            chats: false,
         }
     );
     let tools: Vec<(&str, bool)> = declared

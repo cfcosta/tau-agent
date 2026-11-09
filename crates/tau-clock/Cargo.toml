@@ -1,0 +1,15 @@
+[package]
+name = "tau-clock"
+description = "The host's clock and local time, for agents' schedules and Luau plugins (ADR 0037, ADR 0050)."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The host's offset from UTC, for times in its local time.
+libc.workspace = true
+
+[dev-dependencies]
+hegeltest.workspace = true

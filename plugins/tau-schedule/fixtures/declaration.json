@@ -1,0 +1,109 @@
+{
+  "name": "tau-schedule",
+  "description": "Chats wake themselves later, with a note",
+  "uses": {
+    "tools": [],
+    "jev": false,
+    "infer": false,
+    "change_args": false,
+    "network": [],
+    "secrets": [],
+    "model": null,
+    "store": true,
+    "transcript": false,
+    "archive": false,
+    "chats": true
+  },
+  "settings": null,
+  "tools": [
+    {
+      "name": "schedule",
+      "description": "Wake this chat later, once, with a note to yourself for then: `in` a while, or `on` a local date and time. When it comes, this chat takes a turn whose message is your note, after any turn going ends. Use it when work waits on something: a review, a release, a long build. Scheduling a name again replaces it. The person sees what you scheduled beside the chat and may cancel it.",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "in": {
+            "description": "After this long: `90m`, `2h`, `3d`.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Lower-case letters, digits, `-` and `_`: `recheck-pr-412`.",
+            "type": "string"
+          },
+          "note": {
+            "description": "What to do then, for you to read when it comes.",
+            "type": "string"
+          },
+          "on": {
+            "description": "At this local date and time: `2026-10-13 09:00`.",
+            "type": "string"
+          }
+        },
+        "required": ["name", "note"],
+        "type": "object"
+      },
+      "card": false
+    },
+    {
+      "name": "scheduled",
+      "description": "What this chat has scheduled with `schedule` that is still to come, soonest first, and the host's local time now. Look before you schedule something again.",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "card": false
+    },
+    {
+      "name": "unschedule",
+      "description": "Cancel what this chat scheduled as `name`.",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": ["name"],
+        "type": "object"
+      },
+      "card": false
+    }
+  ],
+  "hooks": {
+    "start": true,
+    "before_tool": false,
+    "before_request": false,
+    "after_tool_result": false,
+    "rewrite_context": false,
+    "rewritten": false,
+    "before_stop": false,
+    "turn_end": false,
+    "on_event": false,
+    "title": false,
+    "notify": false,
+    "repo_data": false,
+    "recover": false,
+    "run_end": false,
+    "view": true,
+    "settings_view": false
+  },
+  "actions": ["cancel"],
+  "events": [],
+  "fills": [],
+  "compaction": null,
+  "forge": null,
+  "nav": null,
+  "commands": [],
+  "jobs": [
+    {
+      "name": "wake",
+      "every": 1,
+      "label": "Waking chats"
+    }
+  ],
+  "pages": [],
+  "repo_nav": null,
+  "picker_auto": null,
+  "continues": null
+}

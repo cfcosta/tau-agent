@@ -1328,27 +1328,30 @@ Built: `plugins/tau-watcher`, a Luau plugin tau comes with (ADR
 
 ### `tau-schedule`: a chat wakes itself later
 
-Built: `crates/plugins/tau-schedule`, with its host half behind its
-`host` feature. Its decision is
-[0039](../decisions/0039-chats-wake-themselves-later.md).
+Built: `plugins/tau-schedule`, a Luau plugin tau comes with (ADR 0050).
+Its decision is [0039](../decisions/0039-chats-wake-themselves-later.md).
 
 - **Tools**, in every run but an agent's (whose own `schedule` also
-  repeats, 0037): `schedule { name, note, in | on }`, `scheduled {}`
-  and `unschedule { name }`. Each reads its chat from its call's run.
-  A sub-agent's `schedule` refuses, saying to hand it back: the tools
-  are there so its prompt prefix stays main's.
-- **Waking:** the host half looks every second for what came due, and
-  wakes each such chat through `Conversations::wake` with one message
-  of tau's holding every note due. A chat with a turn going waits for
-  it; one that landed or was dropped loses what it had waiting.
-- **At least once:** a wake-up leaves `wakes.json` once its chat's turn
-  started. tau closed before that wakes the chat as it starts again, so
-  no wake-up is missed; tau closed after the turn started and before the
-  file was written wakes it once more, on the same note.
-- **State:** `wakes.json` in its plugin directory, by chat, written
-  whole on each change; nothing in the run's records. The interface
-  reads it as the plugin's data: the inspector's Scheduled section, and
-  the card a wake-up's message draws as.
+  repeats, 0037, so an agent's runs leave the plugin out):
+  `schedule { name, note, in | on }`, `scheduled {}` and
+  `unschedule { name }`. Each reads its chat from `ctx.run.id`. A
+  sub-agent's `schedule` refuses, saying to hand it back: the tools are
+  there so its prompt prefix stays main's.
+- **Waking:** its job, `wake`, ticks each second (`uses.chats`): it reads
+  every repository's store for what came due, and wakes each such chat
+  through `ctx.chats.wake` with one message of tau's holding every note
+  due. A chat with a turn going waits for it; one that landed or was
+  dropped loses what it had waiting; a turn that did not start is tried
+  again thirty seconds later.
+- **At least once:** a wake-up leaves the store once its chat's turn
+  started, and what the job wrote is kept as each wake starts a turn.
+  tau closed before a turn started wakes the chat as it starts again, so
+  no wake-up is missed; tau closed after it started and before the job
+  kept that it went wakes it once more, on the same note.
+- **State:** the repository's store, `wake/<chat>/<name>` each; and the
+  chat's state, which each turn's `start` reads again from the store:
+  its inspector's Scheduled section, and the cards of the messages it
+  woke on.
 
 ## What changed in tau-agent
 

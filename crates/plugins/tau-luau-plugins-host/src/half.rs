@@ -143,24 +143,65 @@ impl HostHalf for LuauPluginsHost {
         };
         let dir = cx.plugin_dir(crate::NAME).join("jobs");
         let registry = host.clone();
+        let host_cx = cx.clone();
         cx.runtime.spawn(async move {
+            let mut ran = std::collections::HashMap::new();
+            let ticks = std::sync::Arc::new(crate::jobs::Ticks::default());
+            // The ticks going: one still going waits for its next turn.
+            let going = std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashSet::new(),
+            ));
             loop {
-                for (plugin, job, label) in
-                    crate::jobs::due_now(&registry, &dir).await
+                for due in crate::jobs::due_now(&registry, &dir, &mut ran).await
                 {
                     let (registry, dir) = (registry.clone(), dir.clone());
-                    let (named, what) = (plugin.clone(), job.clone());
+                    let ticks = ticks.clone();
+                    let reach = crate::runtime::JobRef {
+                        stores: registry.stores(),
+                        conversations: host_cx.conversations(),
+                    };
+                    let id = format!("{}/{}", due.plugin, due.job);
+                    if due.every < crate::jobs::TICK_UNDER {
+                        if !going
+                            .lock()
+                            .expect("not poisoned")
+                            .insert(id.clone())
+                        {
+                            continue;
+                        }
+                        let going = going.clone();
+                        tokio::spawn(async move {
+                            if let Err(error) = crate::jobs::run(
+                                &registry,
+                                &due.plugin,
+                                &due.job,
+                                &dir,
+                                &ticks,
+                                reach,
+                                tokio_util::sync::CancellationToken::new(),
+                            )
+                            .await
+                            {
+                                eprintln!("{}: {error:#}", crate::NAME);
+                            }
+                            going.lock().expect("not poisoned").remove(&id);
+                        });
+                        continue;
+                    }
+                    let (named, what) = (due.plugin.clone(), due.job.clone());
                     // One already going waits for its next turn.
                     let _ = jobs.start(
                         crate::NAME,
-                        &format!("{plugin}/{job}"),
-                        format!("{plugin}: {label}"),
+                        &id,
+                        format!("{}: {}", due.plugin, due.label),
                         move |job_cx| async move {
                             crate::jobs::run(
                                 &registry,
                                 &named,
                                 &what,
                                 &dir,
+                                &ticks,
+                                reach,
                                 job_cx.cancel_token().clone(),
                             )
                             .await

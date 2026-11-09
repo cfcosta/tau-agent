@@ -130,6 +130,7 @@ fn call(
         state: state.clone(),
         secrets: None,
         store: Some(store.clone()),
+        job: None,
     };
     let reach: Arc<dyn Reach> = match jev {
         Some(jev) => Arc::new(WithJev(jev.clone())),

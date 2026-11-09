@@ -405,6 +405,7 @@ fn call(
         state,
         secrets: None,
         store: None,
+        job: None,
     };
     let outcome = block_on_io(loaded.call(
         &hook,

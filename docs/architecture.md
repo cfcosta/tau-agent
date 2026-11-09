@@ -10,6 +10,8 @@ tau-agent/
 │   ├── tau-ai/       # types, events, Responses conversion, WebSocket pool, retry, cost
 │   ├── tau-agent/    # Agent, Run, loop, AgentTool + Plugin, typed results,
 │   │                 # limits, sub-agents, forks, context estimate
+│   ├── tau-clock/    # the host's clock and local days: agents' schedules,
+│   │                 # Luau plugins' local time (ADR 0037, 0050)
 │   ├── tau-store/    # runs, messages, fork transcripts: the types and the
 │   │                 # Backend a Store is, with no database driver
 │   ├── tau-store-sqlite/ # the Backend on SQLite via sqlx, with migrations
@@ -52,8 +54,6 @@ tau-agent/
 │       ├── tau-notify/           # desktop notices while tau is in the
 │       │                         # background, filling `tau.notify`
 │       ├── tau-reasoning/        # picks a run's reasoning effort on auto (Luau)
-│       ├── tau-schedule/         # a chat wakes itself later, once; the
-│       │                         # clock agents' schedules go by (ADR 0039)
 │       ├── tau-skills/           # instructions an agent loads when a task
 │       │                         # calls for them
 │       ├── tau-sqlite/           # the store in SQLite, filling `tau.store`

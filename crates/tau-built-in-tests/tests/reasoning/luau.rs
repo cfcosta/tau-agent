@@ -72,6 +72,7 @@ fn context(run: &str, state: &Value) -> Context {
         state: state.clone(),
         secrets: None,
         store: None,
+        job: None,
     }
 }
 

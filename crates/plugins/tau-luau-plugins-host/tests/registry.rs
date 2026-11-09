@@ -728,14 +728,28 @@ fn a_plugins_job_runs_when_due_and_keeps_its_state() {
     }
     block_on_io(registry.allow("greet")).unwrap();
     let dir = home.path().join("jobs");
-    let due = block_on_io(jobs::due_now(&registry, &dir));
-    assert_eq!(due, [("greet".into(), "count".into(), "Counts".into())]);
+    let ran = || std::collections::HashMap::new();
+    let due = block_on_io(jobs::due_now(&registry, &dir, &mut ran()));
+    assert_eq!(
+        due,
+        [jobs::Due {
+            plugin: "greet".into(),
+            job: "count".into(),
+            label: "Counts".into(),
+            every: 3600,
+        }]
+    );
     for _ in 0..2 {
         block_on_io(jobs::run(
             &registry,
             "greet",
             "count",
             &dir,
+            &jobs::Ticks::default(),
+            tau_luau_plugins_host::runtime::JobRef {
+                stores: registry.stores(),
+                conversations: None,
+            },
             Default::default(),
         ))
         .unwrap();
@@ -745,7 +759,7 @@ fn a_plugins_job_runs_when_due_and_keeps_its_state() {
     )
     .unwrap();
     assert_eq!(kept["state"], serde_json::json!({ "n": 2 }));
-    assert!(block_on_io(jobs::due_now(&registry, &dir)).is_empty());
+    assert!(block_on_io(jobs::due_now(&registry, &dir, &mut ran())).is_empty());
 }
 
 /// A job is due once `every` seconds passed since it last ran, and not
@@ -759,17 +773,19 @@ fn a_job_is_due_after_its_interval() {
     assert!(!due(100, 60, 50), "a clock that went back waits");
 }
 
-/// A job that runs more often than every minute keeps its plugin from
-/// loading.
+/// A job that runs more often than every second keeps its plugin from
+/// loading; one that ticks each second loads.
 #[test]
-fn a_job_runs_at_most_every_minute() {
-    let source = r#"return require("tau").plugin { jobs = { fast = { every = 5, run = function() end } } }"#;
-    let files = Files {
-        source: source.into(),
+fn a_job_runs_at_most_every_second() {
+    let with = |every: u32| Files {
+        source: format!(
+            r#"return require("tau").plugin {{ jobs = {{ fast = {{ every = {every}, run = function() end }} }} }}"#
+        ),
         ..Files::named("greet")
     };
-    let error = block_on_io(load("greet", files)).unwrap_err();
+    let error = block_on_io(load("greet", with(0))).unwrap_err();
     assert!(error.contains("`fast`"), "{error}");
+    block_on_io(load("greet", with(1))).unwrap();
 }
 
 /// The built-in `shipped`, loaded.

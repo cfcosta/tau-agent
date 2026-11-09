@@ -118,6 +118,7 @@ fn prompts() -> Prompts {
         state: json!({}),
         secrets: None,
         store: None,
+        job: None,
     };
     let outcome = aside(loaded.call(
         &tau_luau_plugins_host::runtime::Hook::Tool("prompts".into()),

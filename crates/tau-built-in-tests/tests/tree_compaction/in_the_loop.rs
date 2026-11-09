@@ -661,6 +661,7 @@ fn no_more_than_jobs_requests_run_at_once() {
             state: json!({}),
             secrets: None,
             store: None,
+            job: None,
         };
         let counting = Arc::new(Counting {
             running: AtomicUsize::new(0),

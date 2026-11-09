@@ -8,7 +8,7 @@
 use tau_agents::{TriggerKind, When};
 
 use crate::clock::{self, Clock};
-/// Durations and times of day, as tau-schedule reads them for chats too.
+/// Durations and times of day, as Luau plugins read them too (tau-clock).
 pub use crate::clock::{duration, time_of_day};
 
 /// The shortest interval a schedule may have: an event costs a turn.

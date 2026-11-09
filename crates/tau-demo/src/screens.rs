@@ -130,7 +130,7 @@ pub static SCREENS: &[(&str, Screen)] = &[
     }),
     // A chat that woke on what it scheduled (ADR 0039), with more to
     // come in its inspector.
-    ("scheduled", |ws, host, cx| scheduled(ws, host, cx)),
+    ("scheduled", |ws, _, cx| scheduled(ws, cx)),
     // tau-fast-compaction's ledger, its page among tau's Luau plugins
     // (ADR 0050).
     ("ledger", |ws, _, cx| {
@@ -2261,8 +2261,10 @@ fn sidebar_states(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
 }
 
 /// A chat that scheduled itself a look at a review, woke on it, and has
-/// two more waiting.
-fn scheduled(ws: &mut Workspace, host: &DemoHost, cx: &mut Context<Workspace>) {
+/// two more waiting. tau-schedule is Luau (ADR 0050): its state and view
+/// come from its fixture, which its tests check against the plugin, each
+/// time in it moved to now.
+fn scheduled(ws: &mut Workspace, cx: &mut Context<Workspace>) {
     use tau_ai::message::{
         AssistantBlock,
         AssistantMessage,
@@ -2273,56 +2275,26 @@ fn scheduled(ws: &mut Workspace, host: &DemoHost, cx: &mut Context<Workspace>) {
         UserContent,
         UserMessage,
     };
-    use tau_schedule::{Overview, Wake, Woken};
-    use tau_ui_plugin::Group;
 
-    let now = tau_agents::shown::now();
     let run = RunId("scheduled-review".into());
-    let wake = |name: &str, at: i64, note: &str| Wake {
-        run: run.0.to_string(),
-        name: name.into(),
-        note: note.into(),
-        at,
-        made: now - 2 * 3600,
-    };
-    let overview = Overview {
-        wakes: vec![
-            wake(
-                "recheck-415",
-                now + 2 * 3600,
-                "If #415 has its second approval, land it; if CI is red, \
-                 read the failing job before touching anything.",
-            ),
-            wake(
-                "release-notes",
-                now + 26 * 3600,
-                "Tomorrow's release: check the notes mention the plugins \
-                 tree change from #412.",
-            ),
-        ],
-    };
-    let mut catalog = ws.catalog().clone();
-    let info = tau_ui_remote::catalog::PluginInfo {
-        name: tau_schedule::NAME.into(),
-        description: "Chats wake themselves later, with a note".into(),
-        group: Group::Tools,
-        page: None,
-        reach: Default::default(),
-        spend: 0.0,
-        note: None,
-        entries: Vec::new(),
-        settings: false,
-        ui: true,
-        rewrites_keep_transcript: false,
-    };
-    let data = PluginValue::typed(overview);
-    catalog.plugins.retain(|plugin| plugin.name != info.name);
-    catalog.plugins.push(info.clone());
-    catalog
-        .plugin_data
-        .insert(tau_schedule::NAME.into(), data.clone());
-    host.pin(info, data);
-    ws.set_catalog(catalog, cx);
+    let mut fixture =
+        crate::luau_fixture(tau_luau_plugins::names::SCHEDULE, "scheduled");
+    let shift = tau_agents::shown::now() - fixture["now"].as_i64().unwrap_or(0);
+    for wake in fixture["state"]["waiting"]
+        .as_array_mut()
+        .into_iter()
+        .flatten()
+    {
+        for field in ["at", "made"] {
+            let at = wake[field].as_i64().unwrap_or(0);
+            wake[field] = json!(at + shift);
+        }
+    }
+    shift_due(&mut fixture["view"], shift * 1000);
+    let woken = fixture["state"]["cards"]
+        .as_object()
+        .and_then(|cards| cards.keys().next().cloned())
+        .unwrap_or_default();
 
     let text = |text: &str| {
         Message::Assistant(AssistantMessage {
@@ -2354,13 +2326,7 @@ fn scheduled(ws: &mut Workspace, host: &DemoHost, cx: &mut Context<Workspace>) {
             "Opened #415. Reviews here take a few hours, so I scheduled \
              myself a look at 14:00.",
         ),
-        user(tau_schedule::message(&[Woken {
-            name: "look-at-415".into(),
-            due: "2026-10-12 14:00".into(),
-            note: "Read #415's review. Answer what you can; if a change \
-                   is asked for, make it and push."
-                .into(),
-        }])),
+        user(woken),
         text(
             "One approval, and a question on the jitter's upper bound: I \
              answered with the numbers from the backoff test and pushed a \
@@ -2377,6 +2343,49 @@ fn scheduled(ws: &mut Workspace, host: &DemoHost, cx: &mut Context<Workspace>) {
     )
     .in_repo("tau-agent");
     ws.apply(HostUpdate::Run(Box::new(view)), cx);
+    let [state, view] = [
+        tau_luau_plugins::Record::State {
+            plugin: tau_luau_plugins::names::SCHEDULE.into(),
+            state: fixture["state"].take(),
+        },
+        tau_luau_plugins::Record::View {
+            plugin: tau_luau_plugins::names::SCHEDULE.into(),
+            view: fixture["view"].take(),
+        },
+    ];
+    for record in [state, view] {
+        ws.apply(
+            HostUpdate::PluginFold {
+                run: run.clone(),
+                plugin: tau_luau_plugins::NAME.into(),
+                body: serde_json::to_value(record).expect("plain JSON"),
+            },
+            cx,
+        );
+    }
     ws.navigate(Route::Run(run), cx);
     ws.toggle_details(cx);
+}
+
+/// Every countdown in the view tree `node` moved `shift` milliseconds on.
+fn shift_due(node: &mut serde_json::Value, shift: i64) {
+    match node {
+        serde_json::Value::Object(fields) => {
+            if fields.get("piece").and_then(|piece| piece.as_str())
+                == Some("due")
+                && let Some(at) = fields.get("at").and_then(|at| at.as_i64())
+            {
+                fields.insert("at".into(), json!(at + shift));
+            }
+            for child in fields.values_mut() {
+                shift_due(child, shift);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                shift_due(item, shift);
+            }
+        }
+        _ => {}
+    }
 }

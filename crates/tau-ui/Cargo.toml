@@ -46,7 +46,6 @@ tau-notify.workspace = true
 tau-phones.workspace = true
 tau-sqlite.workspace = true
 tau-chatgpt.workspace = true
-tau-schedule.workspace = true
 tau-agents.workspace = true
 tau-luau-plugins.workspace = true
 tau-jev.workspace = true

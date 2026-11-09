@@ -415,13 +415,21 @@ end
 local KINDS = { primary = true, secondary = true, danger = true }
 
 -- A button that carries out the plugin's `actions[action]` with `args`;
--- `kind` is primary, secondary (the default) or danger.
-function ui.button(label, action, args, kind)
+-- `kind` is primary, secondary (the default) or danger. `icon`, one of
+-- tau's icons by name, goes before the label, or alone with an empty one.
+function ui.button(label, action, args, kind, icon)
 	kind = kind or "secondary"
 	if not KINDS[kind] then
 		error("a button's kind is primary, secondary or danger, not " .. tostring(kind), 2)
 	end
-	return { piece = "button", label = tostring(label), action = tostring(action), args = args or {}, kind = kind }
+	return {
+		piece = "button",
+		label = tostring(label),
+		action = tostring(action),
+		args = args or {},
+		kind = kind,
+		icon = icon and tostring(icon) or nil,
+	}
 end
 
 function ui.heading(text)
@@ -581,6 +589,12 @@ function ui.ticker(id, since, stopped)
 	}
 end
 
+-- The time left until `at`, in milliseconds since 1970 (`ctx.now.unix *
+-- 1000` from a hook): `in 5m`, then `now`. `id` names it.
+function ui.due(id, at)
+	return { piece = "due", id = tostring(id), at = math.floor(tonumber(at) or 0) }
+end
+
 -- A small map: `nodes` are `{ id, label, x, y, tone, focus, page }`, with
 -- `x` and `y` from 0 to 1 and `page` one of this plugin's pages to open;
 -- `edges` are `{ from_id, to_id }`. `height` is in rems (12.5 by default).
@@ -736,6 +750,7 @@ function tau._describe(plugin)
 			store = uses.store == true,
 			transcript = uses.transcript == true,
 			archive = uses.archive == true,
+			chats = uses.chats == true,
 		},
 		-- What can be set; `view` draws the settings page, on the host.
 		settings = plugin.settings and {
@@ -1039,28 +1054,35 @@ end
 -- tools.
 -- The plugin's store (`uses.store`), over the host's calls `source`
 -- has: none when it has no store.
-local function store_of(source)
-	if source == nil or source.store_get == nil then
+-- With `repo`, in a job: that repository's store, over the host's
+-- `repo_store_*` calls.
+local function store_of(source, repo)
+	local prefix = repo and "repo_store_" or "store_"
+	if source == nil or source[prefix .. "get"] == nil then
 		return nil
+	end
+	local function call(name, args)
+		args.repo = repo
+		return source[prefix .. name](args)
 	end
 	return {
 		-- The value of `key`, or nil.
 		get = function(key)
-			local value = source.store_get({ key = tostring(key) })
+			local value = call("get", { key = tostring(key) })
 			if value == json.null then
 				return nil
 			end
 			return value
 		end,
 		put = function(key, value)
-			source.store_put({ key = tostring(key), value = value })
+			call("put", { key = tostring(key), value = value })
 		end,
 		delete = function(key)
-			source.store_delete({ key = tostring(key) })
+			call("delete", { key = tostring(key) })
 		end,
 		-- Every key starting with `prefix`, in key order, as { key, value }.
-		list = function(prefix)
-			return source.store_list({ prefix = tostring(prefix or "") })
+		list = function(start)
+			return call("list", { prefix = tostring(start or "") })
 		end,
 	}
 end
@@ -1081,6 +1103,52 @@ function tau._ctx(data, with_tools)
 	}
 	function ctx.log(text)
 		table.insert(logs, tostring(text))
+	end
+	-- The host's local time (ADR 0050, gap D): `local(at)` is `at`, in
+	-- seconds since 1970, as `YYYY-MM-DD HH:MM` there; `parse(text)` reads
+	-- one back, or nil when it is no such time; `duration(text)` is
+	-- `90m`, `2h` or `3d` in seconds, or nil, as agents' schedules read
+	-- them.
+	local source = with_tools or tools
+	ctx.time = {
+		["local"] = function(at)
+			return source.time_local({ at = math.floor(tonumber(at) or 0) })
+		end,
+		parse = function(text)
+			local at = source.time_parse({ text = tostring(text) })
+			if at == json.null then
+				return nil
+			end
+			return at
+		end,
+		duration = function(text)
+			local seconds = source.time_duration({ text = tostring(text) })
+			if seconds == json.null then
+				return nil
+			end
+			return seconds
+		end,
+	}
+	-- In a job of a plugin with uses.chats: the repositories it keeps a
+	-- store in, each one's store, and waking a chat.
+	if source ~= nil and source.repo_stores ~= nil then
+		function ctx.repos()
+			return source.repo_stores({})
+		end
+		function ctx.stores(repo)
+			return store_of(source, tostring(repo))
+		end
+	end
+	if source ~= nil and source.chat_wake ~= nil then
+		ctx.chats = {
+			-- Starts a turn of the chat `run` on tau's message `text`:
+			-- "started", "busy" (a turn of it is going) or "gone" (it
+			-- takes no more messages). What the job wrote to its stores
+			-- is kept first.
+			wake = function(run, text)
+				return source.chat_wake({ run = tostring(run), text = tostring(text) })
+			end,
+		}
 	end
 	-- The run's conversation, whole: in `before_request` and
 	-- `rewrite_context`, with `uses.transcript`.
@@ -1211,6 +1279,49 @@ local function unix_of(iso)
 	return unix
 end
 
+-- `unix` as `YYYY-MM-DD HH:MM` at `offset` seconds from UTC.
+local function local_of(unix, offset)
+	local at = unix + offset
+	local days, seconds = at // 86400, at % 86400
+	-- Howard Hinnant's civil_from_days.
+	local z = days + 719468
+	local era = z // 146097
+	local doe = z - era * 146097
+	local yoe = (doe - doe // 1460 + doe // 36524 - doe // 146096) // 365
+	local doy = doe - (365 * yoe + yoe // 4 - yoe // 100)
+	local mp = (5 * doy + 2) // 153
+	local d = doy - (153 * mp + 2) // 5 + 1
+	local m = mp < 10 and mp + 3 or mp - 9
+	local y = yoe + era * 400 + (m <= 2 and 1 or 0)
+	return string.format("%04d-%02d-%02d %02d:%02d", y, m, d, seconds // 3600, seconds % 3600 // 60)
+end
+
+-- `YYYY-MM-DD HH:MM` at `offset` seconds from UTC, in seconds since
+-- 1970; nil when it is no such time.
+local function parse_local(text, offset)
+	local y, m, d, hh, mm = string.match(text, "^%s*(%d+)-(%d+)-(%d+) (%d+):(%d+)%s*$")
+	if not y then
+		return nil
+	end
+	y, m, d, hh, mm = tonumber(y), tonumber(m), tonumber(d), tonumber(hh), tonumber(mm)
+	local leap = (y % 4 == 0 and y % 100 ~= 0) or y % 400 == 0
+	local lengths = { 31, leap and 29 or 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }
+	if m < 1 or m > 12 or d < 1 or d > lengths[m] or hh > 23 or mm > 59 then
+		return nil
+	end
+	return unix_of(string.format("%04d-%02d-%02dT%02d:%02d:00", y, m, d, hh, mm)) - offset
+end
+
+-- A number, then `s`, `m`, `h` or `d`, in seconds; nil when it is none.
+local function duration_of(text)
+	local number, unit = string.match(text, "^%s*(%d+)([smhd])%s*$")
+	number = tonumber(number)
+	if not number or number <= 0 then
+		return nil
+	end
+	return number * ({ s = 1, m = 60, h = 3600, d = 86400 })[unit]
+end
+
 local function deep_copy(value)
 	if type(value) ~= "table" then
 		return value
@@ -1231,8 +1342,14 @@ end
 -- `settings`, `state`, `store` (a table of keys, shared by the runs
 -- given the same one), `tools` (a function or a value per tool name),
 -- `transcript` (the messages `ctx.transcript()` gives), `models` (what
--- `ctx.models` lists) and `jev` (what `ctx.jev` is: functions as Jev's). Its hooks are methods; each keeps the state the last one left,
--- and a hook that fails keeps none of what it wrote to the store.
+-- `ctx.models` lists), `jev` (what `ctx.jev` is: functions as Jev's),
+-- `offset` (the host's seconds from UTC, 0 by default), `stores` (by
+-- repository, what a job's `ctx.stores` reads; the run's own is "test")
+-- and `wake` (what `ctx.chats.wake` answers: a value, or a function of
+-- the run and the text; "started" by default). Its hooks are methods;
+-- each keeps the state the last one left, and a hook that fails keeps
+-- none of what it wrote to the stores. `run.woken` lists each wake, as
+-- `{ run, text }`.
 function test.run(spec)
 	spec = spec or {}
 	local plugin = test.load()
@@ -1249,6 +1366,20 @@ function test.run(spec)
 	end
 	-- The store, kept in the fake run: `spec.store` to start from.
 	local kept = spec.store or {}
+	local offset = spec.offset or 0
+	fakes.time_local = function(args)
+		return local_of(args.at, offset)
+	end
+	fakes.time_parse = function(args)
+		return parse_local(args.text, offset) or json.null
+	end
+	fakes.time_duration = function(args)
+		return duration_of(args.text) or json.null
+	end
+	-- Every repository's store, the run's own among them.
+	local stores = spec.stores or {}
+	stores.test = kept
+	local woken = {}
 	if plugin.uses and plugin.uses.store then
 		fakes.store_get = function(args)
 			local value = kept[args.key]
@@ -1278,6 +1409,66 @@ function test.run(spec)
 			return found
 		end
 	end
+	-- What a job reaches with uses.chats: each repository's store, and
+	-- waking chats. Only a job gets them: `job` says when one runs.
+	local in_job = false
+	local function job_only(fake)
+		return function(args)
+			if not in_job then
+				error("only a job reaches every repository and wakes chats", 0)
+			end
+			return fake(args)
+		end
+	end
+	if plugin.uses and plugin.uses.chats then
+		local function store(args)
+			stores[args.repo] = stores[args.repo] or {}
+			return stores[args.repo]
+		end
+		fakes.repo_stores = job_only(function()
+			local names = {}
+			for name in pairs(stores) do
+				table.insert(names, name)
+			end
+			table.sort(names)
+			return array(names)
+		end)
+		fakes.repo_store_get = job_only(function(args)
+			local value = store(args)[args.key]
+			if value == nil then
+				return json.null
+			end
+			return value
+		end)
+		fakes.repo_store_put = job_only(function(args)
+			store(args)[args.key] = args.value
+		end)
+		fakes.repo_store_delete = job_only(function(args)
+			store(args)[args.key] = nil
+		end)
+		fakes.repo_store_list = job_only(function(args)
+			local from, keys = store(args), {}
+			for key in pairs(from) do
+				if string.sub(key, 1, #args.prefix) == args.prefix then
+					table.insert(keys, key)
+				end
+			end
+			table.sort(keys)
+			local found = array({})
+			for _, key in ipairs(keys) do
+				table.insert(found, { key = key, value = from[key] })
+			end
+			return found
+		end)
+		fakes.chat_wake = job_only(function(args)
+			table.insert(woken, { run = args.run, text = args.text })
+			local answer = spec.wake
+			if type(answer) == "function" then
+				answer = answer(args.run, args.text)
+			end
+			return answer or "started"
+		end)
+	end
 	-- The conversation `ctx.transcript()` gives: `spec.transcript`.
 	if plugin.uses and plugin.uses.transcript then
 		fakes.transcript = function()
@@ -1286,6 +1477,9 @@ function test.run(spec)
 	end
 	local run = {
 		store = kept,
+		stores = stores,
+		woken = woken,
+		job_state = spec.job_state or {},
 		state = spec.state or {},
 		logs = {},
 		data = {
@@ -1300,7 +1494,13 @@ function test.run(spec)
 				live = spec.live == true,
 				jev = spec.jev ~= nil,
 			},
-			now = { unix = unix_of(now), iso = now, weekday = weekday(now) },
+			now = {
+				unix = unix_of(now),
+				iso = now,
+				weekday = weekday(now),
+				["local"] = local_of(unix_of(now), offset),
+				offset = offset,
+			},
 			settings = spec.settings or defaults,
 			models = spec.models or array({}),
 		},
@@ -1312,14 +1512,16 @@ function test.run(spec)
 		if spec.jev then
 			ctx.jev = spec.jev
 		end
-		local before = deep_copy(kept)
+		local before = deep_copy(stores)
 		local ok, answer = pcall(hook, ..., ctx)
 		if not ok then
-			for key in pairs(kept) do
-				kept[key] = nil
-			end
-			for key, value in pairs(before) do
-				kept[key] = value
+			for name, store in pairs(stores) do
+				for key in pairs(store) do
+					store[key] = nil
+				end
+				for key, value in pairs(before[name] or {}) do
+					store[key] = value
+				end
 			end
 			error(answer, 0)
 		end
@@ -1373,9 +1575,21 @@ function test.run(spec)
 	end
 	function run:job(name)
 		local job = need((plugin.jobs or {})[name], "job " .. name)
-		return call(function(_, ctx)
+		local data, state = run.data, run.state
+		-- A job is outside any run, with a state of its own: `run.job_state`.
+		run.data = table.clone(data)
+		run.data.run = {}
+		run.state = run.job_state
+		in_job = true
+		local ok, answer = pcall(call, function(_, ctx)
 			return job.run(ctx)
 		end, nil)
+		in_job, run.data = false, data
+		run.job_state, run.state = run.state, state
+		if not ok then
+			error(answer, 0)
+		end
+		return answer
 	end
 	function run:view()
 		local view = need(plugin.view, "view")
@@ -1409,7 +1623,13 @@ function test.run(spec)
 	end
 	-- Moves the run's clock to `iso`.
 	function run:at(iso)
-		run.data.now = { unix = unix_of(iso), iso = iso, weekday = weekday(iso) }
+		run.data.now = {
+			unix = unix_of(iso),
+			iso = iso,
+			weekday = weekday(iso),
+			["local"] = local_of(unix_of(iso), offset),
+			offset = offset,
+		}
 		return run
 	end
 	function run:page(name, params)

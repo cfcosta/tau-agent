@@ -411,6 +411,7 @@ impl Registry {
             state: serde_json::json!({}),
             secrets: self.secrets_of(&active.loaded.declaration.name),
             store: self.store_of(&active.loaded.declaration, Some(repo)).await,
+            job: None,
         }
     }
 
@@ -1016,6 +1017,7 @@ impl Registry {
             state: state.clone(),
             secrets: self.secrets_of(plugin),
             store: self.store_of(&loaded.declaration, repo).await,
+            job: None,
         };
         let outcome = loaded
             .call(

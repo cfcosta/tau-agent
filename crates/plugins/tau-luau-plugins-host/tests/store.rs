@@ -205,7 +205,8 @@ fn hooks_take_turns_with_the_store_and_a_failing_one_writes_nothing() {
 }
 
 /// The repositories a plugin keeps a store in are read back from their
-/// files' names, as tau starts again, odd names and all.
+/// files' names, as tau starts again, odd names and all; asked again,
+/// as a job does each second, they are there still, with one made since.
 #[test]
 fn a_plugins_repositories_are_read_back_from_its_files() {
     let dir = tempfile::tempdir().unwrap();
@@ -221,4 +222,9 @@ fn a_plugins_repositories_are_read_back_from_its_files() {
     want.sort();
     assert_eq!(block_on_io(again.repos_of("todo")), want);
     assert!(block_on_io(again.repos_of("other")).is_empty());
+    assert_eq!(block_on_io(again.repos_of("todo")), want);
+    block_on_io(again.of("todo", "later")).unwrap();
+    want.push("later");
+    want.sort();
+    assert_eq!(block_on_io(again.repos_of("todo")), want);
 }

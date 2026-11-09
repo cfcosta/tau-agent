@@ -403,7 +403,8 @@ impl UiPlugin for AgentsUi {
 
     /// Agents' repositories (ADR 0037): one per agent, kept in: their
     /// commands start only through tau-agents' sandbox, and they ask
-    /// through tau-agents' own `ask`, not tau-ask's.
+    /// and schedule through tau-agents' own `ask` and `schedule`, not
+    /// tau-ask's and tau-schedule's.
     fn repo_kinds(&self) -> Vec<tau_ui_plugin::kinds::KindHost> {
         vec![tau_ui_plugin::kinds::KindHost {
             kind: crate::KIND,
@@ -413,7 +414,10 @@ impl UiPlugin for AgentsUi {
             },
             first_files: crate::repository::first_files,
             sandboxed: true,
-            without: &[tau_luau_plugins::names::ASK],
+            without: &[
+                tau_luau_plugins::names::ASK,
+                tau_luau_plugins::names::SCHEDULE,
+            ],
         }]
     }
 

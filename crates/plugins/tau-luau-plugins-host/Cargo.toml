@@ -23,6 +23,8 @@ tau-codemode-host.workspace = true
 tau-jev.workspace = true
 sqlx.workspace = true
 tau-tools-host.workspace = true
+# The host's local time, which `ctx.now` and `ctx.time` read (ADR 0050, gap D).
+tau-clock.workspace = true
 tau-luau-plugins.workspace = true
 # Where the skill tau ships is installed.
 tau-skills = { path = "../tau-skills", default-features = false }

@@ -9585,9 +9585,9 @@ dependencies = [
  "tau-agents",
  "tau-ai",
  "tau-artifacts",
+ "tau-clock",
  "tau-luau-plugins",
  "tau-luau-plugins-host",
- "tau-schedule",
  "tau-skills",
  "tau-testing",
  "tau-tools",
@@ -9645,6 +9645,7 @@ dependencies = [
 name = "tau-built-in-tests"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "futures-util",
  "hegeltest",
@@ -9654,6 +9655,7 @@ dependencies = [
  "serde_json",
  "tau-agent",
  "tau-ai",
+ "tau-clock",
  "tau-codemode-host",
  "tau-jev",
  "tau-luau-plugins",
@@ -9661,6 +9663,7 @@ dependencies = [
  "tau-store",
  "tau-store-sqlite",
  "tau-testing",
+ "tau-ui-plugin",
  "tempfile",
  "tokio",
  "tokio-util",
@@ -9705,6 +9708,14 @@ dependencies = [
  "tau-ui-plugin",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "tau-clock"
+version = "0.1.0"
+dependencies = [
+ "hegeltest",
+ "libc",
 ]
 
 [[package]]
@@ -9798,7 +9809,6 @@ dependencies = [
  "tau-memory-host",
  "tau-phones",
  "tau-remote",
- "tau-schedule",
  "tau-skills",
  "tau-store",
  "tau-testing",
@@ -9906,6 +9916,7 @@ dependencies = [
  "sqlx",
  "tau-agent",
  "tau-ai",
+ "tau-clock",
  "tau-codemode",
  "tau-codemode-host",
  "tau-jev",
@@ -10133,7 +10144,6 @@ dependencies = [
  "tau-memory",
  "tau-notify",
  "tau-phones",
- "tau-schedule",
  "tau-skills",
  "tau-sqlite",
  "tau-tools",
@@ -10180,26 +10190,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
-]
-
-[[package]]
-name = "tau-schedule"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "hegeltest",
- "libc",
- "serde",
- "serde_json",
- "tau-agent",
- "tau-agents",
- "tau-testing",
- "tau-ui-kit",
- "tau-ui-plugin",
- "tempfile",
- "tokio",
- "tokio-util",
 ]
 
 [[package]]
@@ -10376,7 +10366,6 @@ dependencies = [
  "tau-phones",
  "tau-plugins",
  "tau-remote",
- "tau-schedule",
  "tau-skills",
  "tau-sqlite",
  "tau-store",

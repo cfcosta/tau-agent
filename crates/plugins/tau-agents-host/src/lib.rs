@@ -42,10 +42,10 @@ pub use agents::{
 };
 pub use half::AgentsHost;
 pub use tau_agents::{NAME, ROOT, SKILL};
+/// The host's clock and local days (tau-clock), which chats' and Luau
+/// plugins' local times go by too.
+pub use tau_clock as clock;
 use tau_luau_plugins_host::runtime::{MANIFEST, Manifest, Root};
-/// The host's clock and local days, which tau-schedule keeps for chats
-/// and agents alike.
-pub use tau_schedule::clock;
 
 /// An agent's repository as a package (ADR 0051): `tau.toml`, its entry
 /// `src/agent.luau`, required as `agent`, with its modules beside it and

@@ -803,6 +803,68 @@ The result's`structured`is`{ call, answers }`or`{ call, declined
   panel's. A ninth row without its key did not, as no question has
   more than five rows. It went with the Rust crate.
 
+### Gap D, and tau-schedule
+
+Gap D closed on a wake a job asks for and sees the end of, rather than
+an answer the host carries out once the job ends, so the plugin keeps
+the at-least-once logic it had:
+
+- **`ctx.chats.wake(run, text)`**, in a job of a plugin with
+  `uses.chats`: a turn of the chat `run` on tau's message `text`,
+  answering `"started"`, `"busy"` or `"gone"` as
+  `Conversations::wake` does, and failing when the turn did not start.
+  `uses.chats` is new reach, allowed as any other.
+- **A job reaches every repository's store**: `ctx.repos()` and
+  `ctx.stores(repo)`, through the host's `repo_store_*` calls, a
+  session opened as the job first names each. What the job wrote is
+  kept just before each wake: the turn it starts runs `start` hooks
+  that open the same store, and a job still holding it waited on them
+  for good, as the host test found with the commit taken out.
+- **Ticks**: a job may run `every = 1`. One more often than every
+  minute is not shown among the person's jobs, and when it last ran is
+  kept in memory, its file written only when its state changes. The
+  host looks for due jobs each second, not each 30.
+- **Local time**: `ctx.now` gains `local` and `offset`, and every hook
+  has `ctx.time.local(at)`, `ctx.time.parse(text)` and
+  `ctx.time.duration(text)`, the offset at the time asked about. They
+  read `tau-clock`, a crate of tau-schedule's clock, which tau-agents'
+  schedules go by too.
+- **Not built**: a job starting a chat (`tau.start_chat`) stays an
+  action's; tau-schedule did not need it.
+- **Of gap E**: `ui.due(id, at)`, a countdown, and a button's `icon`.
+- **The test harness** gives a job a state of its own (`run.job_state`;
+  it shared the run's), a fixed `offset` for local time, other
+  repositories' `stores`, and `wake`'s answer, keeping each wake in
+  `run.woken`.
+
+What the port found besides:
+
+- **The store replaced `wakes.json`**: each wake-up is
+  `wake/<chat>/<name>` in its chat's repository's store, and the old
+  file is left, with no migration. The chat's state holds what its
+  inspector draws, which each turn's `start` reads again from the store,
+  and the cards of the messages it woke on, by their text.
+- **An agent's runs leave it out**, as they leave out tau-ask (`LeftOut`).
+- **Smaller differences.** The catalog's row is tau-luau-plugins', so it
+  no longer says how many wait. A field the schema does not allow is
+  refused with Luau's own words, not serde's. A tick's store keeps a
+  connection to each repository's store it opened while tau runs.
+- **The parity check** ran the Rust plugin beside the Luau on 1 200
+  drawn runs of up to 25 steps: two chats scheduling with names,
+  notes, durations and local times written well and badly, `in` and
+  `on` together or neither, repeats, cancels and listings, time
+  passing by the retry's and the soonest's edges, chats busy, gone and
+  failing to start a turn, and ticks; comparing every answer, every
+  message a chat woke on and what waited after each step. It found the
+  Luau refusing a repeat before an empty note, where the Rust checked
+  the note first. A retry a second late it did not find; the case at
+  thirty seconds does. It went with the Rust crate.
+- **The model** moved to Luau as a machine: tau closing after the k-th
+  wake of a tick started its turn leaves the store as it was when that
+  wake was asked for, and each wake-up woke its chat once, and once more
+  at most for each such close. Deleting a chat's due wake-ups before
+  waking it fails it.
+
 ## Alternatives considered
 
 - **Port the plugins and leave the gaps**, calling Jev over HTTP with

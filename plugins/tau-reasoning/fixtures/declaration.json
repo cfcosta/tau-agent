@@ -11,7 +11,8 @@
     "model": null,
     "store": false,
     "transcript": true,
-    "archive": false
+    "archive": false,
+    "chats": false
   },
   "settings": {
     "default": {

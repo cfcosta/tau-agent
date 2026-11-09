@@ -19,6 +19,7 @@ mod fast_compaction;
 mod goal;
 mod package;
 mod reasoning;
+mod schedule;
 mod titles;
 mod todo;
 mod tree_compaction;

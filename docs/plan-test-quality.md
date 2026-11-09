@@ -148,7 +148,7 @@ with an oracle of its own. A cluster of examples of one law was done whole.
 Ten nominated tests stay, each the only test of its behaviour or needing a
 seam in production code:
 
-- `tau-schedule` `the_system_clock_has_an_offset`, the only run of
+- `tau-clock` `the_system_clock_follows_the_time_zone`, the only run of
   `SystemClock::offset`'s `localtime_r`.
 - `tau-tree-compaction` `the_builders_set_their_fields`, the only test of
   `view_bytes()` and `jobs()`.

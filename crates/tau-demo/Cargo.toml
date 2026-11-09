@@ -37,7 +37,6 @@ tau-mcp-host.workspace = true
 tau-memory.workspace = true
 tau-memory-host = { workspace = true, features = ["docbert", "demo"] }
 tau-phones.workspace = true
-tau-schedule.workspace = true
 tau-skills = { workspace = true, features = ["demo"] }
 tau-tools.workspace = true
 tau-vcs.workspace = true

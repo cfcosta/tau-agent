@@ -79,6 +79,7 @@ fn fold(
         state: state.clone(),
         secrets: None,
         store: None,
+        job: None,
     };
     let view = tau_testing::block_on_io(plugin.call(
         &Hook::View,

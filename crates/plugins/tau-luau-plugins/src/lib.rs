@@ -78,6 +78,10 @@ pub struct Uses {
     /// can read (`ctx.archive`), for the model to read back.
     #[serde(default)]
     pub archive: bool,
+    /// Its jobs wake chats (`ctx.chats.wake`), and reach its store in
+    /// every repository (ADR 0050, gap D).
+    #[serde(default)]
+    pub chats: bool,
 }
 
 impl Uses {
@@ -104,6 +108,9 @@ impl Uses {
         }
         if self.transcript && !before.transcript {
             grown.push("reading the run's conversation".into());
+        }
+        if self.chats && !before.chats {
+            grown.push("waking chats".into());
         }
         if self.change_args && !before.change_args {
             grown.push("changing a tool call's arguments".into());
@@ -298,8 +305,13 @@ pub struct JobSpec {
     pub label: String,
 }
 
-/// The shortest a job may wait between runs, in seconds.
-pub const SHORTEST_EVERY: u64 = 60;
+/// The shortest a job may wait between runs, in seconds: a tick, for
+/// what comes due by the second.
+pub const SHORTEST_EVERY: u64 = 1;
+
+/// A job that waits less than this between runs is a tick: it runs
+/// outside the person's jobs, and keeps when it ran in memory alone.
+pub const TICK_UNDER: u64 = 60;
 
 /// Its entry in the sidebar, which opens its page.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -797,6 +809,7 @@ mod tests {
                 store: false,
                 transcript: false,
                 archive: false,
+                chats: false,
             },
             settings: None,
             tools: Vec::new(),

@@ -1,0 +1,4 @@
+name = "tau-schedule"
+version = "0.1.0"
+description = "Chats wake themselves later, with a note"
+entry = "src/plugin.luau"

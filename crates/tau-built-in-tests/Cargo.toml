@@ -13,6 +13,7 @@ name = "built_in"
 path = "tests/main.rs"
 
 [dev-dependencies]
+anyhow.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true
 hegeltest.workspace = true
@@ -22,6 +23,7 @@ serde.workspace = true
 serde_json.workspace = true
 tau-agent.workspace = true
 tau-ai.workspace = true
+tau-clock.workspace = true
 tau-codemode-host.workspace = true
 tau-jev.workspace = true
 tau-luau-plugins.workspace = true
@@ -29,6 +31,7 @@ tau-luau-plugins-host.workspace = true
 tau-store.workspace = true
 tau-store-sqlite.workspace = true
 tau-testing.workspace = true
+tau-ui-plugin.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["net", "rt", "time"] }
 tokio-util.workspace = true

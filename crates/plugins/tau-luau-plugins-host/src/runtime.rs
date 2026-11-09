@@ -595,12 +595,33 @@ impl PartialEq for StoreRef {
 /// A hook's session with its plugin's store.
 type SessionRef = Arc<tokio::sync::Mutex<crate::store::Session>>;
 
+/// What a job reaches beyond the hook's own (ADR 0050, gap D): with
+/// `uses.chats`, its plugin's store in every repository, and the host's
+/// chats to wake.
+#[derive(Clone)]
+pub struct JobRef {
+    pub stores: Arc<crate::store::Stores>,
+    pub conversations: Option<Arc<dyn tau_ui_plugin::Conversations>>,
+}
+
+impl std::fmt::Debug for JobRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JobRef").finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for JobRef {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.stores, &other.stores)
+    }
+}
+
 /// What a hook's `ctx` holds, besides what it may reach.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct Context {
     /// `{ id, kind, repo, model, turn }`.
     pub run: Value,
-    /// `{ unix, iso, weekday }`.
+    /// `{ unix, iso, weekday, local, offset }`.
     pub now: Value,
     pub settings: Value,
     pub state: Value,
@@ -612,6 +633,9 @@ pub struct Context {
     /// has one and the plugin uses it (`uses.store`).
     #[serde(skip)]
     pub store: Option<StoreRef>,
+    /// What a job reaches beyond that, when the hook is a job.
+    #[serde(skip)]
+    pub job: Option<JobRef>,
 }
 
 /// The file the plugin `plugin`'s secrets are kept in, in tau's
@@ -894,6 +918,19 @@ impl Loaded {
         let mut reaches =
             Reaches::of(&self.declaration, context.secrets.as_deref());
         reaches.store = session.clone();
+        let job = context
+            .job
+            .as_ref()
+            .filter(|_| self.declaration.uses.chats)
+            .map(|job| {
+                Arc::new(JobReaches {
+                    plugin: self.declaration.name.clone(),
+                    stores: job.stores.clone(),
+                    conversations: job.conversations.clone(),
+                    sessions: Default::default(),
+                })
+            });
+        reaches.job = job.clone();
         let (value, failed) = run(
             self.modules.clone(),
             reach,
@@ -908,6 +945,11 @@ impl Loaded {
         let mut error = failed.map(|failed| without_caller(failed.why));
         // What it wrote goes in whole once it ends well, and not at all
         // when it fails.
+        if let (Some(job), None) = (&job, &error)
+            && let Err(why) = job.commit().await
+        {
+            error = Some(format!("its stores: {why}"));
+        }
         if let (Some(session), None) = (session, &error) {
             let committed = match Arc::into_inner(session) {
                 Some(session) => session.into_inner().commit().await,
@@ -1212,6 +1254,8 @@ struct Reaches {
     /// The property case its draws come from, while a property runs
     /// (ADR 0049).
     hegel: Option<crate::hegel::Shared>,
+    /// A job's every store, and the chats it wakes.
+    job: Option<Arc<JobReaches>>,
 }
 
 /// The HTTP requests a plugin may send (`uses.network`): to these hosts,
@@ -1243,6 +1287,7 @@ impl Reaches {
             transcript: uses.transcript,
             archive: uses.archive,
             hegel: None,
+            job: None,
         }
     }
 
@@ -1257,6 +1302,7 @@ impl Reaches {
             transcript: false,
             archive: false,
             hegel: None,
+            job: None,
         }
     }
 }
@@ -1303,6 +1349,7 @@ async fn run(
         transcript: reaches.transcript,
         archive: reaches.archive,
         hegel: reaches.hegel,
+        job: reaches.job,
     });
     let request = Request {
         call_id: format!("plugin:{}", reaches.name),
@@ -1369,6 +1416,7 @@ struct PluginHost {
     archive: bool,
     /// The case a property's draws come from, while one runs.
     hegel: Option<crate::hegel::Shared>,
+    job: Option<Arc<JobReaches>>,
 }
 
 impl PluginHost {
@@ -1467,6 +1515,51 @@ impl Host for PluginHost {
                 });
             }
         }
+        let mut add = |name: &str, description: &str| {
+            tools.push(ToolEntry {
+                name: name.into(),
+                description: description.into(),
+                input_schema: json!({ "type": "object" }),
+                output_schema: None,
+                namespace: None,
+                sequential: false,
+            });
+        };
+        add(
+            "time_local",
+            "`at` as `YYYY-MM-DD HH:MM` in the host's local time.",
+        );
+        add(
+            "time_parse",
+            "A local `YYYY-MM-DD HH:MM`, in seconds since 1970.",
+        );
+        add("time_duration", "`90m`, `2h` or `3d`, in seconds.");
+        if let Some(job) = &self.job {
+            add(
+                "repo_stores",
+                "The repositories the plugin keeps a store in.",
+            );
+            for (name, description) in [
+                (
+                    "repo_store_get",
+                    "The value of `key` in `repo`'s store, or null.",
+                ),
+                ("repo_store_put", "Sets `key` to `value` in `repo`'s store."),
+                ("repo_store_delete", "Deletes `key` from `repo`'s store."),
+                (
+                    "repo_store_list",
+                    "Every key of `repo`'s store starting with `prefix`.",
+                ),
+            ] {
+                add(name, description);
+            }
+            if job.conversations.is_some() {
+                add(
+                    "chat_wake",
+                    "Starts a turn of the chat `run` on tau's `text`.",
+                );
+            }
+        }
         if self.hegel.is_some() {
             tools.push(ToolEntry {
                 name: "hegel".into(),
@@ -1514,6 +1607,34 @@ impl Host for PluginHost {
         {
             return store_call(store, &call).await;
         }
+        match call.name.as_str() {
+            "time_local" => {
+                let at = call.args["at"].as_i64().ok_or("`at` is a number")?;
+                return Ok(ToolReply::success(json!(tau_clock::local(
+                    &tau_clock::SystemClock,
+                    at
+                ))));
+            }
+            "time_duration" => {
+                let text = call.args["text"].as_str().unwrap_or_default();
+                return Ok(ToolReply::success(json!(tau_clock::duration(
+                    text
+                ))));
+            }
+            "time_parse" => {
+                let text = call.args["text"].as_str().unwrap_or_default();
+                return Ok(ToolReply::success(json!(tau_clock::parse_local(
+                    &tau_clock::SystemClock,
+                    text
+                ))));
+            }
+            _ => {}
+        }
+        if let Some(job) = &self.job
+            && (call.name.starts_with("repo_store") || call.name == "chat_wake")
+        {
+            return job.call(&call).await.map(ToolReply::success);
+        }
         if let (Some(network), "http") = (&self.network, call.name.as_str()) {
             return self.request(network, &call.args).await;
         }
@@ -1546,23 +1667,35 @@ async fn store_call(
     store: &SessionRef,
     call: &ToolCall,
 ) -> Result<ToolReply, String> {
+    let mut session = store.lock().await;
+    let op = call.name.strip_prefix("store_").unwrap_or_default();
+    store_op(&mut session, op, call)
+        .await
+        .map(ToolReply::success)
+}
+
+/// `op` (`get`, `put`, `delete` or `list`) on a session, as `call` asks.
+async fn store_op(
+    session: &mut crate::store::Session,
+    op: &str,
+    call: &ToolCall,
+) -> Result<Value, String> {
     let text = |field: &str| -> Result<String, String> {
         call.args[field].as_str().map(str::to_owned).ok_or_else(|| {
             format!("`{}` needs its `{field}`, a string", call.name)
         })
     };
-    let mut session = store.lock().await;
-    let value = match call.name.as_str() {
-        "store_get" => session.get(&text("key")?).await?.unwrap_or(Value::Null),
-        "store_put" => {
+    let value = match op {
+        "get" => session.get(&text("key")?).await?.unwrap_or(Value::Null),
+        "put" => {
             session.put(&text("key")?, call.args["value"].clone());
             Value::Null
         }
-        "store_delete" => {
+        "delete" => {
             session.delete(&text("key")?);
             Value::Null
         }
-        "store_list" => {
+        "list" => {
             let prefix = call.args["prefix"].as_str().unwrap_or_default();
             Value::Array(
                 session
@@ -1575,5 +1708,72 @@ async fn store_call(
         }
         other => return Err(format!("the store has no `{other}`")),
     };
-    Ok(ToolReply::success(value))
+    Ok(value)
+}
+
+/// A job's reach across repositories: its plugin's store in each, a
+/// session opened as the job first names it, and the chats it wakes.
+struct JobReaches {
+    plugin: String,
+    stores: Arc<crate::store::Stores>,
+    conversations: Option<Arc<dyn tau_ui_plugin::Conversations>>,
+    sessions: tokio::sync::Mutex<
+        std::collections::BTreeMap<String, crate::store::Session>,
+    >,
+}
+
+impl JobReaches {
+    async fn call(&self, call: &ToolCall) -> Result<Value, String> {
+        match call.name.as_str() {
+            "repo_stores" => {
+                return Ok(json!(self.stores.repos_of(&self.plugin).await));
+            }
+            "chat_wake" => {
+                let conversations = self
+                    .conversations
+                    .as_ref()
+                    .ok_or("this host wakes no chats")?;
+                let text = |field: &str| {
+                    call.args[field].as_str().map(str::to_owned).ok_or_else(
+                        || format!("`chat_wake` needs its `{field}`, a string"),
+                    )
+                };
+                let (run, message) = (text("run")?, text("text")?);
+                // What the job wrote is kept first: the turn it starts may
+                // read the same stores.
+                self.commit().await?;
+                let waking = conversations
+                    .wake(&run, message)
+                    .await
+                    .map_err(|error| format!("{error:#}"))?;
+                return Ok(json!(match waking {
+                    tau_ui_plugin::Waking::Started => "started",
+                    tau_ui_plugin::Waking::Busy => "busy",
+                    tau_ui_plugin::Waking::Gone => "gone",
+                }));
+            }
+            _ => {}
+        }
+        let repo = call.args["repo"]
+            .as_str()
+            .ok_or_else(|| format!("`{}` needs its `repo`", call.name))?
+            .to_owned();
+        let op = call.name.strip_prefix("repo_store_").unwrap_or_default();
+        let mut sessions = self.sessions.lock().await;
+        if !sessions.contains_key(&repo) {
+            let kv = self.stores.of(&self.plugin, &repo).await?;
+            sessions.insert(repo.clone(), kv.session().await);
+        }
+        let session = sessions.get_mut(&repo).expect("just opened");
+        store_op(session, op, call).await
+    }
+
+    /// Keeps what the job wrote to each store, and lets go of them.
+    async fn commit(&self) -> Result<(), String> {
+        let sessions = std::mem::take(&mut *self.sessions.lock().await);
+        for (_, session) in sessions {
+            session.commit().await?;
+        }
+        Ok(())
+    }
 }

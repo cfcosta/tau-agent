@@ -41,6 +41,7 @@ fn view_of(loaded: &Loaded, state: &Value) -> Value {
         state: state.clone(),
         secrets: None,
         store: None,
+        job: None,
     };
     let outcome = block_on_io(loaded.call(
         &Hook::View,

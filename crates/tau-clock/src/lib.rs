@@ -1,7 +1,8 @@
-//! The host's clock: what time it is, and the host's local days, which
-//! an agent's schedules and its daily cap go by (ADR 0037), and what a
-//! chat schedules for itself (ADR 0039); durations and times of day as
-//! both write them.
+//! tau-clock: the host's clock, what time it is and the host's local
+//! days, which an agent's schedules and its daily cap go by (ADR 0037),
+//! and what a chat schedules for itself (ADR 0039) and a Luau plugin
+//! reads as local time (ADR 0050, gap D); durations and times of day as
+//! they write them.
 
 use std::sync::atomic::{AtomicI64, Ordering};
 
@@ -353,9 +354,8 @@ mod tests {
     /// `cargo test` alike.
     #[test]
     fn the_system_clock_follows_the_time_zone() {
-        const NAME: &str =
-            "clock::tests::the_system_clock_follows_the_time_zone";
-        const CHILD: &str = "TAU_SCHEDULE_OFFSETS";
+        const NAME: &str = "tests::the_system_clock_follows_the_time_zone";
+        const CHILD: &str = "TAU_CLOCK_OFFSETS";
         // 2026-01-15 and 2026-07-15, 12:00 UTC.
         const WINTER: i64 = 1_768_478_400;
         const SUMMER: i64 = 1_784_116_800;

@@ -21,7 +21,6 @@ pub fn plugins() -> Registry {
         .with(tau_memory::ui::MemoryUi)
         .with(tau_notify::NotifyUi)
         .with(tau_phones::PhonesUi)
-        .with(tau_schedule::ScheduleUi)
         .with(tau_skills::SkillsUi)
         .with(tau_sqlite::SqliteUi)
         .with(tau_tools::ui::ToolsUi)

@@ -338,6 +338,7 @@ fn luau_built_ins() -> (PluginInfo, PluginValue) {
             built_in(tau_luau_plugins::names::CONSTITUTION),
             built_in(tau_luau_plugins::names::GOAL),
             built_in(tau_luau_plugins::names::ASK),
+            built_in(tau_luau_plugins::names::SCHEDULE),
             built_in(tau_luau_plugins::names::FAST_COMPACTION),
             built_in(tau_luau_plugins::names::COMPACTION),
             built_in(tau_luau_plugins::names::TREE_COMPACTION),
