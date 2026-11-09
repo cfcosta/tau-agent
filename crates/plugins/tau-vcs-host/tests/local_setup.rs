@@ -778,9 +778,48 @@ fn a_failed_setup_leaves_the_folder_as_it_was(tc: TestCase) {
     } else {
         Cut::Before(index(&tc, Step::ALL.len()))
     };
+    failed_setup_leaves_the_folder(&world, cut, jj.as_deref(), &|note| {
+        tc.note(note);
+    });
+}
+
+/// The shrunk case `a_failed_setup_leaves_the_folder_as_it_was` found:
+/// on a branch that a remote's auto-tracked branch moves, the import's
+/// export moves Git's `HEAD` with it and logs that in `logs/HEAD`, which
+/// a blocked setup left behind.
+#[test]
+fn a_blocked_setup_takes_back_what_its_export_logged_for_head() {
+    let world = World {
+        commits: vec![vec![(0, 0)], vec![(0, 0)]],
+        branches: vec![(1, 0)],
+        tags: Vec::new(),
+        head: HeadAt::Branch(1),
+        remotes: vec![
+            Some(Remote {
+                branches: vec![(1, 1)],
+                head: None,
+            }),
+            None,
+        ],
+        edits: Vec::new(),
+        abandon: false,
+        auto_track: true,
+        jj: None,
+    };
+    failed_setup_leaves_the_folder(&world, Cut::Blocked, None, &|_| {});
+}
+
+/// The property's check for one `world` and `cut`, saying what was
+/// announced through `note`.
+fn failed_setup_leaves_the_folder(
+    world: &World,
+    cut: Cut,
+    jj: Option<&Path>,
+    note: &dyn Fn(&str),
+) {
     let base = tempfile::tempdir().unwrap();
     let person = Person::new(&base.path().join("person"));
-    let folder = build(&person, base.path(), &world, jj.as_deref());
+    let folder = build(&person, base.path(), world, jj);
     let found = found(&person, &folder);
     let mut layout = layout(base.path(), &folder);
     if matches!(cut, Cut::Blocked) {
@@ -803,7 +842,7 @@ fn a_failed_setup_leaves_the_folder_as_it_was(tc: TestCase) {
             }
         },
     );
-    tc.note(&format!("announced {announced:?}"));
+    note(&format!("announced {announced:?}"));
     match cut {
         Cut::Before(k) => {
             if !announced.contains(&Step::ALL[k]) {

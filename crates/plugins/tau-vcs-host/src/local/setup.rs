@@ -280,6 +280,9 @@ struct Journal<'a> {
     /// Git's `HEAD` as the folder had it, as written: on a branch
     /// (`ref: refs/heads/…`), or detached.
     head_before: Option<Vec<u8>>,
+    /// `HEAD`'s reflog as the folder had it: an export that moves `HEAD`
+    /// appends to it.
+    head_log_before: Option<Vec<u8>>,
     /// The branches and tags tau's exports made, as full ref names with
     /// their targets: the bookmarks an import made for remote branches
     /// the person's `auto-track-bookmarks` matches.
@@ -334,6 +337,8 @@ impl<'a> Journal<'a> {
             refs_before,
             git_dirs_before: git_dirs(&git_dir),
             head_before: std::fs::read(git_dir.join("HEAD")).ok(),
+            head_log_before: std::fs::read(git_dir.join("logs").join("HEAD"))
+                .ok(),
             git_dir,
             had_jj,
             made_jj: false,
@@ -689,9 +694,23 @@ impl<'a> Journal<'a> {
         Ok(repo)
     }
 
-    /// Puts Git's `HEAD` back as it was, once the refs are: an export
-    /// may have detached it.
+    /// Puts Git's `HEAD` back as it was, once the refs are, and its
+    /// reflog: an export may have detached it, and logged that.
     fn undo_head(&self) -> Result<(), VcsError> {
+        let log = self.git_dir.join("logs").join("HEAD");
+        if std::fs::read(&log).ok() != self.head_log_before {
+            match &self.head_log_before {
+                Some(bytes) => {
+                    std::fs::write(&log, bytes).map_err(|source| {
+                        VcsError::Create {
+                            path: log.clone(),
+                            source,
+                        }
+                    })?
+                }
+                None => remove_file(&log)?,
+            }
+        }
         let Some(before) = &self.head_before else {
             return Ok(());
         };
