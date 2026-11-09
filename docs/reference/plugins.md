@@ -936,7 +936,7 @@ what Jev answered, and what the plugin would send. It runs on the
 latest runs of a store, each on its own model, with the real Jev:
 
 ```sh
-cargo run -p tau-reasoning --example replay -- ~/.local/share/tau/runs.db 20
+cargo run -p tau-built-in-tests --example replay -- ~/.local/share/tau/runs.db 20
 ```
 
 It reports decisions, not savings: the reasoning tokens a request

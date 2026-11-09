@@ -8,21 +8,3 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-
-[dev-dependencies]
-async-trait.workspace = true
-futures-util.workspace = true
-schemars.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-tau-agent.workspace = true
-tau-ai.workspace = true
-tau-codemode-host.workspace = true
-tau-compaction.workspace = true
-tau-luau-plugins.workspace = true
-tau-luau-plugins-host.workspace = true
-tau-store.workspace = true
-tau-store-sqlite.workspace = true
-tau-testing.workspace = true
-tokio.workspace = true
-tokio-util.workspace = true

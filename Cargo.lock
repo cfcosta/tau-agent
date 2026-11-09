@@ -9642,10 +9642,29 @@ dependencies = [
 [[package]]
 name = "tau-ask"
 version = "0.1.0"
+
+[[package]]
+name = "tau-built-in-tests"
+version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "futures-util",
+ "hegeltest",
+ "jsonschema",
+ "schemars",
+ "serde",
  "serde_json",
+ "tau-agent",
+ "tau-ai",
+ "tau-codemode-host",
+ "tau-jev",
+ "tau-luau-plugins",
  "tau-luau-plugins-host",
+ "tau-store",
+ "tau-store-sqlite",
  "tau-testing",
+ "tempfile",
+ "tokio",
  "tokio-util",
 ]
 
@@ -9760,41 +9779,14 @@ dependencies = [
 [[package]]
 name = "tau-compaction"
 version = "0.1.0"
-dependencies = [
- "async-trait",
- "futures-util",
- "schemars",
- "serde",
- "serde_json",
- "tau-agent",
- "tau-ai",
- "tau-luau-plugins",
- "tau-luau-plugins-host",
- "tau-store",
- "tau-store-sqlite",
- "tau-testing",
- "tokio-util",
-]
 
 [[package]]
 name = "tau-compaction-chain"
 version = "0.1.0"
-dependencies = [
- "tau-luau-plugins-host",
- "tau-testing",
- "tokio-util",
-]
 
 [[package]]
 name = "tau-constitution"
 version = "0.1.0"
-dependencies = [
- "serde_json",
- "tau-jev",
- "tau-luau-plugins-host",
- "tau-testing",
- "tokio-util",
-]
 
 [[package]]
 name = "tau-demo"
@@ -9864,21 +9856,6 @@ dependencies = [
 [[package]]
 name = "tau-fast-compaction"
 version = "0.1.0"
-dependencies = [
- "async-trait",
- "futures-util",
- "serde_json",
- "tau-agent",
- "tau-ai",
- "tau-jev",
- "tau-luau-plugins",
- "tau-luau-plugins-host",
- "tau-store",
- "tau-store-sqlite",
- "tau-testing",
- "tempfile",
- "tokio-util",
-]
 
 [[package]]
 name = "tau-github"
@@ -9913,13 +9890,6 @@ dependencies = [
 [[package]]
 name = "tau-goal"
 version = "0.1.0"
-dependencies = [
- "serde_json",
- "tau-jev",
- "tau-luau-plugins-host",
- "tau-testing",
- "tokio-util",
-]
 
 [[package]]
 name = "tau-jev"
@@ -10205,20 +10175,6 @@ dependencies = [
 [[package]]
 name = "tau-reasoning"
 version = "0.1.0"
-dependencies = [
- "async-trait",
- "serde_json",
- "tau-agent",
- "tau-ai",
- "tau-codemode-host",
- "tau-jev",
- "tau-luau-plugins-host",
- "tau-store",
- "tau-store-sqlite",
- "tau-testing",
- "tokio",
- "tokio-util",
-]
 
 [[package]]
 name = "tau-remote"
@@ -10372,27 +10328,10 @@ dependencies = [
 [[package]]
 name = "tau-titles"
 version = "0.1.0"
-dependencies = [
- "tau-luau-plugins-host",
- "tau-testing",
- "tokio-util",
-]
 
 [[package]]
 name = "tau-todo"
 version = "0.1.0"
-dependencies = [
- "futures-util",
- "hegeltest",
- "jsonschema",
- "serde_json",
- "tau-agent",
- "tau-luau-plugins",
- "tau-luau-plugins-host",
- "tau-testing",
- "tempfile",
- "tokio-util",
-]
 
 [[package]]
 name = "tau-tools"
@@ -10449,24 +10388,6 @@ dependencies = [
 [[package]]
 name = "tau-tree-compaction"
 version = "0.1.0"
-dependencies = [
- "async-trait",
- "futures-util",
- "schemars",
- "serde",
- "serde_json",
- "tau-agent",
- "tau-ai",
- "tau-codemode-host",
- "tau-compaction",
- "tau-luau-plugins",
- "tau-luau-plugins-host",
- "tau-store",
- "tau-store-sqlite",
- "tau-testing",
- "tokio",
- "tokio-util",
-]
 
 [[package]]
 name = "tau-ui"
@@ -10668,12 +10589,6 @@ dependencies = [
 [[package]]
 name = "tau-watcher"
 version = "0.1.0"
-dependencies = [
- "serde_json",
- "tau-luau-plugins-host",
- "tau-testing",
- "tokio-util",
-]
 
 [[package]]
 name = "tauri-winrt-notification"
