@@ -3,12 +3,12 @@
 
 use std::time::Duration;
 
+use common::reference;
 use hegel::{TestCase, generators as gs};
 use tau_agent::limits::Limits;
 use tau_ai::message::{Usage, UsageCost};
 
-mod common;
-use common::reference;
+use crate::common;
 
 #[hegel::test(test_cases = 500)]
 fn reached_matches_reference(tc: TestCase) {

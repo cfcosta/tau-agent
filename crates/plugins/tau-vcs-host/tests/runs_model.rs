@@ -47,8 +47,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
@@ -67,6 +65,8 @@ use tau_vcs_host::{
     UpdateFrom,
     Vcs,
 };
+
+use crate::common;
 
 const PATHS: [&str; 3] = ["a.txt", "c.txt", "dir/b.txt"];
 const VALUES: [&str; 4] = ["", "one\n", "two\n", "three\n"];

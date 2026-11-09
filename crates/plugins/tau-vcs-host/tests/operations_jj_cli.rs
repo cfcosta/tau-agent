@@ -15,11 +15,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-#[path = "common/jj_cli.rs"]
-mod jj_cli;
-#[path = "common/ops.rs"]
-mod ops;
-
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -44,6 +39,8 @@ use tau_vcs_host::{
     VcsPlugin,
     is_taus,
 };
+
+use crate::common::{jj_cli, ops};
 
 /// One turn of tau's.
 #[derive(Debug, Clone, hegel::PrettyPrintable)]

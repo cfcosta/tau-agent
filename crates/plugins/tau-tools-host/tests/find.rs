@@ -2,8 +2,6 @@
 //! ("find") and pi's `find.ts`, on a real directory
 //! (`docs/reference/testing.md`, "tau-tools").
 
-mod common;
-
 use std::path::Path;
 
 use globset::GlobBuilder;
@@ -20,6 +18,8 @@ use tau_tools_host::{
     path::Root,
     truncate::{MAX_BYTES, format_size, truncate_head},
 };
+
+use crate::common;
 
 fn text_of(output: &ToolOutput) -> &str {
     match &output.content[0] {

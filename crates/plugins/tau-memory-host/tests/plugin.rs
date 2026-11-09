@@ -2,8 +2,6 @@
 //! compaction replaces the transcript, stale marks on edits, and the
 //! consolidation pass.
 
-mod common;
-
 use std::sync::Arc;
 
 use async_trait::async_trait;

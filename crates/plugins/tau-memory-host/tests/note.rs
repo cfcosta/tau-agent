@@ -13,11 +13,11 @@
 //!
 //! Existing note round trips and plain ASCII wiki-link properties are retained.
 
-mod common;
-
 use common::{id, note};
 use hegel::{TestCase, generators as gs, generators::Generator as _};
 use tau_memory_host::note::{Link, LinkType, Note, is_id, slug, wiki_links};
+
+use crate::common;
 
 const ASCII_WORDS: &str =
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";

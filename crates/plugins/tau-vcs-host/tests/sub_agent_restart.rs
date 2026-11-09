@@ -1,13 +1,11 @@
 //! A sub-agent's workspace after a restart (`docs/reference/vcs.md`,
-//! "Sub-agents: spawn"), in a test binary of its own: a fresh process,
-//! as tau is after a restart.
+//! "Sub-agents: spawn"), in a fresh process, as tau is after a restart:
+//! nextest runs each test in a process of its own.
 
 #![allow(
     clippy::disallowed_methods,
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
-
-mod common;
 
 use common::{
     caller_in,
@@ -20,6 +18,8 @@ use common::{
 use serde_json::json;
 use tau_testing::scripted::ScriptedModel;
 use tau_ui_plugin::sub_agents::{ChildModel, Ending, Spawn};
+
+use crate::common;
 
 /// A sub-agent workspace left behind by an earlier process, as a crash
 /// in the middle of a sub-agent leaves it, stays apart from the next

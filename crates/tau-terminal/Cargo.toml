@@ -1,4 +1,5 @@
 [package]
+autotests = false
 name = "tau-terminal"
 description = "A terminal for tool output: libghostty-vt emulation, a PTY command runner, plain text, styled snapshots and a GPUI view."
 version.workspace = true
@@ -31,3 +32,7 @@ gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = 
 hegeltest.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

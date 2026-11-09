@@ -7,10 +7,17 @@ use std::{
 };
 
 use async_trait::async_trait;
+use common::{
+    assert_grammar,
+    assert_results_follow_calls,
+    counter_clock,
+    stored,
+};
 use hegel::{TestCase, generators as gs};
 use serde_json::{Value, json};
 use tau_agent::{
     agent::Agent,
+    error::{PluginError, ToolError},
     event::{RunEvent, StopReason},
     plugin::{Decision, Plugin, PluginCtx, PluginRun, RunPlan, ToolCall},
     runner::{CANCELLED, TRUNCATED},
@@ -23,16 +30,9 @@ use tau_ai::message::{
     StopReason as MessageStop,
 };
 use tau_testing::{block_on, scripted::ScriptedModel};
-
-mod common;
-use common::{
-    assert_grammar,
-    assert_results_follow_calls,
-    counter_clock,
-    stored,
-};
-use tau_agent::error::{PluginError, ToolError};
 use tokio::time::Instant;
+
+use crate::common;
 
 /// A tool that sleeps `ms` virtual milliseconds (stopping early on
 /// cancel), optionally fails, and records when it ran.

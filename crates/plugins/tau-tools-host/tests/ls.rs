@@ -7,8 +7,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use hegel::{TestCase, generators as gs};
 use serde_json::json;
 use tau_agent::{
@@ -23,6 +21,8 @@ use tau_tools_host::{
     path::Root,
     truncate::{MAX_BYTES, format_size, truncate_head},
 };
+
+use crate::common;
 
 fn text_of(output: &ToolOutput) -> &str {
     match &output.content[0] {

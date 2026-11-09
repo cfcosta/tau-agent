@@ -25,8 +25,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::{
     collections::{BTreeSet, HashMap},
     path::Path,
@@ -62,6 +60,8 @@ use tau_ui_plugin::{
 };
 use tau_vcs_host::{Head, Identity, JjRunWorkspace, MAIN_WORKSPACE};
 use tokio::sync::mpsc::UnboundedReceiver;
+
+use crate::common;
 
 const PATHS: [&str; 3] = ["a.txt", "b.txt", "dir/c.txt"];
 const VALUES: [&str; 3] = ["", "one\n", "two\n"];

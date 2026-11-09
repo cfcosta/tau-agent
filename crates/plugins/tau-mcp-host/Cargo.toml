@@ -1,4 +1,5 @@
 [package]
+autotests = false
 name = "tau-mcp-host"
 description = "Connects a tau agent to MCP servers and adds their tools: tau-mcp's host half."
 version.workspace = true
@@ -83,3 +84,7 @@ tokio = { workspace = true, features = [
 [[test]]
 name = "stdio"
 harness = false
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

@@ -1,6 +1,11 @@
 //! What tests share of a host's repositories: their projects, opened as
 //! the VCS keeps them.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0028)"
+)]
+
 use std::time::{Duration, Instant};
 
 use tau_ui::host::Host;

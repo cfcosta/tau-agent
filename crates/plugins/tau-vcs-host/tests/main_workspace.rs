@@ -28,11 +28,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-#[path = "common/jj_cli.rs"]
-mod jj_cli;
-#[path = "common/ops.rs"]
-mod ops;
-
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     path::{Path, PathBuf},
@@ -59,6 +54,8 @@ use tau_agent::tool::RunId;
 use tau_testing::{block_on_io, git::git};
 use tau_ui_plugin::vcs::{Keep, Owner, Standing};
 use tau_vcs_host::{Head, Identity, JjEnv, MAIN_WORKSPACE, ProjectRepo, Vcs};
+
+use crate::common::{jj_cli, ops};
 
 const DEFAULT: &str = "default";
 const PATHS: [&str; 3] = ["a.txt", "c.txt", "dir/b.txt"];

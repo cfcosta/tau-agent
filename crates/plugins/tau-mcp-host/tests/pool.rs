@@ -11,8 +11,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
@@ -30,6 +28,8 @@ use tau_mcp_host::{
     pool::{Pool, diff},
 };
 use tokio_util::sync::CancellationToken;
+
+use crate::common;
 
 const NAMES: [&str; 4] = ["a", "b", "c", "d"];
 const ORIGINS: [Origin; 3] = [Origin::User, Origin::Settings, Origin::Repo];

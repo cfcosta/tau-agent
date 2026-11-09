@@ -20,9 +20,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-#[path = "common/jj_cli.rs"]
-mod jj_cli;
-
 use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
@@ -40,6 +37,8 @@ use serde_json::json;
 use tau_agent::{plugin::Plugin as _, tool::ToolCtx};
 use tau_testing::{block_on_io as block_on, git::git};
 use tau_vcs_host::{Identity, JjEnv, ProjectRepo, Vcs, VcsPlugin};
+
+use crate::common::jj_cli;
 
 /// What both jj and tau seed their config ids with here, so a config
 /// written before the clone is at the path the clone's would be.

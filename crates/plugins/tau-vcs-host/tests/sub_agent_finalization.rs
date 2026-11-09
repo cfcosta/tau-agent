@@ -6,8 +6,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
@@ -32,6 +30,8 @@ use tau_ui_plugin::{
     vcs::{Link, WORKSPACE_PLUGIN},
 };
 use tau_vcs_host::{Head, Identity, Vcs};
+
+use crate::common;
 
 /// A real jj-lib refusal, not a mocked commit result: tag the already
 /// snapshotted working copy immediately before the workspace finishes.

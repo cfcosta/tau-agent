@@ -1,4 +1,5 @@
 [package]
+autotests = false
 name = "tau-tools-host"
 description = "Optional coding tools for tau agents: read, exec_command, write_stdin, edit, write, grep, find and ls; tau-tools' host half."
 version.workspace = true
@@ -61,3 +62,7 @@ reqwest.workspace = true
 [[bench]]
 name = "grep"
 harness = false
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

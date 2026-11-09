@@ -11,8 +11,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::{collections::BTreeMap, path::Path};
 
 use common::{coder, links, project};
@@ -22,6 +20,8 @@ use tau_agent::agent::Checkpoint;
 use tau_testing::scripted::ScriptedModel;
 use tau_ui_plugin::vcs::{Link, WORKSPACE_PLUGIN};
 use tau_vcs_host::{Head, Identity, ProjectRepo, RunWorkspace};
+
+use crate::common;
 
 const PATHS: [&str; 3] = ["a.txt", "b.txt", "dir/c.txt"];
 const VALUES: [&str; 4] = ["", "one\n", "two\n", "three\n"];

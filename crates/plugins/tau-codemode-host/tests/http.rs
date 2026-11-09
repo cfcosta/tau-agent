@@ -6,8 +6,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -25,6 +23,8 @@ use tau_codemode_host::{
     options,
     run,
 };
+
+use crate::common;
 
 /// A run with `http`, which answers with what it was asked.
 #[derive(Default)]

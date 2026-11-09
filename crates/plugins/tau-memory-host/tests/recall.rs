@@ -1,8 +1,6 @@
 //! Search and recall: BM25 against its formula written out plainly, and
 //! recall's budget, link hops and ranking as laws over random notes.
 
-mod common;
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use common::pool_note;
@@ -16,6 +14,8 @@ use tau_memory_host::{
     recall::{SUPERSEDED_WEIGHT, linked, recall},
     store::Notes,
 };
+
+use crate::common;
 
 const VOCAB: [&str; 8] = [
     "retry", "after", "header", "jitter", "cache", "lane", "delta", "fork",

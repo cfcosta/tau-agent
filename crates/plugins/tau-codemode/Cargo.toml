@@ -1,4 +1,5 @@
 [package]
+autotests = false
 name = "tau-codemode"
 description = "Codemode's interface half: the cards of its Luau scripts, and the records they fold."
 version.workspace = true
@@ -24,3 +25,7 @@ uuid.workspace = true
 [dev-dependencies]
 tau-ui-plugin = { workspace = true, features = ["testing"] }
 hegeltest.workspace = true
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

@@ -1,4 +1,5 @@
 [package]
+autotests = false
 name = "tau-ui-plugin"
 description = "The interface a tau plugin brings its UI through (ADR 0017): extension points, manifests, and the registry tau-ui builds from them."
 version.workspace = true
@@ -32,3 +33,7 @@ gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
 tau-store-sqlite.workspace = true
 hegeltest.workspace = true
 tokio = { workspace = true, features = ["rt", "time", "macros", "test-util"] }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

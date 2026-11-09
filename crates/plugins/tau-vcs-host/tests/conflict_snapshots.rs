@@ -7,8 +7,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use common::project_with;
@@ -17,6 +15,8 @@ use serde_json::json;
 use tau_agent::{plugin::Plugin as _, tool::ToolCtx};
 use tau_testing::block_on_io as block_on;
 use tau_vcs_host::{Identity, VcsPlugin};
+
+use crate::common;
 
 #[derive(Debug, Clone, hegel::DefaultGenerator)]
 enum Kind {

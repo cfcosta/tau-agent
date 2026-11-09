@@ -40,9 +40,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-#[path = "common/jj_cli.rs"]
-mod jj_cli;
-
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     path::{Path, PathBuf},
@@ -67,6 +64,8 @@ use tau_agent::{
 use tau_ai::message::InputBlock;
 use tau_testing::{block_on_io, git::git};
 use tau_vcs_host::{Identity, JjEnv, ProjectRepo, UpdateFrom, Vcs, VcsPlugin};
+
+use crate::common::jj_cli;
 
 /// The paths runs edit. The main chat and upstream write files of
 /// their own, so these are the same in every commit but a run's.

@@ -1,4 +1,5 @@
 [package]
+autotests = false
 name = "tau-codemode-host"
 description = "The codemode tool: a Luau sandbox that calls tau's tools and Jev, as a plugin; codemode's host half."
 version.workspace = true
@@ -37,3 +38,7 @@ tokio = { workspace = true, features = [
   "time",
   "test-util",
 ] }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

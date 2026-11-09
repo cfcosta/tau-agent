@@ -161,6 +161,10 @@
                   "--package"
                   "tau-ui"
                 ];
+                # Each test in a process of its own, as everywhere else: a
+                # crate's tests are one binary, and some keep state for
+                # the process (docs/reference/testing.md).
+                useNextest = true;
 
                 # The sqlx query metadata is committed; no database at build time.
                 SQLX_OFFLINE = "true";

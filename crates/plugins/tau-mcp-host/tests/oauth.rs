@@ -25,8 +25,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::{
     collections::{BTreeSet, HashMap},
     os::unix::fs::PermissionsExt,
@@ -56,6 +54,8 @@ use tokio::{
     sync::oneshot,
 };
 use tokio_util::sync::CancellationToken;
+
+use crate::common;
 
 /// One HTTP request, as the responder reads it.
 struct Request {

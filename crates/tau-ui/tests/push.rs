@@ -9,9 +9,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-mod support;
-
 use std::{
     path::{Path, PathBuf},
     time::Duration,
@@ -29,6 +26,8 @@ use tau_ui::{
 };
 use tau_ui_remote::{models::ModelChoice, push::PushFailure};
 use tokio::sync::mpsc::UnboundedReceiver;
+
+use crate::{common, support};
 
 const FULL_NAME: &str = "cfcosta/hello";
 const WAIT: Duration = Duration::from_secs(60);

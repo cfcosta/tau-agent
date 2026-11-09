@@ -17,9 +17,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-#[path = "common/ops.rs"]
-mod ops;
-
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -29,6 +26,8 @@ use hegel::{Generator as _, TestCase, generators as gs};
 use tau_testing::{block_on, git::git};
 use tau_ui_plugin::vcs::{Link, Remote};
 use tau_vcs_host::{Identity, ProjectRepo, UpdateFrom, Vcs, VcsError};
+
+use crate::common::ops;
 
 /// A bare repository standing for GitHub, a checkout that pushes to it
 /// as someone else would, and a project cloned from it whose main chat

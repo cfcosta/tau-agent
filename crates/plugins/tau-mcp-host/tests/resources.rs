@@ -11,8 +11,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::{
     os::unix::fs::PermissionsExt,
     sync::Arc,
@@ -31,6 +29,8 @@ use tau_mcp_host::{
     results::resource_contents,
 };
 use tokio_util::sync::CancellationToken;
+
+use crate::common;
 
 fn environment() -> Environment {
     Environment {

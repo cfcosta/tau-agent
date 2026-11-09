@@ -15,11 +15,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-#[path = "common/jj_cli.rs"]
-mod jj_cli;
-#[path = "common/ops.rs"]
-mod ops;
-
 use std::{
     os::unix::fs::MetadataExt as _,
     path::{Path, PathBuf},
@@ -32,6 +27,8 @@ use serde_json::json;
 use tau_agent::{plugin::Plugin as _, tool::ToolCtx};
 use tau_testing::block_on_io as block_on;
 use tau_vcs_host::{Identity, ProjectRepo, Vcs, VcsPlugin};
+
+use crate::common::{jj_cli, ops};
 
 /// jj-cli's path, from its `lock_git_import_export`.
 fn git_lock(workspace: &Path) -> PathBuf {

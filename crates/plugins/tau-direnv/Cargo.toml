@@ -1,4 +1,5 @@
 [package]
+autotests = false
 name = "tau-direnv"
 description = "Runs a tau agent's commands in the repository's direnv environment, once the person allows it, as a plugin."
 version.workspace = true
@@ -41,3 +42,7 @@ tokio = { workspace = true, features = [
   "time",
   "process",
 ] }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

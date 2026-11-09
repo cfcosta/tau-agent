@@ -6,8 +6,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod support;
-
 use std::sync::{
     Arc,
     Mutex,
@@ -19,6 +17,8 @@ use serde_json::json;
 use support::fake;
 use tau_github_host::{Api, Poll, url::repository_of};
 use tokio::sync::Notify;
+
+use crate::support;
 
 fn runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread()

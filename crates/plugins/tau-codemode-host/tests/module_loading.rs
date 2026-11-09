@@ -5,8 +5,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{
@@ -38,6 +36,8 @@ use tau_codemode_host::{
     options,
     run,
 };
+
+use crate::common;
 
 struct ModuleHost {
     tools: FakeHost,

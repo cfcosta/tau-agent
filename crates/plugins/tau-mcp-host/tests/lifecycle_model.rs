@@ -43,8 +43,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::{
     collections::BTreeSet,
     future::Future,
@@ -77,6 +75,8 @@ use tau_mcp_host::{
 };
 use tokio::{runtime::Runtime, sync::watch};
 use tokio_util::sync::CancellationToken;
+
+use crate::common;
 
 /// Tools the server adds and removes; its own five stay.
 const TOOLS: [&str; 3] = ["alpha", "beta", "gamma"];

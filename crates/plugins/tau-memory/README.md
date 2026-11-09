@@ -103,7 +103,7 @@ tested through the host half, and its import pages through
 
 ```sh
 cargo nextest run --release -p tau-memory -p tau-memory-host
-cargo nextest run --release -p tau-ui-remote --test memory_import
+cargo nextest run --release -p tau-ui-remote memory_import::
 ```
 
 ## Further reading

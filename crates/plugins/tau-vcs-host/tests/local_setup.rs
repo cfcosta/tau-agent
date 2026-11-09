@@ -34,9 +34,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-#[path = "common/jj_cli.rs"]
-mod jj_cli;
-
 use std::{
     collections::BTreeMap,
     ops::ControlFlow,
@@ -55,6 +52,8 @@ use tau_vcs_host::{
     VcsError,
     local::{self, Found, Kind, State, Step},
 };
+
+use crate::common::jj_cli;
 
 const FILES: [&str; 6] =
     ["a", "b.txt", "dir/c", "dir/sub/d", "with space", "ünï.md"];

@@ -6,11 +6,11 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::path::Path;
 
 use tau_vcs_host::{ProjectRepo, Vcs, VcsError};
+
+use crate::common;
 
 /// A project with one commit on `main`: `a.txt` holding `a`.
 fn project(home: &Path) -> (ProjectRepo, String) {

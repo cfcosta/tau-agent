@@ -16,14 +16,12 @@ setup = "no-disk-syncs"
 # filters each other's opposite.
 [profile.ci]
 default-filter = """
-not (binary(/_model$/)
-  | (package(tau-vcs-host) & binary(=model))
-  | (package(tau-built-in-tests) & test(/_model::/)))
+not (test(/(^|::)[a-z0-9_]*_model::/)
+  | (package(tau-vcs-host) & binary(=tests) & test(/^model::/)))
 """
 
 [profile.models]
 default-filter = """
-binary(/_model$/)
-  | (package(tau-vcs-host) & binary(=model))
-  | (package(tau-built-in-tests) & test(/_model::/))
+test(/(^|::)[a-z0-9_]*_model::/)
+  | (package(tau-vcs-host) & binary(=tests) & test(/^model::/))
 """

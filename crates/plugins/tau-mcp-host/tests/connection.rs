@@ -10,8 +10,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::{
     future::Future,
     sync::{
@@ -39,6 +37,8 @@ use tokio::{
     net::TcpListener,
 };
 use tokio_util::sync::CancellationToken;
+
+use crate::common;
 
 fn environment() -> Environment {
     Environment {

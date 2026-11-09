@@ -8,8 +8,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::sync::{Arc, Mutex};
 
 use common::project_with;
@@ -29,6 +27,8 @@ use tau_vcs_host::{
     MAIN_DOES_NOT_LAND,
     SUB_AGENTS_DO_NOT_LAND,
 };
+
+use crate::common;
 
 fn runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_multi_thread()

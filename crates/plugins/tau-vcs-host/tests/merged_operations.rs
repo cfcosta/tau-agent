@@ -10,9 +10,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-#[path = "common/ops.rs"]
-mod ops;
-
 use std::sync::Arc;
 
 use hegel::{TestCase, generators as gs};
@@ -22,6 +19,8 @@ use jj_lib::{
 };
 use pollster::block_on;
 use tau_vcs_host::{Identity, ProjectRepo, TAU_OP_ATTRIBUTE, is_taus};
+
+use crate::common::ops;
 
 /// The repository at its head, loaded as another program loads it,
 /// which merges a forked log.

@@ -1,8 +1,6 @@
 //! The store against a model: a map of notes, with every replaced
 //! version kept. Reopening the directory reads back what the model holds.
 
-mod common;
-
 use std::collections::BTreeMap;
 
 use common::{pool_id, pool_note};
@@ -11,6 +9,8 @@ use tau_memory_host::{
     note::{Link, LinkType, Note},
     store::{Notes, StoreError},
 };
+
+use crate::common;
 
 /// What the store should hold: each note, and every version a write
 /// replaced, oldest first.

@@ -7,8 +7,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::path::Path;
 
 use hegel::{Generator as _, TestCase, generators as gs};

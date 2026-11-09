@@ -9,6 +9,10 @@
 //! starting it again on what it left on disk.
 
 #![allow(dead_code, reason = "each model that includes this uses a part of it")]
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0028)"
+)]
 
 use std::{
     cell::RefCell,

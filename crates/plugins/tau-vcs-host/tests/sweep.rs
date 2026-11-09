@@ -9,8 +9,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use jj_lib::{
     backend::ChangeId,
     default_backend_factories::{
@@ -23,6 +21,8 @@ use tau_agent::tool::RunId;
 use tau_testing::block_on_io as block_on;
 use tau_ui_plugin::vcs::{Keep, Owner, Standing};
 use tau_vcs_host::{Head, MAIN_WORKSPACE, ProjectRepo, Vcs};
+
+use crate::common;
 
 /// A run's workspace `name` on trunk, with `file` committed under the
 /// run's head. Returns the commit's change id.

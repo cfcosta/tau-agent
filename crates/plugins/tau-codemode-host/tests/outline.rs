@@ -8,8 +8,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::sync::Arc;
 
 use common::{FakeHost, script};
@@ -18,6 +16,8 @@ use serde_json::{Value, json};
 use tau_codemode::outline::{self, Line, Shown, line};
 use tau_codemode_host::Item;
 use tau_ui_kit::assets::Icon;
+
+use crate::common;
 
 /// Strings stay text and other values JSON, in order, whether the
 /// script gave them to `text`, `print` or `return`.

@@ -10,8 +10,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
@@ -74,6 +72,8 @@ use tau_ui_plugin::{
     points::{AtCard, AtRepo, AtRun},
     tree,
 };
+
+use crate::common;
 
 // The settings' laws.
 

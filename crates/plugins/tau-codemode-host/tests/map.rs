@@ -13,8 +13,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::{
     sync::{Arc, atomic::Ordering},
     time::Duration,
@@ -26,6 +24,8 @@ use serde_json::{Value, json};
 use tau_codemode::store::Snapshot;
 use tau_codemode_host::{CallStatus, CancellationToken, Failure};
 use tau_testing::block_on;
+
+use crate::common;
 
 fn host() -> Arc<FakeHost> {
     Arc::new(FakeHost::default())

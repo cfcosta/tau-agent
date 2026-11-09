@@ -1,4 +1,5 @@
 [package]
+autotests = false
 name = "tau-luau-plugins-host"
 description = "tau-luau-plugins' host half: loading plugins written in Luau and running their hooks in codemode's sandbox."
 version.workspace = true
@@ -45,3 +46,7 @@ tau-testing.workspace = true
 tokio-util.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

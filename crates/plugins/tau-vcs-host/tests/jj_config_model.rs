@@ -21,9 +21,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-#[path = "common/jj_cli.rs"]
-mod jj_cli;
-
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -34,6 +31,8 @@ use hegel::{TestCase, generators as gs};
 use jj_lib::secure_config::SecureConfig;
 use rand_chacha::{ChaCha20Rng, rand_core::SeedableRng as _};
 use tau_vcs_host::{Identity, JjEnv, jj_settings};
+
+use crate::common::jj_cli;
 
 /// The keys every world sets somewhere: who commits, and one that only
 /// the environment's editor variables and the files set.

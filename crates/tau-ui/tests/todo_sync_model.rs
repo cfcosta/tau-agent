@@ -17,9 +17,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-#[path = "common/sync.rs"]
-mod sync;
-
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 use hegel::{HealthCheck, TestCase, generators as gs};
@@ -28,6 +25,8 @@ use sync::{Keep, Net, Who, assert_synced};
 use tau_luau_plugins_host::store::{Fuse, Kv};
 use tau_testing::block_on_io;
 use tau_ui_remote::WorkspaceEvent;
+
+use crate::sync;
 
 const REPO: &str = "repo";
 const LUAU: &str = "tau-luau-plugins";

@@ -2,8 +2,6 @@
 //! ("grep") and pi's `grep.ts`, on a real directory
 //! (`docs/reference/testing.md`, "tau-tools").
 
-mod common;
-
 use hegel::{TestCase, generators as gs};
 use regex::RegexBuilder;
 use serde_json::{Value, json};
@@ -18,6 +16,8 @@ use tau_tools_host::{
     path::Root,
     truncate::{MAX_BYTES, format_size, truncate_head},
 };
+
+use crate::common;
 
 fn text_of(output: &ToolOutput) -> &str {
     match &output.content[0] {

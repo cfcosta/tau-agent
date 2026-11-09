@@ -1,4 +1,5 @@
 [package]
+autotests = false
 name = "tau-skills"
 description = "Skills: instructions a tau agent loads when a task calls for them, from ~/.agents/skills, as a plugin."
 version.workspace = true
@@ -36,3 +37,7 @@ hegeltest.workspace = true
 tau-testing.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt", "time"] }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

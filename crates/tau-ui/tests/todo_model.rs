@@ -19,9 +19,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-#[path = "common/sync.rs"]
-mod sync;
-
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 use hegel::{HealthCheck, TestCase, generators as gs};
@@ -34,6 +31,8 @@ use tau_ui_remote::{
     WorkspaceEvent,
     view::{Item, ToolState},
 };
+
+use crate::sync;
 
 /// The repository the issues are kept in.
 const REPO: &str = "repo";

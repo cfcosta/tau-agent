@@ -40,8 +40,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
@@ -65,6 +63,8 @@ use tau_vcs_host::{
     Vcs,
     VcsPlugin,
 };
+
+use crate::common;
 
 /// One workspace's handle and its tools.
 struct Workspace {

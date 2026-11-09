@@ -743,6 +743,28 @@ revert:
 - Revert from a backup only you write, never through `jj restore` of a
   file with edits of your own (see [Anti-patterns](#anti-patterns)).
 
+## One binary per crate
+
+A crate's integration tests build as one binary: `tests/main.rs` names
+each `tests/*.rs` as a module, and the crate's `Cargo.toml` turns
+`autotests` off and declares that one `[[test]]`. Each test binary links
+the whole dependency graph, GPUI or jj-lib among it, so linking one per
+file was most of what building the tests cost: rebuilding them all
+after a change to tau-ai went from 205 s to 115 s on one machine.
+
+- A new test file gets a `mod` line in `tests/main.rs`; with `autotests`
+  off it is not built otherwise.
+  `tau-built-in-tests`' `every_test_file_is_in_its_crates_one_binary`
+  fails on a file left out.
+- Helpers in `tests/common/` or `tests/support/` are declared once, in
+  `tests/main.rs`; a test file reaches them with `use crate::common;`.
+- A test with `harness = false`, such as tau-mcp-host's `stdio`, keeps a
+  `[[test]]` of its own.
+- nextest still runs each test in a process of its own, so tests in one
+  binary share no globals. A plain `cargo test` runs them as threads of
+  one process, which tau-ui's do not survive: the Nix package's check
+  runs nextest too (`useNextest`).
+
 ## CI tiers
 
 | Tier    | When       | Runs                                                                                                                                                                              |
@@ -750,10 +772,10 @@ revert:
 | Check   | every push | `nix fmt` check, `cargo clippy --all-targets -D warnings`, `cargo nextest run --release --profile ci` (all but the model tests), `cargo sqlx prepare --check`, `cargo deny check` |
 | Nightly | once a day | `cargo nextest run --release --profile models` (the model tests), then `cargo nextest run --release --run-ignored only` (nightly properties)                                      |
 
-The model tests are the `*_model` test binaries, tau-vcs-host's `model`,
-and tau-built-in-tests' `*_model` modules: `.config/nextest.toml` names
-them in the `ci` and `models` profiles. A new model test goes in a binary
-or module so named, or both filters gain it. Locally, a plain
+The model tests are the tests in `*_model` modules, and in tau-vcs-host's
+`model`: `.config/nextest.toml` names them in the `ci` and `models`
+profiles. A new model test goes in a module so named, a `tests/*_model.rs`
+file, or both filters gain it. Locally, a plain
 `cargo nextest run --release` still runs everything.
 
 Tests run in release in CI, as they do locally: the debug test binaries,
@@ -764,7 +786,8 @@ runner's unused toolchains first.
 The Check tier's tests should stay under five minutes of running. If they
 grow past that, move cases to nightly variants rather than lowering the
 default counts. Compiling the release test binaries takes longer than
-running them: about 25 minutes on a hosted runner with a warm cache.
+running them, which is why each crate builds its tests as one binary
+([One binary per crate](#one-binary-per-crate)).
 
 ## Anti-patterns
 

@@ -7,8 +7,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::{path::Path, time::Duration};
 
 use tau_agent::{
@@ -29,6 +27,8 @@ use tau_ui_remote::{
 };
 use tau_vcs_host::{Identity, Project};
 use tokio::sync::mpsc::UnboundedReceiver;
+
+use crate::common;
 
 /// The repository a host under test lists, made from the checkout it
 /// is given, as a clone from GitHub would be.

@@ -19,8 +19,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod support;
-
 use std::{
     collections::BTreeMap,
     ops::ControlFlow,
@@ -49,6 +47,8 @@ use tau_vcs_host::{
     local::{Refusal, State, Step},
 };
 use tokio::sync::mpsc::UnboundedReceiver;
+
+use crate::support;
 
 const WAIT: Duration = Duration::from_secs(60);
 /// The GitHub repository an `origin` on GitHub names.

@@ -10,8 +10,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
@@ -35,6 +33,8 @@ use tau_mcp_host::{
 use tau_store::Store;
 use tau_testing::scripted::ScriptedModel;
 use tokio_util::sync::CancellationToken;
+
+use crate::common;
 
 fn plugin(
     fixture: &Arc<Fixture>,

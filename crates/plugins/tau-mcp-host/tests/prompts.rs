@@ -10,8 +10,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use common::State as Fixture;
@@ -33,6 +31,8 @@ use tau_mcp_host::{
     },
 };
 use tokio_util::sync::CancellationToken;
+
+use crate::common;
 
 fn key() -> impl hegel::generators::PrintableGenerator<String> {
     gs::from_regex("[A-Za-z_][A-Za-z0-9_.-]{0,8}")

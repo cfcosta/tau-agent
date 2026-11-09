@@ -29,9 +29,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-#[path = "common/jj_cli.rs"]
-mod jj_cli;
-
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -44,6 +41,8 @@ use tau_vcs_host::{
     JjEnv,
     local::{self, Found, Kind, Origin, Refusal, Trunk, TrunkFrom},
 };
+
+use crate::common::jj_cli;
 
 /// Files the worlds commit and change, some of whose names `git status`
 /// would quote.

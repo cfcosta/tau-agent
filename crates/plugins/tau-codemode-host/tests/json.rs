@@ -6,8 +6,6 @@
 //! boundary; text limits have boundary examples. Hegel profiles are
 //! inherited from the workspace; no provider or wall-clock randomness.
 
-mod common;
-
 use std::sync::Arc;
 
 use common::{FakeHost, error, script, texts};
@@ -19,6 +17,8 @@ use mlua::Lua;
 use serde_json::{Map, Value, json};
 use tau_codemode_host::{json as codec, value};
 use tau_testing::block_on;
+
+use crate::common;
 
 /// The oracle applies documented double semantics, not the codec itself.
 fn doubles(value: &Value) -> Value {

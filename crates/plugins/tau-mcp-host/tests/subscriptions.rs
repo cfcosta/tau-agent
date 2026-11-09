@@ -10,8 +10,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -28,6 +26,8 @@ use tau_mcp_host::connection::{
     WatchError,
 };
 use tokio_util::sync::CancellationToken;
+
+use crate::common;
 
 const STATUS: &str = "file:///status";
 

@@ -25,9 +25,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-#[path = "common/jj_cli.rs"]
-mod jj_cli;
-
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     path::{Path, PathBuf},
@@ -37,6 +34,8 @@ use std::{
 use hegel::{TestCase, generators as gs};
 use tau_testing::block_on_io;
 use tau_vcs_host::{Identity, JjEnv, Vcs};
+
+use crate::common::jj_cli;
 
 const DIRS: [&str; 6] = ["", "src", "src/deep", "docs", "target", "src/target"];
 const NAMES: [&str; 5] = ["a.rs", "b.txt", "keep.txt", "big.bin", "c.md"];

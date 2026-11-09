@@ -24,10 +24,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-#[path = "common/jj_cli.rs"]
-mod jj_cli;
-
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -43,6 +39,8 @@ use tau_agent::{
 };
 use tau_testing::{block_on_io as block_on, git::git};
 use tau_vcs_host::{Head, Identity, ProjectRepo, UpdateFrom, Vcs, VcsPlugin};
+
+use crate::{common, common::jj_cli};
 
 const RUNS: usize = 3;
 

@@ -5,8 +5,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::{
     collections::BTreeMap,
     sync::{
@@ -28,6 +26,8 @@ use tau_jev::{
     Response,
     fake::{FakeJev, response},
 };
+
+use crate::common;
 
 #[tokio::test]
 async fn noul_returns_a_probability_and_charges_its_usage() {

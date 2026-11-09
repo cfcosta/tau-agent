@@ -10,6 +10,7 @@
 // Each test crate uses only some of these.
 #![allow(dead_code)]
 
+pub mod jj_cli;
 pub mod merge;
 pub mod ops;
 

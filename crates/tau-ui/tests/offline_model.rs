@@ -25,9 +25,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-#[path = "common/sync.rs"]
-mod sync;
-
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
@@ -47,6 +44,8 @@ use tau_ui_remote::{
     view::{Origin, RunView},
     workspace::Synced,
 };
+
+use crate::sync;
 
 /// The plugin whose UI state the person edits: one with drafts and
 /// sections, as tau-agents has.

@@ -16,9 +16,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-#[path = "common/sync.rs"]
-mod sync;
-
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -38,6 +35,8 @@ use tau_ui_remote::{
     view::{Item, Origin, RunView},
     workspace::Synced,
 };
+
+use crate::sync;
 
 /// What the person asked for, in the order the host got it from any
 /// device: what the computer must show once everything arrived.

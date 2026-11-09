@@ -9,6 +9,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use common::{assert_grammar, stored};
 use futures_util::future::join_all;
 use hegel::generators as gs;
 use serde_json::{Value, json};
@@ -40,8 +41,7 @@ use tau_ai::message::{InputBlock, Message};
 use tau_testing::{block_on, scripted::ScriptedModel};
 use tokio::time::Instant;
 
-mod common;
-use common::{assert_grammar, stored};
+use crate::common;
 
 /// The text of an output.
 fn text(output: &ToolOutput) -> String {

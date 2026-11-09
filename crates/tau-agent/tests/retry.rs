@@ -4,6 +4,7 @@
 
 use std::time::Duration;
 
+use common::stored;
 use futures_util::StreamExt;
 use hegel::{TestCase, generators as gs};
 use tau_agent::{
@@ -21,8 +22,7 @@ use tau_testing::{
 };
 use tokio::time::Instant;
 
-mod common;
-use common::stored;
+use crate::common;
 
 /// A retryable failure, as the scripts draw it.
 #[derive(

@@ -8,8 +8,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod support;
-
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -20,6 +18,8 @@ use support::fake;
 use tau_github::{Act, GitHubData, SignIn, Signed};
 use tau_github_host::{Endpoints, GitHub, GitHubHost, Token};
 use tau_ui_plugin::{HostCx, HostHalf, Push, Services};
+
+use crate::support;
 
 #[test]
 fn a_token_signs_in_and_signing_out_forgets_it() {

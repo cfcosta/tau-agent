@@ -8,8 +8,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -42,6 +40,8 @@ use tau_ui_plugin::{
     vcs::{Link, WORKSPACE_PLUGIN},
 };
 use tau_vcs_host::{Head, ProjectRepo};
+
+use crate::common;
 
 fn commit(message: &str) -> serde_json::Value {
     json!({ "message": message })

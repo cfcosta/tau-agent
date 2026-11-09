@@ -5,8 +5,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::{
     sync::{Arc, atomic::Ordering},
     time::{Duration, Instant},
@@ -16,6 +14,8 @@ use common::{FakeHost, error, script, script_with, texts};
 use serde_json::json;
 use tau_codemode::store::Snapshot;
 use tau_codemode_host::{CallStatus, CancellationToken, Failure, Item};
+
+use crate::common;
 
 fn host() -> Arc<FakeHost> {
     Arc::new(FakeHost::default())

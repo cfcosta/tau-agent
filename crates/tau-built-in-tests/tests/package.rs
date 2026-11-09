@@ -6,7 +6,11 @@
 use std::path::{Path, PathBuf};
 
 /// Every file under `dir` named as `keep` likes, build output aside.
-fn walk(dir: &Path, keep: &dyn Fn(&Path) -> bool, out: &mut Vec<PathBuf>) {
+pub(crate) fn walk(
+    dir: &Path,
+    keep: &dyn Fn(&Path) -> bool,
+    out: &mut Vec<PathBuf>,
+) {
     for entry in std::fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
         if path.is_dir() {

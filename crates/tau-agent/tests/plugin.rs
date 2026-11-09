@@ -4,9 +4,11 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use common::assert_grammar;
 use serde_json::{Value, json};
 use tau_agent::{
     agent::{Agent, AgentError},
+    error::{PluginError, ToolError},
     event::{LimitKind, RunEvent, StopReason},
     limits::Limits,
     plugin::{
@@ -37,9 +39,7 @@ use tau_store::{Status, Store};
 use tau_testing::{block_on, scripted::ScriptedModel};
 use tokio_util::sync::CancellationToken;
 
-mod common;
-use common::assert_grammar;
-use tau_agent::error::{PluginError, ToolError};
+use crate::common;
 
 /// Changes a run's plan.
 type PlanChange = Arc<dyn Fn(&mut RunPlan) + Send + Sync>;

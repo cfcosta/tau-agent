@@ -6,8 +6,6 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-mod common;
-
 use std::io::Cursor;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -26,6 +24,8 @@ use tau_tools_host::{
     truncate::{Limit, MAX_BYTES, MAX_LINES, truncate_head},
 };
 use tokio_util::sync::CancellationToken;
+
+use crate::common;
 
 /// Calls `read` on a normal runtime: it does blocking I/O on the
 /// blocking pool, which paused time would treat as idle.
