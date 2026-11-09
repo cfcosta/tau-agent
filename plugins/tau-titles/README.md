@@ -8,9 +8,9 @@ written, and when it cannot be, the run shows the first line of its
 prompt, which is the kernel's. What the requests cost is booked to the
 plugin, so the Plugins screen shows it.
 
-It is a Luau plugin tau comes with: `luau/plugin.luau` asks through
+It is a Luau plugin tau comes with: `src/plugin.luau` asks through
 `tools.infer` with `uses.model = "luna"`, a family the host resolves to
-the plan's newest (else the run's model), and `luau/lib/titles.luau`
+the plan's newest (else the run's model), and `src/titles.luau`
 builds the request and cleans the title. tau-luau-plugins loads it as
 always active and fills `tau.title` for it; what it asks is booked to
 `tau-titles`.
@@ -22,6 +22,6 @@ always active and fills `tau.title` for it; what it asks is booked to
 | `NAME`  | `"tau-titles"`                               |
 | `FILES` | The Luau files, by their paths in its folder |
 
-`tests/luau.rs` loads the plugin as tau does and runs its Luau tests:
+`tau-built-in-tests/tests/titles/luau.rs` loads the plugin as tau does and runs its Luau tests:
 cases for the request and the switch, and properties for the budget and
 the cleaned title.

@@ -44,41 +44,18 @@ on.
 
 ## How it fits
 
-It is a single crate: the plugin, its `UiPlugin` and its `HostHalf` live
-here. It builds on `tau-agent` (the `start`, `before_request`,
-`rewritten` and `finish` seams), `tau-ai` (the efforts a model takes)
-and `tau-jev`, the shared Jev client. Its UI uses `tau-ui-kit` and
-`tau-ui-plugin`.
-
-`tau-ui` registers `ReasoningHost`, which adds the plugin to a run only
-when the host has a Jev (a saved TypeSafe key) and the run's effort is
-on auto. `tau-ui-remote` registers `ReasoningPlugin`.
+It is a Luau plugin tau comes with (ADR 0050, 0051): `src/plugin.luau` and
+`src/effort.luau`, loaded as always active. It reaches Jev on runs on auto,
+when a TypeSafe key is saved.
 
 ## Usage
-
-```rust
-use std::sync::Arc;
-
-use tau_agent::agent::Agent;
-use tau_jev::TypeSafe;
-use tau_reasoning::Reasoning;
-
-let jev = Arc::new(TypeSafe::from_env()?); // reads TYPESAFE_API_KEY
-let agent = Agent::new(llm)
-    .instructions("You are a careful coding agent.")
-    .plugin(Reasoning::new(jev).threshold(0.8));
-```
-
-Share one `Reasoning` across an agent's runs. Each scoring is one Jev
-round trip before the run's session opens, and with `redecide` one more
-per ended lease.
 
 The `replay` example runs the policy over the latest runs of a store,
 each on its own model, with the real Jev. It needs `TYPESAFE_API_KEY`
 and the network:
 
 ```sh
-cargo run -p tau-reasoning --example replay -- ~/.local/share/tau/runs.db 20
+cargo run -p tau-built-in-tests --example replay -- ~/.local/share/tau/runs.db 20
 ```
 
 It reports decisions, not savings: what a request would have cost at
@@ -87,23 +64,21 @@ another effort is unknown.
 ## Testing
 
 ```sh
-cargo nextest run --release -p tau-reasoning
+target/release/tau --plugin-test plugins/tau-reasoning   # its Luau tests, no compiling
+cargo nextest run --release -p tau-built-in-tests -E 'test(/^reasoning::/)'
 ```
 
-The tests use `tau_jev`'s `FakeJev`, so they need no key and no
-network. `tests/reasoning.rs` covers the policy, with Hegel properties,
-through the agent loop with `ScriptedModel`. `tests/ui.rs` covers what
-the UI's fold makes of the plugin's records.
+The tests use a fake Jev, so they need no key and no network.
 
 ## Further reading
 
-- [plugins.md](../../../docs/reference/plugins.md): the
+- [plugins.md](../../docs/reference/plugins.md): the
   `tau-reasoning` section, including "Replaying stored runs", and the
   shared Jev client
-- [openai-websocket.md](../../../docs/reference/openai-websocket.md):
+- [openai-websocket.md](../../docs/reference/openai-websocket.md):
   why a change of effort costs the prompt cache
-- [0022-the-prompt-cache-follows-the-connection.md](../../../docs/decisions/0022-the-prompt-cache-follows-the-connection.md):
+- [0022-the-prompt-cache-follows-the-connection.md](../../docs/decisions/0022-the-prompt-cache-follows-the-connection.md):
   sticky effort
-- [0017-plugins-bring-their-ui.md](../../../docs/decisions/0017-plugins-bring-their-ui.md)
-  and [0030-host-halves-are-crates.md](../../../docs/decisions/0030-host-halves-are-crates.md):
+- [0017-plugins-bring-their-ui.md](../../docs/decisions/0017-plugins-bring-their-ui.md)
+  and [0030-host-halves-are-crates.md](../../docs/decisions/0030-host-halves-are-crates.md):
   its UI and host half

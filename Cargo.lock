@@ -9639,10 +9639,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tau-ask"
-version = "0.1.0"
-
-[[package]]
 name = "tau-built-in-tests"
 version = "0.1.0"
 dependencies = [
@@ -9776,18 +9772,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tau-compaction"
-version = "0.1.0"
-
-[[package]]
-name = "tau-compaction-chain"
-version = "0.1.0"
-
-[[package]]
-name = "tau-constitution"
-version = "0.1.0"
-
-[[package]]
 name = "tau-demo"
 version = "0.1.0"
 dependencies = [
@@ -9845,10 +9829,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tau-fast-compaction"
-version = "0.1.0"
-
-[[package]]
 name = "tau-github"
 version = "0.1.0"
 dependencies = [
@@ -9877,10 +9857,6 @@ dependencies = [
  "tempfile",
  "tokio",
 ]
-
-[[package]]
-name = "tau-goal"
-version = "0.1.0"
 
 [[package]]
 name = "tau-jev"
@@ -10163,10 +10139,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tau-reasoning"
-version = "0.1.0"
-
-[[package]]
 name = "tau-remote"
 version = "0.1.0"
 dependencies = [
@@ -10316,14 +10288,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tau-titles"
-version = "0.1.0"
-
-[[package]]
-name = "tau-todo"
-version = "0.1.0"
-
-[[package]]
 name = "tau-tools"
 version = "0.1.0"
 dependencies = [
@@ -10374,10 +10338,6 @@ dependencies = [
  "tokio-util",
  "unicode-normalization",
 ]
-
-[[package]]
-name = "tau-tree-compaction"
-version = "0.1.0"
 
 [[package]]
 name = "tau-ui"
@@ -10560,10 +10520,6 @@ dependencies = [
  "uuid",
  "whoami",
 ]
-
-[[package]]
-name = "tau-watcher"
-version = "0.1.0"
 
 [[package]]
 name = "tauri-winrt-notification"

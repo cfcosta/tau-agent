@@ -111,8 +111,8 @@ nothing but `checked`.
 | `watch.recent`                    | The last 50 lines the prompt carries                      |
 | `watch.conversation`              | The conversation as the side request reads it             |
 | `watch.noted`, `answered`, `band` | The notes in the state, and the one above the composer    |
-| `tau_watcher::FILES`, `DEMO_*`    | The files, and the views the demo shows                   |
+| `fixtures/`                       | The views the demo shows                                  |
 
-`tests/luau.rs` loads it as tau does and runs its Luau tests, cases,
+`tau-built-in-tests/tests/watcher/luau.rs` loads it as tau does and runs its Luau tests, cases,
 properties and a state machine, and checks the demo's views are what
 the plugin draws (`BLESS_FIXTURES=1` writes them anew).

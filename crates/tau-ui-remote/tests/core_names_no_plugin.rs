@@ -36,10 +36,13 @@ fn root() -> PathBuf {
 /// Every plugin crate's name, as its manifest and its paths spell it:
 /// `tau-goal` and `tau_goal`.
 fn plugins() -> Vec<(String, String)> {
-    let dir = root().join("crates/plugins");
-    let mut names: Vec<(String, String)> = std::fs::read_dir(dir)
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+    // The Rust plugins, and the Luau ones tau comes with (ADR 0051).
+    let mut names: Vec<(String, String)> = ["crates/plugins", "plugins"]
+        .iter()
+        .flat_map(|dir| std::fs::read_dir(root().join(dir)).unwrap())
+        .map(|entry| entry.unwrap())
+        .filter(|entry| entry.path().is_dir())
+        .map(|entry| entry.file_name().into_string().unwrap())
         .map(|name| (name.clone(), name.replace('-', "_")))
         .collect();
     names.sort();

@@ -24,13 +24,13 @@ on `tamaratran/fast-jev-compaction`. Output pruning, the partitioned
 history and the token estimate come from `tamaratran/jev-pruner`. All
 three are MIT; the notices are in `THIRD_PARTY_NOTICES.md`.
 
-It is a Luau plugin tau comes with (ADR 0050): `luau/lib/` holds the
+It is a Luau plugin tau comes with (ADR 0050): `src/` holds the
 estimate, the history state, its partitions, the decisions, the ledger
-and output pruning, and `luau/plugin.luau` declares the hooks and draws
+and output pruning, and `src/plugin.luau` declares the hooks and draws
 the status line, the notes, the cards and the ledger page.
 tau-luau-plugins loads it as always active, first of the compactions.
 Its rules are in
-[fast-compaction.md](../../../docs/reference/fast-compaction.md).
+[fast-compaction.md](../../docs/reference/fast-compaction.md).
 
 ## What it provides
 
@@ -47,17 +47,18 @@ Its rules are in
 ## Testing
 
 ```sh
-cargo nextest run --release -p tau-fast-compaction
+target/release/tau --plugin-test plugins/tau-fast-compaction   # its Luau tests, no compiling
+cargo nextest run --release -p tau-built-in-tests -E 'test(/^fast_compaction::/)'
 ```
 
-`luau/tests/estimate.luau` checks the token estimate;
-`luau/tests/rules.luau` holds properties of the history state, its
-segments, the decisions and the ledger; `luau/tests/output.luau` those
+`tests/estimate.luau` checks the token estimate;
+`tests/rules.luau` holds properties of the history state, its
+segments, the decisions and the ledger; `tests/output.luau` those
 of output pruning's gate, chunks, plan, answers and render;
-`luau/tests/plugin.luau` runs the hooks and the view against fake runs.
-`tests/luau.rs` loads the plugin as tau does and runs them, and checks
+`tests/plugin.luau` runs the hooks and the view against fake runs.
+`tau-built-in-tests/tests/fast_compaction/luau.rs` loads the plugin as tau does and runs them, and checks
 the demo's fixtures (`BLESS_FIXTURES=1` writes them anew).
-`tests/in_the_loop.rs` and `tests/output_in_the_loop.rs` run it in the
+`tau-built-in-tests/tests/fast_compaction/in_the_loop.rs` and `tests/output_in_the_loop.rs` run it in the
 agent loop with `ScriptedModel` and a fake Jev: passes, cooldowns,
 forks, overflows, failures and archives, and outputs pruned, kept and
 left alone.

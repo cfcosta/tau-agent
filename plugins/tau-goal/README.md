@@ -37,47 +37,22 @@ controls a goal by storing a record with the run.
 
 ## How it fits
 
-tau-goal is a single crate: the interface half and the host half live
-together, since neither pulls in anything heavy (decision 0030 keeps
-only heavy host halves in crates of their own). It builds on `tau-agent`,
-`tau-ai`, `tau-jev`, `tau-ui-plugin` and `tau-ui-kit`.
-
-`tau-ui` registers `GoalHost`, which adds the plugin to a run only when
-its services hold a Jev (a TypeSafe key is saved), and never to a
-sub-agent. `tau-ui-remote` lists `GoalUi`, so a phone shows goals too.
+It is a Luau plugin tau comes with (ADR 0050, 0051): `src/plugin.luau` and
+`src/goal.luau`, loaded as always active. It reaches Jev, so it does nothing
+without a saved TypeSafe key, and it is not in a sub-agent's runs.
 
 ## Usage
 
-```rust
-use std::sync::Arc;
-use tau_agent::limits::Limits;
-use tau_goal::GoalPlugin;
-use tau_jev::{Jev, TypeSafe};
-
-let jev: Arc<dyn Jev> = Arc::new(TypeSafe::from_env()?);
-let agent = agent
-    .plugin(GoalPlugin::new(jev))
-    // The agent's own cap on continuations applies to all plugins
-    // together; the goal caps itself.
-    .limits(Limits::default().max_continuations(100));
-
-let task = "/goal --budget 5 cargo nextest run passes and clippy is clean";
-let outcome = agent.run(task, &store).await?;
-```
+`/goal --budget 5 cargo nextest run passes and clippy is clean`
 
 A later run that resumes the conversation keeps the goal. `/goal clear`
 removes it, and a new `/goal` replaces it.
 
-## Features
-
-| Feature | What it adds                                   |
-| ------- | ---------------------------------------------- |
-| `demo`  | `demo::records`: the goals tau-ui's demo shows |
-
 ## Testing
 
 ```sh
-cargo nextest run --release -p tau-goal
+target/release/tau --plugin-test plugins/tau-goal   # its Luau tests, no compiling
+cargo nextest run --release -p tau-built-in-tests -E 'test(/^goal::/)'
 ```
 
 The tests drive real runs with `tau-testing`'s `ScriptedModel`,
@@ -89,8 +64,8 @@ records.
 
 ## Further reading
 
-- [docs/reference/goal.md](../../../docs/reference/goal.md)
-- [docs/reference/plugins.md](../../../docs/reference/plugins.md), section
+- [docs/reference/goal.md](../../docs/reference/goal.md)
+- [docs/reference/plugins.md](../../docs/reference/plugins.md), section
   "`tau-goal`: keep going until a goal holds"
-- [ADR 0017: plugins bring their UI](../../../docs/decisions/0017-plugins-bring-their-ui.md)
-- [ADR 0030: host halves are crates](../../../docs/decisions/0030-host-halves-are-crates.md)
+- [ADR 0017: plugins bring their UI](../../docs/decisions/0017-plugins-bring-their-ui.md)
+- [ADR 0030: host halves are crates](../../docs/decisions/0030-host-halves-are-crates.md)

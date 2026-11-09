@@ -6,7 +6,7 @@ then the summary, each declining when it would save too little, the
 first rewrite winning. tau-compaction is Luau too, and runs after the
 others in the order tau comes with them.
 
-It is a Luau plugin tau comes with: `luau/plugin.luau` declares the
+It is a Luau plugin tau comes with: `src/plugin.luau` declares the
 chain in its `compaction` table, and tau-luau-plugins loads it as
 always active, filling the slot for it. The Plugins screen shows the
 slot filled by tau-luau-plugins, whose own plugins' rewrites run first.
@@ -18,4 +18,4 @@ slot filled by tau-luau-plugins, whose own plugins' rewrites run first.
 | `NAME`  | `"tau-compaction-chain"`                     |
 | `FILES` | The Luau files, by their paths in its folder |
 
-`tests/luau.rs` loads the plugin as tau does and runs its Luau tests.
+`tau-built-in-tests/tests/compaction_chain/luau.rs` loads the plugin as tau does and runs its Luau tests.

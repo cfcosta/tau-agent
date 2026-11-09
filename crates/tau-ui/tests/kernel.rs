@@ -25,10 +25,16 @@ fn crates() -> PathBuf {
 
 /// Every plugin, by the name its crate has in Rust: `tau_memory_host`.
 fn plugins() -> BTreeSet<String> {
-    std::fs::read_dir(crates().join("plugins"))
-        .expect("crates/plugins")
+    // The Rust plugins, and the Luau ones tau comes with (ADR 0051).
+    let luau = crates().join("../plugins");
+    [crates().join("plugins"), luau]
+        .iter()
+        .flat_map(|dir| std::fs::read_dir(dir).expect("a plugins folder"))
         .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.path().join("Cargo.toml").exists())
+        .filter(|entry| {
+            entry.path().join("Cargo.toml").exists()
+                || entry.path().join("tau.toml").exists()
+        })
         .map(|entry| entry.file_name().to_string_lossy().replace('-', "_"))
         .collect()
 }

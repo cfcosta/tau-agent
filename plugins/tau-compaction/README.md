@@ -7,11 +7,11 @@ summary, the newest kept as they are. A context overflow summarizes at
 once, and an idle chat is summarized in its own conversation, before its
 prompt cache lapses.
 
-It is a Luau plugin tau comes with (ADR 0050): `luau/plugin.luau`
-declares its hooks, `luau/lib/compaction.luau` holds the rules, and
+It is a Luau plugin tau comes with (ADR 0050): `src/plugin.luau`
+declares its hooks, `src/compaction.luau` holds the rules, and
 tau-luau-plugins loads it as always active, after fast pruning and the
 tree. Its rules are in
-[compaction.md](../../../docs/reference/compaction.md).
+[compaction.md](../../docs/reference/compaction.md).
 
 ## What it provides
 
@@ -28,15 +28,16 @@ An agent of its own, as an evaluation's, runs it with
 ## Testing
 
 ```sh
-cargo nextest run --release -p tau-compaction
+target/release/tau --plugin-test plugins/tau-compaction   # its Luau tests, no compiling
+cargo nextest run --release -p tau-built-in-tests -E 'test(/^compaction::/)'
 ```
 
-`luau/tests/rules.luau` holds properties of the threshold, the cut point
+`tests/rules.luau` holds properties of the threshold, the cut point
 and the plan, the serialized conversation, the file lists and the
-prompts, and pi's known cases. `luau/tests/plugin.luau` runs the hooks
-against fake runs. `tests/luau.rs` loads the plugin as tau does and runs
+prompts, and pi's known cases. `tests/plugin.luau` runs the hooks
+against fake runs. `tau-built-in-tests/tests/compaction/luau.rs` loads the plugin as tau does and runs
 them, and checks the demo's fixture of its declaration
-(`BLESS_FIXTURES=1` writes it anew). `tests/in_the_loop.rs` runs it in
+(`BLESS_FIXTURES=1` writes it anew). `tau-built-in-tests/tests/compaction/in_the_loop.rs` runs it in
 the agent loop with `ScriptedModel`: threshold and overflow compaction,
 split turns, rejected summaries and their wait, forks, retries and idle
 chats.

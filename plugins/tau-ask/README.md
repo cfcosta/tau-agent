@@ -7,8 +7,8 @@ person can always write their own answer instead, and add a note to any
 answer. The call waits until the answers come, the person declines, or
 the run is cancelled; the answers are the call's result, so the turn
 goes on without a new message. It is a Luau plugin tau comes with (ADR
-0050): this crate carries its files, what the demo shows of it, and the
-tests that check them.
+0050): this folder is its package, with the tests and the fixtures the demo
+shows of it.
 
 ## What it provides
 
@@ -22,7 +22,7 @@ tests that check them.
 | `DEMO_SWEEP`       | Another chat waiting on one question, as the sidebar shows it             |
 | `DEMO_DECLARATION` | What the plugin declares, as the demo lists it among tau's Luau plugins   |
 
-The Luau, under `luau/`:
+The Luau, under `src/`:
 
 | File               | What it is                                                                     |
 | ------------------ | ------------------------------------------------------------------------------ |
@@ -39,22 +39,22 @@ tau-luau-plugins-host lists it among the Luau plugins tau comes with
 holds the call until one of its actions answers `tau.answer` (ADR 0050,
 gap C); its view's `composer` is the panel. An agent's runs leave it
 out: they ask through tau-agents' own `ask` (ADR 0037). `tau-demo`
-draws it from the fixtures, as the demo runs no Luau; this crate's
-tests check each fixture is what the plugin leaves and draws.
+draws it from the fixtures, as the demo runs no Luau; `tau-built-in-tests` checks each fixture is what the plugin leaves and draws.
 
 ## Testing
 
 ```sh
-cargo nextest run --release -p tau-ask
+target/release/tau --plugin-test plugins/tau-ask   # its Luau tests, no compiling
+cargo nextest run --release -p tau-built-in-tests -E 'test(/^ask::/)'
 ```
 
-`tests/luau.rs` loads the plugin as tau does and runs its Luau tests,
+`tau-built-in-tests/tests/ask/luau.rs` loads the plugin as tau does and runs its Luau tests,
 and checks the fixtures (`BLESS_FIXTURES=1` writes them anew).
 tau-ui's `tests/ask.rs` runs it in a host, answered from two devices,
 and draws its panel in the workspace.
 
 ## Further reading
 
-- [docs/reference/ask.md](../../../docs/reference/ask.md)
-- [0019: The agent asks the person, in the composer's place](../../../docs/decisions/0019-ask-the-person.md)
-- [0050: tau's own plugins, in Luau](../../../docs/decisions/0050-tau-s-plugins-in-luau.md)
+- [docs/reference/ask.md](../../docs/reference/ask.md)
+- [0019: The agent asks the person, in the composer's place](../../docs/decisions/0019-ask-the-person.md)
+- [0050: tau's own plugins, in Luau](../../docs/decisions/0050-tau-s-plugins-in-luau.md)
