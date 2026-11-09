@@ -49,14 +49,48 @@ pub struct Cleaner {
     dropped: usize,
     /// What the last take said of the line being written.
     said: Option<String>,
+    /// What the next take's first line goes on from it with, when it does.
+    joins: Option<String>,
 }
 
 /// What was read since the last [`Cleaner::take`].
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Taken {
     pub text: String,
+    /// It holds a line, which may be empty.
+    pub any: bool,
     /// Lines that were dropped for want of room before being read.
     pub dropped: usize,
+    /// The last line was still being written.
+    pub open: bool,
+    /// The first line goes on from the line the last take left open,
+    /// after this whitespace.
+    pub joins: Option<String>,
+}
+
+impl Taken {
+    /// Adds what a later take found: a line one take left open goes on
+    /// in the next, as it was written.
+    pub fn merge(&mut self, later: Taken) {
+        if later.any {
+            if self.any {
+                match later.joins.as_deref().filter(|_| self.open) {
+                    Some(gap) => self.text.push_str(gap),
+                    None => self.text.push('\n'),
+                }
+            }
+            self.text.push_str(&later.text);
+            self.any = true;
+            self.open = later.open;
+        }
+        self.dropped += later.dropped;
+    }
+}
+
+/// `rest` without its leading whitespace, and that whitespace.
+fn split_gap(rest: &str) -> (&str, &str) {
+    let text = rest.trim_start();
+    (text, &rest[..rest.len() - text.len()])
 }
 
 impl Default for Cleaner {
@@ -71,6 +105,7 @@ impl Default for Cleaner {
             unread: 0,
             dropped: 0,
             said: None,
+            joins: None,
         }
     }
 }
@@ -205,10 +240,13 @@ impl Cleaner {
         if let Some(said) = self.said.take() {
             let said = said.trim_end();
             if let Some(rest) = line.strip_prefix(said) {
-                line = rest.trim_start().to_owned();
+                let (text, gap) = split_gap(rest);
+                let (text, gap) = (text.to_owned(), gap.to_owned());
+                line = text;
                 if line.is_empty() {
                     return;
                 }
+                self.joins = Some(gap);
             }
         }
         self.unread += line.len() + 1;
@@ -219,6 +257,7 @@ impl Cleaner {
             };
             self.unread -= dropped.len() + 1;
             self.dropped += 1;
+            self.joins = None;
         }
     }
 
@@ -252,6 +291,7 @@ impl Cleaner {
             return;
         }
         self.said = None;
+        self.joins = None;
         for line in text.split('\n').rev() {
             self.unread += line.len() + 1;
             self.done.push_front(line.to_owned());
@@ -265,13 +305,24 @@ impl Cleaner {
         let line: String = self.line.iter().collect();
         let mut lines: Vec<String> = self.done.drain(..).collect();
         self.unread = 0;
+        let mut joins = self.joins.take();
+        if lines.is_empty() && partial.is_some() {
+            joins = self.said.as_deref().and_then(|said| {
+                let rest = line.trim_end().strip_prefix(said.trim_end())?;
+                Some(split_gap(rest).1.to_owned())
+            });
+        }
+        let open = partial.is_some();
         if let Some(partial) = partial {
             lines.push(partial);
             self.said = Some(line);
         }
         Taken {
             text: lines.join("\n"),
+            any: !lines.is_empty(),
             dropped: std::mem::take(&mut self.dropped),
+            open,
+            joins,
         }
     }
 }
@@ -330,6 +381,61 @@ mod tests {
             start = end;
         }
         assert_eq!(cut.take().text, whole.take().text);
+    }
+
+    /// Property inventory: takes made anywhere in what a process writes,
+    /// merged, are the text of one take at the end, so a read that lands
+    /// inside a line does not break it.
+    /// Generator: text, spaces and line ends, without redraws, which say
+    /// a line again on purpose, cut at arbitrary points.
+    #[hegel::test]
+    fn takes_merged_are_one_take(tc: TestCase) {
+        let pieces: Vec<&[u8]> = tc.draw(
+            gs::vecs(gs::sampled_from(vec![
+                "abc".as_bytes(),
+                "é世".as_bytes(),
+                b" ",
+                b"  ",
+                b"\t",
+                b"\r\n",
+                b"\n",
+                b"\x1b[31m",
+                b"x",
+            ]))
+            .max_size(40),
+        );
+        let bytes = pieces.concat();
+        let mut cuts: Vec<usize> = tc.draw(
+            gs::vecs(
+                gs::integers::<usize>().min_value(0).max_value(bytes.len()),
+            )
+            .max_size(10),
+        );
+        cuts.sort_unstable();
+        let mut whole = Cleaner::default();
+        whole.feed(&bytes);
+        let mut cut = Cleaner::default();
+        let mut merged = Taken::default();
+        let mut start = 0;
+        for end in cuts.into_iter().chain([bytes.len()]) {
+            cut.feed(&bytes[start..end]);
+            merged.merge(cut.take());
+            start = end;
+        }
+        assert_eq!(merged.text, whole.take().text);
+    }
+
+    /// Shrunk from a run under load: a read landed inside `line 1002`,
+    /// and the model read it as two lines.
+    #[test]
+    fn a_read_inside_a_line_does_not_break_it() {
+        let mut cleaner = Cleaner::default();
+        let mut merged = Taken::default();
+        cleaner.feed(b"line 1001\nline 1");
+        merged.merge(cleaner.take());
+        cleaner.feed(b"002\nline 1003\n");
+        merged.merge(cleaner.take());
+        assert_eq!(merged.text, "line 1001\nline 1002\nline 1003");
     }
 
     fn text(chunks: &[&[u8]]) -> String {

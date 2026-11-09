@@ -569,13 +569,7 @@ impl Read {
             exit,
             output_bytes,
         } = later;
-        if !text.text.is_empty() {
-            if !self.text.text.is_empty() {
-                self.text.text.push('\n');
-            }
-            self.text.text.push_str(&text.text);
-        }
-        self.text.dropped += text.dropped;
+        self.text.merge(text);
         self.raw.append(&mut raw);
         if self.raw.len() > MAX_RAW {
             let cut = self.raw.len() - MAX_RAW;
