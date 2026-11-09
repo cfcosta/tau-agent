@@ -31,7 +31,12 @@ jobs:
       - uses: ./.github/actions/free-disk
       - uses: DeterminateSystems/determinate-nix-action@main
       - uses: DeterminateSystems/flakehub-cache-action@main
+      # Keyed on the flake's toolchain, not the runner's own rustup, which
+      # changes almost daily and made most runs miss the cache.
       - uses: Swatinem/rust-cache@v2
+        with:
+          add-rust-environment-hash-key: false
+          key: ${{ hashFiles('flake.lock', 'rust-toolchain.toml') }}
 
       - name: Format
         run: nix fmt -- --ci
@@ -56,9 +61,10 @@ jobs:
 
       # In release, as developers run them: the debug test binaries,
       # each with GPUI or jj-lib linked in, come to over 40 GB and fill
-      # the runner's disk; the release ones come to about 8 GB.
+      # the runner's disk; the release ones come to about 8 GB. The model
+      # tests run nightly: the `ci` profile leaves them out.
       - name: Tests
-        run: nix develop -c cargo nextest run --release --workspace --no-fail-fast
+        run: nix develop -c cargo nextest run --release --workspace --no-fail-fast --profile ci
 
       - name: sqlx offline metadata is current
         working-directory: crates/tau-store-sqlite
@@ -67,5 +73,17 @@ jobs:
           nix develop -c sqlx database setup
           nix develop -c cargo sqlx prepare --check -- -p tau-store-sqlite
 
-      - name: Dependencies (advisories, bans, licenses, sources)
-        run: nix develop -c cargo deny check
+  # Its own job: a new advisory fails it alone, and Check still saves its
+  # build cache, which a failed job does not.
+  dependencies:
+    name: Dependencies (advisories, bans, licenses, sources)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: DeterminateSystems/determinate-nix-action@main
+      - uses: DeterminateSystems/flakehub-cache-action@main
+      - run: nix develop -c cargo deny check

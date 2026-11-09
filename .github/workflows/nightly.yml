@@ -1,6 +1,7 @@
-# The Nightly tier from docs/reference/testing.md: the extended
-# property variants. Mutation testing runs by hand
-# (scripts/mutants.sh): a full pass is about eight runner-hours.
+# The Nightly tier from docs/reference/testing.md: the model tests, which
+# CI leaves out, and the extended property variants. Mutation testing
+# runs by hand (scripts/mutants.sh): a full pass is about eight
+# runner-hours.
 name: Nightly
 
 on:
@@ -25,9 +26,18 @@ jobs:
       - uses: DeterminateSystems/determinate-nix-action@main
       - uses: DeterminateSystems/flakehub-cache-action@main
       - uses: Swatinem/rust-cache@v2
+        with:
+          add-rust-environment-hash-key: false
+          key: ${{ hashFiles('flake.lock', 'rust-toolchain.toml') }}
       # In release, as in CI: debug test binaries fill the runner's disk.
       # The tests that ask the real Jev (`the_real_jev_*`) need
       # TYPESAFE_API_KEY, and run by hand.
-      - run: >-
+      - name: Model tests
+        run: >-
+          nix develop -c cargo nextest run --release --workspace
+          --no-fail-fast --profile models
+      - name: Extended properties
+        if: ${{ !cancelled() }}
+        run: >-
           nix develop -c cargo nextest run --release --workspace
           --run-ignored only --no-fail-fast -E 'not test(/^the_real_jev_/)'

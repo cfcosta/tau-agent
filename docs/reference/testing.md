@@ -745,18 +745,26 @@ revert:
 
 ## CI tiers
 
-| Tier    | When       | Runs                                                                                                                                       |
-| ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| Check   | every push | `nix fmt` check, `cargo clippy --all-targets -D warnings`, `cargo nextest run --release`, `cargo sqlx prepare --check`, `cargo deny check` |
-| Nightly | once a day | everything in Check, plus `cargo nextest run --release --run-ignored only` (nightly properties)                                            |
+| Tier    | When       | Runs                                                                                                                                                                              |
+| ------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Check   | every push | `nix fmt` check, `cargo clippy --all-targets -D warnings`, `cargo nextest run --release --profile ci` (all but the model tests), `cargo sqlx prepare --check`, `cargo deny check` |
+| Nightly | once a day | `cargo nextest run --release --profile models` (the model tests), then `cargo nextest run --release --run-ignored only` (nightly properties)                                      |
+
+The model tests are the `*_model` test binaries, tau-vcs-host's `model`,
+and tau-built-in-tests' `*_model` modules: `.config/nextest.toml` names
+them in the `ci` and `models` profiles. A new model test goes in a binary
+or module so named, or both filters gain it. Locally, a plain
+`cargo nextest run --release` still runs everything.
 
 Tests run in release in CI, as they do locally: the debug test binaries,
 each linking GPUI or jj-lib, come to over 40 GB, more than a hosted
 runner's disk holds. `.github/actions/free-disk` also clears the
 runner's unused toolchains first.
 
-The Check tier must stay under five minutes. If it grows past that,
-move cases to nightly variants rather than lowering the default counts.
+The Check tier's tests should stay under five minutes of running. If they
+grow past that, move cases to nightly variants rather than lowering the
+default counts. Compiling the release test binaries takes longer than
+running them: about 25 minutes on a hosted runner with a warm cache.
 
 ## Anti-patterns
 
