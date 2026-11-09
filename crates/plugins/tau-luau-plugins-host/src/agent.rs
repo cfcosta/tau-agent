@@ -83,24 +83,15 @@ pub struct Active {
 }
 
 impl Active {
-    /// The plugin tau comes with by `name` ([`crate::BUILT_IN`]), loaded
+    /// The plugin tau comes with by `name` (`plugins/built-in.toml`), loaded
     /// as tau loads it, with its default settings: for an agent of its
     /// own, as an evaluation's.
     pub async fn built_in(name: &str) -> Result<Self, String> {
-        let built_in = crate::BUILT_IN
-            .iter()
-            .find(|built_in| built_in.name == name)
+        let loaded = crate::built_in::loaded()
+            .await?
+            .into_iter()
+            .find(|loaded| loaded.declaration.name == name)
             .ok_or_else(|| format!("tau comes with no plugin {name}"))?;
-        let paths: Vec<(String, Vec<u8>)> = built_in
-            .files
-            .iter()
-            .map(|(path, source)| {
-                ((*path).to_owned(), source.as_bytes().to_vec())
-            })
-            .collect();
-        let files =
-            crate::runtime::Files::from_paths(&paths, crate::runtime::PLUGIN)?;
-        let loaded = crate::runtime::load(name, files).await?;
         let settings = loaded.declaration.default_settings();
         Ok(Self { loaded, settings })
     }

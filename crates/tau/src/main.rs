@@ -22,6 +22,10 @@
 //!   fades. `TAU_REDUCE_MOTION=1` asks the same (`0` asks for all the
 //!   motion), then `"reduce_motion": true` in `interface.json`, then
 //!   the desktop's `enable-animations`.
+//! - `--plugin-test <folder>`: load a Luau plugin's package and run its
+//!   tests, then exit: 0 if they all pass. Nothing else starts.
+//! - `--check-plugins`: read and load the plugins tau comes with, as
+//!   starting does, then exit: 0 if they all load (ADR 0051).
 
 use gpui::{
     App,
@@ -102,7 +106,49 @@ fn args() -> Args {
     }
 }
 
+/// `--plugin-test` and `--check-plugins`: each answers and exits, before a
+/// host or a window exists.
+fn answer_and_exit() {
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(at) = args.iter().position(|arg| arg == "--plugin-test") {
+        let Some(folder) = args.get(at + 1) else {
+            eprintln!("tau: --plugin-test takes a plugin's folder");
+            std::process::exit(2);
+        };
+        match tau_luau_plugins_host::testing::test_folder(folder.as_ref()) {
+            Ok((text, passed)) => {
+                println!("{text}");
+                std::process::exit(i32::from(!passed));
+            }
+            Err(error) => {
+                eprintln!("tau: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
+    if args.iter().any(|arg| arg == "--check-plugins") {
+        match tau_luau_plugins_host::built_in::check() {
+            Ok(checked) => {
+                println!(
+                    "{}: {} plugins, read in {:?}, loaded in {:?}: {}",
+                    checked.dir.display(),
+                    checked.names.len(),
+                    checked.read,
+                    checked.load,
+                    checked.names.join(", ")
+                );
+                std::process::exit(0);
+            }
+            Err(error) => {
+                eprintln!("tau: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
 fn main() {
+    answer_and_exit();
     // Every plugin's host half, the Luau ones included (ADR 0030).
     tau::install();
     let args = args();
@@ -121,7 +167,12 @@ fn main() {
     // The host starts signed out or in: what fills `tau.provider` says
     // whether there is a model to run on, and setup opens when there is
     // none (ADR 0045).
-    let host = (!args.demo).then(|| Host::new(config));
+    let host = (!args.demo).then(|| {
+        // Without tau's own plugins there are no agents, and the window
+        // says why (ADR 0051).
+        tau::load_built_in_plugins()?;
+        Host::new(config)
+    });
 
     gpui_platform::application().with_assets(Assets).run(
         move |cx: &mut App| {

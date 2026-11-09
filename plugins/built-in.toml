@@ -1,0 +1,16 @@
+# The Luau plugins tau comes with (ADR 0051), in the order they are active.
+# The compactions rewrite in this order, the first rewrite winning: fast
+# pruning, then the tree, then the summary.
+plugins = [
+  "tau-todo",
+  "tau-titles",
+  "tau-compaction-chain",
+  "tau-watcher",
+  "tau-reasoning",
+  "tau-goal",
+  "tau-constitution",
+  "tau-ask",
+  "tau-fast-compaction",
+  "tau-tree-compaction",
+  "tau-compaction",
+]

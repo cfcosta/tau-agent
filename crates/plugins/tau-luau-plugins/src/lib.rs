@@ -14,6 +14,7 @@
 //! - [`Declaration`], [`Uses`], [`ToolSpec`], [`Hooks`]: what a plugin
 //!   says it is, as every interface shows it.
 
+pub mod packages;
 pub mod pane;
 pub mod repository;
 pub mod settings;

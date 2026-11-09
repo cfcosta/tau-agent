@@ -21,18 +21,6 @@ tau-codemode.workspace = true
 tau-codemode-host.workspace = true
 tau-jev.workspace = true
 sqlx.workspace = true
-# The Luau plugins tau comes with.
-tau-todo.workspace = true
-tau-titles.workspace = true
-tau-compaction-chain.workspace = true
-tau-watcher.workspace = true
-tau-reasoning.workspace = true
-tau-goal.workspace = true
-tau-constitution.workspace = true
-tau-ask.workspace = true
-tau-compaction.workspace = true
-tau-tree-compaction.workspace = true
-tau-fast-compaction.workspace = true
 tau-tools-host.workspace = true
 tau-luau-plugins.workspace = true
 # Where the skill tau ships is installed.

@@ -18,4 +18,5 @@ tau-ui-plugin.workspace = true
 
 [dev-dependencies]
 hegeltest.workspace = true
+tempfile.workspace = true
 tau-ui-plugin = { workspace = true, features = ["testing"] }

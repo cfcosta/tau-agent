@@ -68,8 +68,8 @@ struct Shared {
     refresh: Box<dyn Fn() + Send + Sync>,
     /// The person's settings, as they are now.
     settings: Box<dyn Fn() -> tau_luau_plugins::LuauSettings + Send + Sync>,
-    /// The Luau plugins tau comes with.
-    built_in: &'static [BuiltIn],
+    /// The Luau plugins tau comes with, loaded.
+    built_in: Vec<Loaded>,
     /// tau's configuration directory, where each plugin's secrets are.
     config: Option<PathBuf>,
     /// The host's runtime, for hooks called from outside it.
@@ -121,14 +121,6 @@ pub struct ActionCall<'a> {
     pub keyed: bool,
 }
 
-/// A Luau plugin tau comes with: its name, and its files by their paths
-/// in its folder.
-#[derive(Debug, Clone, Copy)]
-pub struct BuiltIn {
-    pub name: &'static str,
-    pub files: &'static [(&'static str, &'static str)],
-}
-
 impl PluginHost for Registry {
     async fn new(cx: &HostCx) -> anyhow::Result<Self> {
         // The skill runs read to write a plugin, as this build has it.
@@ -144,7 +136,11 @@ impl PluginHost for Registry {
             move || refresher.refresh(),
         )
         .with_settings(move || reader.settings(crate::NAME))
-        .with_built_in(crate::BUILT_IN)
+        .with_built_in(
+            crate::built_in::loaded()
+                .await
+                .map_err(anyhow::Error::msg)?,
+        )
         .with_chats(cx.conversations());
         let registry = match cx.config_dir() {
             Some(config) => registry.with_config(config.to_owned()),
@@ -184,7 +180,7 @@ impl Registry {
             allowed_path: allowed,
             state: RwLock::default(),
             tried: tokio::sync::Mutex::default(),
-            built_in: &[],
+            built_in: Vec::new(),
             refresh: Box::new(refresh),
             settings: Box::new(Default::default),
             config: None,
@@ -284,62 +280,41 @@ impl Registry {
     }
 
     /// The registry, with the Luau plugins tau comes with, `built_in`:
-    /// active once [`Self::load_built_in`] loaded them.
-    pub fn with_built_in(self, built_in: &'static [BuiltIn]) -> Self {
+    /// active once [`Self::load_built_in`] took them.
+    pub fn with_built_in(self, built_in: Vec<Loaded>) -> Self {
         let shared = Arc::into_inner(self.0)
             .expect("built-in plugins are given before the registry is shared");
         Self(Arc::new(Shared { built_in, ..shared }))
     }
 
-    /// Loads the Luau plugins tau comes with and makes them active. One
-    /// that does not load is listed as broken, with why: a bug in tau.
+    /// Makes the Luau plugins tau comes with active.
     pub async fn load_built_in(&self) {
-        let mut loaded = Vec::new();
-        for built_in in self.0.built_in {
-            let paths: Vec<(String, Vec<u8>)> = built_in
-                .files
-                .iter()
-                .map(|(path, source)| {
-                    ((*path).to_owned(), source.as_bytes().to_vec())
-                })
-                .collect();
-            let plugin = match Files::from_paths(&paths, crate::runtime::PLUGIN)
-            {
-                Ok(files) => load(built_in.name, files).await,
-                Err(error) => Err(error),
-            };
-            let entry = |standing, declaration| Entry {
-                name: built_in.name.to_owned(),
-                description: String::new(),
-                version: String::new(),
-                standing,
-                declaration,
-                tests: Vec::new(),
-                keeps_earlier: false,
-                built_in: true,
-            };
-            match plugin {
-                Ok(plugin) => {
-                    let declaration = plugin.declaration.clone();
-                    let settings = declaration.default_settings();
-                    let mut entry =
-                        entry(Standing::Active, Some(declaration.clone()));
-                    entry.description = declaration.description;
-                    entry.version.clone_from(&plugin.files.manifest.version);
-                    loaded.push((
-                        entry,
-                        Active {
-                            loaded: plugin,
-                            settings,
-                        },
-                    ));
-                }
-                Err(error) => eprintln!(
-                    "tau-luau-plugins: the built-in {} does not load: {error}",
-                    built_in.name
-                ),
-            }
-        }
+        let loaded = self
+            .0
+            .built_in
+            .iter()
+            .map(|plugin| {
+                let declaration = plugin.declaration.clone();
+                let settings = declaration.default_settings();
+                let entry = Entry {
+                    name: declaration.name.clone(),
+                    description: declaration.description.clone(),
+                    version: plugin.files.manifest.version.clone(),
+                    standing: Standing::Active,
+                    declaration: Some(declaration),
+                    tests: Vec::new(),
+                    keeps_earlier: false,
+                    built_in: true,
+                };
+                (
+                    entry,
+                    Active {
+                        loaded: plugin.clone(),
+                        settings,
+                    },
+                )
+            })
+            .collect();
         let mut state = self.0.state.write().await;
         state.built_in = loaded;
         merge_built_in(&mut state);
@@ -833,7 +808,7 @@ impl Registry {
             .0
             .built_in
             .iter()
-            .map(|built_in| built_in.name)
+            .map(|built_in| built_in.declaration.name.as_str())
             .collect();
         for (name, paths) in folders {
             // A name tau's own plugins have is theirs.

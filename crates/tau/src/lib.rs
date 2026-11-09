@@ -16,6 +16,12 @@ pub fn plugins() -> Registry {
         .host(tau_agents_host::AgentsHost)
 }
 
+/// Loads the Luau plugins tau comes with: a failure means no agents, with
+/// its reason, as they provide what a run cannot go without (ADR 0051).
+pub fn load_built_in_plugins() -> anyhow::Result<()> {
+    tau_luau_plugins_host::built_in::load_at_start()
+}
+
 /// Installs [`plugins`] as this process's, once: before anything starts
 /// a host.
 pub fn install() {

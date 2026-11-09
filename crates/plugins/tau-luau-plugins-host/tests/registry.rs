@@ -14,7 +14,10 @@ use std::sync::{
 };
 
 use tau_luau_plugins::Standing;
-use tau_luau_plugins_host::{registry::Registry, runtime::Manifest};
+use tau_luau_plugins_host::{
+    registry::Registry,
+    runtime::{Files, Loaded, Manifest, load},
+};
 use tau_testing::block_on_io;
 use tau_vcs_host::{Identity, Project, ProjectRepo};
 
@@ -460,7 +463,6 @@ fn a_plugin_fills_the_title_and_compaction_slots() {
 /// each needs.
 #[test]
 fn a_plugin_fills_only_what_it_may() {
-    use tau_luau_plugins_host::runtime::{Files, load};
     let refused = |source: &str| {
         let files = Files {
             source: source.into(),
@@ -761,7 +763,6 @@ fn a_job_is_due_after_its_interval() {
 /// loading.
 #[test]
 fn a_job_runs_at_most_every_minute() {
-    use tau_luau_plugins_host::runtime::{Files, load};
     let source = r#"return require("tau").plugin { jobs = { fast = { every = 5, run = function() end } } }"#;
     let files = Files {
         source: source.into(),
@@ -771,21 +772,16 @@ fn a_job_runs_at_most_every_minute() {
     assert!(error.contains("`fast`"), "{error}");
 }
 
-const BUILT_IN: &[tau_luau_plugins_host::registry::BuiltIn] = &[
-    tau_luau_plugins_host::registry::BuiltIn {
-        name: "shipped",
-        files: &[
-            (
-                "tau.toml",
-                "name = \"shipped\"\nversion = \"0.1.0\"\ndescription = \"Ships.\"\n",
-            ),
-            (
-                "src/plugin.luau",
-                r#"return require("tau").plugin { before_tool = function() end }"#,
-            ),
-        ],
-    },
-];
+/// The built-in `shipped`, loaded.
+fn shipped() -> Loaded {
+    let source =
+        r#"return require("tau").plugin { before_tool = function() end }"#;
+    let files = Files {
+        source: source.into(),
+        ..Files::named("shipped")
+    };
+    block_on_io(load("shipped", files)).unwrap()
+}
 
 /// A plugin tau comes with is active once loaded, with no Allow, even
 /// one reaching what a repository plugin would wait for; the repository
@@ -799,7 +795,7 @@ fn a_built_in_plugin_is_active_and_its_name_is_its_own() {
         Identity::default(),
         || {},
     )
-    .with_built_in(BUILT_IN);
+    .with_built_in(vec![shipped()]);
     block_on_io(registry.load_built_in());
     let names = |registry: &Registry| -> Vec<String> {
         block_on_io(registry.active())

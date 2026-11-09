@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+anyhow.workspace = true
 gpui = { package = "gpui-pre", version = "=0.3.7" }
 # The Luau plugins' host halves: only the app links them (ADR 0030).
 tau-codemode-host.workspace = true
@@ -36,3 +37,6 @@ ashpd = { version = "0.13", default-features = false, features = [
   "async-io",
   "settings",
 ] }
+
+[dev-dependencies]
+tempfile.workspace = true

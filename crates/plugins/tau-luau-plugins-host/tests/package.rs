@@ -10,7 +10,10 @@
 use std::{fs, path::Path};
 
 use hegel::generators as gs;
-use tau_luau_plugins_host::runtime::{Files, MANIFEST, Manifest, PLUGIN, load};
+use tau_luau_plugins_host::{
+    built_in,
+    runtime::{Files, MANIFEST, Manifest, PLUGIN, load},
+};
 use tau_testing::block_on_io;
 
 const GOOD: &str = "name = \"greet\"\nversion = \"0.1.0\"\n\
@@ -207,4 +210,82 @@ fn a_folder_and_its_commit_are_one_version(tc: hegel::TestCase) {
         "name = \"greet\"\nversion = \"0.2.0\"\ndescription = \"Says hello.\"\n",
     );
     assert_ne!(Files::read(dir.path(), PLUGIN).unwrap().digest(), digest);
+}
+
+/// The folder this tree's tests read.
+fn folder() -> std::path::PathBuf {
+    tau_luau_plugins::packages::find().unwrap()
+}
+
+/// The compactions rewrite in the listed order, the first rewrite winning:
+/// fast pruning, then the tree, then the summary. A folder read in its
+/// alphabetical order would put the summary first.
+#[test]
+fn the_compactions_stay_in_their_order() {
+    let names = built_in::listed(&folder()).unwrap();
+    let at = |name: &str| names.iter().position(|n| n == name).unwrap();
+    assert!(at("tau-fast-compaction") < at("tau-tree-compaction"));
+    assert!(at("tau-tree-compaction") < at("tau-compaction"));
+}
+
+/// Each built-in's `tau.toml` names its folder, and each loads.
+#[test]
+fn the_built_ins_read_and_load() {
+    let packages = built_in::read(&folder()).unwrap();
+    assert!(packages.len() >= 11);
+    for files in &packages {
+        assert_eq!(files.entry(), "src/plugin.luau");
+    }
+    let loaded = block_on_io(built_in::load_all(packages)).unwrap();
+    for plugin in &loaded {
+        assert!(!plugin.declaration.description.is_empty());
+    }
+}
+
+/// A plugin folder of `name`, in the layout, that loads.
+fn plugin(dir: &Path, name: &str) {
+    write(
+        dir,
+        &format!("{name}/{MANIFEST}"),
+        &Manifest::text(name, "Is."),
+    );
+    write(dir, &format!("{name}/src/plugin.luau"), ENTRY);
+}
+
+/// What the file lists must be there, and what is there must be listed.
+#[test]
+fn the_list_and_the_folder_must_agree() {
+    let dir = tempfile::tempdir().unwrap();
+    let list = |names: &str| {
+        write(
+            dir.path(),
+            built_in::LIST,
+            &format!("plugins = [{names}]\n"),
+        )
+    };
+    assert!(
+        built_in::listed(dir.path())
+            .unwrap_err()
+            .contains(built_in::LIST)
+    );
+    list("\"a\"");
+    let error = built_in::listed(dir.path()).unwrap_err();
+    assert!(error.contains("lists a"), "{error}");
+    plugin(dir.path(), "a");
+    assert_eq!(built_in::listed(dir.path()).unwrap(), ["a"]);
+    plugin(dir.path(), "b");
+    let error = built_in::listed(dir.path()).unwrap_err();
+    assert!(error.contains("holds b"), "{error}");
+    list("\"b\", \"a\"");
+    // Its order is the file's.
+    assert_eq!(built_in::listed(dir.path()).unwrap(), ["b", "a"]);
+    list("\"b\", \"a\", \"a\"");
+    let error = built_in::listed(dir.path()).unwrap_err();
+    assert!(error.contains("twice"), "{error}");
+    list("\"b\", \"a\"");
+    // One that does not load is the error, naming it.
+    write(dir.path(), "b/src/plugin.luau", "return tau.plugin {");
+    let packages = built_in::read(dir.path()).unwrap();
+    let error = block_on_io(built_in::load_all(packages)).unwrap_err();
+    assert!(error.contains("the built-in b does not load"), "{error}");
 }

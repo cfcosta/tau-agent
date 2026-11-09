@@ -9510,6 +9510,7 @@ checksum = "876fef147edbcbddc8ac5cbbba92c7b86519e314e86638596c09673b2ed01e7f"
 name = "tau"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "ashpd",
  "gpui-pre",
  "gpui-pre-platform",
@@ -9521,6 +9522,7 @@ dependencies = [
  "tau-ui",
  "tau-ui-plugin",
  "tau-ui-remote",
+ "tempfile",
 ]
 
 [[package]]
@@ -9946,6 +9948,7 @@ dependencies = [
  "tau-jev",
  "tau-ui-kit",
  "tau-ui-plugin",
+ "tempfile",
 ]
 
 [[package]]
@@ -9963,30 +9966,19 @@ dependencies = [
  "sqlx",
  "tau-agent",
  "tau-ai",
- "tau-ask",
  "tau-codemode",
  "tau-codemode-host",
- "tau-compaction",
- "tau-compaction-chain",
- "tau-constitution",
- "tau-fast-compaction",
- "tau-goal",
  "tau-jev",
  "tau-luau-plugins",
  "tau-plugins",
- "tau-reasoning",
  "tau-skills",
  "tau-store",
  "tau-store-sqlite",
  "tau-testing",
- "tau-titles",
- "tau-todo",
  "tau-tools-host",
- "tau-tree-compaction",
  "tau-ui-kit",
  "tau-ui-plugin",
  "tau-vcs-host",
- "tau-watcher",
  "tempfile",
  "tokio",
  "tokio-util",

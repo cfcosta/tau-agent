@@ -10,62 +10,13 @@
 
 pub mod agent;
 pub mod archive;
+pub mod built_in;
 pub mod chats;
 pub mod forms;
 mod half;
 pub mod hegel;
 pub mod infer;
 pub mod jobs;
-
-/// The Luau plugins tau comes with (ADR 0048, 0050).
-pub const BUILT_IN: &[registry::BuiltIn] = &[
-    registry::BuiltIn {
-        name: tau_todo::NAME,
-        files: tau_todo::FILES,
-    },
-    registry::BuiltIn {
-        name: tau_titles::NAME,
-        files: tau_titles::FILES,
-    },
-    registry::BuiltIn {
-        name: tau_compaction_chain::NAME,
-        files: tau_compaction_chain::FILES,
-    },
-    registry::BuiltIn {
-        name: tau_watcher::NAME,
-        files: tau_watcher::FILES,
-    },
-    registry::BuiltIn {
-        name: tau_reasoning::NAME,
-        files: tau_reasoning::FILES,
-    },
-    registry::BuiltIn {
-        name: tau_goal::NAME,
-        files: tau_goal::FILES,
-    },
-    registry::BuiltIn {
-        name: tau_constitution::NAME,
-        files: tau_constitution::FILES,
-    },
-    registry::BuiltIn {
-        name: tau_ask::NAME,
-        files: tau_ask::FILES,
-    },
-    // The compactions rewrite in this order, the first rewrite winning:
-    // fast pruning, then the tree, then the summary.
-    registry::BuiltIn {
-        name: tau_fast_compaction::NAME,
-        files: tau_fast_compaction::FILES,
-    },
-    registry::BuiltIn {
-        name: tau_tree_compaction::NAME,
-        files: tau_tree_compaction::FILES,
-    },
-    registry::BuiltIn {
-        name: tau_compaction::NAME,
-        files: tau_compaction::FILES,
-    },
-];
 
 pub mod parity;
 pub mod registry;

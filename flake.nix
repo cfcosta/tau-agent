@@ -191,9 +191,12 @@
                   })
                 ];
 
-                # The icon, drawn as scalable and at the sizes menus look
+                # tau's Luau plugins, which it reads at startup (ADR 0051), and
+                # the icon, drawn as scalable and at the sizes menus look
                 # for first.
                 postInstall = ''
+                  mkdir -p $out/share/tau
+                  cp -r plugins $out/share/tau/plugins
                   icon=crates/tau/assets/tau-ui.svg
                   install -Dm644 $icon $out/share/icons/hicolor/scalable/apps/tau-ui.svg
                   for size in 16 24 32 48 64 128 256 512; do
@@ -216,6 +219,18 @@
                         pkgs.bubblewrap
                       ]
                     }
+                '';
+
+                # What proves the package has its plugins: CI does not build
+                # it, so this runs on a hand-run `nix build` (ADR 0051). No
+                # display is needed: these answer before a window opens.
+                doInstallCheck = true;
+                installCheckPhase = ''
+                  runHook preInstallCheck
+                  $out/bin/tau --check-plugins
+                  $out/bin/tau --plugin-test $out/share/tau/plugins/tau-titles
+                  test -f $out/share/tau/plugins/tau-goal/fixtures/working.json
+                  runHook postInstallCheck
                 '';
 
                 meta = {

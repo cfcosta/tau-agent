@@ -13,6 +13,7 @@ use tau_agent::{
     plugin::Plugin,
     tool::{AgentTool, ToolCtx, ToolOutput},
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     TestResult,
@@ -93,20 +94,7 @@ impl AgentTool for PluginTest {
             return Err(format!("{plugin:?} is not a plugin's folder").into());
         }
         let tests = test(&self.dir, plugin, ctx.cancel.clone()).await?;
-        let passed = tests.iter().filter(|test| test.passed).count();
-        let mut text =
-            format!("{plugin} loads; {passed} of {} tests pass.", tests.len());
-        if tests.is_empty() {
-            text = format!("{plugin} loads, and has no tests under `tests/`.");
-        }
-        for test in tests.iter().filter(|test| !test.passed) {
-            text.push_str(&format!(
-                "\n- {}: {} failed: {}",
-                test.file,
-                test.name,
-                test.error.as_deref().unwrap_or("")
-            ));
-        }
+        let (text, _) = report(plugin, &tests);
         Ok(ToolOutput {
             details: Some(json!({ "tested": plugin, "tests": tests })),
             ..ToolOutput::text(text)
@@ -114,11 +102,53 @@ impl AgentTool for PluginTest {
     }
 }
 
+/// What running a folder's tests says, and whether they all passed.
+fn report(plugin: &str, tests: &[TestResult]) -> (String, bool) {
+    let passed = tests.iter().filter(|test| test.passed).count();
+    let mut text =
+        format!("{plugin} loads; {passed} of {} tests pass.", tests.len());
+    if tests.is_empty() {
+        text = format!("{plugin} loads, and has no tests under `tests/`.");
+    }
+    for test in tests.iter().filter(|test| !test.passed) {
+        text.push_str(&format!(
+            "\n- {}: {} failed: {}",
+            test.file,
+            test.name,
+            test.error.as_deref().unwrap_or("")
+        ));
+    }
+    (text, passed == tests.len())
+}
+
+/// `tau --plugin-test <folder>` (ADR 0051): loads the package at `folder`,
+/// runs its tests, and says what `plugin_test` says, and whether all passed.
+/// It blocks: a synchronous entry point.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "called from main, before anything else runs (ADR 0028)"
+)]
+pub fn test_folder(folder: &Path) -> Result<(String, bool), String> {
+    let folder = folder
+        .canonicalize()
+        .map_err(|error| format!("{}: {error}", folder.display()))?;
+    let (Some(dir), Some(plugin)) =
+        (folder.parent(), folder.file_name().and_then(|n| n.to_str()))
+    else {
+        return Err(format!("{} is not a plugin's folder", folder.display()));
+    };
+    let runtime = crate::built_in::runtime()?;
+    let tests = runtime
+        .block_on(test(dir, plugin, CancellationToken::new()))
+        .map_err(|error| error.to_string())?;
+    Ok(report(plugin, &tests))
+}
+
 /// Loads `plugin` from `dir` and runs its tests.
 async fn test(
     dir: &Path,
     plugin: &str,
-    cancel: tokio_util::sync::CancellationToken,
+    cancel: CancellationToken,
 ) -> Result<Vec<TestResult>, ToolError> {
     let folder = dir.join(plugin);
     let files = tokio::task::spawn_blocking(move || {
