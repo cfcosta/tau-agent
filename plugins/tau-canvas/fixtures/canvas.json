@@ -2,37 +2,37 @@
   "blob": "demo-chart",
   "calls": [
     {
-      "id": "canvas-show",
-      "tool": "canvas_show",
       "args": {
+        "caption": "p50 and p99 latency per attempt, before and after the backoff change",
         "path": "target/plots/retry-latency.png",
-        "title": "Retry latency",
-        "caption": "p50 and p99 latency per attempt, before and after the backoff change"
+        "title": "Retry latency"
       },
-      "text": "Image 1, \"Retry latency\", is on the canvas (1200×640 PNG)."
+      "id": "canvas-show",
+      "text": "Image 1, \"Retry latency\", is on the canvas (1200×640 PNG).",
+      "tool": "canvas_show"
     },
     {
+      "args": {
+        "text": "## What changes\n\n- `canvas_show` keeps a copy of the image in the repository's blobs, so it still shows once the file changes.\n- `canvas_write` and `canvas_edit` keep every revision of a document.\n- The pane opens beside the transcript when something new arrives.\n\n## Open questions\n\n1. Should the person edit a document in place?\n2. Should uploads land on the canvas too?\n",
+        "title": "Canvas plan"
+      },
       "id": "canvas-write",
-      "tool": "canvas_write",
-      "args": {
-        "title": "Canvas plan",
-        "text": "## What changes\n\n- `canvas_show` keeps a copy of the image in the repository's blobs, so it still shows once the file changes.\n- `canvas_write` and `canvas_edit` keep every revision of a document.\n- The pane opens beside the transcript when something new arrives.\n\n## Open questions\n\n1. Should the person edit a document in place?\n2. Should uploads land on the canvas too?\n"
-      },
-      "text": "Document 2, \"Canvas plan\", is on the canvas."
+      "text": "Document 2, \"Canvas plan\", is on the canvas.",
+      "tool": "canvas_write"
     },
     {
-      "id": "canvas-edit",
-      "tool": "canvas_edit",
       "args": {
-        "item": 2,
         "edits": [
           {
-            "old": "2. Should uploads land on the canvas too?",
-            "new": "2. Uploads land on the canvas too: the person's images go to the model as input."
+            "new": "2. Uploads land on the canvas too: the person's images go to the model as input.",
+            "old": "2. Should uploads land on the canvas too?"
           }
-        ]
+        ],
+        "item": 2
       },
-      "text": "Document 2, \"Canvas plan\", is at revision 2."
+      "id": "canvas-edit",
+      "text": "Document 2, \"Canvas plan\", is at revision 2.",
+      "tool": "canvas_edit"
     }
   ],
   "state": {

@@ -8,6 +8,7 @@ mod dispatch;
 mod files;
 mod forms;
 mod infer;
+mod install;
 mod package;
 mod parity;
 mod properties;

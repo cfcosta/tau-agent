@@ -15,6 +15,38 @@ function test.case(name, check)
 	table.insert(cases, { name = tostring(name), check = check })
 end
 
+-- Fixtures (ADR 0053): the value `make` returns, which the host holds to
+-- `fixtures/<name>.json` and `tau-plugin test --bless` writes.
+local fixtures = array({})
+
+function test.fixture(name, make)
+	table.insert(fixtures, { name = tostring(name), make = make })
+end
+
+-- Loops (ADR 0053): the host runs `spec`, data, as a real agent loop, and
+-- gives `check` what the run came to. The spec and the run's fields are
+-- tau-luau-plugins-host's `looping` module's: `prompt`, `steer`, `model`
+-- (the turns), `settings`, `reasoning`, `clock`, `retry`, `plugins`,
+-- `files`, `tools`, `jev` and `then` (forks, resumes, idle compaction);
+-- `results`, `outcome`, `state`, `rewrites`, `logs`, `charged`,
+-- `record`, `transcript`, `archive`, `forks`, `requests`, `most_at_once`,
+-- `jev`, `workspace` and `blobs`.
+local loops = array({})
+
+function test.loop(name, spec, check)
+	table.insert(loops, { name = tostring(name), spec = spec, check = check })
+end
+
+-- A workspace file of a loop's `spec.files`: a PNG of `width`×`height`,
+-- or bytes given in base64.
+function test.png(width, height)
+	return { png = { width = width, height = height } }
+end
+
+function test.bytes(base64)
+	return { base64 = base64 }
+end
+
 local function same(a, b)
 	if type(a) ~= type(b) then
 		return false
@@ -151,7 +183,7 @@ local function deep_copy(value)
 	return setmetatable(out, meta)
 end
 
--- A fake run: `spec` may give `now` (an ISO date), `id`, `kind`,
+-- A fake run: `spec` may give `now` (an ISO date), `id`, `kind`, `repo`,
 -- `settings`, `state`, `store` (a table of keys, shared by the runs
 -- given the same one), `tools` (a function or a value per tool name),
 -- `transcript` (the messages `ctx.transcript()` gives), `models` (what
@@ -350,7 +382,7 @@ function test.run(spec)
 			run = {
 				id = spec.id or "test",
 				kind = spec.kind or "main",
-				repo = "test",
+				repo = spec.repo or "test",
 				model = "test",
 				turn = 1,
 				live = spec.live == true,
@@ -934,6 +966,40 @@ function tau._run_tests()
 		})
 	end
 	return results
+end
+
+-- Every loop's name and spec, for the host to run.
+function tau._loops()
+	local out = array({})
+	for _, loop in ipairs(loops) do
+		table.insert(out, { name = loop.name, spec = loop.spec })
+	end
+	return out
+end
+
+-- The loop `name`'s check, on what its run came to.
+function tau._check_loop(name, run)
+	for _, loop in ipairs(loops) do
+		if loop.name == name then
+			local ok, why = pcall(loop.check, run)
+			return { passed = ok, error = (not ok) and tostring(why) or json.null }
+		end
+	end
+	return { passed = false, error = "there is no loop " .. name }
+end
+
+-- Makes every fixture, each on its own: its value, or why it failed.
+function tau._run_fixtures()
+	local made = array({})
+	for _, fixture in ipairs(fixtures) do
+		local ok, value = pcall(fixture.make)
+		table.insert(made, {
+			name = fixture.name,
+			value = ok and value or json.null,
+			error = (not ok) and tostring(value) or json.null,
+		})
+	end
+	return made
 end
 
 return test

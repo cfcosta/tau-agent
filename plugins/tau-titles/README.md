@@ -22,6 +22,6 @@ always active and fills `tau.title` for it; what it asks is booked to
 | `NAME`  | `"tau-titles"`                               |
 | `FILES` | The Luau files, by their paths in its folder |
 
-`tau-built-in-tests/tests/titles/luau.rs` loads the plugin as tau does and runs its Luau tests:
-cases for the request and the switch, and properties for the budget and
-the cleaned title.
+`tau-plugin test plugins/tau-titles` loads the plugin as tau does and
+runs its Luau tests: cases for the request and the switch, and
+properties for the budget and the cleaned title.

@@ -15,10 +15,7 @@ use tau_agent::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::{
-    TestResult,
-    runtime::{Files, load},
-};
+use crate::{TestResult, runtime::Files};
 
 /// The tool's name.
 pub const TOOL: &str = "plugin_test";
@@ -121,29 +118,6 @@ fn report(plugin: &str, tests: &[TestResult]) -> (String, bool) {
     (text, passed == tests.len())
 }
 
-/// `tau --plugin-test <folder>` (ADR 0051): loads the package at `folder`,
-/// runs its tests, and says what `plugin_test` says, and whether all passed.
-/// It blocks: a synchronous entry point.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "called from main, before anything else runs (ADR 0028)"
-)]
-pub fn test_folder(folder: &Path) -> Result<(String, bool), String> {
-    let folder = folder
-        .canonicalize()
-        .map_err(|error| format!("{}: {error}", folder.display()))?;
-    let (Some(dir), Some(plugin)) =
-        (folder.parent(), folder.file_name().and_then(|n| n.to_str()))
-    else {
-        return Err(format!("{} is not a plugin's folder", folder.display()));
-    };
-    let runtime = crate::built_in::runtime()?;
-    let tests = runtime
-        .block_on(test(dir, plugin, CancellationToken::new()))
-        .map_err(|error| error.to_string())?;
-    Ok(report(plugin, &tests))
-}
-
 /// Loads `plugin` from `dir` and runs its tests.
 async fn test(
     dir: &Path,
@@ -151,13 +125,12 @@ async fn test(
     cancel: CancellationToken,
 ) -> Result<Vec<TestResult>, ToolError> {
     let folder = dir.join(plugin);
+    let read = folder.clone();
     let files = tokio::task::spawn_blocking(move || {
-        Files::read(&folder, crate::runtime::PLUGIN)
+        Files::read(&read, crate::runtime::PLUGIN)
     })
     .await
     .map_err(|error| error.to_string())??;
-    let loaded = load(plugin, files)
-        .await
-        .map_err(|error| format!("{plugin} does not load: {error}"))?;
-    Ok(loaded.test(cancel).await)
+    let fixtures = crate::packages::Fixtures::Check;
+    Ok(crate::packages::test(files, &folder, fixtures, cancel).await?)
 }

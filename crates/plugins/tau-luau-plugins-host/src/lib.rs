@@ -18,11 +18,14 @@ mod half;
 pub mod hegel;
 pub mod infer;
 pub mod jobs;
+pub mod looping;
 
+pub mod packages;
 pub mod parity;
 pub mod registry;
 pub mod rewrite;
 pub mod runtime;
+pub mod scaffold;
 pub mod skill;
 pub mod slots;
 pub mod store;

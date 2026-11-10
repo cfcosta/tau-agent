@@ -6,7 +6,9 @@ pub mod fake_openai;
 pub mod generators;
 pub mod git;
 pub mod openai;
-pub mod scripted;
+/// The scripted model, a crate of its own so Luau plugins' loop tests ship it
+/// (ADR 0053).
+pub use tau_scripted as scripted;
 pub mod stream;
 
 use std::future::Future;

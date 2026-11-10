@@ -13,15 +13,11 @@ name = "built_in"
 path = "tests/main.rs"
 
 [dev-dependencies]
-base64.workspace = true
-image = { workspace = true, features = ["png"] }
 anyhow.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true
 hegeltest.workspace = true
 jsonschema.workspace = true
-schemars.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 tau-agent.workspace = true
 tau-ai.workspace = true

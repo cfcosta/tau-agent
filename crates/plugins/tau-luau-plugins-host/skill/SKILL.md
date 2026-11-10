@@ -645,6 +645,7 @@ local t = tau.test
 t.case("what it checks", function()
   local run = t.run {
     now = "2026-10-09T10:00:00Z",  -- an ISO date: a Friday
+    id = "r1", repo = "tau",       -- the run's id and repository, else "test"
     settings = { ... },            -- else the defaults
     state = { ... },               -- else {}
     tools = { read = "text" },     -- what ctx.tools give: a value, or a function of the args
@@ -724,6 +725,66 @@ end, { cases = 200 })
   most, and gives the same result each time for the same files. Its
   cases share one VM: keep what a case changes inside it, not in the
   file's top-level values.
+
+### Fixtures
+
+A fixture is a value the plugin makes, kept in `fixtures/<name>.json`:
+what a view draws at a step, what a run leaves. `plugin_test` makes each
+one and holds it to its file, as JSON, so a change to what the plugin
+draws shows as the first place it differs. The package's declaration is
+always `fixtures/declaration.json`, with no fixture of its own; a file
+there that nothing makes fails.
+
+```luau
+t.fixture("counted", function()
+  local run = t.run { id = "demo", tools = { read = "one two three" } }
+  run:tool("word_count", { path = "notes.md" }, "c1")
+  return { state = run.state, view = run:view() }
+end)
+```
+
+The files are written from what the tests make, never by hand: blessing
+writes each one anew and removes those nothing makes.
+
+### Loops
+
+A loop runs the plugin in a real agent loop, not a fake run: a scripted
+model calls tools, the plugin's hooks run as tau runs them, with a store,
+its files and real time. Give the run as data; the check gets what it
+came to.
+
+```luau
+t.loop("an image is kept as a blob", {
+  files = { ["plot.png"] = t.png(12, 8) },     -- the run's workspace
+  model = {                                    -- the model's turns, in order
+    { tool = "canvas_show", args = { path = "plot.png", title = "Plot" } },
+    { text = "Shown." },
+  },
+}, function(run)
+  t.equal(run.results[1].text, 'Image 1, "Plot", is on the canvas (12×8 PNG).')
+end)
+```
+
+- The spec: `prompt`, `steer` (a message steered in at the start),
+  `model` (each turn a part or a list: `{ text }`, `{ thinking }`,
+  `{ tool, args }`, `{ usage = { input, output } }`,
+  `{ error = { code, message } }`, `{ stop = "length" }`), `name` (the
+  model's id), `settings`, `kind`, `repo`, `files` (text,
+  `t.bytes(base64)` or `t.png(w, h)`), `tools` (fake tools: a name to a
+  text, a list taken in order, or `{ error }`; `{path}` in a text is the
+  call's argument, `{x*size}` is `x` that many times), `jev` (rules,
+  first match answers: `{ id = "call_", noul = 0.9 }`,
+  `{ has = "error[", noul = 0.95 }`, or `{ error = 503 }`), and `then`
+  (forks, each from where the run before it ended, with its own
+  `prompt`, `steer`, `settings` and `jev`).
+- What the check gets: `results` (each call's `text` and `error`),
+  `outcome` (`text`, `stop`, `usage`), `error`, `events`, `state`,
+  `rewrites` (the context's, by plugin), `logs`, `charged`, `archive`
+  (each archived file's `text` and `mode`), and for the first run
+  `forks`, `requests` (each request the model got: its `messages`,
+  `instructions`, `tools`), `jev` (what Jev was asked), `workspace` and
+  `blobs`.
+- A loop runs for 60 s at most; its check, like a case, 10 s.
 
 ## Six plugins
 

@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 tau-ai.workspace = true
+tau-scripted.workspace = true
 base64.workspace = true
 futures-util.workspace = true
 hegeltest.workspace = true

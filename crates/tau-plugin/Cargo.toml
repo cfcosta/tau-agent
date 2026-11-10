@@ -1,0 +1,22 @@
+[package]
+name = "tau-plugin"
+description = "tau-plugin, a command line for Luau plugins: check and test packages with no window (ADR 0053)."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish.workspace = true
+autotests = false
+
+[dependencies]
+serde_json.workspace = true
+tau-luau-plugins.workspace = true
+tau-luau-plugins-host.workspace = true
+tokio-util.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

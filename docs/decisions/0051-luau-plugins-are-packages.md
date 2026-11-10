@@ -1,6 +1,7 @@
 # 0051: tau's Luau plugins are packages, not crates
 
-- Status: accepted.
+- Status: accepted. `tau --plugin-test` and `tau --check-plugins` are
+  `tau-plugin test` and `tau-plugin check` since ADR 0053.
 - Date: 2026-11-08
 
 ## Context

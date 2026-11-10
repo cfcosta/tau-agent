@@ -38,21 +38,24 @@ live in the plugin's store in each repository, and the page edits them.
 tau-luau-plugins-host lists it among the Luau plugins tau comes with
 (`BUILT_IN`), always active. It needs a TypeSafe key: without one,
 nothing is checked. `tau-demo` draws it from the fixtures, as the demo
-runs no Luau; `tau-built-in-tests` checks each fixture is what the plugin
+runs no Luau; `tau-plugin test` checks each fixture is what the plugin
 leaves and draws.
 
 ## Testing
 
 ```sh
-target/release/tau --plugin-test plugins/tau-constitution   # its Luau tests, no compiling
-cargo nextest run --release -p tau-built-in-tests -E 'test(/^constitution::/)'
+target/release/tau-plugin test plugins/tau-constitution   # its Luau tests, no compiling
+target/release/tau-plugin test plugins/tau-constitution --bless   # writes its fixtures anew
+cargo nextest run --release -p tau-built-in-tests -E 'test(/^constitution::/)' --run-ignored only
 ```
 
-`tau-built-in-tests/tests/constitution/luau.rs` loads the plugin as tau does and runs its Luau tests,
-and checks the fixtures (`BLESS_FIXTURES=1` writes them anew). One test
-asks the real Jev and is ignored without `TYPESAFE_API_KEY`
-(`--run-ignored only`). tau-ui's `tests/constitution.rs` runs it in a
-host.
+`tau-plugin test` loads the plugin as tau does and runs its Luau tests.
+`tests/fixtures.luau` makes the demo's fixtures, which it holds to
+`fixtures/`; a case there checks the demo run's stats and marks, and the
+store's review item and answers.
+`tau-built-in-tests/tests/constitution/live.rs` asks the real Jev and is
+ignored without `TYPESAFE_API_KEY` (`--run-ignored only`). tau-ui's
+`tests/constitution.rs` runs it in a host.
 
 ## Further reading
 

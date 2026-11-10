@@ -18,4 +18,5 @@ slot filled by tau-luau-plugins, whose own plugins' rewrites run first.
 | `NAME`  | `"tau-compaction-chain"`                     |
 | `FILES` | The Luau files, by their paths in its folder |
 
-`tau-built-in-tests/tests/compaction_chain/luau.rs` loads the plugin as tau does and runs its Luau tests.
+`tau-plugin test plugins/tau-compaction-chain` loads the plugin as tau
+does and runs its Luau tests.

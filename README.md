@@ -208,8 +208,8 @@ cargo run --release -p tau               # the same, inside `nix develop`
 tau is not one file: it reads its Luau plugins at startup from
 `share/tau/plugins` beside the binary, or from `plugins/` in the checkout it
 was built from, or from `TAU_PLUGINS_DIR` (ADR 0051). Without them it starts
-no agents, and says why. `tau --plugin-test plugins/tau-goal` runs one's tests
-with nothing to compile.
+no agents, and says why. `tau-plugin test plugins/tau-goal` runs one's tests
+with nothing to compile, and `tau-plugin check` loads them all (ADR 0053).
 
 On first start, tau asks you to sign in with ChatGPT and with GitHub.
 After that, "Add repository" picks a repository from GitHub to clone.

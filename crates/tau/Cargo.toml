@@ -37,6 +37,3 @@ ashpd = { version = "0.13", default-features = false, features = [
   "async-io",
   "settings",
 ] }
-
-[dev-dependencies]
-tempfile.workspace = true

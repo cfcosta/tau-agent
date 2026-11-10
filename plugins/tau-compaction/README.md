@@ -28,16 +28,15 @@ An agent of its own, as an evaluation's, runs it with
 ## Testing
 
 ```sh
-target/release/tau --plugin-test plugins/tau-compaction   # its Luau tests, no compiling
-cargo nextest run --release -p tau-built-in-tests -E 'test(/^compaction::/)'
+target/release/tau-plugin test plugins/tau-compaction   # its Luau tests, no compiling
 ```
 
 `tests/rules.luau` holds properties of the threshold, the cut point
 and the plan, the serialized conversation, the file lists and the
 prompts, and pi's known cases. `tests/plugin.luau` runs the hooks
-against fake runs. `tau-built-in-tests/tests/compaction/luau.rs` loads the plugin as tau does and runs
-them, and checks the demo's fixture of its declaration
-(`BLESS_FIXTURES=1` writes it anew). `tau-built-in-tests/tests/compaction/in_the_loop.rs` runs it in
-the agent loop with `ScriptedModel`: threshold and overflow compaction,
+against fake runs. `tau-plugin test` loads the plugin as tau does and
+runs them, and checks the demo's fixture of its declaration.
+`tests/loop.luau` runs it in a real agent loop on a scripted model
+(`t.loop`): threshold and overflow compaction,
 split turns, rejected summaries and their wait, forks, retries and idle
 chats.

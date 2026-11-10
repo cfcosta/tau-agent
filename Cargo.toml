@@ -152,6 +152,7 @@ tau-github-host = { path = "crates/plugins/tau-github-host", version = "0.1.0" }
 tau-agents = { path = "crates/plugins/tau-agents", version = "0.1.0" }
 tau-agents-host = { path = "crates/plugins/tau-agents-host", version = "0.1.0" }
 tau-clock = { path = "crates/tau-clock", version = "0.1.0" }
+tau-scripted = { path = "crates/tau-scripted", version = "0.1.0" }
 tau-luau-plugins = { path = "crates/plugins/tau-luau-plugins", version = "0.1.0" }
 tau-luau-plugins-host = { path = "crates/plugins/tau-luau-plugins-host", version = "0.1.0" }
 tau-skills = { path = "crates/plugins/tau-skills", version = "0.1.0" }

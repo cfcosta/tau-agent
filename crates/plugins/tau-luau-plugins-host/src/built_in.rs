@@ -7,11 +7,7 @@
 //! package not listed and a plugin that does not load are each an error
 //! tau does not start agents past.
 
-use std::{
-    collections::BTreeSet,
-    path::{Path, PathBuf},
-    time::{Duration, Instant},
-};
+use std::{collections::BTreeSet, path::Path};
 
 use serde::Deserialize;
 use tau_luau_plugins::packages;
@@ -116,42 +112,6 @@ pub fn files(name: &str) -> Result<Files, String> {
     Files::read(&packages::find()?.join(name), PLUGIN)
 }
 
-/// What [`check`] found.
-#[derive(Debug, Clone)]
-pub struct Checked {
-    pub dir: PathBuf,
-    pub names: Vec<String>,
-    /// Finding the folder and reading it.
-    pub read: Duration,
-    /// Loading each plugin.
-    pub load: Duration,
-}
-
-/// Does what starting does to the folder, and times it. It blocks: for
-/// `tau --check-plugins`, a synchronous entry point.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "called from main, before anything else runs (ADR 0028)"
-)]
-pub fn check() -> Result<Checked, String> {
-    let at = Instant::now();
-    let dir = packages::find()?;
-    let packages = read(&dir)?;
-    let read_took = at.elapsed();
-    let names = packages
-        .iter()
-        .map(|files| files.manifest.name.clone())
-        .collect();
-    let at = Instant::now();
-    runtime()?.block_on(load_all(packages))?;
-    Ok(Checked {
-        dir,
-        names,
-        read: read_took,
-        load: at.elapsed(),
-    })
-}
-
 /// Loads them before the host starts, so a failure stops agents with its
 /// reason rather than leaving a host without compaction. It blocks: called
 /// from `main`.
@@ -167,7 +127,7 @@ pub fn load_at_start() -> anyhow::Result<()> {
         .map_err(anyhow::Error::msg)
 }
 
-pub(crate) fn runtime() -> Result<tokio::runtime::Runtime, String> {
+pub fn runtime() -> Result<tokio::runtime::Runtime, String> {
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()

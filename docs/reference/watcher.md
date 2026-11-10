@@ -113,6 +113,7 @@ nothing but `checked`.
 | `watch.noted`, `answered`, `band` | The notes in the state, and the one above the composer    |
 | `fixtures/`                       | The views the demo shows                                  |
 
-`tau-built-in-tests/tests/watcher/luau.rs` loads it as tau does and runs its Luau tests, cases,
-properties and a state machine, and checks the demo's views are what
-the plugin draws (`BLESS_FIXTURES=1` writes them anew).
+`tau-plugin test plugins/tau-watcher` loads it as tau does and runs its
+Luau tests, cases, properties and a state machine. `tests/fixtures.luau`
+makes the demo's views, which it holds to `fixtures/` (`--bless` writes
+them anew).

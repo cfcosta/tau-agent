@@ -39,17 +39,19 @@ tau-luau-plugins-host lists it among the Luau plugins tau comes with
 holds the call until one of its actions answers `tau.answer` (ADR 0050,
 gap C); its view's `composer` is the panel. An agent's runs leave it
 out: they ask through tau-agents' own `ask` (ADR 0037). `tau-demo`
-draws it from the fixtures, as the demo runs no Luau; `tau-built-in-tests` checks each fixture is what the plugin leaves and draws.
+draws it from the fixtures, as the demo runs no Luau; `tau-plugin test`
+checks each fixture is what the plugin leaves and draws.
 
 ## Testing
 
 ```sh
-target/release/tau --plugin-test plugins/tau-ask   # its Luau tests, no compiling
-cargo nextest run --release -p tau-built-in-tests -E 'test(/^ask::/)'
+target/release/tau-plugin test plugins/tau-ask   # its Luau tests, no compiling
+target/release/tau-plugin test plugins/tau-ask --bless   # writes its fixtures anew
 ```
 
-`tau-built-in-tests/tests/ask/luau.rs` loads the plugin as tau does and runs its Luau tests,
-and checks the fixtures (`BLESS_FIXTURES=1` writes them anew).
+`tau-plugin test` loads the plugin as tau does and runs its Luau tests.
+`tests/fixtures.luau` makes the demo's fixtures, which it holds to
+`fixtures/`.
 tau-ui's `tests/ask.rs` runs it in a host, answered from two devices,
 and draws its panel in the workspace.
 

@@ -47,8 +47,8 @@ Its rules are in
 ## Testing
 
 ```sh
-target/release/tau --plugin-test plugins/tau-fast-compaction   # its Luau tests, no compiling
-cargo nextest run --release -p tau-built-in-tests -E 'test(/^fast_compaction::/)'
+target/release/tau-plugin test plugins/tau-fast-compaction   # its Luau tests, no compiling
+target/release/tau-plugin test plugins/tau-fast-compaction --bless   # writes its fixtures anew
 ```
 
 `tests/estimate.luau` checks the token estimate;
@@ -56,9 +56,8 @@ cargo nextest run --release -p tau-built-in-tests -E 'test(/^fast_compaction::/)
 segments, the decisions and the ledger; `tests/output.luau` those
 of output pruning's gate, chunks, plan, answers and render;
 `tests/plugin.luau` runs the hooks and the view against fake runs.
-`tau-built-in-tests/tests/fast_compaction/luau.rs` loads the plugin as tau does and runs them, and checks
-the demo's fixtures (`BLESS_FIXTURES=1` writes them anew).
-`tau-built-in-tests/tests/fast_compaction/in_the_loop.rs` and `tests/output_in_the_loop.rs` run it in the
-agent loop with `ScriptedModel` and a fake Jev: passes, cooldowns,
-forks, overflows, failures and archives, and outputs pruned, kept and
-left alone.
+`tau-plugin test` loads the plugin as tau does and runs them;
+`tests/fixtures.luau` makes the demo's fixtures, which it holds to
+`fixtures/`. `tests/loop.luau` and `tests/output_loop.luau` run it in a
+real agent loop (`t.loop`) on a scripted model and a fake Jev: passes, cooldowns, forks, overflows,
+failures and archives, and outputs pruned, kept and left alone.

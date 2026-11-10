@@ -36,11 +36,13 @@ An agent's runs leave it out: an agent's own `schedule` also repeats
 ## Testing
 
 ```sh
-target/release/tau --plugin-test plugins/tau-schedule   # its Luau tests, no compiling
+target/release/tau-plugin test plugins/tau-schedule   # its Luau tests, no compiling
+target/release/tau-plugin test plugins/tau-schedule --bless   # writes its fixtures anew
 cargo nextest run --release -p tau-built-in-tests -E 'test(/^schedule::/)'
 ```
 
-The second runs its Luau tests as tau loads it, checks its fixtures,
-and wakes a chat through the real host: a chat's tool keeps the
-wake-up, the job wakes the chat on it in the host's local time, and the
-turn it starts may open the same store.
+The first runs its Luau tests as tau loads it, and checks the fixtures
+`tests/fixtures.luau` makes are those in `fixtures/`. The third wakes a
+chat through the real host: a chat's tool keeps the wake-up, the job
+wakes the chat on it in the host's local time, and the turn it starts
+may open the same store.

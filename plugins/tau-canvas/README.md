@@ -29,11 +29,12 @@ workspace and the home folder, read-only: a path past them is refused.
 ## Testing
 
 ```sh
-target/release/tau --plugin-test plugins/tau-canvas   # its Luau tests, no compiling
-cargo nextest run --release -p tau-built-in-tests -E 'test(/^canvas::/)'
+target/release/tau-plugin test plugins/tau-canvas   # its Luau tests, no compiling
+target/release/tau-plugin test plugins/tau-canvas --bless   # writes its fixtures anew
 cargo nextest run --release -p tau-ui -E 'test(/^canvas::/)'
 ```
 
-The second runs its Luau tests as tau loads it, checks its fixtures,
-and shows an image in a real run: read from the workspace, kept as a
-blob, and read back whole.
+The first runs its Luau tests as tau loads it, and checks the fixtures
+`tests/fixtures.luau` makes are those in `fixtures/`; `tests/loop.luau`
+shows an image in a real run: read from the workspace, kept as a blob,
+and read back whole. The third runs tau-ui's pane on the plugin.

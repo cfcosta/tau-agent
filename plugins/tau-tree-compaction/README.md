@@ -26,16 +26,15 @@ built. Its rules are in
 ## Testing
 
 ```sh
-target/release/tau --plugin-test plugins/tau-tree-compaction   # its Luau tests, no compiling
-cargo nextest run --release -p tau-built-in-tests -E 'test(/^tree_compaction::/)'
+target/release/tau-plugin test plugins/tau-tree-compaction   # its Luau tests, no compiling
 ```
 
 `tests/tree.luau` holds properties of names, fitting, what to
 build, zoom, render and restore; `tests/build.luau` grows lines
 against a stand-in model; `tests/plugin.luau` runs the hooks
-against fake runs. `tau-built-in-tests/tests/tree_compaction/luau.rs` loads the plugin as tau does and runs
-them, and checks the demo's fixture of its declaration
-(`BLESS_FIXTURES=1` writes it anew). `tau-built-in-tests/tests/tree_compaction/in_the_loop.rs` runs it in
-the agent loop with `ScriptedModel`: folding, a second compaction,
+against fake runs. `tau-plugin test` loads the plugin as tau does and
+runs them, and checks the demo's fixture of its declaration.
+`tests/loop.luau` runs it in a real agent loop on a scripted model
+(`t.loop`): folding, a second compaction,
 forks that zoom, waits after a failure, tau-compaction stepping in, and
 how many lines are asked at once.

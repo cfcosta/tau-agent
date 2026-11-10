@@ -142,5 +142,7 @@ the computer started.
 - `src/panel.luau`: the panel and the card.
 - `src/plugin.luau`: the tool, the actions, `start`, `run_end` and the
   view.
-- `tests/`: the cases and properties; `tau-built-in-tests/tests/ask/luau.rs` runs them
-  as tau loads the plugin, and checks the demo's fixtures.
+- `tests/`: the cases and properties, and `fixtures.luau`, which makes
+  the demo's fixtures; `tau-plugin test plugins/tau-ask` runs them as
+  tau loads the plugin, and checks the fixtures it makes are those in
+  `fixtures/`.

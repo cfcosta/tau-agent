@@ -8791,7 +8791,6 @@ dependencies = [
  "tau-ui",
  "tau-ui-plugin",
  "tau-ui-remote",
- "tempfile",
 ]
 
 [[package]]
@@ -8914,13 +8913,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "base64 0.23.1",
  "futures-util",
  "hegeltest",
- "image",
  "jsonschema",
- "schemars",
- "serde",
  "serde_json",
  "tau-agent",
  "tau-ai",
@@ -9168,6 +9163,7 @@ dependencies = [
  "tau-jev",
  "tau-luau-plugins",
  "tau-plugins",
+ "tau-scripted",
  "tau-skills",
  "tau-store",
  "tau-store-sqlite",
@@ -9373,6 +9369,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tau-plugin"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tau-luau-plugins",
+ "tau-luau-plugins-host",
+ "tempfile",
+ "tokio-util",
+]
+
+[[package]]
 name = "tau-plugins"
 version = "0.1.0"
 dependencies = [
@@ -9432,6 +9439,16 @@ dependencies = [
  "tau-tools-host",
  "tempfile",
  "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "tau-scripted"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "serde_json",
+ "tau-ai",
  "tokio",
 ]
 
@@ -9517,6 +9534,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "tau-ai",
+ "tau-scripted",
  "tokio",
  "tokio-tungstenite",
  "turmoil",

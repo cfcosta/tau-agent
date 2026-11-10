@@ -1030,7 +1030,12 @@ impl Loaded {
     /// runs, reaching nothing. A file that fails outside its cases is one
     /// failed result, named after the file.
     pub async fn test(&self, cancel: CancellationToken) -> Vec<TestResult> {
-        run_tests(
+        self.tested(cancel).await.results
+    }
+
+    /// [`Self::test`], with the fixtures its files made (ADR 0053).
+    pub async fn tested(&self, cancel: CancellationToken) -> Tested {
+        run_all(
             &self.declaration.name,
             self.modules.clone(),
             &self.files,
@@ -1038,6 +1043,23 @@ impl Loaded {
         )
         .await
     }
+}
+
+/// What a package's tests came to: each case's and property's result,
+/// a fixture that failed to be made among them, and the fixtures made.
+#[derive(Debug, Clone, Default)]
+pub struct Tested {
+    pub results: Vec<TestResult>,
+    pub fixtures: Vec<Made>,
+}
+
+/// A fixture a test file made with `t.fixture`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Made {
+    /// The file under `tests/` that made it, without `.luau`.
+    pub file: String,
+    pub name: String,
+    pub value: Value,
 }
 
 /// Runs `files`' tests against `modules`, each file in a fresh VM,
@@ -1049,11 +1071,22 @@ pub async fn run_tests(
     files: &Files,
     cancel: CancellationToken,
 ) -> Vec<TestResult> {
+    run_all(name, modules, files, cancel).await.results
+}
+
+/// [`run_tests`], with the fixtures the files made.
+pub async fn run_all(
+    name: &str,
+    modules: Arc<Modules>,
+    files: &Files,
+    cancel: CancellationToken,
+) -> Tested {
     let Root {
         module, subject, ..
     } = files.root;
     let digest = files.digest();
     let mut results = Vec::new();
+    let mut fixtures: Vec<Made> = Vec::new();
     for (file, source) in &files.tests {
         // The file runs as a function, from the script's first line, so
         // its errors keep their line numbers.
@@ -1063,7 +1096,9 @@ pub async fn run_tests(
              require(\"tau\").test.{subject} = require(\"{module}\")\n\
              __test()\n\
              return {{ cases = require(\"tau\")._run_tests(), \
-             properties = require(\"tau\")._properties() }}\n"
+             properties = require(\"tau\")._properties(), \
+             fixtures = require(\"tau\")._run_fixtures(), \
+             loops = require(\"tau\")._loops() }}\n"
         );
         let (value, error) = run(
             modules.clone(),
@@ -1096,6 +1131,29 @@ pub async fn run_tests(
             })
             .collect();
         results.extend(cases);
+        for fixture in value["fixtures"].as_array().into_iter().flatten() {
+            let name = fixture["name"].as_str().unwrap_or_default().to_owned();
+            let error = match fixture["error"].as_str() {
+                Some(error) => Some(error.to_owned()),
+                None if fixtures.iter().any(|made| made.name == name) => {
+                    Some(format!("the fixture {name} is made twice"))
+                }
+                None => None,
+            };
+            match error {
+                Some(error) => results.push(TestResult {
+                    file: file.clone(),
+                    name: format!("fixture {name}"),
+                    passed: false,
+                    error: Some(error),
+                }),
+                None => fixtures.push(Made {
+                    file: file.clone(),
+                    name,
+                    value: fixture["value"].clone(),
+                }),
+            }
+        }
         for property in value["properties"].as_array().into_iter().flatten() {
             let property = Property {
                 name: property["name"].as_str().unwrap_or_default().to_owned(),
@@ -1111,8 +1169,25 @@ pub async fn run_tests(
             };
             results.push(run_property(&source, property, &cancel).await);
         }
+        for each in value["loops"].as_array().into_iter().flatten() {
+            let loop_name = each["name"].as_str().unwrap_or_default();
+            let script = loop_script(source, module, subject);
+            results.push(
+                run_loop(
+                    name,
+                    &modules,
+                    files,
+                    file,
+                    loop_name,
+                    &each["spec"],
+                    script,
+                    &cancel,
+                )
+                .await,
+            );
+        }
     }
-    results
+    Tested { results, fixtures }
 }
 
 /// The cases a property runs, unless it asks for others, and the most
@@ -1138,6 +1213,65 @@ struct PropertySource<'a> {
     digest: &'a str,
     file: &'a str,
     script: String,
+}
+
+/// The script a loop's check runs: the file, registering its loops,
+/// then the check of the loop `__loop` names on `__run`.
+fn loop_script(source: &str, module: &str, subject: &str) -> String {
+    format!(
+        "local __test = function() {source}\nend\n\
+         require(\"tau_test\")\n\
+         require(\"tau\").test.{subject} = require(\"{module}\")\n\
+         __test()\n\
+         return require(\"tau\")._check_loop(__loop, __run)\n"
+    )
+}
+
+/// Runs the loop `loop_name` of `file`: its `spec` in a real agent loop,
+/// then its check, in a fresh VM, on what the run came to.
+#[allow(clippy::too_many_arguments, reason = "one loop of one file")]
+async fn run_loop(
+    name: &str,
+    modules: &Arc<Modules>,
+    files: &Files,
+    file: &str,
+    loop_name: &str,
+    spec: &Value,
+    script: String,
+    cancel: &CancellationToken,
+) -> TestResult {
+    let result = |error: Option<String>| TestResult {
+        file: file.to_owned(),
+        name: loop_name.to_owned(),
+        passed: error.is_none(),
+        error,
+    };
+    let ran = match crate::looping::run(files, spec).await {
+        Ok(ran) => ran,
+        Err(error) => {
+            return result(Some(format!("the loop did not run: {error}")));
+        }
+    };
+    let (value, failed) = run(
+        modules.clone(),
+        Arc::new(NoReach),
+        Reaches::none(name),
+        script,
+        vec![
+            ("__loop".to_owned(), Value::String(loop_name.to_owned())),
+            ("__run".to_owned(), ran),
+        ],
+        TEST_LIMIT,
+        cancel.clone(),
+    )
+    .await;
+    if let Some(failed) = failed {
+        return result(Some(failed.why));
+    }
+    result(match value["passed"].as_bool() {
+        Some(true) => None,
+        _ => Some(value["error"].as_str().unwrap_or("it failed").to_owned()),
+    })
 }
 
 /// The script a property runs: the file, registering its cases and

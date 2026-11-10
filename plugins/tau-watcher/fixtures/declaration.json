@@ -1,0 +1,66 @@
+{
+  "name": "tau-watcher",
+  "description": "Every 6th step a side request reads the run and, rarely, offers one note you likely missed",
+  "uses": {
+    "tools": [],
+    "jev": false,
+    "infer": true,
+    "change_args": false,
+    "network": [],
+    "secrets": [],
+    "model": null,
+    "store": false,
+    "transcript": true,
+    "archive": false,
+    "chats": false,
+    "files": []
+  },
+  "settings": {
+    "default": {
+      "enabled": false,
+      "family": "chat"
+    },
+    "schema": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "family": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "tools": [],
+  "hooks": {
+    "start": true,
+    "before_tool": false,
+    "before_request": true,
+    "after_tool_result": false,
+    "rewrite_context": false,
+    "rewritten": false,
+    "before_stop": false,
+    "turn_end": false,
+    "on_event": false,
+    "title": false,
+    "notify": false,
+    "repo_data": false,
+    "recover": false,
+    "run_end": false,
+    "view": true,
+    "settings_view": true
+  },
+  "actions": ["answer"],
+  "events": [],
+  "fills": [],
+  "compaction": null,
+  "forge": null,
+  "nav": null,
+  "commands": [],
+  "jobs": [],
+  "pages": [],
+  "repo_nav": null,
+  "picker_auto": null,
+  "continues": null
+}

@@ -51,16 +51,16 @@ removes it, and a new `/goal` replaces it.
 ## Testing
 
 ```sh
-target/release/tau --plugin-test plugins/tau-goal   # its Luau tests, no compiling
-cargo nextest run --release -p tau-built-in-tests -E 'test(/^goal::/)'
+target/release/tau-plugin test plugins/tau-goal   # its Luau tests, no compiling
+target/release/tau-plugin test plugins/tau-goal --bless   # writes its fixtures anew
 ```
 
-The tests drive real runs with `tau-testing`'s `ScriptedModel`,
-`tau_jev::fake::FakeJev` and a store, so no TypeSafe key or network is
-needed. Property tests (`hegeltest`) check that a written `/goal` reads as
-itself, that budgets are finite and not below zero, that any condition
-reads back from the model's input, and that the UI's fold follows the
-records.
+`tests/plugin.luau` drives fake runs with a fake Jev, so no TypeSafe
+key or network is needed. `tests/command.luau` holds properties: a
+written `/goal` reads as itself, budgets are finite and not below zero,
+and any condition reads back from the model's input.
+`tests/fixtures.luau` makes the demo's fixtures, which `tau-plugin test`
+holds to `fixtures/`.
 
 ## Further reading
 

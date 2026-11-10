@@ -89,8 +89,8 @@ fn the_flake_ships_the_plugins_and_checks_them() {
         "./plugins\n",
         "cp -r plugins $out/share/tau/plugins",
         "doInstallCheck = true;",
-        "$out/bin/tau --check-plugins",
-        "$out/bin/tau --plugin-test",
+        "$out/bin/tau-plugin check",
+        "$out/bin/tau-plugin test",
     ] {
         assert!(flake.contains(needed), "flake.nix lacks {needed:?}");
     }

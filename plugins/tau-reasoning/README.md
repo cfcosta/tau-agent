@@ -64,11 +64,15 @@ another effort is unknown.
 ## Testing
 
 ```sh
-target/release/tau --plugin-test plugins/tau-reasoning   # its Luau tests, no compiling
+target/release/tau-plugin test plugins/tau-reasoning   # its Luau tests, no compiling
+target/release/tau-plugin test plugins/tau-reasoning --bless   # writes its fixtures anew
 cargo nextest run --release -p tau-built-in-tests -E 'test(/^reasoning::/)'
 ```
 
 The tests use a fake Jev, so they need no key and no network.
+`tests/fixtures.luau` makes the demo's fixtures, which `tau-plugin test`
+holds to `fixtures/`. `tau-built-in-tests/tests/reasoning/replayed.rs`
+runs the `replay` example's plugin over stored runs.
 
 ## Further reading
 

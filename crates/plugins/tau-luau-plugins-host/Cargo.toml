@@ -16,7 +16,8 @@ async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
-tau-agent.workspace = true
+# `serde`: a loop test's events, as its check reads them (ADR 0053).
+tau-agent = { workspace = true, features = ["serde"] }
 tau-ai.workspace = true
 tau-codemode.workspace = true
 tau-codemode-host.workspace = true
@@ -36,23 +37,27 @@ tau-skills = { path = "../tau-skills", default-features = false }
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 tau-vcs-host.workspace = true
-tokio.workspace = true
+# `built_in::runtime`: tau-plugin and the app start one before anything else.
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 tokio-util.workspace = true
 toml.workspace = true
+# `t.loop` (ADR 0053): a real run, on a scripted model and a store in
+# memory, in a folder of its own.
+futures-util.workspace = true
+tau-scripted.workspace = true
+tau-store.workspace = true
+tau-store-sqlite.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
 image = { workspace = true, features = ["png"] }
 hegeltest.workspace = true
 tau-plugins.workspace = true
-tau-store-sqlite.workspace = true
 async-trait.workspace = true
 tau-ui-plugin = { workspace = true, features = ["testing"] }
-futures-util.workspace = true
 tau-agent.workspace = true
-tau-store.workspace = true
 tau-testing.workspace = true
 tokio-util.workspace = true
-tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 
 [[test]]

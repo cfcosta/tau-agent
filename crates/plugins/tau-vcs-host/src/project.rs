@@ -1360,6 +1360,82 @@ impl ProjectRepo {
         Ok(())
     }
 
+    /// Puts `files` (paths under `folder`, with their bytes) in place of
+    /// what trunk holds under `folder`, in a commit on top of trunk
+    /// described `description`, and moves trunk to it: a landing with no
+    /// workspace, as `tau-plugin install` makes one (ADR 0053). Gives
+    /// trunk's commit after, a full id in hex; a folder that already
+    /// holds `files` commits nothing.
+    pub fn commit_folder_on_trunk(
+        &self,
+        folder: &str,
+        files: &[(String, Vec<u8>)],
+        description: &str,
+    ) -> Result<String, VcsError> {
+        use jj_lib::{
+            backend::{CopyId, TreeValue},
+            merged_tree_builder::MergedTreeBuilder,
+            op_store::RefTarget,
+            repo_path::RepoPathBuf,
+        };
+        let folder = folder.trim_matches('/');
+        let repo_lock = self.lock()?;
+        let repo = self.load()?;
+        let (name, trunk) = self.trunk_bookmark(&repo).ok_or_else(|| {
+            VcsError::NoCommit(self.trunk_name().unwrap_or_default())
+        })?;
+        let mut given: Vec<(String, Vec<u8>)> = files
+            .iter()
+            .map(|(path, bytes)| (format!("{folder}/{path}"), bytes.clone()))
+            .collect();
+        given.sort();
+        let held = self.files_under(&trunk.hex(), folder)?;
+        if held == given {
+            return Ok(trunk.hex());
+        }
+        let path_of = |path: &str| {
+            RepoPathBuf::from_relative_path(path).map_err(|error| {
+                VcsError::Create {
+                    path: path.into(),
+                    source: std::io::Error::other(error.to_string()),
+                }
+            })
+        };
+        let parent = repo.store().get_commit(&trunk)?;
+        let mut tx = repo.start_transaction();
+        let store = tx.repo().store().clone();
+        let mut tree = MergedTreeBuilder::new(parent.tree());
+        for (path, _) in &held {
+            tree.set_or_remove(path_of(path)?, None);
+        }
+        for (path, bytes) in &given {
+            let id = block_on(
+                store.write_file(&path_of(path)?, &mut bytes.as_slice()),
+            )?;
+            tree.set_or_remove(
+                path_of(path)?,
+                Some(TreeValue::File {
+                    id,
+                    executable: false,
+                    copy_id: CopyId::placeholder(),
+                }),
+            );
+        }
+        let tree = block_on(tree.write_tree())?;
+        let commit = block_on(
+            tx.repo_mut()
+                .new_commit(vec![trunk], tree)
+                .set_description(description)
+                .write(),
+        )?;
+        tx.repo_mut().set_local_bookmark_target(
+            RefName::new(&name),
+            RefTarget::normal(commit.id().clone()),
+        );
+        crate::colocate::commit(tx, description, &repo_lock.git()?)?;
+        Ok(commit.id().hex())
+    }
+
     /// Makes run `name`'s workspace, on a new empty commit on top of
     /// `base` (a full commit id in hex), with `base`'s files checked out,
     /// and opens it. When `base` was rewritten, the workspace starts on

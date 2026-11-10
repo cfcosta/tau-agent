@@ -153,10 +153,12 @@
                 cargoBuildFlags = [
                   "--package"
                   "tau"
+                  "--package"
+                  "tau-plugin"
                 ];
                 cargoTestFlags = [
                   "--package"
-                  "tau"
+                  "tau-plugin"
                   "--package"
                   "tau-ui"
                 ];
@@ -230,8 +232,8 @@
                 doInstallCheck = true;
                 installCheckPhase = ''
                   runHook preInstallCheck
-                  $out/bin/tau --check-plugins
-                  $out/bin/tau --plugin-test $out/share/tau/plugins/tau-titles
+                  $out/bin/tau-plugin check
+                  $out/bin/tau-plugin test
                   test -f $out/share/tau/plugins/tau-goal/fixtures/working.json
                   test -f $out/share/tau/plugins/examples/word-count/tau.toml
                   runHook postInstallCheck

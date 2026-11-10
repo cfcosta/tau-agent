@@ -846,12 +846,23 @@ nothing to compile. `plugins/examples/` holds the worked plugins and agents
 the `tau-plugins` and `tau-agents` skills teach, read as the skills install;
 no package lives under `crates/`.
 
-| Command                                             | What it does                                        |
-| --------------------------------------------------- | --------------------------------------------------- |
-| `tau --plugin-test <folder>`                        | Loads a package and runs its Luau tests             |
-| `tau --check-plugins`                               | Reads and loads tau's own, as starting does         |
-| `cargo nextest run --release -p tau-built-in-tests` | The tests that need Rust: fixtures, the real loop   |
-| `BLESS_FIXTURES=1 cargo nextest ...` of that crate  | Writes the fixtures anew from what the plugins draw |
+| Command                                             | What it does                                                         |
+| --------------------------------------------------- | -------------------------------------------------------------------- |
+| `tau-plugin new <name>`                             | Writes a package that loads and passes its tests                     |
+| `tau-plugin new --built-in tau-<name>`              | The same under the checkout's `plugins/`, listed in `built-in.toml`  |
+| `tau-plugin test [<folder>...]`                     | Its cases, properties, fixtures and loops (`t.fixture`, `t.loop`)    |
+| `tau-plugin test --bless [<folder>...]`             | Writes the fixtures anew from what the plugins make                  |
+| `tau-plugin test --watch [<folder>...]`             | Runs them again each time a package changes                          |
+| `tau-plugin check [<folder>...]`                    | Loads each, says what it declares and reaches                        |
+| `tau-plugin install <folder>`                       | Tests it, then commits it to the plugins repository's trunk          |
+| `cargo nextest run --release -p tau-built-in-tests` | What Luau cannot say: the real host, the store under a fuse, oracles |
+
+`tau-plugin` (ADR 0053) is a binary of its own, with no window; with no
+folder, `test` and `check` take the one they are run in when it holds a
+`tau.toml`, else every plugin tau comes with. A loop runs the plugin in a
+real agent loop with a scripted model; the `looping` module of
+tau-luau-plugins-host documents what a loop's spec holds and what its
+check gets.
 
 ## The first four plugins
 
