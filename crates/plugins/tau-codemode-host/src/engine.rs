@@ -8,7 +8,9 @@
 //!   yields the threads the engine runs (the script's and those of
 //!   `parallel`), so a loop with no call in it neither holds a tokio
 //!   worker nor outlives a cancel. A coroutine the script made is never
-//!   yielded: its `resume` would see the yield as its own.
+//!   yielded: its `resume` would see the yield as its own. Nor is mlua's
+//!   wrapper of an async call, which would lose the call's wake-up: the
+//!   yield waits for the next point outside it.
 //! - **Globals that reach out** are Rust functions that return
 //!   `(true, ...)` or `(false, message)`; a small Luau prelude turns the
 //!   second into a Lua error with a string message, so `pcall` gets the
@@ -369,6 +371,9 @@ struct State {
     cancel: CancellationToken,
     deadline: Option<Instant>,
     ticks: AtomicU64,
+    /// A yield of the engine's threads is due at the next point one may
+    /// be taken ([`set_interrupt`]).
+    yield_owed: AtomicBool,
     threads: Mutex<HashMap<usize, Thread>>,
     modules: Mutex<HashMap<String, LuaValue>>,
     module_aliases: Mutex<HashMap<String, String>>,
@@ -426,6 +431,7 @@ impl State {
             cancel,
             deadline,
             ticks: AtomicU64::new(0),
+            yield_owed: AtomicBool::new(false),
             threads: Mutex::default(),
             modules: Mutex::default(),
             module_aliases: Mutex::default(),
@@ -655,11 +661,35 @@ fn set_interrupt(lua: &Lua, state: &Arc<State>) {
             state.stop.store(TIMED_OUT, Ordering::SeqCst);
             return Err(mlua::Error::runtime("Script timed out"));
         }
-        if tick % YIELD_EVERY == YIELD_EVERY - 1 && state.owns_current(lua) {
+        if tick % YIELD_EVERY == YIELD_EVERY - 1 {
+            state.yield_owed.store(true, Ordering::Relaxed);
+        }
+        // A yield owed waits for a point outside mlua's wrapper of an
+        // async call: one there, between a poll that left the call
+        // pending and the wrapper's own yield, is taken for a yield of no
+        // call, so the engine wakes itself at once and the next resume
+        // reaches the wrapper's yield without polling the call. A wake-up
+        // the call sent in between is spent on that resume, and the
+        // script sleeps until its deadline.
+        if state.yield_owed.load(Ordering::Relaxed)
+            && state.owns_current(lua)
+            && !in_async_wrapper(lua)
+        {
+            state.yield_owed.store(false, Ordering::Relaxed);
             return Ok(VmState::Yield);
         }
         Ok(VmState::Continue)
     });
+}
+
+/// Whether the running function is mlua's wrapper of an async
+/// function, which polls the call's future and yields while it is
+/// pending.
+fn in_async_wrapper(lua: &Lua) -> bool {
+    lua.inspect_stack(0, |debug| {
+        debug.source().source.as_deref() == Some("=__mlua_async_poll")
+    })
+    .unwrap_or(false)
 }
 
 /// `(true, values...)`.

@@ -24,3 +24,4 @@ mod sandbox;
 mod search;
 mod signature;
 mod ui;
+mod wakes;
