@@ -52,7 +52,7 @@ tree-sitter-typescript = "0.23.2"
 libc = "0.2.189"
 # Codemode's sandbox: Luau, run from tokio, with JSON values
 # (docs/decisions/0018-codemode-and-mcp.md).
-mlua = { version = "0.12.1", features = ["luau", "async", "send", "serde"] }
+mlua = { version = "0.12.2", features = ["luau", "async", "send", "serde"] }
 # Codemode's cards show scripts formatted; the library half, for Luau.
 stylua = { version = "2.5.2", default-features = false, features = ["luau"] }
 # The terminal emulator behind tau-terminal
