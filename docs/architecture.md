@@ -50,7 +50,7 @@ tau-agent/
 │       ├── tau-mcp/              # MCP servers' tools (rmcp), the Servers page
 │       ├── tau-memory/           # linked notes each repository's runs keep (Luau)
 │       ├── tau-notify/           # desktop notices while tau is in the
-│       │                         # background, filling `tau.notify`
+│       │                         # background, filling `tau.notify` (Luau)
 │       ├── tau-reasoning/        # picks a run's reasoning effort on auto (Luau)
 │       ├── tau-sqlite/           # the store in SQLite, filling `tau.store`
 │       ├── tau-titles/           # a run's title from the person's model,

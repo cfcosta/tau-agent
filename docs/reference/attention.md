@@ -84,8 +84,10 @@ open forks get new forecasts, so a forecast follows main's head.
   each time a turn of main ends with conflicts still on it (ADR 0024).
 - Notices go to the plugin that fills the `tau.notify` slot (ADR 0045),
   looked up as each goes (`notify::Slotted`, given `Host::slots`), so
-  the person's pick on the Plugins screen counts at once. tau-notify
-  fills it: the desktop gets them through `notify-rust` over zbus (no
-  libdbus), and its settings pane switches them off. Opening one brings
+  the person's pick on the Plugins screen counts at once. tau-notify,
+  a Luau plugin, fills it: its `notify` shows each with
+  `ctx.desktop.notice`, which tau-luau-plugins-host sends to the desktop
+  through `notify-rust` over zbus (no libdbus), and its setting
+  switches them off. Opening one brings
   tau's window up and opens its chat. With nothing in the slot, no
   notice shows.

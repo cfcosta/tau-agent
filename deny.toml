@@ -77,7 +77,7 @@ ignore = [
   { id = "RUSTSEC-2026-0192", reason = "ttf-parser, via gpui (tau-ui)" },
   { id = "RUSTSEC-2026-0206", reason = "rustybuzz, via gpui (tau-ui)" },
   # zbus 6 took these in as its own modules; gpui's accessibility and
-  # keyring crates and tau-notify's notify-rust are still on zbus 5.
+  # keyring crates and tau-luau-plugins-host's notify-rust are still on zbus 5.
   { id = "RUSTSEC-2026-0370", reason = "zvariant, via zbus 5 (gpui, notify-rust)" },
   { id = "RUSTSEC-2026-0371", reason = "zbus_names, via zbus 5 (gpui, notify-rust)" },
   { id = "RUSTSEC-2026-0372", reason = "zvariant_derive, via zbus 5 (gpui, notify-rust)" },

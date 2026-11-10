@@ -141,7 +141,6 @@ tokio-util = { version = "0.7.19", default-features = false }
 tokio = { version = "1.53.1", features = ["macros", "rt", "sync", "time"] }
 tau-agent = { path = "crates/tau-agent", version = "0.1.0" }
 tau-direnv = { path = "crates/plugins/tau-direnv", version = "0.1.0" }
-tau-notify = { path = "crates/plugins/tau-notify", version = "0.1.0" }
 tau-phones = { path = "crates/plugins/tau-phones", version = "0.1.0" }
 tau-sqlite = { path = "crates/plugins/tau-sqlite", version = "0.1.0" }
 tau-chatgpt = { path = "crates/plugins/tau-chatgpt", version = "0.1.0" }

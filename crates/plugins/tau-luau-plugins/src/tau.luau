@@ -1512,6 +1512,18 @@ function tau._ctx(data, with_tools)
 			end,
 		}
 	end
+	-- For the notify slot's `notify` (ADR 0050): one notice on the
+	-- desktop, whose click opens its chat.
+	if source ~= nil and source.desktop_notice ~= nil then
+		ctx.desktop = {
+			notice = function(notice)
+				return source.desktop_notice({
+					title = tostring(notice.title),
+					body = if notice.body == nil then "" else tostring(notice.body),
+				})
+			end,
+		}
+	end
 	if source ~= nil and source.chat_wake ~= nil then
 		ctx.chats = {
 			-- Starts a turn of the chat `run` on tau's message `text`:

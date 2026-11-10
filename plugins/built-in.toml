@@ -15,6 +15,7 @@ plugins = [
   "tau-skills",
   "tau-github",
   "tau-memory",
+  "tau-notify",
   "tau-fast-compaction",
   "tau-tree-compaction",
   "tau-compaction",

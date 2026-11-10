@@ -193,8 +193,9 @@ order, json }`, `json` the arguments as the model wrote them; a
     36 characters; `nil` leaves the prompt's first line). It runs
     outside any run: `ctx.run` and `ctx.state` are empty.
   - `tau.notify`: `notify` gets each notice tau would show while its
-    window is not in front, and sends it where the plugin reaches over
-    HTTP, such as a push service.
+    window is not in front. `ctx.desktop.notice{ title, body }` shows
+    it on the desktop, and a click opens its chat; or the plugin sends
+    it where it reaches over HTTP, such as a push service.
   - `tau.forge`: where repositories are hosted. Its `forge` table
     names the forge (`name`, `id`, the `host` repositories clone from)
     and the secret that signs in (`token`, which `uses.secrets` must
@@ -346,6 +347,7 @@ is an input whose text goes straight to the store.
 | `ctx.models`                                   | the plan's models, newest of each family: `{ id, family, efforts }`                                                                                                                                                        |
 | `ctx.files`                                    | in a tool's `call`, with `uses.files`: `read(path, { bytes, limit })`, `list(path)` and `image(path)` under the folders it names; `write`, `remove`, `rename`, `mkdir` in those it writes (below)                          |
 | `ctx.blobs`                                    | in a tool's `call`, with `uses.files`: `put_file(path)` keeps a file's bytes in the run's repository, for `ui.image` (below)                                                                                               |
+| `ctx.desktop`                                  | in `notify`: `ctx.desktop.notice{ title, body }` shows a notice on the desktop, whose click opens its chat                                                                                                                 |
 | `ctx.repos()`, `ctx.stores(repo)`, `ctx.chats` | in a job, with `uses.chats`: the repositories the plugin keeps a store in, each one's store, and `ctx.chats.wake(run, text)` (below)                                                                                       |
 
 `ctx.state` is stored with the run: a resumed or forked run keeps it.
@@ -800,6 +802,7 @@ end)
   `run:run_end(run)`, `run:title(run)`, `run:notify(notice)`,
   `run:job(name)`,
   `run:view()`; each takes what the hook is given.
+- `run.notices` is each notice `ctx.desktop.notice` showed, in order.
 - `run.files` is `files` as the plugin left them, what it wrote too;
   `run.folders` the folders it made; `run.infers` each round
   `infer{ tools }` asked, with the `turns` before it.

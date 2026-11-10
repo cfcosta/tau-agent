@@ -9120,6 +9120,7 @@ dependencies = [
  "hegeltest",
  "hegeltest-c",
  "image",
+ "notify-rust",
  "saphyr",
  "serde",
  "serde_json",
@@ -9229,18 +9230,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tau-notify"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "notify-rust",
- "serde",
- "serde_json",
- "tau-agent",
- "tau-ui-plugin",
-]
-
-[[package]]
 name = "tau-output-pruning-eval"
 version = "0.1.0"
 dependencies = [
@@ -9321,7 +9310,6 @@ dependencies = [
  "tau-jev",
  "tau-luau-plugins",
  "tau-mcp",
- "tau-notify",
  "tau-phones",
  "tau-sqlite",
  "tau-tools",
@@ -9526,7 +9514,6 @@ dependencies = [
  "tau-luau-plugins-host",
  "tau-mcp",
  "tau-mcp-host",
- "tau-notify",
  "tau-phones",
  "tau-plugins",
  "tau-remote",

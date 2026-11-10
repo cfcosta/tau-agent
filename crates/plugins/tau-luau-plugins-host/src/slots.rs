@@ -270,12 +270,12 @@ impl Title for LuauTitle {
 }
 
 /// `tau.notify` from the active plugin that fills it: each notice goes
-/// to its `notify`, on the host's runtime. Opening one is the person's
-/// own, wherever the plugin sent it.
+/// to its `notify`, on the host's runtime, which may show it on the
+/// desktop with `ctx.desktop.notice`; clicking that opens its chat.
 pub struct LuauNotify(pub Registry);
 
 impl Notify for LuauNotify {
-    fn show(&self, notice: Notice, _opened: Box<dyn FnOnce() + Send>) {
+    fn show(&self, notice: Notice, opened: Box<dyn FnOnce() + Send>) {
         let Some(runtime) = self.0.runtime() else {
             return;
         };
@@ -292,7 +292,10 @@ impl Notify for LuauNotify {
                     &Hook::Notify,
                     json!({ "title": notice.title, "body": notice.body }),
                     &context(&registry, &active),
-                    ModelReach::of(&registry, &active, None),
+                    std::sync::Arc::new(crate::desktop::DesktopReach::new(
+                        ModelReach::of(&registry, &active, None),
+                        opened,
+                    )),
                     CancellationToken::new(),
                 )
                 .await;

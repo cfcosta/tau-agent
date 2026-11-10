@@ -61,9 +61,9 @@ The twelve stay Rust. Each keeps its reason in this ADR, and parity
 stays where it is for the slots and services they fill. Two of them
 moved later all the same, once Luau reached what they hold: tau-skills
 (gap K, the person's files) and tau-memory (gap L, its notes' files,
-once ADR 0052 took its embeddings away). Ten stay: tau-vcs, tau-mcp,
-tau-tools, tau-agents, tau-sqlite, tau-chatgpt, tau-jev, tau-phones,
-tau-direnv and tau-notify.
+once ADR 0052 took its embeddings away), and tau-notify (one host call
+to the desktop). Nine stay: tau-vcs, tau-mcp, tau-tools, tau-agents,
+tau-sqlite, tau-chatgpt, tau-jev, tau-phones and tau-direnv.
 
 ### The gaps, and how each closes
 
@@ -1300,3 +1300,29 @@ Unicode tables, and a remote read from real Git configs.
 - **The interface's window tests of imports** (tau-ui-remote's
   `memory_import`) went: the Luau tests hold what they checked, the
   pages' trees being the plugin's.
+
+### What stays Rust, again, and tau-notify
+
+Reviewed on 2026-11-10, once Luau could write files, ask with tools and
+draw pages of the app: which of the ten could move now.
+
+- **tau-notify moves.** Luau could fill `tau.notify` already, but had
+  nothing to show a notice on the desktop, and the slot dropped the
+  click that opens its chat. Now the slot's `notify` alone gets
+  `ctx.desktop.notice{ title, body }` (`desktop::DesktopReach`, the
+  call `desktop_notice`), which tau-luau-plugins-host shows through
+  `notify-rust` over D-Bus, on a thread that waits for the click and
+  opens the chat. `plugins/tau-notify` is its switch, as a setting, and
+  the hook; the crate went. Its row on the Plugins screen is
+  tau.toml's description, on or off; its pane is the setting's.
+- **tau-direnv could move, and does not yet.** It needs a Luau plugin
+  to run a program (`direnv export json`) and a seam that wraps the
+  agent's commands and MCP servers (`direnv exec <workspace>`). Running
+  programs is a reach no Luau plugin has; that wants a decision of its
+  own.
+- **The other eight stay, for what they are:** tau-vcs (jj-lib),
+  tau-mcp (server processes and streams), tau-tools (the agent's files
+  and terminals), tau-agents (a runtime of its own, loading agents'
+  Luau and starting their turns), tau-sqlite (the store, open before
+  any plugin), tau-chatgpt (a provider, which streams), tau-jev (the
+  client Luau calls) and tau-phones (a listener).

@@ -33,7 +33,6 @@ pub fn halves(plugins: Registry) -> Registry {
         .host(tau_vcs_host::VcsHost)
         .host(tau_direnv::DirenvHost)
         .host(tau_mcp_host::McpHost)
-        .host(tau_notify::NotifyHost)
         .host(tau_phones::PhonesHost)
         .host(tau_jev::JevHost)
         .host(tau_sqlite::SqliteHost)

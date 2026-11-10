@@ -11,6 +11,7 @@ pub const FAST_COMPACTION: &str = "tau-fast-compaction";
 pub const GITHUB: &str = "tau-github";
 pub const GOAL: &str = "tau-goal";
 pub const MEMORY: &str = "tau-memory";
+pub const NOTIFY: &str = "tau-notify";
 pub const REASONING: &str = "tau-reasoning";
 pub const SCHEDULE: &str = "tau-schedule";
 pub const SKILLS: &str = "tau-skills";

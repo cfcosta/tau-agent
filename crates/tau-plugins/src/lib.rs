@@ -16,7 +16,6 @@ pub fn plugins() -> Registry {
         .with(tau_jev::JevUi)
         .with(tau_luau_plugins::LuauPluginsUi)
         .with(tau_mcp::McpUi)
-        .with(tau_notify::NotifyUi)
         .with(tau_phones::PhonesUi)
         .with(tau_sqlite::SqliteUi)
         .with(tau_tools::ui::ToolsUi)
@@ -25,12 +24,13 @@ pub fn plugins() -> Registry {
         // person picks another on the Plugins screen (ADR 0045).
         .slot_order(&tau_ui_plugin::vcs::VCS, &[tau_vcs::ui::NAME])
         .slot_order(&tau_ui_plugin::provider::PROVIDER, &[tau_chatgpt::NAME])
-        // tau-titles, tau-compaction-chain, tau-compaction and tau-github
+        // tau-titles, tau-compaction-chain, tau-compaction, tau-github and
+        // tau-notify
         // are Luau (ADR 0050): the slots are tau-luau-plugins', which
         // fills them for them.
         .slot_order(&tau_ui_plugin::title::TITLE, &[tau_luau_plugins::NAME])
         .slot_order(&tau_ui_plugin::forge::FORGE, &[tau_luau_plugins::NAME])
-        .slot_order(&tau_ui_plugin::notify::NOTIFY, &[tau_notify::NAME])
+        .slot_order(&tau_ui_plugin::notify::NOTIFY, &[tau_luau_plugins::NAME])
         .slot_order(
             &tau_ui_plugin::compaction::COMPACTION,
             &[tau_luau_plugins::NAME],

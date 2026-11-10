@@ -336,6 +336,15 @@ function test.run(spec)
 			return json.null
 		end
 	end
+	-- What the notify slot's `ctx.desktop.notice` shows: each notice in
+	-- `run.notices`, `{ title, body }`, in order.
+	local notices = array({})
+	if plugin.notify then
+		fakes.desktop_notice = function(args)
+			table.insert(notices, { title = args.title, body = args.body or "" })
+			return json.null
+		end
+	end
 	-- What a tool reads with uses.files: `spec.files`, by path as the tool
 	-- names it, each its text, or `{ text, image = { mime, width, height },
 	-- modified }`, `modified` what a listing says of it (0 when not given).
@@ -599,6 +608,7 @@ function test.run(spec)
 		state = spec.state or {},
 		-- Which secrets are set, by name: what `ctx.secrets` and `keep` left.
 		secrets = secrets,
+		notices = notices,
 		logs = {},
 		data = {
 			-- `live` and `jev`, as an action sees them: `spec.live`, and

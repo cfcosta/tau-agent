@@ -15,7 +15,6 @@ publish.workspace = true
 tau-ui-plugin.workspace = true
 tau-codemode.workspace = true
 tau-direnv = { path = "../plugins/tau-direnv", default-features = false }
-tau-notify = { path = "../plugins/tau-notify", default-features = false }
 tau-phones = { path = "../plugins/tau-phones", default-features = false }
 tau-sqlite = { path = "../plugins/tau-sqlite", default-features = false }
 tau-chatgpt = { path = "../plugins/tau-chatgpt", default-features = false }

@@ -52,6 +52,11 @@ tau-store.workspace = true
 tau-store-sqlite.workspace = true
 tempfile.workspace = true
 
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+# `ctx.desktop.notice`: desktop notifications over D-Bus, in Rust (zbus):
+# no libdbus. GPUI's Linux backend already builds it with these features.
+notify-rust = { version = "4.18", default-features = false, features = ["z"] }
+
 [dev-dependencies]
 image = { workspace = true, features = ["png"] }
 hegeltest.workspace = true

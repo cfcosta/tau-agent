@@ -1761,6 +1761,8 @@ impl PluginHost {
             || (self.files && crate::files::Files::handles(name))
             // Sizes only, where the hook holds the run's conversation.
             || name == "measure"
+            // Only the notify slot's reach offers it (ADR 0050).
+            || name == crate::desktop::NOTICE
     }
 }
 

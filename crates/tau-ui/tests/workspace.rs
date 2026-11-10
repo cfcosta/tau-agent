@@ -456,7 +456,21 @@ fn a_failed_fork_opens_a_dialog(cx: &mut TestAppContext) {
         ws.fork_from(&run, 2, window, cx);
         ws.submit_prompt("try again".into(), cx);
     });
-    cx.run_until_parked();
+    // The fork fails on the host's threads, which parking GPUI does not
+    // wait for: under a full test run's load its answer comes later.
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        cx.run_until_parked();
+        if workspace.read_with(&cx, |ws, _| ws.alert().is_some()) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for the dialog"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
     workspace.read_with(&cx, |ws, _| {
         let (title, message) = ws.alert().expect("a dialog");
         assert_eq!(title, "Could not fork the run");

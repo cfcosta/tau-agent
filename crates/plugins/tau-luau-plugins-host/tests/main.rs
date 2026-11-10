@@ -4,6 +4,7 @@
 
 mod agent;
 mod agents;
+mod desktop;
 mod dispatch;
 mod files;
 mod forge_urls;
