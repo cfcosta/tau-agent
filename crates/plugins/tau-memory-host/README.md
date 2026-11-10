@@ -11,37 +11,33 @@ keeps or drops (decision 0044).
 
 ## What it provides
 
-| Item                       | What it is                                                                        |
-| -------------------------- | --------------------------------------------------------------------------------- |
-| `MemoryPlugin`             | The `Plugin`; share one across an agent's runs                                    |
-| `plugin::write_notes`      | One notes request and the writes it asks for, on any `Asker`                      |
-| `plugin::Asker`            | Who it asks: a run's `PluginCtx`, or the person's model outside a run (`Outside`) |
-| `Scopes`                   | The repository's scope, the user's (optional) and the clock                       |
-| `Memory`                   | One scope: its notes and their index, kept in step                                |
-| `memory::Draft`            | A note to write: new, a new version (`id`), or a replacement (`supersedes`)       |
-| `store::Notes`             | The note files of one directory, at `<type>/<id>.md`, with history and backlinks  |
-| `index::Index`, `Bm25`     | The search index trait, and keyword search                                        |
-| `colbert::Colbert`         | ColBERT MaxSim search over an `Encoder`, with embeddings cached on disk           |
-| `docbert::Docbert`         | docbert's model as an `Encoder` (`docbert` feature)                               |
-| `recall`                   | Ranking: superseded notes rank lower, and one hop along links                     |
-| `safety`                   | `redact` removes secrets before a write; `refusal` catches prompt injection       |
-| `eval`                     | The retrieval evaluation over `eval/harbor.toml`                                  |
-| `MemoryHost`, `Host`       | The `HostHalf` tau's interface registers; opens each scope once per session       |
-| `Memories`, `Search`       | The open scopes, and whether they search by meaning or by keywords                |
-| `stale_on_turn`            | A turn hook that marks notes about a commit's paths as possibly stale             |
-| `notebook`, `now`          | A scope's notes as the page lists them; the clock in milliseconds                 |
-| `importers`                | Readers for Claude Code's and Codex's files under a given home (`Roots`)          |
-| `importers::remote`        | A folder's Git remote, from its config, without running Git                       |
-| `import::Importer`         | Proposals, the checkpoint and the last scan, kept in memory's plugin directory    |
-| `import::Reach`            | The `import` job, and the acts: import, stop, tick, keep, drop, not now           |
-| `import::Proposals`        | The proposals and the tally; `admit` checks a draft as `Memory::write` would      |
-| `plugin::write_notes_from` | `write_notes` on input fenced its own way, as an import's material is             |
+| Item                       | What it is                                                                         |
+| -------------------------- | ---------------------------------------------------------------------------------- |
+| `MemoryPlugin`             | The `Plugin`; share one across an agent's runs                                     |
+| `plugin::write_notes`      | One notes request and the writes it asks for, on any `Asker`                       |
+| `plugin::Asker`            | Who it asks: a run's `PluginCtx`, or the person's model outside a run (`Outside`)  |
+| `Scopes`                   | The repository's scope, the user's (optional) and the clock                        |
+| `Memory`                   | One scope: its notes and their index, kept in step                                 |
+| `memory::Draft`            | A note to write: new, a new version (`id`), or a replacement (`supersedes`)        |
+| `store::Notes`             | The note files of one directory, at `<type>/<id>.md`, with history and backlinks   |
+| `index::Bm25`              | Keyword search: BM25 over each note's title, description, tags and body (ADR 0052) |
+| `recall`                   | Ranking: superseded notes rank lower, and one hop along links                      |
+| `safety`                   | `redact` removes secrets before a write; `refusal` catches prompt injection        |
+| `MemoryHost`, `Host`       | The `HostHalf` tau's interface registers; opens each scope once per session        |
+| `Memories`                 | The open scopes                                                                    |
+| `stale_on_turn`            | A turn hook that marks notes about a commit's paths as possibly stale              |
+| `notebook`, `now`          | A scope's notes as the page lists them; the clock in milliseconds                  |
+| `importers`                | Readers for Claude Code's and Codex's files under a given home (`Roots`)           |
+| `importers::remote`        | A folder's Git remote, from its config, without running Git                        |
+| `import::Importer`         | Proposals, the checkpoint and the last scan, kept in memory's plugin directory     |
+| `import::Reach`            | The `import` job, and the acts: import, stop, tick, keep, drop, not now            |
+| `import::Proposals`        | The proposals and the tally; `admit` checks a draft as `Memory::write` would       |
+| `plugin::write_notes_from` | `write_notes` on input fenced its own way, as an import's material is              |
 
 The model gets four tools: `memory_write`, `memory_search`, `memory_read`
 and `memory_link`. Ids from the user's scope read `user:<id>`.
 `MemoryPlugin::consolidate(true)` adds a pass at the end of each run that
-asks the model what the run taught; it is off by default. The default
-model for `Docbert` is `lightonai/GTE-ModernColBERT-v1` (`docbert::MODEL`).
+asks the model what the run taught; it is off by default.
 
 ### Imports
 
@@ -65,49 +61,35 @@ re-exports `NAME`, `note` and `record` from it.
 
 It builds on `tau-agent` (the `Plugin` and tool traits), `tau-ai`
 (messages and request settings for the compaction and consolidation
-requests) and `tau-ui-plugin` (`HostHalf`). The `docbert` feature pulls in
-`docbert-pylate` and candle.
+requests) and `tau-ui-plugin` (`HostHalf`).
 
-Used by `tau-ui`, which registers `MemoryHost` with the `docbert` and
-`demo` features, and by `crates/evals/tau-memory-e2e`, the end-to-end
+Used by `tau-ui`, which registers `MemoryHost`; by `tau-demo`, with the
+`demo` feature; and by `crates/evals/tau-memory-e2e`, the end-to-end
 evaluation. In the app a repository's notes are in `memory/` in tau's
 directory for it, and the user's in `memory/` in tau's data directory.
 
 ## Usage
 
-Memory on an agent, outside tau's interface, searching by keywords:
+Memory on an agent, outside tau's interface:
 
 ```rust
 use std::sync::Arc;
-use tau_memory_host::{Memory, MemoryPlugin, Scopes, index::Bm25, now};
+use tau_memory_host::{Memory, MemoryPlugin, Scopes, now};
 
-let repo = Memory::open("notes/repo", Box::new(Bm25::new()))?;
-let user = Memory::open("notes/user", Box::new(Bm25::new()))?;
+let repo = Memory::open("notes/repo")?;
+let user = Memory::open("notes/user")?;
 let memory = MemoryPlugin::new(Scopes::new(repo, Some(user), Arc::new(now)));
 
 let agent = agent.plugin(memory);
 ```
 
-With the `docbert` feature, search by meaning instead:
-
-```rust
-use tau_memory_host::{colbert::Colbert, docbert::Docbert};
-
-let index = Colbert::new(Docbert::new()).cached("notes/repo-embeddings");
-let repo = Memory::open("notes/repo", Box::new(index))?;
-```
-
-The model is loaded on first use and downloaded from the Hugging Face hub
-when it is not cached.
-
 ## Features
 
-| Feature   | What it adds                                                         |
-| --------- | -------------------------------------------------------------------- |
-| `docbert` | The `docbert` module and the `tau-memory-eval` binary (needs candle) |
-| `demo`    | `demo::seed` and `demo::imports`, what tau-ui's demo shows           |
+| Feature | What it adds                                               |
+| ------- | ---------------------------------------------------------- |
+| `demo`  | `demo::seed` and `demo::imports`, what tau-ui's demo shows |
 
-Neither is on by default.
+It is off by default.
 
 ## Testing
 
@@ -115,31 +97,16 @@ Neither is on by default.
 cargo nextest run --release -p tau-memory-host
 ```
 
-Most tests are property tests (`hegeltest`) over notes, the store, recall,
-redaction and the evaluation corpus. The import's tests read synthetic
-copies of Claude Code's and Codex's files in a temporary home, never the
-developer's, with the person's model scripted (`tau-testing`). They search with BM25 or a fake
-encoder, so no model is loaded. One test loads docbert's real model and
-may download it, so it only runs when asked:
-
-```sh
-cargo nextest run --release -p tau-memory-host --features docbert --run-ignored only
-```
-
-The retrieval evaluation compares BM25, ColBERT and the two fused as
-near-duplicates pile up:
-
-```sh
-cargo run --release -p tau-memory-host --features docbert --bin tau-memory-eval
-```
-
-`--keywords` runs BM25 alone without loading the model, and `--json PATH`
-writes every row. Embeddings are cached in `$XDG_CACHE_HOME/tau/memory-eval`.
+Most tests are property tests (`hegeltest`) over notes, the store, recall
+(BM25 against its formula written out plainly) and redaction. The
+import's tests read synthetic copies of Claude Code's and Codex's files
+in a temporary home, never the developer's, with the person's model
+scripted (`tau-testing`).
 
 ## Further reading
 
 - [docs/reference/plugins.md](../../../docs/reference/plugins.md), section
-  "`tau-memory`: a zettelkasten on docbert"
+  "`tau-memory`: a zettelkasten"
 - [docs/research/memory.md](../../../docs/research/memory.md), the research
   behind the design and the evaluation
 - [ADR 0030: host halves are crates](../../../docs/decisions/0030-host-halves-are-crates.md)

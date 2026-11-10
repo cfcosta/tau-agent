@@ -962,7 +962,7 @@ would have spent at another effort were never spent, so no stored
 number says what it would have cost. The store keeps no agent
 instructions, so the replay goes without them.
 
-### `tau-memory`: a zettelkasten on docbert
+### `tau-memory`: a zettelkasten
 
 Research and the reasons behind these choices:
 [research/memory.md](../research/memory.md). Decided 2026-09-29.
@@ -992,7 +992,8 @@ Research and the reasons behind these choices:
     first and returns the nearest notes with the result, so the agent
     updates, supersedes or links instead of duplicating;
   - `memory_search { query }` returns ids, titles, types, descriptions
-    and snippets from docbert, plus one hop along links, in one budget;
+    and snippets from a BM25 search, plus one hop along links, in one
+    budget;
     superseded notes rank lower and are labelled, never hidden;
   - `memory_read { id }` returns a note with its links and backlinks;
   - `memory_link { from, to, type, why }` links two notes.
@@ -1002,7 +1003,7 @@ Research and the reasons behind these choices:
   refused with a message asking the agent to rewrite it; nothing is cut
   silently.
 - **start:** puts the index note into `plan.context`, frozen for the
-  run, then the top few docbert hits for the input (about three), both
+  run, then the top few search hits for the input (about three), both
   fenced as untrusted data. Each message of a chat is a run, so each
   gives only what the conversation lacks: a hit it was given before
   stays out, and so does the index until it changes (a stored
@@ -1031,41 +1032,26 @@ Research and the reasons behind these choices:
   change is a diff that can be reviewed or reverted; nothing lands in
   the project's history. Notes are the truth; the search index is
   derived and rebuilt from them on open.
-  - The index is ColBERT MaxSim alone. The `docbert` feature encodes
-    with docbert's model through `docbert-pylate`, loaded on first use;
-    without a model (as in tests) memory searches with BM25.
-  - It was BM25 fused with ColBERT by reciprocal rank fusion, as docbert
-    fuses them. The retrieval evaluation showed the fusion doing worse:
-    - ColBERT alone found verbatim queries as well as BM25 did, and found
-      paraphrases far more often (recall at 5 of 0.83 against the
-      fusion's 0.54, and 0.58 against 0.29 with 16 near-duplicates per
-      answer).
-    - The fusion lets BM25 rank near-duplicates that share a query's
-      words above the answer.
-  - Embeddings are cached on disk by model and text, so reopening a
-    scope encodes only notes that changed.
-  - Every note is scored exhaustively: a scope is small, and MaxSim over
-    all of it is exact. PLAID is out for now.
+  - The index is BM25, in process, over each note's title, description,
+    tags and body (ADR 0052). It was ColBERT MaxSim with docbert's
+    model from 2026-09-29, which found paraphrased queries more often;
+    the model was what kept tau-memory from moving to Luau, so it went
+    on 2026-11-09, with the retrieval evaluation that compared the two.
+  - Every note is scored: a scope is small.
 - **Safety:** secrets are redacted before a note is written, writes are
   scanned for prompt injection, and memory never stands in for rules
   (those belong in `AGENTS.md` or the constitution).
 - **Evaluation first:** retrieval recall at 5 and 10 by evidence
   distance; coding tasks that need an earlier run, before and after the
-  fact changed; recall as near-duplicates pile up, for BM25, ColBERT and
-  the hybrid (does late interaction escape the interference "The Price
-  of Meaning" proves?); calls, tokens and latency. Baselines: no memory,
-  one `MEMORY.md`, docbert over raw transcripts.
-  - Retrieval and interference run today: `cargo run --release -p
-tau-memory-host --features docbert --bin tau-memory-eval` (`--keywords`
-    for BM25 alone, `--json PATH` for the rows). The corpus is
-    `crates/plugins/tau-memory-host/eval/harbor.toml`, synthetic facts about a
-    made-up service. Every level holds the same number of notes, so only
-    the near-duplicates per answer change.
-  - The end-to-end tasks run with `cargo run --release -p tau-memory-e2e`
-    (`--features docbert` to search as the app does; BM25 without it).
-    They make real model calls, which cost money: `--budget-usd` stops
-    the run once that much is spent, and `--scenario`, `--arm`,
-    `--variant` and `--trials N` pick what runs. `--help` lists the rest.
+  fact changed; calls, tokens and latency. Baselines: no memory, one
+  `MEMORY.md`, BM25 over raw transcripts. The retrieval evaluation,
+  which measured recall as near-duplicates pile up for BM25, ColBERT and
+  the two fused, was removed with ColBERT (ADR 0052).
+  - The end-to-end tasks run with `cargo run --release -p tau-memory-e2e`,
+    searching memory and transcripts with BM25. They make real model
+    calls, which cost money: `--budget-usd` stops the run once that much
+    is spent, and `--scenario`, `--arm`, `--variant` and `--trials N`
+    pick what runs. `--help` lists the rest.
     - Access is a saved ChatGPT sign-in with plan usage: `--chatgpt ID`,
       or tau's active account. The model defaults to tau-ui's. Without
       a sign-in, nothing runs.

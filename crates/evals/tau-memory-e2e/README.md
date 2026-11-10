@@ -50,14 +50,14 @@ and read, and in the changed variant whether the old fact was used.
 ## How it fits
 
 It builds on `tau-memory-host` (the memory plugin, its notes and its
-indexes), `tau-compaction` (run by `tau-luau-plugins-host`), `tau-tools-host`, `tau-agent`, `tau-ai`,
+index), `tau-compaction` (run by `tau-luau-plugins-host`), `tau-tools-host`, `tau-agent`, `tau-ai`,
 `tau-store` and `tau-store-sqlite`. No other crate depends on it.
 
 ## Usage
 
 ```sh
 cargo run --release -p tau-memory-e2e -- --budget-usd 2 --json results.json
-cargo run --release -p tau-memory-e2e --features docbert -- --trials 3
+cargo run --release -p tau-memory-e2e -- --trials 3
 ```
 
 | Option             | Effect                                                          |
@@ -72,7 +72,6 @@ cargo run --release -p tau-memory-e2e --features docbert -- --trials 3
 | `--chatgpt ID`     | Use this ChatGPT account's plan, from tau's sign-ins            |
 | `--max-turns N`    | Turns a run may take (default 40)                               |
 | `--work DIR`       | Where trial repositories are made (default: the temp directory) |
-| `--keywords`       | Search with BM25 even when built with `docbert`                 |
 | `--list`           | List the scenarios and arms, and exit                           |
 | `--help`           | Print the usage, and exit                                       |
 
@@ -85,12 +84,6 @@ Every trial is two agent runs, which cost money; use `--budget-usd` to
 cap the spend. Each trial's progress goes to standard error. Standard
 output gets a table per arm and variant, the total spent, and the reason
 when it stopped early.
-
-## Features
-
-- `docbert` (off by default): search memory and transcripts with
-  docbert's ColBERT model, as the app does, through
-  `tau-memory-host/docbert`. Without it, the search is BM25.
 
 ## Testing
 

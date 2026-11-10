@@ -1,7 +1,7 @@
 # Research: agent memory, for tau-memory
 
 - Status: decided 2026-09-29 (see Decisions); the plan is in
-  [plugins.md](../reference/plugins.md#tau-memory-a-zettelkasten-on-docbert)
+  [plugins.md](../reference/plugins.md#tau-memory-a-zettelkasten)
 - Date: 2026-09-29
 - Checked against: Codex `codex-rs` at `6c49240`; akitaonrails/ai-memory
   at `0e560e3` (v2.4.1); letta-ai/letta-code at `2b95889` and letta
@@ -70,7 +70,7 @@ across sessions.
 
 ## Where tau-memory stands
 
-The plan is in [plugins.md](../reference/plugins.md#tau-memory-a-zettelkasten-on-docbert):
+The plan is in [plugins.md](../reference/plugins.md#tau-memory-a-zettelkasten):
 four tools (`memory_write`, `memory_search`, `memory_read`,
 `memory_link`), top notes put into `plan.context` at `start`, optional
 distillation at `finish`, one Markdown file per note indexed by
@@ -457,16 +457,16 @@ A proposal to argue with, not a decision.
 
 Asked and answered on 2026-09-29; the plan in plugins.md follows them.
 
-| Question                    | Decision                                                                                               |
-| --------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Where repository notes live | tau's data directory, private and versioned; nothing in the project's history                          |
-| Background consolidation    | Built, off until the evaluation shows it helps; on by default since 2026-10-07, a setting              |
-| Context at `start`          | The index note plus the top few search hits, fenced as untrusted                                       |
-| The index note              | Written by the agent, about 2k tokens; a write past the budget is refused with a request to rewrite it |
-| Note and link types         | The full proposed sets                                                                                 |
-| Interference                | Measured in the evaluation: recall as near-duplicates pile up, for BM25, ColBERT and the hybrid        |
-| Staleness against code      | Notes `about` a file are flagged when a later commit touches it                                        |
-| Search                      | ColBERT alone, after the evaluation showed it beating BM25 and the fusion on paraphrases (2026-09-29)  |
+| Question                    | Decision                                                                                                                                                                  |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Where repository notes live | tau's data directory, private and versioned; nothing in the project's history                                                                                             |
+| Background consolidation    | Built, off until the evaluation shows it helps; on by default since 2026-10-07, a setting                                                                                 |
+| Context at `start`          | The index note plus the top few search hits, fenced as untrusted                                                                                                          |
+| The index note              | Written by the agent, about 2k tokens; a write past the budget is refused with a request to rewrite it                                                                    |
+| Note and link types         | The full proposed sets                                                                                                                                                    |
+| Interference                | Measured in the evaluation: recall as near-duplicates pile up, for BM25, ColBERT and the hybrid; the evaluation was removed with ColBERT (2026-11-09)                     |
+| Staleness against code      | Notes `about` a file are flagged when a later commit touches it                                                                                                           |
+| Search                      | ColBERT alone, after the evaluation showed it beating BM25 and the fusion on paraphrases (2026-09-29); BM25 alone since 2026-11-09, so memory can move to Luau (ADR 0052) |
 
 ## Sources
 

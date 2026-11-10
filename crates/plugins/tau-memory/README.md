@@ -109,7 +109,7 @@ cargo nextest run --release -p tau-ui-remote memory_import::
 ## Further reading
 
 - [docs/reference/plugins.md](../../../docs/reference/plugins.md), section
-  "`tau-memory`: a zettelkasten on docbert"
+  "`tau-memory`: a zettelkasten"
 - [docs/research/memory.md](../../../docs/research/memory.md), the research
   behind the design
 - [ADR 0017: plugins bring their UI](../../../docs/decisions/0017-plugins-bring-their-ui.md)
