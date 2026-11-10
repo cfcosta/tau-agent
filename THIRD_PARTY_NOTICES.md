@@ -45,7 +45,7 @@ SOFTWARE.
 ## pstack
 
 <https://github.com/cursor/plugins/tree/main/pstack>. The skills
-`tau-skills` ships (`crates/plugins/tau-skills/skills`) are adapted
+`tau-skills` ships (`plugins/tau-skills/skills`) are adapted
 from pstack's: its principles, the poteto-mode playbooks, and `how`,
 `why`, `architect`, `arena`, `interrogate`, `blast-radius`, `tdd`,
 `technical-writing`, `correct`, `reflect`, `figure-it-out`, `teach` and

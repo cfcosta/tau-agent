@@ -226,3 +226,94 @@ fn a_new_folder_waits_for_an_allow() {
         ["reading the run's workspace"]
     );
 }
+
+/// Frontmatter is the file's start, between `---` lines, whatever the
+/// line ends: each key with its value as written, and the text after it;
+/// anything else says why it is none (ADR 0050, gap K).
+#[test]
+fn frontmatter_is_found_at_the_start_only() {
+    let f = Fixture::new();
+    let files = f.files(&["workspace"]);
+    let front = |text: &str| {
+        std::fs::write(f.dir.path().join("work/SKILL.md"), text).unwrap();
+        call(&files, "files_frontmatter", json!({ "path": "SKILL.md" }))
+            .unwrap()
+    };
+    let read = front(
+        "---\nname: a\ncount: 404\nratio: 1.0\non: true\nnone: ~\nlist: [x]\n---\nbody\n",
+    );
+    assert_eq!(read["body"], json!("body\n"));
+    let keys: Vec<(String, String, Value)> = read["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|key| {
+            (
+                key["key"].as_str().unwrap().to_owned(),
+                key["kind"].as_str().unwrap().to_owned(),
+                key["text"].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            ("name".into(), "string".into(), json!("a")),
+            ("count".into(), "integer".into(), json!("404")),
+            ("ratio".into(), "float".into(), json!("1.0")),
+            ("on".into(), "boolean".into(), json!("true")),
+            ("none".into(), "null".into(), Value::Null),
+            ("list".into(), "other".into(), Value::Null),
+        ]
+    );
+    assert_eq!(
+        front("---\r\nname: a\r\n---\r\nbody")["body"],
+        json!("body")
+    );
+    assert_eq!(front("\u{feff}---\nx: 1\n---")["body"], json!(""));
+    assert_eq!(
+        front("# no frontmatter\n")["error"],
+        json!("SKILL.md does not start with frontmatter (---)")
+    );
+    assert_eq!(
+        front("---\nname: a\n")["error"],
+        json!("SKILL.md's frontmatter has no closing ---")
+    );
+    assert_eq!(
+        front("---\n- a\n---\n")["error"],
+        json!("its frontmatter is not a list of keys and values")
+    );
+}
+
+/// `package`, `data` and `skills` name the folders the host gives, and
+/// a folder in one; the roots say where each is.
+#[test]
+fn the_package_data_and_skills_folders_are_where_the_host_says() {
+    let f = Fixture::new();
+    let declared: Vec<String> =
+        ["package/skills", "skills"].map(str::to_owned).to_vec();
+    let files = Files::new(&declared, None, None)
+        .with_package(Some(f.dir.path().join("work")))
+        .with_skills(Some(f.dir.path().join("outside")));
+    let roots = call(&files, "files_roots", json!({})).unwrap();
+    assert_eq!(roots["package/skills"], json!(f.path("work/skills")));
+    assert_eq!(roots["skills"], json!(f.path("outside")));
+    assert_eq!(
+        call(
+            &files,
+            "files_read",
+            json!({ "path": f.path("outside/secret.txt") })
+        ),
+        Ok(json!("secret"))
+    );
+    let error = call(
+        &files,
+        "files_read",
+        json!({ "path": f.path("work/notes.txt") }),
+    )
+    .unwrap_err();
+    assert!(
+        error.contains("its folder is not in `uses.files`"),
+        "{error}"
+    );
+}

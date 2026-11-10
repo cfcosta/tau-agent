@@ -80,6 +80,19 @@ pub struct LeftOut(pub &'static [&'static str]);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceDir(pub PathBuf);
 
+/// Where the person's skills are: `~/.agents/skills`, the folder other
+/// agents read them from too, or a test's own. A host service, by
+/// [`crate::services::names::SKILLS_DIR`]; what a Luau plugin's
+/// `uses.files` names `skills` (ADR 0050, gap K).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillsDir(pub PathBuf);
+
+/// Where plugins put the skills tau ships of theirs, under tau's data
+/// directory: one folder each, as in the person's folder. tau-skills
+/// offers them as `data/skills`, a skill of the person's with the same
+/// name in their place.
+pub const SHIPPED_SKILLS: &str = "skills";
+
 /// How a run's commands start. The host puts it in
 /// [`RunCtx::services`] for each run with a workspace.
 #[derive(Clone)]

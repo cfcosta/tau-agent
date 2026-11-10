@@ -15,6 +15,8 @@ use std::{
 pub mod names {
     /// A run's workspace ([`crate::WorkspaceDir`]).
     pub const WORKSPACE_DIR: &str = "tau.workspace-dir";
+    /// Where the person's skills are ([`crate::SkillsDir`]).
+    pub const SKILLS_DIR: &str = "tau.skills-dir";
     /// What a run's turns leave in its workspace ([`crate::TurnHooks`]).
     pub const TURN_HOOKS: &str = "tau.turn-hooks";
     /// The commands a run leaves running ([`crate::RunCommands`]).

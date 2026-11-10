@@ -33,7 +33,9 @@
     "recover": false,
     "run_end": true,
     "view": true,
-    "settings_view": false
+    "settings_view": false,
+    "app": false,
+    "page": false
   },
   "actions": ["/goal", "act"],
   "events": [],
@@ -191,5 +193,6 @@
   "pages": [],
   "repo_nav": null,
   "picker_auto": null,
-  "continues": 20
+  "continues": 20,
+  "listed_commands": false
 }

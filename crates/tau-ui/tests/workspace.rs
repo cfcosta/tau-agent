@@ -1390,8 +1390,9 @@ fn a_slash_lists_the_commands_that_work_here(cx: &mut TestAppContext) {
     let mut skills: Vec<String> =
         ["code-review", "release-notes", "tau-plugins"]
             .into_iter()
-            .chain(tau_skills::shipped::SKILLS.iter().map(|(name, _)| *name))
-            .filter(|name| !name.starts_with(tau_skills::PRINCIPLE))
+            .map(str::to_owned)
+            .chain(shipped_skills())
+            .filter(|name| !name.starts_with("principle-"))
             .map(|name| format!("/{name}"))
             .collect();
     skills.sort();
@@ -3414,4 +3415,20 @@ fn a_plugins_ui_state_set_on_a_phone_reaches_the_computer(
         phone.update(&mut phone_cx, |ws, _| ws.synced()),
         computer.update(&mut computer_cx, |ws, _| ws.synced()),
     );
+}
+
+/// The skills tau-skills ships, by their folders' names in its package.
+fn shipped_skills() -> Vec<String> {
+    let dir = tau_luau_plugins::packages::find()
+        .unwrap()
+        .join(tau_luau_plugins::names::SKILLS)
+        .join("skills");
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
 }

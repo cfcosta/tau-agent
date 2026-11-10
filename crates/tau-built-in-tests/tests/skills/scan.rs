@@ -1,15 +1,19 @@
-//! Reading the skills folder against what was written to it: every
-//! folder is a skill or a problem, never both and never lost; a skill
-//! has the name and description its frontmatter gives, however the YAML
-//! writes them; and the instructions list exactly the skills.
+//! tau-skills' Luau reading a skills folder against what was written to
+//! it, through the host's YAML parser: every folder is a skill or a
+//! problem, never both and never lost; a skill has the name and
+//! description its frontmatter gives, however the YAML writes them; and
+//! the instructions list exactly the skills.
 
 use std::{collections::BTreeSet, fs, path::Path};
 
 use hegel::{TestCase, generators as gs};
-use tau_skills::{
-    SKILL_FILE,
-    scan::{self, DESCRIPTION_LIMIT, HEADING, NAME_LIMIT},
-};
+
+use super::scan as read;
+
+const SKILL_FILE: &str = "SKILL.md";
+const NAME_LIMIT: usize = 64;
+const DESCRIPTION_LIMIT: usize = 1024;
+const HEADING: &str = "# Skills";
 
 /// One folder as a test writes it.
 #[derive(Debug, Clone)]
@@ -204,7 +208,7 @@ fn every_folder_is_a_skill_or_a_problem(tc: TestCase) {
         write(home.path(), &folder_name, folder);
         expected.push((folder_name, folder.clone()));
     }
-    let skills = scan::scan(home.path());
+    let skills = read(home.path());
 
     // Each folder once, as a skill or a problem.
     let found: BTreeSet<_> =
@@ -261,7 +265,7 @@ fn every_folder_is_a_skill_or_a_problem(tc: TestCase) {
     }
 
     // The instructions list exactly the skills, a line each.
-    match scan::section(&skills) {
+    match skills.section.clone() {
         None => assert!(skills.found.is_empty()),
         Some(section) => {
             assert!(section.starts_with(HEADING));
@@ -278,26 +282,13 @@ fn every_folder_is_a_skill_or_a_problem(tc: TestCase) {
     }
 }
 
-/// Frontmatter is the file's start, between `---` lines, whatever the
-/// line ends; anything else is not a skill's.
-#[test]
-fn frontmatter_is_found_at_the_start_only() {
-    let (front, body) = scan::split("---\nname: a\n---\nbody\n").unwrap();
-    assert_eq!((front, body), ("name: a\n", "body\n"));
-    let (front, body) = scan::split("---\r\nname: a\r\n---\r\nbody").unwrap();
-    assert_eq!((front, body), ("name: a\r\n", "body"));
-    assert_eq!(scan::split("\u{feff}---\nx: 1\n---").unwrap().1, "");
-    assert!(scan::split("# no frontmatter\n").is_err());
-    assert!(scan::split("---\nname: a\n").is_err());
-}
-
 /// A missing folder holds no skills, and says nothing is wrong.
 #[test]
 fn a_missing_folder_holds_nothing() {
     let home = tempfile::tempdir().unwrap();
-    let skills = scan::scan(&home.path().join("nowhere"));
+    let skills = read(&home.path().join("nowhere"));
     assert!(skills.found.is_empty() && skills.problems.is_empty());
-    assert_eq!(scan::section(&skills), None);
+    assert_eq!(skills.section, None);
 }
 
 /// Unquoted, YAML reads a name like `404` as a number and `true` as a
@@ -316,7 +307,7 @@ fn unquoted_names_read_as_written() {
         )
         .unwrap();
     }
-    let skills = scan::scan(home.path());
+    let skills = read(home.path());
     let names: Vec<&str> = skills
         .found
         .iter()
@@ -329,8 +320,9 @@ fn unquoted_names_read_as_written() {
 /// in, unless the person has one of the same name.
 #[test]
 fn a_persons_skill_replaces_a_built_in_one() {
-    let (home, shipped) =
+    let (home, package) =
         (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let shipped = package.path().join("skills");
     let skill = |dir: &std::path::Path, name: &str, description: &str| {
         fs::create_dir_all(dir.join(name)).unwrap();
         fs::write(
@@ -339,11 +331,11 @@ fn a_persons_skill_replaces_a_built_in_one() {
         )
         .unwrap();
     };
-    skill(shipped.path(), "tau-plugins", "tau's");
-    skill(shipped.path(), "built", "tau's");
+    skill(&shipped, "tau-plugins", "tau's");
+    skill(&shipped, "built", "tau's");
     skill(home.path(), "tau-plugins", "mine");
     skill(home.path(), "own", "mine");
-    let skills = scan::scan_all(Some(home.path()), shipped.path());
+    let skills = super::read(Some(home.path()), Some(package.path()));
     let found: Vec<(&str, &str, bool)> = skills
         .found
         .iter()
@@ -364,7 +356,7 @@ fn a_persons_skill_replaces_a_built_in_one() {
         ]
     );
     // With no folder of the person's, the shipped ones are all there is.
-    let skills = scan::scan_all(None, shipped.path());
+    let skills = super::read(None, Some(package.path()));
     assert_eq!(skills.found.len(), 2);
     assert!(skills.found.iter().all(|skill| skill.builtin));
 }
@@ -382,7 +374,7 @@ fn principles_and_playbooks_are_listed_under_their_headings() {
         )
         .unwrap();
     }
-    let section = scan::section(&scan::scan(home.path())).unwrap();
+    let section = read(home.path()).section.unwrap();
     let order: Vec<&str> = section
         .lines()
         .filter(|line| line.starts_with("- ") || line.starts_with("## "))

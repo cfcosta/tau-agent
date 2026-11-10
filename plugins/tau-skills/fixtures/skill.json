@@ -1,0 +1,61 @@
+{
+  "state": {
+    "loaded": {
+      "call_skill": {
+        "description": "Writes release notes from the commits between two tags: groups by kind, leads with what users notice.",
+        "file": "~/.agents/skills/release-notes/SKILL.md",
+        "instructions": "Run scripts/commits.sh with the two tags, group what it lists, and lead with what users will notice.",
+        "name": "release-notes"
+      }
+    },
+    "order": ["code-review", "release-notes"],
+    "skills": {
+      "code-review": {
+        "description": "Reviews the current diff for correctness bugs, ranked by severity, with a failing input for each.",
+        "dir": "~/.agents/skills/code-review"
+      },
+      "release-notes": {
+        "description": "Writes release notes from the commits between two tags: groups by kind, leads with what users notice.",
+        "dir": "~/.agents/skills/release-notes"
+      }
+    }
+  },
+  "text": "Skill release-notes. Its folder, where the files it names are: ~/.agents/skills/release-notes\n\nRun scripts/commits.sh with the two tags, group what it lists, and lead with what users will notice.",
+  "view": {
+    "calls": {
+      "call_skill": {
+        "body": {
+          "children": [
+            {
+              "piece": "mono",
+              "text": "~/.agents/skills/release-notes/SKILL.md"
+            },
+            {
+              "piece": "text",
+              "text": "Run scripts/commits.sh with the two tags, group what it lists, and lead with what users will notice."
+            }
+          ],
+          "piece": "stack"
+        },
+        "head": {
+          "children": [
+            {
+              "name": "skill",
+              "piece": "icon",
+              "tone": "info"
+            },
+            {
+              "piece": "mono",
+              "text": "release-notes"
+            },
+            {
+              "piece": "text",
+              "text": "Writes release notes from the commits between two tags: groups by kind, leads with what users notice."
+            }
+          ],
+          "piece": "row"
+        }
+      }
+    }
+  }
+}

@@ -35,6 +35,12 @@ pub struct Files {
     workspace: Option<PathBuf>,
     home: Option<PathBuf>,
     blobs: Option<PathBuf>,
+    /// The plugin's own package, for a plugin tau comes with.
+    package: Option<PathBuf>,
+    /// tau's data folder.
+    data: Option<PathBuf>,
+    /// The person's skills folder, as the host has it.
+    skills: Option<PathBuf>,
 }
 
 impl Files {
@@ -50,7 +56,28 @@ impl Files {
             workspace,
             home: std::env::var_os("HOME").map(PathBuf::from),
             blobs,
+            package: None,
+            data: Some(crate::packages::data_dir()),
+            skills: None,
         }
+    }
+
+    /// With the person's skills folder at `dir` (`uses.files`' `skills`).
+    pub fn with_skills(mut self, dir: Option<PathBuf>) -> Self {
+        self.skills = dir;
+        self
+    }
+
+    /// With the plugin's own package at `dir` (`uses.files`' `package`).
+    pub fn with_package(mut self, dir: Option<PathBuf>) -> Self {
+        self.package = dir;
+        self
+    }
+
+    /// With tau's data folder at `dir` (`uses.files`' `data`).
+    pub fn with_data(mut self, dir: PathBuf) -> Self {
+        self.data = Some(dir);
+        self
     }
 
     /// The calls a script makes for `ctx.files` and `ctx.blobs`.
@@ -59,6 +86,11 @@ impl Files {
             ("files_read", "A file's text, or bytes in base64."),
             ("files_list", "What a folder holds."),
             ("files_image", "A file's size, and the image it is."),
+            (
+                "files_frontmatter",
+                "A Markdown file's YAML frontmatter, and the text after it.",
+            ),
+            ("files_roots", "Where the folders `uses.files` names are."),
             ("blobs_put", "Keeps a file's bytes as a blob."),
         ]
         .into_iter()
@@ -77,7 +109,12 @@ impl Files {
     pub fn handles(name: &str) -> bool {
         matches!(
             name,
-            "files_read" | "files_list" | "files_image" | "blobs_put"
+            "files_read"
+                | "files_list"
+                | "files_image"
+                | "files_frontmatter"
+                | "files_roots"
+                | "blobs_put"
         )
     }
 
@@ -87,6 +124,9 @@ impl Files {
         name: &str,
         args: &Value,
     ) -> Result<ToolReply, String> {
+        if name == "files_roots" {
+            return Ok(ToolReply::success(self.named_roots()));
+        }
         let input = args["path"]
             .as_str()
             .ok_or_else(|| format!("`{name}` needs its `path`, a string"))?;
@@ -95,6 +135,7 @@ impl Files {
             "files_read" => read(input, &path, args).await?,
             "files_list" => list(input, &path).await?,
             "files_image" => image(input, &path).await?,
+            "files_frontmatter" => frontmatter(input, &path).await?,
             "blobs_put" => self.put(input, &path).await?,
             other => {
                 return Err(format!("`{other}` is not a call of ctx.files"));
@@ -141,21 +182,58 @@ impl Files {
     fn roots(&self) -> Vec<PathBuf> {
         self.declared
             .iter()
-            .filter_map(|folder| {
-                if folder == tau_luau_plugins::WORKSPACE {
-                    return self.workspace.clone();
-                }
-                if folder == "~" {
-                    return self.home.clone();
-                }
-                if let Some(rest) = folder.strip_prefix("~/") {
-                    return self.home.as_ref().map(|home| home.join(rest));
-                }
-                Path::new(folder)
-                    .is_absolute()
-                    .then(|| PathBuf::from(folder))
-            })
+            .filter_map(|folder| self.root(folder))
             .collect()
+    }
+
+    /// Where the folder `folder` of `uses.files` is, if it is anywhere.
+    fn root(&self, folder: &str) -> Option<PathBuf> {
+        let under = |base: &Option<PathBuf>, token: &str| {
+            let base = base.as_ref()?;
+            if folder == token {
+                return Some(base.clone());
+            }
+            let rest = folder.strip_prefix(token)?.strip_prefix('/')?;
+            Some(base.join(rest))
+        };
+        if folder == tau_luau_plugins::WORKSPACE {
+            return self.workspace.clone();
+        }
+        if folder == "~" {
+            return self.home.clone();
+        }
+        if let Some(rest) = folder.strip_prefix("~/") {
+            return self.home.as_ref().map(|home| home.join(rest));
+        }
+        if let Some(path) = under(&self.package, tau_luau_plugins::PACKAGE)
+            .or_else(|| under(&self.data, tau_luau_plugins::DATA))
+            .or_else(|| under(&self.skills, tau_luau_plugins::SKILLS))
+        {
+            return Some(path);
+        }
+        Path::new(folder)
+            .is_absolute()
+            .then(|| PathBuf::from(folder))
+    }
+
+    /// Where each folder `uses.files` names is, of those that are
+    /// somewhere.
+    pub fn root_paths(&self) -> Vec<String> {
+        self.roots()
+            .into_iter()
+            .map(|path| path.display().to_string())
+            .collect()
+    }
+
+    /// Each folder `uses.files` names that is somewhere, to its path.
+    fn named_roots(&self) -> Value {
+        let mut named = serde_json::Map::new();
+        for folder in &self.declared {
+            if let Some(path) = self.root(folder) {
+                named.insert(folder.clone(), json!(path.display().to_string()));
+            }
+        }
+        Value::Object(named)
     }
 
     /// Keeps the file at `path` as a blob.
@@ -291,7 +369,8 @@ async fn list(input: &str, path: &Path) -> Result<Value, String> {
         .await
         .map_err(|error| format!("Cannot list {input}: {error}"))?
     {
-        let meta = entry.metadata().await.ok();
+        // Through a link, as a folder linked in is one.
+        let meta = tokio::fs::metadata(entry.path()).await.ok();
         found.push(json!({
             "name": entry.file_name().to_string_lossy(),
             "dir": meta.as_ref().is_some_and(std::fs::Metadata::is_dir),
@@ -353,4 +432,99 @@ fn dimensions(bytes: &[u8], mime: &str) -> Option<(u32, u32)> {
         .ok()?
         .into_dimensions()
         .ok()
+}
+
+/// The Markdown file at `path`'s YAML frontmatter, between `---` lines at
+/// its start, and the text after it: `{ keys, body }`, each key with its
+/// value's `kind` (`string`, `integer`, `float`, `boolean`, `null` or
+/// `other`) and its `text` as written; or `{ error }` when it has none,
+/// or it is not a mapping of YAML.
+async fn frontmatter(input: &str, path: &Path) -> Result<Value, String> {
+    let text = tokio::fs::read_to_string(path)
+        .await
+        .map_err(|error| format!("Cannot read {input}: {error}"))?;
+    let file = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| input.to_owned());
+    Ok(match split_front(&text, &file) {
+        Err(error) => json!({ "error": error }),
+        Ok((front, body)) => match front_keys(front) {
+            Err(error) => json!({ "error": error, "body": body }),
+            Ok(keys) => json!({ "keys": keys, "body": body }),
+        },
+    })
+}
+
+/// `text` split into its frontmatter and what follows it.
+fn split_front<'a>(
+    text: &'a str,
+    file: &str,
+) -> Result<(&'a str, &'a str), String> {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let rest = text
+        .strip_prefix("---\n")
+        .or_else(|| text.strip_prefix("---\r\n"))
+        .ok_or_else(|| {
+            format!("{file} does not start with frontmatter (---)")
+        })?;
+    let mut at = 0;
+    for line in rest.split_inclusive('\n') {
+        if line.trim_end() == "---" {
+            return Ok((&rest[..at], &rest[at + line.len()..]));
+        }
+        at += line.len();
+    }
+    if rest[at..].trim_end() == "---" {
+        return Ok((&rest[..at], ""));
+    }
+    Err(format!("{file}'s frontmatter has no closing ---"))
+}
+
+/// The keys of the frontmatter `front`, in order.
+fn front_keys(front: &str) -> Result<Vec<Value>, String> {
+    use saphyr::{LoadableYamlNode, Scalar, Yaml};
+    let not_yaml = |error: &dyn std::fmt::Display| {
+        format!("its frontmatter is not YAML: {error}")
+    };
+    let mut documents =
+        Yaml::load_from_str(front).map_err(|error| not_yaml(&error))?;
+    if documents.len() > 1 {
+        return Err(not_yaml(&"it holds more than one document"));
+    }
+    let map = match documents.pop() {
+        None | Some(Yaml::Value(Scalar::Null)) => return Ok(Vec::new()),
+        Some(Yaml::Mapping(map)) => map,
+        Some(_) => {
+            return Err(
+                "its frontmatter is not a list of keys and values".into()
+            );
+        }
+    };
+    Ok(map
+        .into_iter()
+        .filter_map(|(key, value)| {
+            let Yaml::Value(Scalar::String(key)) = key else {
+                return None;
+            };
+            let (kind, text) = match &value {
+                Yaml::Value(Scalar::Null) => ("null", Value::Null),
+                Yaml::Value(Scalar::String(text)) => {
+                    ("string", json!(text.to_string()))
+                }
+                Yaml::Value(Scalar::Integer(number)) => {
+                    ("integer", json!(number.to_string()))
+                }
+                // `1.0` stays `1.0`, which `Display` would make `1`.
+                Yaml::Value(Scalar::FloatingPoint(number)) => {
+                    ("float", json!(format!("{:?}", number.0)))
+                }
+                Yaml::Value(Scalar::Boolean(flag)) => {
+                    ("boolean", json!(flag.to_string()))
+                }
+                _ => ("other", Value::Null),
+            };
+            Some(json!({ "key": key.to_string(), "kind": kind, "text": text }))
+        })
+        .collect())
 }

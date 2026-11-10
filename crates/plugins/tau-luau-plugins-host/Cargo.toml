@@ -31,9 +31,10 @@ tau-clock.workspace = true
 tau-artifacts.workspace = true
 image.workspace = true
 base64.workspace = true
+# `ctx.files.frontmatter` (ADR 0050, gap K): a skill's descriptions are often
+# YAML block scalars.
+saphyr = { version = "0.2.2", default-features = false }
 tau-luau-plugins.workspace = true
-# Where the skill tau ships is installed.
-tau-skills = { path = "../tau-skills", default-features = false }
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 tau-vcs-host.workspace = true

@@ -8854,7 +8854,6 @@ dependencies = [
  "tau-clock",
  "tau-luau-plugins",
  "tau-luau-plugins-host",
- "tau-skills",
  "tau-testing",
  "tau-tools",
  "tau-tools-host",
@@ -8916,6 +8915,7 @@ dependencies = [
  "futures-util",
  "hegeltest",
  "jsonschema",
+ "serde",
  "serde_json",
  "tau-agent",
  "tau-ai",
@@ -9047,7 +9047,6 @@ dependencies = [
  "tau-memory-host",
  "tau-phones",
  "tau-remote",
- "tau-skills",
  "tau-store",
  "tau-testing",
  "tau-tools",
@@ -9150,6 +9149,7 @@ dependencies = [
  "hegeltest",
  "hegeltest-c",
  "image",
+ "saphyr",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -9164,7 +9164,6 @@ dependencies = [
  "tau-luau-plugins",
  "tau-plugins",
  "tau-scripted",
- "tau-skills",
  "tau-store",
  "tau-store-sqlite",
  "tau-testing",
@@ -9394,7 +9393,6 @@ dependencies = [
  "tau-memory",
  "tau-notify",
  "tau-phones",
- "tau-skills",
  "tau-sqlite",
  "tau-tools",
  "tau-ui-plugin",
@@ -9449,26 +9447,6 @@ dependencies = [
  "futures-util",
  "serde_json",
  "tau-ai",
- "tokio",
-]
-
-[[package]]
-name = "tau-skills"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "futures-util",
- "hegeltest",
- "saphyr",
- "serde",
- "serde_json",
- "tau-agent",
- "tau-store-sqlite",
- "tau-testing",
- "tau-ui-kit",
- "tau-ui-plugin",
- "tempfile",
  "tokio",
 ]
 
@@ -9626,7 +9604,6 @@ dependencies = [
  "tau-phones",
  "tau-plugins",
  "tau-remote",
- "tau-skills",
  "tau-sqlite",
  "tau-store",
  "tau-store-sqlite",

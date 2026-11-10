@@ -1,24 +1,40 @@
-//! The skills tau-skills ships, as the model gets them: installed into
-//! tau's data directory, each one a skill the scan offers, every skill
-//! and reference file they point to there, and an install that leaves
-//! only what this build ships.
+//! The skills tau-skills ships, in its package (ADR 0050, gap K): each
+//! one a skill the plugin offers and none a problem, every skill and
+//! reference file they point to there, and none tied to one language or
+//! another harness.
 
-use std::{collections::BTreeSet, fs, path::Path};
-
-use tau_skills::{
-    SKILL_FILE,
-    scan,
-    shipped::{self, MANIFEST, SKILLS},
+use std::{
+    collections::BTreeSet,
+    fs,
+    path::{Path, PathBuf},
 };
 
 /// Skills a shipped one may mention without tau shipping them: the
 /// person's own, used when the run has them.
 const OPTIONAL: [&str; 2] = ["diataxis", "asd-ste100"];
 
-fn installed() -> tempfile::TempDir {
-    let dir = tempfile::tempdir().unwrap();
-    shipped::install(dir.path()).unwrap();
-    dir
+/// The package, whose `skills/` holds what it ships.
+fn package() -> PathBuf {
+    tau_luau_plugins::packages::find()
+        .unwrap()
+        .join(tau_luau_plugins::names::SKILLS)
+}
+
+/// Each shipped skill: its folder's name, and its files by path, with
+/// their text.
+fn shipped() -> Vec<(String, Vec<(String, String)>)> {
+    let dir = package().join("skills");
+    let mut skills: Vec<(String, Vec<(String, String)>)> = fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            (name, tree(&entry.path()))
+        })
+        .collect();
+    skills.sort();
+    skills
 }
 
 /// Every file under `dir`, with its text, by path.
@@ -41,6 +57,16 @@ fn tree(dir: &Path) -> Vec<(String, String)> {
     files
 }
 
+/// Whether `name` is one a skill may have.
+fn named_so(name: &str) -> bool {
+    (1..=64).contains(&name.len())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && !name.starts_with('-')
+        && !name.ends_with('-')
+}
+
 /// The names between backticks right before " skill" in `text`: the
 /// skills it tells the model to load.
 fn skills_named(text: &str) -> Vec<String> {
@@ -51,7 +77,7 @@ fn skills_named(text: &str) -> Vec<String> {
         if let Some(open) = before.rfind('`') {
             let name = &before[open + 1..];
             // A pattern such as `playbook-*` names a kind, not a skill.
-            if scan::check_name(name).is_ok() {
+            if named_so(name) {
                 names.push(name.to_owned());
             }
         }
@@ -62,15 +88,16 @@ fn skills_named(text: &str) -> Vec<String> {
 
 #[test]
 fn every_shipped_skill_is_offered_and_none_is_a_problem() {
-    let dir = installed();
-    let skills = scan::scan(dir.path());
+    let skills = super::read(None, Some(&package()));
     assert!(skills.problems.is_empty(), "{:?}", skills.problems);
     let found: Vec<&str> =
         skills.found.iter().map(|s| s.name.as_str()).collect();
-    let shipped: Vec<&str> = SKILLS.iter().map(|(name, _)| *name).collect();
+    let shipped: Vec<String> =
+        shipped().into_iter().map(|(name, _)| name).collect();
     assert_eq!(found, shipped);
     assert!(shipped.len() > 40, "{shipped:?}");
     for skill in &skills.found {
+        assert!(skill.builtin, "{}", skill.name);
         assert!(
             skill.description.len() <= 400,
             "{}: {}",
@@ -82,14 +109,14 @@ fn every_shipped_skill_is_offered_and_none_is_a_problem() {
 
 #[test]
 fn every_skill_and_reference_a_skill_names_is_there() {
-    let dir = installed();
-    let shipped: BTreeSet<&str> =
-        SKILLS.iter().map(|(name, _)| *name).collect();
+    let skills = shipped();
+    let names: BTreeSet<&str> =
+        skills.iter().map(|(name, _)| name.as_str()).collect();
     let mut missing = Vec::new();
-    for (name, files) in SKILLS {
-        for (path, text) in *files {
+    for (name, files) in &skills {
+        for (path, text) in files {
             for named in skills_named(text) {
-                if !shipped.contains(named.as_str())
+                if !names.contains(named.as_str())
                     && !OPTIONAL.contains(&named.as_str())
                 {
                     missing.push(format!(
@@ -97,7 +124,7 @@ fn every_skill_and_reference_a_skill_names_is_there() {
                     ));
                 }
             }
-            let mut rest = *text;
+            let mut rest = text.as_str();
             while let Some(at) = rest.find("references/") {
                 let tail = &rest[at..];
                 let end = tail
@@ -106,43 +133,17 @@ fn every_skill_and_reference_a_skill_names_is_there() {
                     })
                     .unwrap_or(tail.len());
                 let reference = tail[..end].trim_end_matches('.');
-                if !dir.path().join(name).join(reference).exists() {
+                if !package().join("skills").join(name).join(reference).exists()
+                {
                     missing
                         .push(format!("{name}/{path} points to {reference}"));
                 }
                 rest = &tail[end..];
             }
         }
-        assert!(files.iter().any(|(path, _)| *path == SKILL_FILE), "{name}");
+        assert!(files.iter().any(|(path, _)| path == "SKILL.md"), "{name}");
     }
     assert!(missing.is_empty(), "not shipped:\n{}", missing.join("\n"));
-}
-
-#[test]
-fn installing_again_changes_nothing() {
-    let dir = installed();
-    let once = tree(dir.path());
-    shipped::install(dir.path()).unwrap();
-    assert_eq!(tree(dir.path()), once);
-}
-
-/// A skill an earlier build shipped is removed; another plugin's, and
-/// edits to a shipped one, do not survive or are not touched as theirs.
-#[test]
-fn an_install_leaves_only_what_this_build_ships() {
-    let dir = tempfile::tempdir().unwrap();
-    let (first, _) = SKILLS[0];
-    for name in ["retired", "tau-agents", first] {
-        fs::create_dir_all(dir.path().join(name)).unwrap();
-        fs::write(dir.path().join(name).join("stale.md"), "old").unwrap();
-    }
-    fs::write(dir.path().join(MANIFEST), format!("retired\n{first}\n"))
-        .unwrap();
-    shipped::install(dir.path()).unwrap();
-    assert!(!dir.path().join("retired").exists());
-    assert!(dir.path().join("tau-agents/stale.md").exists());
-    assert!(!dir.path().join(first).join("stale.md").exists());
-    assert!(dir.path().join(first).join(SKILL_FILE).exists());
 }
 
 /// Words that tie a shipped skill to one language's toolchain, or to
@@ -179,8 +180,8 @@ const FOREIGN: [&str; 24] = [
 #[test]
 fn no_shipped_skill_assumes_a_language_or_another_harness() {
     let mut found = Vec::new();
-    for (name, files) in SKILLS {
-        for (path, text) in *files {
+    for (name, files) in shipped() {
+        for (path, text) in files {
             let text = text.to_lowercase();
             for word in FOREIGN.iter().filter(|word| text.contains(*word)) {
                 found.push(format!("{name}/{path} says {word:?}"));

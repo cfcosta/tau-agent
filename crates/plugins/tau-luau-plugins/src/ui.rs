@@ -299,6 +299,9 @@ const LUAU_PAGE: &str = "luau-page/";
 /// ([`embed_repo`]): carried out in the repository the page shows.
 const LUAU_REPO: &str = "luau-repo/";
 
+/// The mark of an action of a plugin's page of the app (ADR 0050, gap K).
+const LUAU_APP: &str = "luau-app/";
+
 /// The action of an Allow card's buttons: the person's answer to what a
 /// call asked them to allow, with `{ run, call, allowed }`.
 const ANSWER: &str = "luau-answer";
@@ -845,6 +848,24 @@ impl UiPlugin for LuauPluginsUi {
             return;
         }
         if let Some((plugin, own)) = action
+            .strip_prefix(LUAU_APP)
+            .and_then(|rest| rest.split_once('/'))
+        {
+            if own == "tau.reveal" {
+                reveal(plugin, args, view);
+                return;
+            }
+            if kernel_action(own, args, None, &view.handle) {
+                return;
+            }
+            view.handle.act(Act::AppAction {
+                plugin: plugin.to_owned(),
+                action: own.to_owned(),
+                args: args.clone(),
+            });
+            return;
+        }
+        if let Some((plugin, own)) = action
             .strip_prefix(LUAU_REPO)
             .and_then(|rest| rest.split_once('/'))
         {
@@ -1082,6 +1103,29 @@ impl UiPlugin for LuauPluginsUi {
     }
 }
 
+/// `tau.reveal` of `plugin`'s page of the app: shows `args.path` in the
+/// file manager, when it is in a folder the plugin's `uses.files` names.
+fn reveal(plugin: &str, args: &Value, view: &mut ViewCx<'_, LuauPluginsUi>) {
+    let Some(path) = args["path"].as_str() else {
+        return;
+    };
+    let path = std::path::Path::new(path);
+    let inside = view
+        .data
+        .plugins
+        .iter()
+        .find(|entry| entry.name == plugin)
+        .and_then(|entry| entry.app.as_ref())
+        .is_some_and(|app| app.roots.iter().any(|root| path.starts_with(root)));
+    if inside
+        && !path
+            .components()
+            .any(|part| part == std::path::Component::ParentDir)
+    {
+        view.handle.reveal(path);
+    }
+}
+
 /// The active plugins' slash commands, for the composer's menu.
 fn commands(overview: &Overview) -> Vec<ListedCommand> {
     overview
@@ -1090,7 +1134,8 @@ fn commands(overview: &Overview) -> Vec<ListedCommand> {
         .filter(|entry| matches!(entry.standing, Standing::Active))
         .flat_map(|entry| {
             let declared = entry.declaration.iter().flat_map(|d| &d.commands);
-            declared.map(|command| ListedCommand {
+            let listed = entry.app.iter().flat_map(|app| &app.commands);
+            declared.chain(listed).map(|command| ListedCommand {
                 name: command.name.clone(),
                 hint: if command.description.is_empty() {
                     entry.name.clone()
@@ -1168,6 +1213,7 @@ fn command_of<'a>(
                 .declaration
                 .iter()
                 .flat_map(|d| &d.commands)
+                .chain(entry.app.iter().flat_map(|app| &app.commands))
                 .find(|c| c.name == command)?;
             Some((entry.name.as_str(), spec))
         })
@@ -1314,11 +1360,20 @@ fn nav_entries(overview: &Overview) -> impl Iterator<Item = NavEntry> + '_ {
         .filter_map(|entry| {
             let nav = entry.declaration.as_ref()?.nav.as_ref()?;
             let icon = Icon::named(&nav.icon).unwrap_or(Icon::Plug);
-            Some(NavEntry::new(
-                nav.label.clone(),
-                icon,
-                entry_link(&entry.name),
-            ))
+            let mut item =
+                NavEntry::new(nav.label.clone(), icon, entry_link(&entry.name));
+            // What its `app` keeps says the entry's detail and badge.
+            let said = entry.app.as_ref().map(|app| &app.value["nav"]);
+            item.detail = said
+                .and_then(|nav| nav["detail"].as_str())
+                .map(str::to_owned);
+            item.badge =
+                said.and_then(|nav| nav["badge"].as_str()).map(|badge| {
+                    let tone = nav_tone(said)
+                        .unwrap_or(tau_ui_kit::theme::Tone::Quiet);
+                    (badge.to_owned(), tone)
+                });
+            Some(item)
         })
 }
 
@@ -1704,7 +1759,9 @@ fn row(state: &State) -> Option<RowNote> {
 }
 
 /// The link to `entry`'s own page.
-fn entry_link(entry: &str) -> Link {
+/// The page of `entry`, one of the Luau plugins: its card, or the page it
+/// draws of the app.
+pub fn entry_link(entry: &str) -> Link {
     Link::page(PAGE).param(ENTRY, entry)
 }
 
@@ -1831,6 +1888,11 @@ fn plugin_page(entry: &str, view: &mut ViewCx<'_, LuauPluginsUi>) -> Node {
         };
         return Node::stack([back, empty]);
     };
+    // A page of the app it draws itself (ADR 0050, gap K), in place of
+    // its card.
+    if let Some(page) = found.app.as_ref().and_then(|app| app.page.as_ref()) {
+        return embed_as(page, &found.name, LUAU_APP);
+    }
     let (label, tone) = standing_label(&found.standing);
     let mut standing = vec![Node::Badge {
         text: label.into(),
@@ -2326,6 +2388,7 @@ mod tests {
             tests: Vec::new(),
             keeps_earlier: false,
             built_in: false,
+            app: None,
         };
         let overview = Overview {
             plugins: vec![
@@ -2339,6 +2402,61 @@ mod tests {
         assert_eq!(listed[0].name, "ships-go");
         assert_eq!(listed[0].hint, "ships");
         assert_eq!(listed[0].args, "<what>");
+    }
+
+    /// What a plugin's `app` keeps (ADR 0050, gap K): its listed commands
+    /// join the menu and are found by name to run, and its `nav` gives
+    /// the sidebar entry's detail and badge.
+    #[test]
+    fn what_app_keeps_lists_commands_and_marks_the_sidebar() {
+        let app = crate::AppView {
+            value: json!({ "nav": { "detail": "2 skills", "badge": "1", "tone": "bad" } }),
+            commands: vec![crate::CommandSpec {
+                name: "release-notes".into(),
+                description: "Writes release notes".into(),
+                args: "what to do".into(),
+                icon: "skill".into(),
+                ..Default::default()
+            }],
+            roots: vec!["/home/me/.agents/skills".into()],
+            ..crate::AppView::default()
+        };
+        let overview = Overview {
+            plugins: vec![Entry {
+                name: "tau-skills".into(),
+                description: String::new(),
+                version: String::new(),
+                standing: Standing::Active,
+                declaration: Some(Declaration {
+                    nav: Some(crate::Nav {
+                        label: "Skills".into(),
+                        icon: "skill".into(),
+                    }),
+                    listed_commands: true,
+                    ..Declaration::named("tau-skills")
+                }),
+                tests: Vec::new(),
+                keeps_earlier: false,
+                built_in: true,
+                app: Some(app),
+            }],
+            ..Overview::default()
+        };
+        let listed = commands(&overview);
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, "release-notes");
+        assert_eq!(listed[0].hint, "Writes release notes");
+        assert_eq!(
+            command_of(&overview, "release-notes").map(|(plugin, _)| plugin),
+            Some("tau-skills")
+        );
+        let nav: Vec<NavEntry> = nav_entries(&overview).collect();
+        assert_eq!(nav.len(), 1);
+        assert_eq!(nav[0].detail.as_deref(), Some("2 skills"));
+        assert_eq!(
+            nav[0].badge,
+            Some(("1".to_owned(), tau_ui_kit::theme::Tone::Danger))
+        );
     }
 
     /// Each active plugin that asks for a sidebar entry has one, opening
@@ -2358,6 +2476,7 @@ mod tests {
                 tests: Vec::new(),
                 keeps_earlier: false,
                 built_in: false,
+                app: None,
             };
         let nav = |label: &str| {
             Some(crate::Nav {

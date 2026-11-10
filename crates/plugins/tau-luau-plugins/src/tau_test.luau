@@ -279,18 +279,55 @@ function test.run(spec)
 			return text
 		end
 		fakes.files_list = function(args)
-			local prefix = args.path == "." and "" or (args.path .. "/")
+			local prefix = args.path == "." and "" or (string.gsub(args.path, "/$", "") .. "/")
 			local names = {}
+			local folders = {}
 			for path, found in pairs(files) do
-				if string.sub(path, 1, #prefix) == prefix and not string.find(string.sub(path, #prefix + 1), "/") then
-					local text = type(found) == "string" and found or (found.text or "")
-					table.insert(names, { name = string.sub(path, #prefix + 1), dir = false, size = #text })
+				if string.sub(path, 1, #prefix) == prefix then
+					local rest = string.sub(path, #prefix + 1)
+					local slash = string.find(rest, "/")
+					if slash == nil then
+						local text = type(found) == "string" and found or (found.text or "")
+						table.insert(names, { name = rest, dir = false, size = #text })
+					elseif not folders[string.sub(rest, 1, slash - 1)] then
+						-- A folder is there when a file is under it.
+						folders[string.sub(rest, 1, slash - 1)] = true
+						table.insert(names, { name = string.sub(rest, 1, slash - 1), dir = true, size = 0 })
+					end
 				end
 			end
 			table.sort(names, function(a, b)
 				return a.name < b.name
 			end)
 			return array(names)
+		end
+		-- A file's own `frontmatter`, else its text split at `---` lines
+		-- with each `key: value` line a string: enough for a test's files.
+		fakes.files_frontmatter = function(args)
+			local found = file(args)
+			if found.frontmatter then
+				return found.frontmatter
+			end
+			local text = found.text or ""
+			local name = string.match(args.path, "([^/]+)$") or args.path
+			if string.sub(text, 1, 4) ~= "---\n" then
+				return { error = name .. " does not start with frontmatter (---)" }
+			end
+			local close = string.find(text, "\n---\n", 4, true) or string.find(text, "\n---$", 4)
+			if close == nil then
+				return { error = name .. "'s frontmatter has no closing ---" }
+			end
+			local keys = array({})
+			for line in string.gmatch(string.sub(text, 5, close), "([^\n]+)") do
+				local key, value = string.match(line, "^([%w_%-]+):%s*(.-)%s*$")
+				if key then
+					table.insert(keys, { key = key, kind = value == "" and "null" or "string", text = value ~= "" and value or json.null })
+				end
+			end
+			return { keys = keys, body = string.sub(text, close + 5) }
+		end
+		fakes.files_roots = function()
+			return spec.roots or {}
 		end
 		fakes.files_image = function(args)
 			local found = file(args)
@@ -536,6 +573,22 @@ function test.run(spec)
 		return call(function(_, ctx)
 			return need(plugin.repo_data, "repo_data")(ctx)
 		end, nil)
+	end
+	-- What it keeps of the app, the page it draws of it, and the commands
+	-- it lists of it (ADR 0050, gap K).
+	function run:app()
+		return call(function(_, ctx)
+			return need(plugin.app, "app")(ctx)
+		end, nil)
+	end
+	function run:app_page(app)
+		return call(need(plugin.page, "page"), app)
+	end
+	function run:commands(app)
+		local listed = need(plugin.listed, "listed commands")
+		return call(function(input)
+			return listed.list(input)
+		end, app)
 	end
 	function run:recover(input)
 		return call(need(plugin.recover, "recover"), input)

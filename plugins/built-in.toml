@@ -12,6 +12,7 @@ plugins = [
   "tau-ask",
   "tau-schedule",
   "tau-canvas",
+  "tau-skills",
   "tau-fast-compaction",
   "tau-tree-compaction",
   "tau-compaction",

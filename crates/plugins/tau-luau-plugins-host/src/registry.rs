@@ -80,6 +80,9 @@ struct Shared {
     stores: Arc<crate::store::Stores>,
     /// Where each plugin's blobs are kept (`ctx.blobs`).
     blobs: PathBuf,
+    /// The person's skills folder, as the host has it (`uses.files`'
+    /// `skills`, ADR 0050 gap K).
+    skills: Option<PathBuf>,
     /// What runs' tools ask the person to allow, waiting for an answer.
     allows: crate::chats::Allows,
     /// The forms runs' tools ask the person, waiting for the answers.
@@ -99,7 +102,16 @@ struct State {
     trunk: BTreeMap<String, String>,
     /// The Luau plugins tau comes with, loaded: always active.
     built_in: Vec<(Entry, Active)>,
+    /// What each active plugin's `app` kept, by plugin, and when it was
+    /// read (ADR 0050, gap K).
+    app: Option<(
+        std::time::Instant,
+        BTreeMap<String, tau_luau_plugins::AppView>,
+    )>,
 }
+
+/// How long what `app` kept is drawn before it is read again.
+const APP_EVERY: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// One of a plugin's actions to carry out ([`Registry::action`]): on the
 /// `state` the plugin has in `run`, which works in `repo`, under the
@@ -126,7 +138,7 @@ pub struct ActionCall<'a> {
 impl PluginHost for Registry {
     async fn new(cx: &HostCx) -> anyhow::Result<Self> {
         // The skill runs read to write a plugin, as this build has it.
-        let skills = cx.dir.join(tau_skills::BUILTIN_DIR);
+        let skills = cx.dir.join(tau_ui_plugin::SHIPPED_SKILLS);
         tokio::task::spawn_blocking(move || crate::skill::install(&skills))
             .await??;
         let refresher = cx.clone();
@@ -161,6 +173,11 @@ impl PluginHost for Registry {
         ));
         let registry =
             registry.with_blobs(cx.plugin_dir(crate::NAME).join("blobs"));
+        let registry = registry.with_skills(
+            cx.services
+                .get::<tau_ui_plugin::SkillsDir>()
+                .map(|dir| dir.0.clone()),
+        );
         registry.load_built_in().await;
         let watcher = registry.clone();
         cx.runtime.spawn(async move { watcher.watch().await });
@@ -192,6 +209,7 @@ impl Registry {
             model: None,
             stores: Arc::new(crate::store::Stores::memory()),
             blobs: std::env::temp_dir().join("tau-luau-blobs"),
+            skills: None,
             allows: crate::chats::Allows::default(),
             forms: crate::forms::Forms::default(),
             chats: None,
@@ -227,6 +245,15 @@ impl Registry {
 
     /// The registry, keeping each plugin's blobs under `dir`
     /// (`ctx.blobs`).
+    pub fn with_skills(self, dir: Option<PathBuf>) -> Self {
+        let shared = Arc::into_inner(self.0)
+            .expect("the skills folder is given before the registry is shared");
+        Self(Arc::new(Shared {
+            skills: dir,
+            ..shared
+        }))
+    }
+
     pub fn with_blobs(self, dir: PathBuf) -> Self {
         let shared = Arc::into_inner(self.0)
             .expect("the blobs are given before the registry is shared");
@@ -326,6 +353,7 @@ impl Registry {
                     tests: Vec::new(),
                     keeps_earlier: false,
                     built_in: true,
+                    app: None,
                 };
                 (
                     entry,
@@ -434,6 +462,111 @@ impl Registry {
             store: self.store_of(&active.loaded.declaration, Some(repo)).await,
             job: None,
         }
+    }
+
+    /// The overview, with what each active plugin with an `app` keeps of
+    /// the whole app, the commands it lists and the page it draws of it
+    /// (ADR 0050, gap K): read again at most once a second.
+    pub async fn app_overview(&self) -> Overview {
+        let mut overview = self.overview().await;
+        let views = self.app_views().await;
+        for entry in &mut overview.plugins {
+            entry.app = views.get(&entry.name).cloned();
+        }
+        overview
+    }
+
+    async fn app_views(&self) -> BTreeMap<String, tau_luau_plugins::AppView> {
+        if let Some((at, views)) = &self.0.state.read().await.app
+            && at.elapsed() < APP_EVERY
+        {
+            return views.clone();
+        }
+        let mut views = BTreeMap::new();
+        for active in self.active().await {
+            if !active.loaded.declaration.hooks.app {
+                continue;
+            }
+            let name = active.loaded.declaration.name.clone();
+            let Some(active) = self.plugin(&name).await else {
+                continue;
+            };
+            views.insert(name, self.app_view(&active).await);
+        }
+        self.0.state.write().await.app =
+            Some((std::time::Instant::now(), views.clone()));
+        views
+    }
+
+    /// What `active`'s `app` keeps, with its tools' folders read, and what
+    /// it lists and draws of it.
+    async fn app_view(&self, active: &Active) -> tau_luau_plugins::AppView {
+        let declaration = &active.loaded.declaration;
+        let files =
+            crate::files::Files::new(&declaration.uses.files, None, None)
+                .with_package(crate::runtime::package_dir(&declaration.name))
+                .with_skills(self.0.skills.clone());
+        let context = self.app_context(active).await;
+        app_view(active, files, &context).await
+    }
+
+    /// What an `app` hook of `active`'s runs in: no run, no repository.
+    async fn app_context(&self, active: &Active) -> crate::runtime::Context {
+        let declaration = &active.loaded.declaration;
+        crate::runtime::Context {
+            run: serde_json::json!({ "kind": "app" }),
+            now: crate::agent::now(),
+            settings: active.settings.clone(),
+            state: serde_json::json!({}),
+            secrets: self.secrets_of(&declaration.name),
+            store: self.store_of(declaration, None).await,
+            job: None,
+        }
+    }
+
+    /// Carries out `plugin`'s `actions[action]` with `args` from its page of
+    /// the app (ADR 0050, gap K), following what it asks of the interface;
+    /// the page is drawn again after.
+    pub async fn app_action(
+        &self,
+        plugin: &str,
+        action: &str,
+        args: serde_json::Value,
+        chats: Option<&dyn tau_ui_plugin::Conversations>,
+        jev: Option<Arc<dyn tau_jev::Jev>>,
+    ) -> anyhow::Result<serde_json::Value> {
+        let hook = |action: String, args: serde_json::Value| {
+            let jev = jev.clone();
+            async move {
+                let active = self
+                    .plugin(plugin)
+                    .await
+                    .ok_or_else(|| format!("{plugin} is not active"))?;
+                let context = self.app_context(&active).await;
+                let outcome = active
+                    .loaded
+                    .call(
+                        &crate::runtime::Hook::Action(action.clone()),
+                        args,
+                        &context,
+                        Arc::new(crate::runtime::ActionReach(jev)),
+                        CancellationToken::new(),
+                    )
+                    .await;
+                match outcome.error {
+                    Some(error) => Err(format!("{plugin}'s {action}: {error}")),
+                    None => Ok(outcome.value),
+                }
+            }
+        };
+        let value = hook(action.to_owned(), args)
+            .await
+            .map_err(anyhow::Error::msg)?;
+        let followed = crate::chats::follow(value, chats, None, hook)
+            .await
+            .map_err(|error| anyhow::anyhow!("{plugin}'s {action}: {error}"));
+        self.0.state.write().await.app = None;
+        followed
     }
 
     /// What each active plugin keeps of `repo` (`repo_data`), by plugin.
@@ -848,6 +981,7 @@ impl Registry {
                     tests: Vec::new(),
                     keeps_earlier: false,
                     built_in: false,
+                    app: None,
                 });
                 continue;
             }
@@ -872,6 +1006,7 @@ impl Registry {
                         tests: Vec::new(),
                         keeps_earlier: earlier.is_some(),
                         built_in: false,
+                        app: None,
                     });
                     state.active.extend(earlier);
                     continue;
@@ -901,6 +1036,7 @@ impl Registry {
                 tests,
                 keeps_earlier: !active && earlier.is_some(),
                 built_in: false,
+                app: None,
             });
             if active {
                 allowed.insert(
@@ -1226,4 +1362,62 @@ fn merge_built_in(state: &mut State) {
         state.overview.plugins.insert(0, entry.clone());
         state.active.insert(0, active.clone());
     }
+}
+
+/// What `active`'s `app` keeps in `context`, its tools' folders read
+/// through `files`, and the commands it lists and the page it draws of it
+/// (ADR 0050, gap K): what the registry draws, and the demo.
+pub async fn app_view(
+    active: &Active,
+    files: crate::files::Files,
+    context: &crate::runtime::Context,
+) -> tau_luau_plugins::AppView {
+    use crate::runtime::{Hook, NoReach, Reach, WithFiles};
+    let declaration = &active.loaded.declaration;
+    let roots = files.root_paths();
+    let reach: Arc<dyn Reach> = if declaration.uses.files.is_empty() {
+        Arc::new(NoReach)
+    } else {
+        Arc::new(WithFiles {
+            reach: Arc::new(NoReach),
+            files: Arc::new(files),
+        })
+    };
+    let call = |hook: Hook, input: serde_json::Value| {
+        let reach = reach.clone();
+        async move {
+            active
+                .loaded
+                .call(&hook, input, context, reach, CancellationToken::new())
+                .await
+        }
+    };
+    let kept = call(Hook::App, serde_json::Value::Null).await;
+    let mut view = tau_luau_plugins::AppView {
+        value: kept.value,
+        roots,
+        error: kept.error,
+        ..Default::default()
+    };
+    if view.error.is_some() {
+        return view;
+    }
+    if declaration.listed_commands {
+        let listed = call(Hook::ListCommands, view.value.clone()).await;
+        match listed.error {
+            None => {
+                view.commands =
+                    serde_json::from_value(listed.value).unwrap_or_default();
+            }
+            Some(error) => view.error = Some(format!("commands.list: {error}")),
+        }
+    }
+    if declaration.hooks.page {
+        let page = call(Hook::AppPage, view.value.clone()).await;
+        match page.error {
+            None => view.page = Some(page.value),
+            Some(error) => view.error = Some(format!("page: {error}")),
+        }
+    }
+    view
 }

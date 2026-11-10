@@ -600,6 +600,44 @@ run's repository and gives `{ id, digest, size_bytes }`, for
 `ui.image`: its bytes never pass through the plugin. Each folder is new
 reach.
 
+`ctx.files` reaches the same folders in `start` and `app` (below).
+`"skills"` names the person's skills folder as the host has it
+(`~/.agents/skills`), `"package"` the plugin's own folder when it is one
+of tau's own, and `"data"` tau's data folder, each with folders in it
+as `"package/x"`; `ctx.files.roots()` says where each one named is.
+`ctx.files.frontmatter(path)` reads a Markdown file's YAML frontmatter,
+between `---` lines at its start: `{ keys, body }`, each key
+`{ key, kind, text }` in order (`kind` is `string`, `integer`, `float`,
+`boolean`, `null` or `other`, `text` the value as written), or
+`{ error }` when it has none or is no mapping.
+
+### The app: `app`, `page` and listed commands
+
+What a plugin keeps of the whole app, outside any run:
+
+```luau
+app = function(ctx)                  -- ctx.files as uses.files names
+  local found = ctx.files.list(ctx.files.roots().skills)
+  return { count = #found, nav = { detail = #found .. " found", badge = nil, tone = nil } }
+end,
+page = function(app, ctx)            -- the page `nav` opens
+  return ui.stack({ ui.heading("Found"), ui.button("Open folder", "tau.reveal", { path = "..." }) })
+end,
+commands = {                         -- in place of a table of commands
+  list = function(app) return { name = { description = "...", args = "what to do", icon = "skill" } } end,
+  run = function(name, text, ctx) return tau.interface("send", { text = "/" .. name .. " " .. text }) end,
+},
+```
+
+The host runs `app` as it draws the catalog, at most once a second; its
+`nav` gives the sidebar entry's `detail` and `badge`. `page` draws in
+place of the plugin's card on the plugins page, and its buttons are its
+actions, run with no run and no repository; `tau.reveal` shows a folder
+`uses.files` names in the file manager. `commands.list` gives the
+composer's commands by name, and `run` carries one out. A test reaches
+them with `run:app()`, `run:app_page(app)` and `run:commands(app)`, its
+`spec.roots` saying where each folder is.
+
 ### Settings
 
 What the person can set lives in `settings`:

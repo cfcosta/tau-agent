@@ -88,7 +88,9 @@
     "recover": false,
     "run_end": false,
     "view": true,
-    "settings_view": true
+    "settings_view": true,
+    "app": false,
+    "page": false
   },
   "actions": [],
   "events": [],
@@ -101,5 +103,6 @@
   "pages": [],
   "repo_nav": null,
   "picker_auto": null,
-  "continues": null
+  "continues": null,
+  "listed_commands": false
 }

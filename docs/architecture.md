@@ -52,8 +52,6 @@ tau-agent/
 │       ├── tau-notify/           # desktop notices while tau is in the
 │       │                         # background, filling `tau.notify`
 │       ├── tau-reasoning/        # picks a run's reasoning effort on auto (Luau)
-│       ├── tau-skills/           # instructions an agent loads when a task
-│       │                         # calls for them
 │       ├── tau-sqlite/           # the store in SQLite, filling `tau.store`
 │       ├── tau-titles/           # a run's title from the person's model,
 │       │                         # filling `tau.title` (Luau)

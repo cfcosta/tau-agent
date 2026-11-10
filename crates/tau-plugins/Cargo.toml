@@ -22,7 +22,6 @@ tau-chatgpt = { path = "../plugins/tau-chatgpt", default-features = false }
 tau-jev.workspace = true
 tau-luau-plugins.workspace = true
 tau-agents.workspace = true
-tau-skills = { path = "../plugins/tau-skills", default-features = false }
 tau-mcp.workspace = true
 tau-memory.workspace = true
 # `exec_command` cards draw their output as a terminal

@@ -53,7 +53,9 @@
     "recover": false,
     "run_end": true,
     "view": true,
-    "settings_view": false
+    "settings_view": false,
+    "app": false,
+    "page": false
   },
   "actions": [],
   "events": [],
@@ -69,5 +71,6 @@
     "jev": "Auto lets tau-reasoning pick the effort for each message, with Jev.",
     "no_jev": "Auto leaves the effort to the model: tau-reasoning needs a TypeSafe key (Models)."
   },
-  "continues": null
+  "continues": null,
+  "listed_commands": false
 }

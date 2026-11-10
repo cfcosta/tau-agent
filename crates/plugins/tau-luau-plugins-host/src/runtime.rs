@@ -452,6 +452,13 @@ pub enum Hook {
     Job(String),
     /// What it keeps of a repository (`repo_data`), with nothing as input.
     RepoData,
+    /// What it keeps of the whole app (`app`, ADR 0050 gap K), with
+    /// nothing as input.
+    App,
+    /// The page its `nav` opens, with what `app` kept as input.
+    AppPage,
+    /// Its commands, `commands.list` of what `app` kept.
+    ListCommands,
     /// One of its pages of a repository, by name, with the page's params.
     Page(String),
     /// tau started, with the runs it found cut off as `{ runs }`.
@@ -477,6 +484,9 @@ impl Hook {
             | Self::OnEvent => 200,
             Self::Start
             | Self::RepoData
+            | Self::App
+            | Self::AppPage
+            | Self::ListCommands
             | Self::Page(_)
             | Self::Title
             | Self::BeforeTool
@@ -545,6 +555,11 @@ impl Hook {
             Self::Notify => "p.notify(input, ctx)".into(),
             Self::Job(name) => format!("p.jobs[\"{name}\"].run(ctx)"),
             Self::RepoData => "p.repo_data(ctx)".into(),
+            Self::App => "p.app(ctx)".into(),
+            Self::AppPage => "p.page(input, ctx)".into(),
+            Self::ListCommands => {
+                "require(\"tau\")._commands(p.listed.list(input))".into()
+            }
             Self::Recover => "p.recover(input, ctx)".into(),
             Self::Page(name) => format!("p.pages[\"{name}\"](input, ctx)"),
             Self::Forge(name) => format!("p.forge[\"{name}\"](input, ctx)"),
@@ -577,6 +592,9 @@ impl Hook {
                 declaration.jobs.iter().any(|job| &job.name == name)
             }
             Self::RepoData => declaration.hooks.repo_data,
+            Self::App => declaration.hooks.app,
+            Self::AppPage => declaration.hooks.page,
+            Self::ListCommands => declaration.listed_commands,
             Self::Recover => declaration.hooks.recover,
             Self::Page(name) => declaration.pages.contains(name),
             Self::Forge(name) => declaration
@@ -586,7 +604,10 @@ impl Hook {
             Self::RunEnd => declaration.hooks.run_end,
             Self::View => declaration.hooks.view,
             Self::SettingsView => declaration.hooks.settings_view,
-            Self::Action(name) => declaration.actions.contains(name),
+            Self::Action(name) => {
+                declaration.actions.contains(name)
+                    || (declaration.listed_commands && name.starts_with('/'))
+            }
         }
     }
 }
@@ -684,6 +705,53 @@ pub trait Reach: Send + Sync {
 pub struct NoReach;
 
 impl Reach for NoReach {}
+
+/// `reach`, with `ctx.files` too (ADR 0050, gap K): for the hooks past a
+/// tool's call that read the folders `uses.files` names, `start` and
+/// `app`.
+pub struct WithFiles {
+    pub reach: Arc<dyn Reach>,
+    pub files: Arc<crate::files::Files>,
+}
+
+#[async_trait]
+impl Reach for WithFiles {
+    fn tools(&self) -> Vec<ToolEntry> {
+        let mut tools = self.reach.tools();
+        tools.extend(crate::files::Files::entries());
+        tools
+    }
+
+    async fn call(&self, call: ToolCall) -> Result<ToolReply, String> {
+        if crate::files::Files::handles(&call.name) {
+            return self.files.call(&call.name, &call.args).await;
+        }
+        self.reach.call(call).await
+    }
+
+    fn jev(&self) -> Option<Arc<dyn Jev>> {
+        self.reach.jev()
+    }
+
+    fn charge(&self, usage: &Usage) {
+        self.reach.charge(usage);
+    }
+}
+
+/// The folder of `plugin`'s package, when it is one of tau's own: what
+/// `uses.files`' `package` names. It blocks, once.
+pub fn package_dir(plugin: &str) -> Option<std::path::PathBuf> {
+    static FOUND: std::sync::OnceLock<Option<std::path::PathBuf>> =
+        std::sync::OnceLock::new();
+    let dir = FOUND
+        .get_or_init(|| tau_luau_plugins::packages::find().ok())
+        .as_ref()?;
+    let listed = crate::built_in::listed(dir).ok()?;
+    listed
+        .iter()
+        .any(|name| name == plugin)
+        .then(|| dir.join(plugin))
+}
 
 /// What an action reaches outside a run (ADR 0050): the host's Jev, for
 /// a plugin whose `uses` names it.

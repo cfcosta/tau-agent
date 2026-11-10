@@ -15,4 +15,5 @@ mod constitution;
 mod package;
 mod reasoning;
 mod schedule;
+mod skills;
 mod todo;

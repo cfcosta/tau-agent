@@ -88,7 +88,8 @@ pub struct Uses {
     pub chats: bool,
     /// The folders its tools read, read-only (`ctx.files`, ADR 0050, gap
     /// G): [`WORKSPACE`] for the run's own, `~` or `~/x` under the home
-    /// folder, or an absolute path.
+    /// folder, [`PACKAGE`] or [`DATA`] and folders in them (gap K), or an
+    /// absolute path.
     #[serde(default)]
     pub files: Vec<String>,
 }
@@ -96,10 +97,35 @@ pub struct Uses {
 /// What `uses.files` names the run's workspace by.
 pub const WORKSPACE: &str = "workspace";
 
+/// What `uses.files` names the plugin's own package by, wherever it is
+/// installed (ADR 0050, gap K); `package/x` is a folder in it.
+pub const PACKAGE: &str = "package";
+
+/// What `uses.files` names tau's data folder by; `data/x` is a folder in
+/// it.
+pub const DATA: &str = "data";
+
+/// What `uses.files` names the person's skills folder by, as the host has
+/// it (`~/.agents/skills`).
+pub const SKILLS: &str = "skills";
+
 /// What a folder of `uses.files` is, in words for the Allow.
 pub fn folder_words(folder: &str) -> String {
+    let under = |root: &str| {
+        folder
+            .strip_prefix(root)
+            .and_then(|rest| rest.strip_prefix('/'))
+    };
     if folder == WORKSPACE {
         "reading the run's workspace".to_owned()
+    } else if folder == PACKAGE || under(PACKAGE).is_some() {
+        "reading its own package".to_owned()
+    } else if folder == SKILLS {
+        "reading your skills folder".to_owned()
+    } else if folder == DATA {
+        "reading tau's data folder".to_owned()
+    } else if let Some(rest) = under(DATA) {
+        format!("reading `{rest}` in tau's data folder")
     } else {
         format!("reading files in `{folder}`")
     }
@@ -231,6 +257,13 @@ pub struct Hooks {
     /// `settings.view`: a settings page of its own. It reaches nothing.
     #[serde(default)]
     pub settings_view: bool,
+    /// `app`: what it keeps of the whole app, its tools' folders read
+    /// (ADR 0050, gap K).
+    #[serde(default)]
+    pub app: bool,
+    /// `page`: the page its `nav` opens, drawn of what `app` keeps.
+    #[serde(default)]
+    pub page: bool,
 }
 
 impl Hooks {
@@ -429,6 +462,10 @@ pub struct Declaration {
     /// it says.
     #[serde(default)]
     pub continues: Option<u32>,
+    /// Its `commands` are `{ list, run }`: listed from what `app` keeps,
+    /// each run as the action `/name` (ADR 0050, gap K).
+    #[serde(default)]
+    pub listed_commands: bool,
 }
 
 /// The words under the effort picker's Auto, as a plugin that picks the
@@ -551,6 +588,31 @@ pub struct Entry {
     /// and its name is no repository plugin's.
     #[serde(default)]
     pub built_in: bool,
+    /// What it keeps of the whole app, as the host last read it (ADR 0050,
+    /// gap K); none for a plugin with no `app`.
+    #[serde(default)]
+    pub app: Option<AppView>,
+}
+
+/// What a plugin's `app` keeps, and what it draws and lists of it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AppView {
+    /// What `app` gave; its `nav` gives the sidebar entry's `detail` and
+    /// `badge`.
+    pub value: Value,
+    /// What `commands.list` gave of it.
+    #[serde(default)]
+    pub commands: Vec<CommandSpec>,
+    /// What `page` drew of it: the page `nav` opens.
+    #[serde(default)]
+    pub page: Option<Value>,
+    /// The folders `uses.files` names, where they are: what
+    /// `tau.interface("reveal")` may show.
+    #[serde(default)]
+    pub roots: Vec<String>,
+    /// Why `app` failed, when it did.
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 /// The plugins repository as the host last read it.
@@ -601,6 +663,13 @@ pub enum Act {
     RepoAction {
         plugin: String,
         repo: String,
+        action: String,
+        args: Value,
+    },
+    /// Carries out `plugin`'s `actions[action]` with `args` from its page
+    /// of the app (ADR 0050, gap K): no run, no repository.
+    AppAction {
+        plugin: String,
         action: String,
         args: Value,
     },
@@ -865,6 +934,7 @@ mod tests {
             repo_nav: None,
             picker_auto: None,
             continues: None,
+            listed_commands: false,
         }
     }
 
@@ -905,6 +975,8 @@ mod tests {
             run_end: true,
             view: true,
             settings_view: true,
+            app: false,
+            page: false,
         };
         assert_eq!(
             declaration.seams(),

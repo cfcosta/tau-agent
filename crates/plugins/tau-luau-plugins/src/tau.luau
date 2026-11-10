@@ -15,6 +15,28 @@ function tau.plugin(spec)
 	if spec.name ~= nil or spec.description ~= nil then
 		error("a plugin's name and description are in its tau.toml", 2)
 	end
+	-- Commands from what the plugin keeps of the app (ADR 0050, gap K):
+	-- `list(app)` gives them by name, and `run(name, text, ctx)` carries
+	-- one out, as the action `/name`.
+	if type(spec.commands) == "table" and type(spec.commands.list) == "function" then
+		local listed = spec.commands
+		if type(listed.run) ~= "function" then
+			error("listed commands need a `run`", 2)
+		end
+		spec.listed = listed
+		spec.commands = nil
+		spec.actions = setmetatable(spec.actions or {}, {
+			__index = function(_, key)
+				if type(key) == "string" and string.sub(key, 1, 1) == "/" then
+					return function(args, ctx)
+						ctx.drafts = args.drafts or {}
+						return listed.run(string.sub(key, 2), args.text or "", ctx)
+					end
+				end
+				return nil
+			end,
+		})
+	end
 	-- Each command runs as the action `/name`, given the text after it.
 	for name, command in pairs(spec.commands or {}) do
 		if type(command) ~= "table" or type(command.run) ~= "function" then
@@ -789,7 +811,10 @@ function tau._describe(plugin)
 			run_end = plugin.run_end ~= nil,
 			view = plugin.view ~= nil,
 			settings_view = plugin.settings ~= nil and plugin.settings.view ~= nil,
+			app = plugin.app ~= nil,
+			page = plugin.page ~= nil,
 		},
+		listed_commands = plugin.listed ~= nil,
 		actions = actions,
 		events = plugin.events or array({}),
 		commands = tau._commands(plugin.commands),
@@ -1153,8 +1178,9 @@ function tau._ctx(data, with_tools)
 			return store_of(source, tostring(repo))
 		end
 	end
-	-- In a tool's call, with uses.files: the folders it names, read-only,
-	-- a path relative to the run's workspace, `~/` from home, or absolute.
+	-- In a tool's call, `start` and `app`, with uses.files: the folders it
+	-- names, read-only, a path relative to the run's workspace, `~/` from
+	-- home, or absolute.
 	if source ~= nil and source.files_read ~= nil then
 		ctx.files = {
 			-- The file's text; with `{ bytes = true }` its bytes in base64;
@@ -1173,6 +1199,17 @@ function tau._ctx(data, with_tools)
 			-- `height` for an SVG.
 			image = function(path)
 				return source.files_image({ path = tostring(path) })
+			end,
+			-- A Markdown file's YAML frontmatter, between `---` lines at its
+			-- start: `{ keys, body }`, each key `{ key, kind, text }` in
+			-- order, `text` its value as written; or `{ error }` when it
+			-- has none or it is no mapping (ADR 0050, gap K).
+			frontmatter = function(path)
+				return source.files_frontmatter({ path = tostring(path) })
+			end,
+			-- Where each folder `uses.files` names is, by its name there.
+			roots = function()
+				return source.files_roots({})
 			end,
 		}
 		ctx.blobs = {

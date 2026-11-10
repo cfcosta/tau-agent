@@ -37,7 +37,7 @@ Where it keeps its files (`HostConfig`):
 | `$XDG_DATA_HOME/tau/repos.json`       | The repositories tau lists                            |
 | `$XDG_CONFIG_HOME/tau/models.json`    | The person's model choices                            |
 | `$XDG_CONFIG_HOME/tau/interface.json` | Interface settings (`reduce_motion`, `notifications`) |
-| `~/.agents/skills`                    | The person's skills (tau-skills)                      |
+| `~/.agents/skills`                    | The person's skills (tau-skills, a Luau package)      |
 
 `$XDG_DATA_HOME` falls back to `~/.local/share`. ChatGPT sign-ins sit in
 `$XDG_CONFIG_HOME/tau/chatgpt`, and tau-github-host keeps the GitHub token

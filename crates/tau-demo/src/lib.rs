@@ -52,6 +52,7 @@ pub use self::{
 mod chart;
 mod host;
 mod screens;
+mod skills;
 
 /// One scripted update, and how long to wait before it.
 pub type Step = (Duration, RunUpdate);

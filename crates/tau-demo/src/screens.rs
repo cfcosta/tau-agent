@@ -405,11 +405,13 @@ pub static SCREENS: &[(&str, Screen)] = &[
     // tau-skills: the Skills screen; a skill loaded, its card open; a
     // skill not there.
     ("skills", |ws, _, cx| {
+        let link =
+            tau_luau_plugins::ui::entry_link(tau_luau_plugins::names::SKILLS);
         ws.navigate(
             Route::Plugin {
-                plugin: tau_skills::NAME.into(),
-                page: "skills".into(),
-                params: Default::default(),
+                plugin: tau_luau_plugins::NAME.into(),
+                page: link.page,
+                params: link.params,
             },
             cx,
         )
@@ -924,6 +926,7 @@ fn yours(
         }),
         tests,
         built_in: false,
+        app: None,
     };
     let overview = Overview {
         commit: Some("4f2a9c1".into()),
@@ -1933,7 +1936,7 @@ fn watcher(
 }
 
 /// tau-agent's main chat with a `skill` call: release-notes loaded, its
-/// card open, or a skill not there.
+/// card open, as tau-skills' fixture draws it; or a skill not there.
 fn skill(workspace: &mut Workspace, found: bool, cx: &mut Context<Workspace>) {
     let run = run_id();
     let call = "call_skill".to_owned();
@@ -1947,48 +1950,45 @@ fn skill(workspace: &mut Workspace, found: bool, cx: &mut Context<Workspace>) {
         HostUpdate::Event(RunEvent::ToolStart {
             run: run.clone(),
             call_id: call.clone(),
-            tool: tau_skills::TOOL.into(),
+            tool: "skill".into(),
             args: serde_json::json!({ "name": name }),
             parent: None,
         }),
         cx,
     );
-    let output = if found {
-        let mut output = tau_agent::tool::ToolOutput::text(
-            "Skill release-notes. Its folder, where the files it names are: \
-             ~/.agents/skills/release-notes\n\nRun scripts/commits.sh with \
-             the two tags, group what it lists, and lead with what users \
-             will notice.",
-        );
-        output.details = Some(
-            serde_json::to_value(tau_skills::Loaded {
-                name: name.into(),
-                description: "Writes release notes from the commits between \
-                              two tags: groups by kind, leads with what users \
-                              notice."
-                    .into(),
-                file: "~/.agents/skills/release-notes/SKILL.md".into(),
-            })
-            .expect("plain JSON"),
-        );
-        output
+    let fixture = crate::luau_fixture(tau_luau_plugins::names::SKILLS, "skill");
+    let text = if found {
+        fixture["text"].as_str().unwrap_or_default().to_owned()
     } else {
-        tau_agent::tool::ToolOutput::text(
-            "There is no skill \"deploy-prod\". The skills are: code-review, \
-             release-notes.",
-        )
+        "There is no skill \"deploy-prod\". The skills are: code-review, \
+         release-notes."
+            .to_owned()
     };
     workspace.apply(
         HostUpdate::Event(RunEvent::ToolEnd {
             run: run.clone(),
             call_id: call.clone(),
-            output: std::sync::Arc::new(output),
+            output: std::sync::Arc::new(tau_agent::tool::ToolOutput::text(
+                text,
+            )),
             is_error: !found,
             parent: None,
         }),
         cx,
     );
     if found {
+        for body in
+            crate::luau_records_of(tau_luau_plugins::names::SKILLS, &fixture)
+        {
+            workspace.apply(
+                HostUpdate::PluginFold {
+                    run: run.clone(),
+                    plugin: tau_luau_plugins::NAME.into(),
+                    body,
+                },
+                cx,
+            );
+        }
         workspace.toggle_card(&run, &call, cx);
     }
 }

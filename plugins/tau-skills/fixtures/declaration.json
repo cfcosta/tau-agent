@@ -1,0 +1,73 @@
+{
+  "name": "tau-skills",
+  "description": "Instructions the agent loads when a task calls for them: your skills, and those tau ships",
+  "uses": {
+    "tools": [],
+    "jev": false,
+    "infer": false,
+    "change_args": false,
+    "network": [],
+    "secrets": [],
+    "model": null,
+    "store": false,
+    "transcript": false,
+    "archive": false,
+    "chats": false,
+    "files": ["skills", "package/skills", "data/skills"]
+  },
+  "settings": null,
+  "tools": [
+    {
+      "name": "skill",
+      "description": "Loads a skill: its instructions, from its SKILL.md, and the folder its other files are in. Load one when a task fits its description in the instructions' list, before starting.",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "description": "The skill's name, as the list gives it.",
+            "type": "string"
+          }
+        },
+        "required": ["name"],
+        "type": "object"
+      },
+      "card": false
+    }
+  ],
+  "hooks": {
+    "start": true,
+    "before_tool": false,
+    "before_request": false,
+    "after_tool_result": false,
+    "rewrite_context": false,
+    "rewritten": false,
+    "before_stop": false,
+    "turn_end": false,
+    "on_event": false,
+    "title": false,
+    "notify": false,
+    "repo_data": false,
+    "recover": false,
+    "run_end": false,
+    "view": true,
+    "settings_view": false,
+    "app": true,
+    "page": true
+  },
+  "actions": [],
+  "events": [],
+  "fills": [],
+  "compaction": null,
+  "forge": null,
+  "nav": {
+    "label": "Skills",
+    "icon": "skill"
+  },
+  "commands": [],
+  "jobs": [],
+  "pages": [],
+  "repo_nav": null,
+  "picker_auto": null,
+  "continues": null,
+  "listed_commands": true
+}

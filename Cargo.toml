@@ -155,7 +155,6 @@ tau-clock = { path = "crates/tau-clock", version = "0.1.0" }
 tau-scripted = { path = "crates/tau-scripted", version = "0.1.0" }
 tau-luau-plugins = { path = "crates/plugins/tau-luau-plugins", version = "0.1.0" }
 tau-luau-plugins-host = { path = "crates/plugins/tau-luau-plugins-host", version = "0.1.0" }
-tau-skills = { path = "crates/plugins/tau-skills", version = "0.1.0" }
 tau-jev = { path = "crates/plugins/tau-jev", version = "0.1.0" }
 tau-mcp = { path = "crates/plugins/tau-mcp", version = "0.1.0" }
 tau-mcp-host = { path = "crates/plugins/tau-mcp-host", version = "0.1.0" }

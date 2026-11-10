@@ -52,8 +52,8 @@ This is the host half (decisions 0027 and 0030). Its partner is
 `Record`, the Plugins page and the view drawing.
 
 It builds on `tau-agent`, `tau-codemode` and `tau-codemode-host` (the
-sandbox), `tau-jev`, `tau-ui-plugin`, `tau-vcs-host` (reading trunk)
-and `tau-skills` (where the skill is installed). Because it links Luau
+sandbox), `tau-jev`, `tau-ui-plugin` (`SHIPPED_SKILLS`, where the skill
+is installed) and `tau-vcs-host` (reading trunk). Because it links Luau
 through `tau-codemode-host`, only the `tau` app depends on it: it
 registers `LuauPluginsHost` in `crates/tau/src/lib.rs`.
 

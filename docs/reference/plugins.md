@@ -558,8 +558,7 @@ tau-luau-plugins the plugins repository.
   (jj-lib, gix), tau-mcp (rmcp), tau-tools (the tools), tau-memory
   (candle). The plugin's crate keeps its records, their fold, its
   views and the shapes they read (`details` modules, tau-mcp's
-  `info`). tau-direnv and
-  tau-skills keep theirs behind a default `host` feature; the rest,
+  `info`). tau-direnv keeps its behind a default `host` feature; the rest,
   which are light, beside their `UiPlugin`. `tau-ui-remote` depends on
   no plugin crate at all, so neither it nor a phone links one.
 

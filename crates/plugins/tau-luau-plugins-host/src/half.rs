@@ -122,7 +122,11 @@ impl HostHalf for LuauPluginsHost {
             .services
             .get::<tau_ui_plugin::WorkspaceDir>()
             .map_or_else(|| run.repo.checkout.clone(), |dir| dir.0.clone());
-        let luau = luau.with_files(Some(workspace), host.blobs());
+        let luau = luau.with_files(Some(workspace), host.blobs()).with_skills(
+            run.services
+                .get::<tau_ui_plugin::SkillsDir>()
+                .map(|dir| dir.0.clone()),
+        );
         // What their tools ask the person, carried out once allowed.
         let luau = luau.with_dispatch(crate::agent::Dispatch {
             allows: host.allows(),
@@ -297,7 +301,7 @@ impl HostHalf for LuauPluginsHost {
     }
 
     async fn data(&self, host: &Self::Host, _cx: &HostCx) -> Overview {
-        host.overview().await
+        host.app_overview().await
     }
 
     /// What each Luau plugin keeps of `repo` (`repo_data`).
@@ -344,6 +348,14 @@ impl HostHalf for LuauPluginsHost {
                 jev,
             } => {
                 return Ok(Some(host.page(&plugin, &page, &params, jev).await));
+            }
+            Act::AppAction {
+                plugin,
+                action,
+                args,
+            } => {
+                host.app_action(&plugin, &action, args, chats, host_jev())
+                    .await?;
             }
             Act::RepoAction {
                 plugin,

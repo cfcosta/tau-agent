@@ -1,0 +1,4 @@
+name = "tau-skills"
+version = "0.1.0"
+description = "Instructions the agent loads when a task calls for them: your skills, and those tau ships"
+entry = "src/plugin.luau"

@@ -124,7 +124,7 @@ impl PluginHost for Agents {
     async fn new(cx: &HostCx) -> anyhow::Result<Self> {
         // The skill an agent's conversation reads to write itself, as
         // this build has it.
-        let skills = cx.dir.join(tau_skills::BUILTIN_DIR);
+        let skills = cx.dir.join(tau_ui_plugin::SHIPPED_SKILLS);
         tokio::task::spawn_blocking(move || crate::skill::install(&skills))
             .await??;
         let agents = Self::at(

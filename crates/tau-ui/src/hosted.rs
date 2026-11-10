@@ -35,7 +35,6 @@ pub fn halves(plugins: Registry) -> Registry {
         .host(tau_memory_host::MemoryHost)
         .host(tau_direnv::DirenvHost)
         .host(tau_mcp_host::McpHost)
-        .host(tau_skills::SkillsHost)
         .host(tau_notify::NotifyHost)
         .host(tau_phones::PhonesHost)
         .host(tau_jev::JevHost)
@@ -52,8 +51,8 @@ pub fn app_services(home: Option<&std::path::Path>) -> tau_ui_plugin::Services {
         .offer(names::IDENTITY, tau_vcs_host::Identity::from_environment());
     match home {
         Some(home) => services.offer(
-            tau_skills::DIR_SERVICE,
-            tau_skills::SkillsDir(home.join(tau_skills::SKILLS_DIR)),
+            names::SKILLS_DIR,
+            tau_ui_plugin::SkillsDir(home.join(".agents/skills")),
         ),
         None => services,
     }

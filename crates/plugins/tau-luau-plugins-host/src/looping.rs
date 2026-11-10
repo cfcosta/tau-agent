@@ -21,7 +21,8 @@
 //! - `plugins`: others of tau's own after this one, each
 //!   `{ name, settings }`.
 //! - `files`: the workspace, a path to its text, `{ base64 }` or
-//!   `{ png = { width, height } }`.
+//!   `{ png = { width, height } }`; `skills`: the person's skills folder,
+//!   as the host has it, written the same way.
 //! - `tools`: fake tools beside the plugin's, a name to what it answers:
 //!   a text, or a list taken in order, the last kept; `{ error }` fails.
 //!   In a text, `{name}` is the call's argument `name`, and `{x*name}` is
@@ -102,6 +103,9 @@ pub async fn run(files: &Files, spec: &Value) -> Result<Value, String> {
     }
     let dir = tempfile::tempdir().map_err(|error| error.to_string())?;
     let written = workspace(&dir.path().join("work"), &spec["files"])?;
+    if spec["skills"].is_object() {
+        workspace(&dir.path().join("skills"), &spec["skills"])?;
+    }
     let llm = model(&spec["model"])?;
     let looped = Looped {
         name: name.clone(),
@@ -274,6 +278,11 @@ impl Looped {
                 .map(|jev| Arc::new(jev.fake.clone()) as Arc<dyn tau_jev::Jev>),
         )
         .with_files(Some(self.dir.join("work")), self.dir.join("blobs"))
+        .with_skills(
+            self.spec["skills"]
+                .is_object()
+                .then(|| self.dir.join("skills")),
+        )
         .with_archive(self.dir.join("archive"));
         let retry = &self.spec["retry"];
         let mut agent = Agent::new(self.counted.clone()).plugin(plugins).retry(

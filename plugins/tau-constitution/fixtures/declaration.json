@@ -33,7 +33,9 @@
     "recover": false,
     "run_end": true,
     "view": true,
-    "settings_view": false
+    "settings_view": false,
+    "app": false,
+    "page": false
   },
   "actions": [
     "add_place",
@@ -65,5 +67,6 @@
     "icon": "blocked"
   },
   "picker_auto": null,
-  "continues": 10
+  "continues": 10,
+  "listed_commands": false
 }

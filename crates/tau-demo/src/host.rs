@@ -61,6 +61,8 @@ pub struct DemoHost {
     /// Plugins whose entry and data a screen set, whatever their host
     /// half says.
     pinned: Mutex<Vec<(PluginInfo, PluginValue)>>,
+    /// What tau-skills keeps of the app, drawn once as the demo starts.
+    skills_app: tau_luau_plugins::AppView,
     // Dropped last: the plugins' files, and the runtime their work runs
     // on.
     runtime: Runtime,
@@ -112,12 +114,14 @@ impl DemoHost {
             },
         );
         let jev: Arc<dyn Jev> = Arc::new(scripted_jev());
-        let skills = dir.path().join("skills");
-        tau_skills::demo::seed(&skills)?;
+        let skills = dir.path().join("person-skills");
+        crate::skills::seed(&skills)?;
+        let skills_app =
+            crate::skills::app_view(&runtime, &skills, dir.path())?;
         let services = Services::default()
             .with(saved)
             .with(ConfigDir(dir.path().join("config")))
-            .with(tau_skills::SkillsDir(skills))
+            .with(tau_ui_plugin::SkillsDir(skills))
             .with(tau_jev::Upstream(jev.clone()))
             .with(jev);
         let (pushes, pushed) = mpsc::unbounded_channel();
@@ -140,6 +144,7 @@ impl DemoHost {
             repo_settings: Mutex::default(),
             pushed: Mutex::new(Some(pushed)),
             pinned: Mutex::default(),
+            skills_app,
             runtime,
             _dir: dir,
         })
@@ -170,7 +175,7 @@ impl DemoHost {
         catalog.plugin_data = data;
         // tau's Luau plugins, which the demo cannot run: what they
         // declare, from their fixtures (ADR 0050).
-        let (info, data) = luau_built_ins();
+        let (info, data) = luau_built_ins(&self.skills_app);
         catalog.plugins.push(info);
         catalog
             .plugin_data
@@ -322,7 +327,9 @@ fn scripted_jev() -> FakeJev {
 
 /// tau-luau-plugins' entry, with the Luau plugins tau comes with that the
 /// demo draws: each as it declares itself, from its fixture.
-fn luau_built_ins() -> (PluginInfo, PluginValue) {
+fn luau_built_ins(
+    skills: &tau_luau_plugins::AppView,
+) -> (PluginInfo, PluginValue) {
     use tau_luau_plugins::{Entry, Overview, Standing};
     let built_in = |name: &str| Entry {
         name: name.into(),
@@ -336,6 +343,7 @@ fn luau_built_ins() -> (PluginInfo, PluginValue) {
         tests: Vec::new(),
         keeps_earlier: false,
         built_in: true,
+        app: (name == tau_luau_plugins::names::SKILLS).then(|| skills.clone()),
     };
     let overview = Overview {
         commit: None,
@@ -348,6 +356,7 @@ fn luau_built_ins() -> (PluginInfo, PluginValue) {
             built_in(tau_luau_plugins::names::COMPACTION),
             built_in(tau_luau_plugins::names::TREE_COMPACTION),
             built_in(tau_luau_plugins::names::REASONING),
+            built_in(tau_luau_plugins::names::SKILLS),
         ],
         error: None,
     };

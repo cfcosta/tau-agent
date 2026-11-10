@@ -919,6 +919,62 @@ What the port found besides:
   equal; a result's wording changed fails it. It went with the Rust
   crate.
 
+### Gap K, and tau-skills
+
+Added on 2026-11-10: tau-skills, kept in Rust above for writing the
+person's skills, writes only its own: it copied the 51 skills it ships
+out of the binary into `<data>/skills` as the host started. As a
+package, they are files of the package, read where it is installed, and
+it writes nothing. What it lacked is reach outside a run:
+
+- **`app(ctx)`**: what the plugin keeps of the whole app, as
+  `repo_data` does of a repository, with nothing as input and
+  `ctx.files` as its tools have it. The host runs it as it draws the
+  catalog, at most once a second; its `nav` field gives the sidebar
+  entry's `detail` and `badge`, as `repo_data`'s does under a
+  repository.
+- **Commands from it**: `commands` may be `{ list, run }`: `list(app)`
+  gives the commands by name, each `{ description, args, icon }`, and
+  `run(name, args, ctx)` carries one out, as a declared command's
+  action does.
+- **A page of the app**: `page(app, ctx)` draws the page `nav` opens,
+  in place of the plugin's card there; its buttons are its actions.
+- **`ctx.files` in `start`**, so a run's instructions can list what a
+  folder holds as the run starts.
+- **`"package"`**, **`"data"`** and **`"skills"`** in `uses.files`: the
+  package's own folder, wherever it is installed; tau's data folder, where
+  other hosts put the skills they ship; and the person's skills folder as
+  the host has it (`~/.agents/skills`, or a test's), each with folders in
+  it as `package/x`; `ctx.files.roots()` says where each is.
+- **`ctx.files.frontmatter(path)`**: a Markdown file's YAML frontmatter
+  as a table, and the text after it, read by the host (saphyr) as
+  `ctx.files.image` reads an image.
+- **`tau.interface("reveal", { path })`** shows a folder `uses.files`
+  names in the file manager.
+
+As built:
+
+- tau-skills is `plugins/tau-skills`: `src/scan.luau` reads the folders
+  as `scan.rs` did, word for word, and `src/plugin.luau` lists them in
+  `start`, loads one with `skill`, draws the Skills page, the sidebar's
+  count and a card per loaded skill, and lists `/name` commands. The 51
+  skills it ships moved to `plugins/tau-skills/skills`; nothing copies
+  them now. A parity property held the Luau plugin to the Rust one over
+  2,000 drawn pairs of folders (frontmatter missing, unclosed, not YAML,
+  names and descriptions as numbers, flags, null or lists, block
+  scalars, wide spaces, a BOM, CRLF, hidden and clashing folders): the
+  skills found, the folders that are not, the instructions' list and
+  each skill loaded were the same, and changing one reason failed it.
+  Then the Rust crate went.
+- `SkillsDir` moved to tau-ui-plugin, with the service's name and
+  `SHIPPED_SKILLS`, the data folder's `skills` that tau-plugins and
+  tau-agents write theirs to.
+- The `reveal` action is `tau.reveal` on a page of the app, its path
+  held to the folders the host resolved.
+- Differences: the tool is declared even when no skill is found (tau
+  ships 51, so a run always has some); a failed `skill` call has the
+  default card; the Skills entry is in the sidebar with no skills too.
+
 ## Alternatives considered
 
 - **Port the plugins and leave the gaps**, calling Jev over HTTP with

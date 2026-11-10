@@ -135,6 +135,9 @@ struct Inner {
     /// and where each plugin's blobs are kept (`uses.files`).
     workspace: Option<std::path::PathBuf>,
     blobs: Option<std::path::PathBuf>,
+    /// The person's skills folder, as the host has it (`uses.files`'
+    /// `skills`).
+    skills: Option<std::path::PathBuf>,
     /// What carries out what a tool asked once the person allows it.
     dispatch: Option<Dispatch>,
     /// The state of each run going on, by run.
@@ -190,6 +193,7 @@ impl LuauPlugins {
             archive: std::env::temp_dir(),
             workspace: None,
             blobs: None,
+            skills: None,
             dispatch: None,
             runs: Mutex::default(),
         }))
@@ -222,6 +226,15 @@ impl LuauPlugins {
             .expect("the files are given before the plugins are shared");
         inner.workspace = workspace;
         inner.blobs = Some(blobs);
+        self
+    }
+
+    /// The person's skills folder, as the host has it, for the plugins
+    /// whose `uses.files` names `skills`.
+    pub fn with_skills(mut self, dir: Option<std::path::PathBuf>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("the skills folder is given before the plugins are shared")
+            .skills = dir;
         self
     }
 
@@ -261,6 +274,7 @@ impl LuauPlugins {
             archive: std::env::temp_dir(),
             workspace: None,
             blobs: None,
+            skills: None,
             dispatch: None,
             runs: Mutex::default(),
         }))
@@ -300,6 +314,31 @@ impl Inner {
     /// when its `uses` names them, charged to the run, and the run's
     /// conversation, `transcript`, where the hook has it and `uses`
     /// names it; else nothing.
+    /// What `ctx.files` and `ctx.blobs` reach for `active`, with
+    /// `uses.files`: its folders, the run's workspace, its package when it
+    /// is one of tau's own, and its blobs in the run's repository.
+    fn files_of(&self, active: &Active) -> Option<Arc<crate::files::Files>> {
+        let uses = &active.loaded.declaration.uses;
+        if uses.files.is_empty() {
+            return None;
+        }
+        let name = &active.loaded.declaration.name;
+        let blobs = self
+            .blobs
+            .as_ref()
+            .zip(self.run["repo"].as_str())
+            .map(|(root, repo)| crate::files::blobs_dir(root, name, repo));
+        Some(Arc::new(
+            crate::files::Files::new(
+                &uses.files,
+                self.workspace.clone(),
+                blobs,
+            )
+            .with_package(crate::runtime::package_dir(name))
+            .with_skills(self.skills.clone()),
+        ))
+    }
+
     fn reach(
         &self,
         active: &Active,
@@ -659,8 +698,8 @@ fn apply_start(plan: &mut RunPlan, answer: &Value, replaced: &mut bool) {
     );
     if let Some(added) = answer["instructions"].as_str() {
         plan.instructions = Some(match plan.instructions.take() {
-            Some(own) => format!("{own}\n\n{added}"),
-            None => added.to_owned(),
+            Some(own) if !own.is_empty() => format!("{own}\n\n{added}"),
+            _ => added.to_owned(),
         });
     }
     // The effort, before the session opens: on auto only, and the first
@@ -800,6 +839,9 @@ fn hook_name(hook: &Hook) -> String {
         Hook::Forge(name) => format!("forge.{name}"),
         Hook::Job(name) => format!("jobs.{name}"),
         Hook::RepoData => "repo_data".into(),
+        Hook::App => "app".into(),
+        Hook::AppPage => "page".into(),
+        Hook::ListCommands => "commands.list".into(),
         Hook::Recover => "recover".into(),
         Hook::Page(name) => format!("pages.{name}"),
         Hook::RunEnd => "run_end".into(),
@@ -873,7 +915,15 @@ impl Plugin for LuauPlugins {
                         input,
                         &mut state,
                         ctx,
-                        self.0.reach(active, ctx, None),
+                        match self.0.files_of(active) {
+                            Some(files) => {
+                                Arc::new(crate::runtime::WithFiles {
+                                    reach: self.0.reach(active, ctx, None),
+                                    files,
+                                })
+                            }
+                            None => self.0.reach(active, ctx, None),
+                        },
                     )
                     .await
                 else {
@@ -1481,20 +1531,7 @@ impl AgentTool for LuauTool {
             )
             .into());
         };
-        let uses = &active.loaded.declaration.uses;
-        let files = (!uses.files.is_empty()).then(|| {
-            let blobs =
-                inner.blobs.as_ref().zip(inner.run["repo"].as_str()).map(
-                    |(root, repo)| {
-                        crate::files::blobs_dir(root, &self.plugin, repo)
-                    },
-                );
-            Arc::new(crate::files::Files::new(
-                &uses.files,
-                inner.workspace.clone(),
-                blobs,
-            ))
-        });
+        let files = inner.files_of(&active);
         let reach: Arc<dyn Reach> = Arc::new(ToolReach {
             ctx: ctx.clone(),
             plugin: plugin.clone(),

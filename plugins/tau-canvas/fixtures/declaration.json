@@ -150,7 +150,9 @@
     "recover": false,
     "run_end": false,
     "view": true,
-    "settings_view": false
+    "settings_view": false,
+    "app": false,
+    "page": false
   },
   "actions": ["open", "pick"],
   "events": [],
@@ -163,5 +165,6 @@
   "pages": [],
   "repo_nav": null,
   "picker_auto": null,
-  "continues": null
+  "continues": null,
+  "listed_commands": false
 }
