@@ -147,8 +147,8 @@ pub fn service(name: &str) -> Option<Luau> {
         names::IDENTITY => Luau::Excluded(
             "the host's own, to check and land the plugins repository",
         ),
-        names::TURN_HOOKS
-        | names::RUN_COMMANDS
+        names::TURN_HOOKS => Luau::Hook("turn_end"),
+        names::RUN_COMMANDS
         | names::RUN_WAKE
         | names::AGENT_REPO
         | names::REPO_LAUNCHER

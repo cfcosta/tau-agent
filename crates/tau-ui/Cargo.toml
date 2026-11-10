@@ -25,7 +25,6 @@ tokio-util.workspace = true
 # The plugins whose data and records the tests read.
 tau-remote.workspace = true
 tau-mcp.workspace = true
-tau-memory.workspace = true
 tau-vcs.workspace = true
 # Luau plugins' files and tau-todo's store, which its tests read.
 tau-luau-plugins-host.workspace = true
@@ -47,7 +46,6 @@ tau-agents.workspace = true
 tau-luau-plugins.workspace = true
 tau-jev.workspace = true
 tau-mcp-host.workspace = true
-tau-memory-host.workspace = true
 tau-store.workspace = true
 # The product shows `bash` output as a terminal: commands run under a
 # pseudo-terminal (docs/decisions/0010-terminal-rendering.md).

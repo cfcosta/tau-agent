@@ -49,6 +49,8 @@ function tau.plugin(spec)
 			return command.run(args.text or "", ctx)
 		end
 	end
+	-- What `infer{ tools }` calls the plugin's own tools from.
+	tau._spec = spec
 	return spec
 end
 
@@ -459,6 +461,20 @@ function ui.button(label, action, args, kind, icon)
 	}
 end
 
+-- A switch that shows `on`, and carries out the plugin's
+-- `actions[action]` with `args` when flipped (ADR 0050, gap L);
+-- `detail` is a line under its label.
+function ui.switch(label, detail, on, action, args)
+	return {
+		piece = "switch",
+		label = tostring(label),
+		detail = detail and tostring(detail) or json.null,
+		on = on == true,
+		action = tostring(action),
+		args = args or {},
+	}
+end
+
 function ui.heading(text)
 	return { piece = "heading", text = tostring(text) }
 end
@@ -770,8 +786,45 @@ function ui.status(text, detail, of)
 	}
 end
 
+-- `list` as a list of strings, or an error naming `what`.
+function tau._strings(list, what)
+	local out = array({})
+	for _, item in ipairs(list) do
+		if type(item) ~= "string" then
+			error(what .. " is a list of names", 0)
+		end
+		table.insert(out, item)
+	end
+	return out
+end
+
+-- The keys a plugin binds, `{ ["ctrl-2"] = "notes" }`: each to one of its
+-- pages (ADR 0050, gap L).
+function tau._keys(keys, pages)
+	local out = {}
+	for key, page in pairs(keys) do
+		if type(key) ~= "string" or type(page) ~= "string" then
+			error("keys are `{ [key] = page }`, a page of its own for each key", 0)
+		end
+		if (pages or {})[page] == nil then
+			error("the key `" .. key .. "` opens the page `" .. page .. "`, which `pages` lacks", 0)
+		end
+		out[key] = page
+	end
+	return out
+end
+
+-- Whether the page `name` that `what` opens is one of `pages`.
+local function page_of(what, name, pages)
+	if name ~= nil and (pages or {})[name] == nil then
+		error("`" .. what .. "` opens the page `" .. tostring(name) .. "`, which `pages` lacks", 0)
+	end
+end
+
 -- What the host reads of a plugin, without running its hooks.
 function tau._describe(plugin)
+	page_of("nav", plugin.nav and plugin.nav.page, plugin.pages)
+	page_of("repo_menu", plugin.repo_menu and (plugin.repo_menu.page or ""), plugin.pages)
 	local tools = array({})
 	for name, tool in pairs(plugin.tools or {}) do
 		table.insert(tools, {
@@ -794,6 +847,23 @@ function tau._describe(plugin)
 	end
 	table.sort(actions)
 	local uses = plugin.uses or {}
+	-- A folder is a name, read only, or `{ name, write = true }`, written
+	-- too (ADR 0050, gap L).
+	local files, writes = array({}), array({})
+	for _, folder in ipairs(uses.files or {}) do
+		if type(folder) == "table" then
+			local name = folder[1]
+			if type(name) ~= "string" then
+				error("a folder of uses.files is a name, or { name, write = true }", 0)
+			end
+			table.insert(files, name)
+			if folder.write == true then
+				table.insert(writes, name)
+			end
+		else
+			table.insert(files, folder)
+		end
+	end
 	return {
 		uses = {
 			tools = uses.tools or array({}),
@@ -807,7 +877,8 @@ function tau._describe(plugin)
 			transcript = uses.transcript == true,
 			archive = uses.archive == true,
 			chats = uses.chats == true,
-			files = uses.files or array({}),
+			files = files,
+			writes = writes,
 		},
 		-- What can be set; `view` draws the settings page, on the host.
 		settings = plugin.settings and {
@@ -856,7 +927,16 @@ function tau._describe(plugin)
 		nav = plugin.nav and {
 			label = plugin.nav.label and tostring(plugin.nav.label) or "",
 			icon = plugin.nav.icon or "",
+			-- One of its pages of the app, which the entry opens (gap L).
+			page = plugin.nav.page and tostring(plugin.nav.page) or nil,
 		} or json.null,
+		repo_menu = plugin.repo_menu and {
+			label = plugin.repo_menu.label and tostring(plugin.repo_menu.label) or "",
+			page = tostring(plugin.repo_menu.page or ""),
+			icon = plugin.repo_menu.icon or "",
+		} or nil,
+		drafts = plugin.drafts and tau._strings(plugin.drafts, "drafts") or nil,
+		keys = plugin.keys and tau._keys(plugin.keys, plugin.pages) or nil,
 		picker_auto = plugin.picker_auto and {
 			jev = tostring(plugin.picker_auto.jev),
 			no_jev = tostring(plugin.picker_auto.no_jev),
@@ -1149,6 +1229,116 @@ local function store_of(source, repo)
 	}
 end
 
+-- What a tool of the plugin's own answers, as text for the model: its
+-- text, or its value as JSON.
+local function tool_text(value)
+	if type(value) == "string" then
+		return value
+	end
+	-- `tau.result(text)`.
+	if type(value) == "table" and type(value.text) == "string" and type(value.flag) == "boolean" then
+		return value.text
+	end
+	if value == nil then
+		return "null"
+	end
+	return json.encode(value)
+end
+
+-- `infer{ tools }` (ADR 0050, gap L): the model, offered the plugin's own
+-- tools, by name or as tables of its own, asked in rounds, each tool it calls called here with the
+-- hook's `ctx`, until it calls none, or none of `wait_for` (every tool by
+-- default) whose answers it waits for, or `rounds` (4) are done.
+local function infer_with_tools(source, args, ctx)
+	local own = tau._spec and tau._spec.tools or {}
+	local offered = array({})
+	-- A name is one of the plugin's tools; a table, `{ name, description,
+	-- parameters, call }`, a tool of its own for this request alone.
+	local named = {}
+	for _, entry in ipairs(args.tools) do
+		local name, tool = entry, own[entry]
+		if type(entry) == "table" then
+			name, tool = entry.name, entry
+		end
+		if type(tool) ~= "table" or type(tool.call) ~= "function" or type(name) ~= "string" then
+			error("infer offers only the plugin's own tools: it has no `" .. tostring(name) .. "`", 3)
+		end
+		named[name] = tool
+		table.insert(offered, {
+			name = name,
+			description = tool.description or "",
+			parameters = tool.parameters or { type = "object", properties = {} },
+		})
+	end
+	local waits = {}
+	for _, entry in ipairs(args.wait_for or args.tools) do
+		waits[type(entry) == "table" and entry.name or entry] = true
+	end
+	local request = {}
+	for key, value in pairs(args) do
+		if key ~= "tools" and key ~= "wait_for" and key ~= "rounds" then
+			request[key] = value
+		end
+	end
+	request.tools = offered
+	request.turns = array({})
+	local calls = array({})
+	local text = ""
+	for _ = 1, args.rounds or 4 do
+		local answer = source.infer_turn(request)
+		if not answer.ok then
+			answer.calls = calls
+			return answer
+		end
+		text = answer.value.text or ""
+		local asked = answer.value.calls or {}
+		if #asked == 0 then
+			break
+		end
+		-- The answer goes back as the host gave it, with what each call
+		-- answered.
+		local turn = { message = answer.value.message, results = array({}) }
+		local waited = false
+		for _, call in ipairs(asked) do
+			local tool = named[call.name]
+			local ok, value
+			if tool == nil then
+				ok, value = false, "no tool named " .. tostring(call.name)
+			else
+				ok, value = pcall(tool.call, call.args or {}, ctx)
+				if not ok then
+					value = tostring(value)
+				end
+			end
+			if waits[call.name] then
+				waited = true
+			end
+			table.insert(calls, { name = call.name, args = call.args or {}, ok = ok })
+			table.insert(turn.results, { id = call.id, name = call.name, text = tool_text(value), ok = ok })
+		end
+		table.insert(request.turns, turn)
+		if not waited then
+			break
+		end
+	end
+	return { ok = true, value = text, calls = calls }
+end
+
+-- `source`, its `infer` taking `tools` too.
+local function with_tools_infer(source)
+	if source == nil or source.infer_turn == nil then
+		return source
+	end
+	local wrapped = setmetatable({}, { __index = source })
+	wrapped.infer = function(args, ctx)
+		if type(args) == "table" and args.tools ~= nil then
+			return infer_with_tools(source, args, wrapped._ctx)
+		end
+		return source.infer(args)
+	end
+	return wrapped
+end
+
 function tau._ctx(data, with_tools)
 	local logs = array({})
 	local ctx = {
@@ -1156,13 +1346,19 @@ function tau._ctx(data, with_tools)
 		now = data.now,
 		settings = data.settings or {},
 		state = data.state or {},
-		tools = with_tools or tools,
+		tools = with_tools_infer(with_tools or tools),
 		store = store_of(with_tools or tools),
 		jev = jev,
 		-- The plan's models, newest of each family: `{ id, family, efforts }`.
 		models = data.models or array({}),
 		_logs = logs,
 	}
+	-- Only the table `with_tools_infer` made is the hook's own: the
+	-- host's, which it hands on where the reach has no `infer_turn` (a
+	-- tool's call), is frozen.
+	if type(ctx.tools) == "table" and ctx.tools ~= (with_tools or tools) and rawget(ctx.tools, "infer") ~= nil then
+		rawset(ctx.tools, "_ctx", ctx)
+	end
 	function ctx.log(text)
 		table.insert(logs, tostring(text))
 	end
@@ -1207,12 +1403,20 @@ function tau._ctx(data, with_tools)
 	if source ~= nil and source.files_read ~= nil then
 		ctx.files = {
 			-- The file's text; with `{ bytes = true }` its bytes in base64;
-			-- `limit`, the most bytes it reads.
+			-- `offset`, the bytes it skips; `limit`, the most bytes it reads;
+			-- with `lossy = true`, bytes that are not UTF-8 read as U+FFFD.
 			read = function(path, opts)
 				opts = opts or {}
-				return source.files_read({ path = tostring(path), bytes = opts.bytes == true, limit = opts.limit })
+				return source.files_read({
+					path = tostring(path),
+					bytes = opts.bytes == true,
+					limit = opts.limit,
+					offset = opts.offset,
+					lossy = opts.lossy == true,
+				})
 			end,
-			-- What the folder holds: `{ name, dir, size }` each, by name.
+			-- What the folder holds: `{ name, dir, size, modified }` each, by
+			-- name, `modified` in milliseconds since 1970.
 			list = function(path)
 				return source.files_list({ path = tostring(path) })
 			end,
@@ -1233,6 +1437,47 @@ function tau._ctx(data, with_tools)
 			-- Where each folder `uses.files` names is, by its name there.
 			roots = function()
 				return source.files_roots({})
+			end,
+			-- In a folder `uses.files` names `{ name, write = true }` (ADR
+			-- 0050, gap L): writes `text` whole, or not at all, making the
+			-- folders it is in; removes a file or an empty folder; moves one
+			-- in place of another; makes a folder and those it is in.
+			write = function(path, text)
+				source.files_write({ path = tostring(path), text = tostring(text) })
+			end,
+			remove = function(path)
+				source.files_remove({ path = tostring(path) })
+			end,
+			rename = function(from, to)
+				source.files_rename({ path = tostring(from), to = tostring(to) })
+			end,
+			mkdir = function(path)
+				source.files_mkdir({ path = tostring(path) })
+			end,
+			-- The Git remote of the repository at or above a folder it reads:
+			-- `{ url, normalized }`, `url` as its config writes it, or nil.
+			remote = function(path)
+				local found = source.files_remote({ path = tostring(path) })
+				if found == json.null then
+					return nil
+				end
+				return found
+			end,
+			-- The repositories tau lists, `{ id, name, folder, remote,
+			-- normalized }` each, for a plugin whose uses.files names
+			-- `repository` (ADR 0050, gap L).
+			repositories = function()
+				return source.files_repositories({})
+			end,
+			-- tau's folder for the repository `name`, which `repository`
+			-- names in its runs: for a hook outside them; nil for one tau
+			-- does not have.
+			repository = function(name)
+				local found = source.files_repository({ name = tostring(name) })
+				if found == json.null then
+					return nil
+				end
+				return found
 			end,
 		}
 		ctx.blobs = {

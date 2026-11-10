@@ -92,6 +92,11 @@ pub struct Uses {
     /// absolute path.
     #[serde(default)]
     pub files: Vec<String>,
+    /// The folders of [`Self::files`] it writes too (`{ "folder", write
+    /// = true }`, ADR 0050, gap L): its own in tau's folders,
+    /// [`own_folders`], with no Allow; any other with an Allow of its own.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub writes: Vec<String>,
 }
 
 /// What `uses.files` names the run's workspace by.
@@ -108,6 +113,34 @@ pub const DATA: &str = "data";
 /// What `uses.files` names the person's skills folder by, as the host has
 /// it (`~/.agents/skills`).
 pub const SKILLS: &str = "skills";
+
+/// What `uses.files` names tau's own directory for the run's repository
+/// by, beside its rules and archive (ADR 0050, gap L); `repository/x` is
+/// a folder in it.
+pub const REPOSITORY: &str = "repository";
+
+/// The folders `plugin` writes with no Allow: its own, in tau's data
+/// folder and in tau's directory for a repository, and the folders in
+/// them.
+pub fn own_folders(plugin: &str) -> [String; 2] {
+    [format!("{DATA}/{plugin}"), format!("{REPOSITORY}/{plugin}")]
+}
+
+/// Whether `folder` of `uses.files` is one of `plugin`'s own, or in one.
+pub fn is_own_folder(plugin: &str, folder: &str) -> bool {
+    !plugin.is_empty()
+        && own_folders(plugin).iter().any(|own| {
+            folder == own
+                || folder
+                    .strip_prefix(own.as_str())
+                    .is_some_and(|rest| rest.starts_with('/'))
+        })
+}
+
+/// What writing a folder of `uses.files` is, in words for the Allow.
+pub fn write_words(folder: &str) -> String {
+    folder_words(folder).replacen("reading", "writing", 1)
+}
 
 /// What a folder of `uses.files` is, in words for the Allow.
 pub fn folder_words(folder: &str) -> String {
@@ -126,6 +159,10 @@ pub fn folder_words(folder: &str) -> String {
         "reading tau's data folder".to_owned()
     } else if let Some(rest) = under(DATA) {
         format!("reading `{rest}` in tau's data folder")
+    } else if folder == REPOSITORY {
+        "reading tau's folder for the repository".to_owned()
+    } else if let Some(rest) = under(REPOSITORY) {
+        format!("reading `{rest}` in tau's folder for the repository")
     } else {
         format!("reading files in `{folder}`")
     }
@@ -133,8 +170,10 @@ pub fn folder_words(folder: &str) -> String {
 
 impl Uses {
     /// What `self` reaches that `before` did not, in words: what the
-    /// person allows before a version that reaches it activates.
-    pub fn grown_from(&self, before: &Uses) -> Vec<String> {
+    /// person allows before a version of `plugin` that reaches it
+    /// activates. Writing its own folders is no new reach (ADR 0050, gap
+    /// L).
+    pub fn grown_from(&self, before: &Uses, plugin: &str) -> Vec<String> {
         let mut grown: Vec<String> = self
             .tools
             .iter()
@@ -161,6 +200,15 @@ impl Uses {
                 .iter()
                 .filter(|folder| !before.files.contains(folder))
                 .map(|folder| folder_words(folder)),
+        );
+        grown.extend(
+            self.writes
+                .iter()
+                .filter(|folder| {
+                    !before.writes.contains(folder)
+                        && !is_own_folder(plugin, folder)
+                })
+                .map(|folder| write_words(folder)),
         );
         if self.chats && !before.chats {
             grown.push("waking chats".into());
@@ -381,7 +429,8 @@ pub const SHORTEST_EVERY: u64 = 1;
 /// outside the person's jobs, and keeps when it ran in memory alone.
 pub const TICK_UNDER: u64 = 60;
 
-/// Its entry in the sidebar, which opens its page.
+/// Its entry in the sidebar, which opens its page: the page `page` of
+/// the app, of `pages`, when it names one (ADR 0050, gap L).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Nav {
     pub label: String,
@@ -389,6 +438,8 @@ pub struct Nav {
     /// names none it knows.
     #[serde(default)]
     pub icon: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<String>,
 }
 
 /// The forge's hooks, as its `forge` table names them.
@@ -474,7 +525,24 @@ pub struct Declaration {
     /// each run as the action `/name` (ADR 0050, gap K).
     #[serde(default)]
     pub listed_commands: bool,
+    /// Its entry in each repository's menu, opening one of its pages of
+    /// that repository (`repo_menu`, ADR 0050, gap L).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_menu: Option<RepoNav>,
+    /// The inputs its pages read as typed (`drafts`): each page is drawn
+    /// again as what one holds changes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drafts: Vec<String>,
+    /// The keys it binds, of [`KEYS`], each to one of its pages of the
+    /// repository the person is in (`keys`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub keys: BTreeMap<String, String>,
 }
+
+/// The keys tau leaves to Luau plugins (ADR 0050, gap L): the first
+/// active plugin by name that binds one has it; tau-memory binds
+/// `ctrl-2` to the repository's notes.
+pub const KEYS: &[&str] = &["ctrl-2"];
 
 /// The words under the effort picker's Auto, as a plugin that picks the
 /// effort says them.
@@ -491,7 +559,7 @@ impl Declaration {
     /// Jev, `infer`, and the seams that block or continue. Empty when a
     /// version may activate by itself.
     pub fn grown_from(&self, before: &Declaration) -> Vec<String> {
-        let mut grown = self.uses.grown_from(&before.uses);
+        let mut grown = self.uses.grown_from(&before.uses, &self.name);
         grown.extend(self.hooks.grown_from(&before.hooks));
         // A job works with no one watching: always new reach.
         grown.extend(
@@ -661,7 +729,8 @@ pub enum Act {
         name: String,
         value: String,
     },
-    /// Draws `plugin`'s page `page` of `params` (its `repo` among them);
+    /// Draws `plugin`'s page `page` of `params`: of the repository `repo`
+    /// among them, or of the app without one (ADR 0050, gap L);
     /// the answer is a fetched tree.
     Page {
         plugin: String,
@@ -670,7 +739,14 @@ pub enum Act {
         /// Whether a Jev key is saved, as the interface sees it.
         #[serde(default)]
         jev: bool,
+        /// What the inputs its `drafts` names hold, by id.
+        #[serde(default)]
+        drafts: BTreeMap<String, String>,
     },
+    /// Draws `plugin`'s step of first-run setup with the repositories
+    /// `picked` so far, `{ name, folder, remote }` each (ADR 0050, gap
+    /// L); the answer is a fetched tree, the step's body.
+    Setup { plugin: String, picked: Vec<Value> },
     /// Carries out `plugin`'s `actions[action]` with `args` from one of
     /// its pages of the repository `repo`: no run's state, its store
     /// there.
@@ -943,6 +1019,7 @@ mod tests {
                 archive: false,
                 chats: false,
                 files: Vec::new(),
+                writes: Vec::new(),
             },
             settings: None,
             tools: Vec::new(),
@@ -963,6 +1040,9 @@ mod tests {
             picker_auto: None,
             continues: None,
             listed_commands: false,
+            repo_menu: None,
+            drafts: Vec::new(),
+            keys: BTreeMap::new(),
         }
     }
 

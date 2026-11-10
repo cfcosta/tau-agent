@@ -56,6 +56,38 @@ fn catalog() -> Catalog {
     }
 }
 
+/// `catalog` with tau-memory active among the Luau plugins, its entry in
+/// each repository's menu opening the repository's notes.
+fn with_memory(mut catalog: Catalog) -> Catalog {
+    let declaration = tau_luau_plugins::Declaration {
+        name: tau_luau_plugins::names::MEMORY.into(),
+        repo_menu: Some(tau_luau_plugins::RepoNav {
+            label: "Memory".into(),
+            page: "notes".into(),
+            icon: "memory".into(),
+        }),
+        ..Default::default()
+    };
+    catalog.plugin_data.insert(
+        tau_luau_plugins::NAME.into(),
+        tau_ui_plugin::PluginValue::typed(tau_luau_plugins::Overview {
+            plugins: vec![tau_luau_plugins::Entry {
+                name: tau_luau_plugins::names::MEMORY.into(),
+                description: String::new(),
+                version: String::new(),
+                standing: tau_luau_plugins::Standing::Active,
+                declaration: Some(declaration),
+                tests: Vec::new(),
+                keeps_earlier: false,
+                built_in: true,
+                app: None,
+            }],
+            ..Default::default()
+        }),
+    );
+    catalog
+}
+
 fn runs() -> Vec<RunView> {
     let mut main =
         RunView::new(id("main"), "main", "coder", "gpt-5.5").in_repo(REPO);
@@ -642,7 +674,7 @@ fn the_repo_menu_entries_do_what_they_say(cx: &mut TestAppContext) {
     install_plugins();
     cx.update(tau_ui_remote::init);
     let window = cx.add_window(|window, cx| {
-        Workspace::new("tau", runs(), catalog(), window, cx)
+        Workspace::new("tau", runs(), with_memory(catalog()), window, cx)
     });
     let workspace = window.root(cx).unwrap();
     let events: Rc<RefCell<Vec<WorkspaceEvent>>> = Rc::default();
@@ -664,6 +696,11 @@ fn the_repo_menu_entries_do_what_they_say(cx: &mut TestAppContext) {
         assert!(cx.debug_bounds(id).is_none(), "the menu closed");
     };
 
+    let notes = tau_luau_plugins::ui::repo_page_link(
+        tau_luau_plugins::names::MEMORY,
+        "notes",
+        REPO,
+    );
     click(&mut cx, "link:Memory");
     workspace.update(&mut cx, |ws, _| {
         assert_eq!(ws.selected_repo(), Some(REPO), "its repository's");
@@ -671,8 +708,9 @@ fn the_repo_menu_entries_do_what_they_say(cx: &mut TestAppContext) {
             matches!(
                 ws.route(),
                 Route::Plugin { plugin, page, params }
-                    if plugin == tau_memory::NAME && page == "notes"
-                        && params.get("repo").map(String::as_str) == Some(REPO)
+                    if plugin == tau_luau_plugins::NAME
+                        && *page == notes.page
+                        && *params == notes.params
             ),
             "the menu opened {:?}",
             ws.route(),

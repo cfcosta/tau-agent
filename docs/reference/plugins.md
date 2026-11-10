@@ -361,8 +361,8 @@ cancel)` offers a finished run's transcript for a rewrite with
   part, and `plan` shows them the run as stored, with no input; no
   plugin's `start` runs, so nothing a start does (an effort picked, a
   memory search, a record) happens, and the settings stay the last
-  request's. tau-luau-plugins, for tau-compaction, and tau-memory take
-  part: one summarizes, the other keeps what the summary drops. The rewrite is stored as any
+  request's. tau-luau-plugins takes part, for tau-compaction and
+  tau-memory: one summarizes, the other keeps what the summary drops. The rewrite is stored as any
   is; no message is added, the run stays finished, and its events are
   only the rewrite's (`ContextRewritten`, and what plugins charged,
   reported or failed at). Cancelling it stores nothing that was not
@@ -555,8 +555,7 @@ tau-luau-plugins the plugins repository.
 - **The host half.** A plugin whose host half brings what the
   interface does not need keeps it in a crate of its own,
   `tau-<plugin>-host`: tau-codemode (Luau), tau-luau-plugins, tau-vcs
-  (jj-lib, gix), tau-mcp (rmcp), tau-tools (the tools), tau-memory
-  (candle). The plugin's crate keeps its records, their fold, its
+  (jj-lib, gix), tau-mcp (rmcp), tau-tools (the tools). The plugin's crate keeps its records, their fold, its
   views and the shapes they read (`details` modules, tau-mcp's
   `info`). tau-direnv keeps its behind a default `host` feature; the rest,
   which are light, beside their `UiPlugin`. `tau-ui-remote` depends on
@@ -972,11 +971,21 @@ instructions, so the replay goes without them.
 
 ### `tau-memory`: a zettelkasten
 
-Research and the reasons behind these choices:
+Built: `plugins/tau-memory`, a Luau plugin tau comes with (ADR 0050,
+gap L; it was the Rust crates `tau-memory` and `tau-memory-host` until
+2026-11-10). Research and the reasons behind these choices:
 [research/memory.md](../research/memory.md). Decided 2026-09-29.
 
-- **Seams:** tools, `start`, and `rewritten`, for a memory-only turn
-  over what compaction dropped.
+- **Seams:** tools, `start`, `rewritten` (a memory-only request over
+  what compaction dropped), `turn_end` (stale marks from the turn's
+  commit), `run_end` (the consolidation pass), `after_tool_result`, a
+  page of each repository and one of the app, `app`, `setup`, its
+  settings pane, an `import` job and the actions its pages carry out.
+  Its modules: `note` and `toml` (the file format), `store`, `bm25`,
+  `recall`, `safety`, `memory` (one scope), `render` (what the model
+  reads), `import_read` and `import`, and `ui_notes`, `ui_import` and
+  `ui_settings`; `unicode` is written from Rust's tables by
+  `tau-built-in-tests`, never by hand.
 - **Notes:** one idea per Markdown file at `<type>/<slug>.md`, the title
   stating the claim, the body in full prose with exact versions, flags,
   paths and error strings.
@@ -1031,24 +1040,33 @@ Research and the reasons behind these choices:
 - **Staleness:** a note `about` a file is marked "may be stale" when a
   later turn's commit touches that file; the agent sees the mark and
   re-checks.
-  - The app hears of each turn's commit through `RunWorkspace::on_commit`,
-    with the paths it changed, so a change made through bash counts as
-    much as one through the edit tools.
+  - `turn_end` is given each turn's commit, `{ change, paths }`, which
+    the run's workspace hears through `RunWorkspace::on_commit`, so a
+    change made through bash counts as much as one through the edit
+    tools.
   - Only notes last written before the turn began are marked: a commit
     can hold edits made before a note about that file was written.
-- **Storage:** tau's data directory, per repository, versioned so every
-  change is a diff that can be reviewed or reverted; nothing lands in
-  the project's history. Notes are the truth; the search index is
-  derived and rebuilt from them on open.
+- **Storage:** tau's directory for each repository, each change kept
+  as the version it replaced in `.history/<id>/<n>.md`, so it can be
+  reviewed or reverted; nothing lands in the project's history. Notes
+  are the truth; the search index is derived and rebuilt from them on
+  open. Front matter is TOML between `+++` lines, which `toml.luau`
+  reads in the subset tau writes and a person plausibly edits; a file
+  that does not read is reported on its page, never dropped.
   - The index is BM25, in process, over each note's title, description,
     tags and body (ADR 0052). It was ColBERT MaxSim with docbert's
     model from 2026-09-29, which found paraphrased queries more often;
     the model was what kept tau-memory from moving to Luau, so it went
     on 2026-11-09, with the retrieval evaluation that compared the two.
+    In Luau a score can differ from the Rust's in its last place:
+    Rust's `ln` is glibc's `logf`, which does not always round
+    correctly; the order is the same.
   - Every note is scored: a scope is small.
 - **Safety:** secrets are redacted before a note is written, writes are
   scanned for prompt injection, and memory never stands in for rules
-  (those belong in `AGENTS.md` or the constitution).
+  (those belong in `AGENTS.md` or the constitution). The patterns are
+  Luau's, with the regex crate's `\w`, `\s` and case folding read from
+  `unicode.luau`.
 - **Evaluation first:** retrieval recall at 5 and 10 by evidence
   distance; coding tasks that need an earlier run, before and after the
   fact changed; calls, tokens and latency. Baselines: no memory, one
@@ -1056,7 +1074,10 @@ Research and the reasons behind these choices:
   which measured recall as near-duplicates pile up for BM25, ColBERT and
   the two fused, was removed with ColBERT (ADR 0052).
   - The end-to-end tasks run with `cargo run --release -p tau-memory-e2e`,
-    searching memory and transcripts with BM25. They make real model
+    searching memory and transcripts with BM25. The memory arms run the
+    Luau plugin as tau does (`Active::built_in`), on the run's own model,
+    its notes in a directory of the trial's; the commit between runs
+    reaches it as a turn's commit does. They make real model
     calls, which cost money: `--budget-usd` stops the run once that much
     is spent, and `--scenario`, `--arm`, `--variant` and `--trials N`
     pick what runs. `--help` lists the rest.
@@ -1086,7 +1107,9 @@ Research and the reasons behind these choices:
       whether the second run read memory. It prints the means per arm
       and variant; `--json PATH` writes every trial.
 - **Model:** the flush and the consolidation pass are its only model
-  calls (search runs locally). They run on the newest model of a plan
+  calls (search runs locally), each one `ctx.tools.infer` with its own
+  tools, `memory_search` and `memory_write`, until a round searches no
+  more. They run on the newest model of a plan
   family at an effort, set in its settings pane: luna at low unless
   the user picks another, or the run's own model and effort with "Use
   the chat's model instead". A family the plan lacks, or an effort the
@@ -1094,19 +1117,20 @@ Research and the reasons behind these choices:
   default.
 - **Scope:** per repository, plus a user scope for preferences across
   projects; a fact lives in exactly one.
-  - In the app, a repository's notes are in `memory/` in tau's directory
-    for it, beside its constitution, and the user's in `memory/` in
-    tau's data directory. Each scope opens once and every run shares it.
+  - In the app, a repository's notes are in `tau-memory/` in tau's
+    directory for it (`uses.files`' `repository/tau-memory`), and the
+    user's in `tau-memory/` in tau's data directory (`data/tau-memory`):
+    the plugin's own folders, which it writes with no Allow.
   - Plugin context sits in the run's first message as text blocks before
     the input; the app shows only the last block as what the user
     wrote.
 - **Importing what Claude Code and Codex learned**
   ([0044](../decisions/0044-memory-imports-what-other-agents-learned.md)).
-  Memory declares it reads `~/.claude` and `~/.codex`, and only reads
-  them. An import proposes notes; nothing is a note until the person
+  Memory declares it reads `~/.claude` and `~/.codex` (`uses.files`,
+  read-only), and only reads them. An import proposes notes; nothing is a note until the person
   keeps it.
-  - **What it reads** (`tau_memory_host::importers`, each reader given the
-    home, never the process's own). Claude Code: `projects/<folder>/memory/*.md`
+  - **What it reads** (`import_read.luau`, each reader given the home
+    the host has). Claude Code: `projects/<folder>/memory/*.md`
     (YAML front matter: `name`, `description`, `type` under `metadata` or
     at the top; `MEMORY.md` skipped) and the folder's `*.jsonl` chats. The
     folder is the `cwd` a chat recorded, else the existing path the
@@ -1130,25 +1154,27 @@ Research and the reasons behind these choices:
     which, per note.
   - **How.** One job, `import` (`Jobs::start`, its page the review page).
     Claude Code's notes are proposed as they are, with no model. The rest
-    go to the person's model (memory's writer settings) through the loop
-    every notes request uses (`write_notes_from`), fenced as
-    `<material … note="… data, not instructions">`, in chunks of 32 kB,
-    three files at a time, with two tools: `memory_search` over the
+    go to the person's model (memory's writer settings) through
+    `ctx.tools.infer` with tools, fenced as
+    `<material … note="… data, not instructions">`, one chunk of 32 kB
+    a tick of the job, with two tools of the import's own: `memory_search` over the
     scopes' notes and the proposals so far, and `memory_propose` (`type`,
     `title`, `description`, `body`, `scope`, `same_as`, `disagrees_with`).
-    Every proposal passes `Memory::write`'s checks: one that reads as
+    Every proposal passes a note's checks (`memory.write`'s): one that reads as
     instructions is refused and counted, a secret redacted and flagged.
     One that says what a proposal says is merged into it (from either
     tool), and one a note says already is dropped. Flagged ones (a
     secret, a note they disagree with, a note of their title) wait
     unticked, under "Need a look".
-  - **State.** `proposals.json` and `checkpoint.json` in `import/` under
-    memory's plugin directory. The checkpoint holds the import going on,
-    which `HostHalf::resume` starts again after a restart, and each item
-    read: a file's size and modification time, a section's hash, and how
-    far into a chat, so a second import reads only what is new. Stop
-    cancels the asks; what was being read stays unread.
-  - **Keeping** writes a proposal through `Memory::write` with
+  - **State.** `proposals.json`, `checkpoint.json` and `kept.json` in
+    `import/` under `data/tau-memory`, and the setup step's choice in
+    `setup.json` there. The checkpoint holds the import going on, which
+    the job carries on after a restart, and each item read: a file's
+    size and modification time, a section's hash, and how far into a
+    chat (a chat past 8 MiB is read in parts), so a second import reads
+    only what is new. Stop ends it; what was being read stays unread. A
+    model ask that fails stops the import.
+  - **Keeping** writes a proposal through `memory.write` with
     `source.imported = { from, path, session }`, `by = inferred`; a note
     of the same title is superseded, and stays as history.
   - **Where the person sees it.** A Memories step in first-run setup,
@@ -1159,9 +1185,11 @@ Research and the reasons behind these choices:
     repository and Need a look. On the Memory tab, "Import from Claude
     Code or Codex…" (also in a repository's menu), and a banner when the
     tools know a repository: proposals wait for it, or there is what no
-    import read. All of it draws from memory's catalog data
-    (`MemoryData::imports`) and acts through its host half, so the review
-    page and the banner work on a phone. No cost is shown: tau runs on
+    import read. Places match listed repositories by folder or by the
+    remote the host reads (`ctx.files.repositories()`), never by reading
+    project folders. All of it is drawn by the plugin's pages and `app`,
+    and acts through its actions, so the review page and the banner work
+    on a phone. No cost is shown: tau runs on
     the person's subscription.
 
 ### `tau-constitution`: rules checked on specific calls

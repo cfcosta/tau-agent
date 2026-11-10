@@ -42,6 +42,8 @@ use tau_vcs_host::{Identity, Project};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_util::sync::CancellationToken;
 
+use crate::common::LuauSettings as _;
+
 const REPO: &str = "repo";
 const WAIT: Duration = Duration::from_secs(60);
 
@@ -118,8 +120,8 @@ fn host_on(llm: &ScriptedModel) -> (Host, UnboundedReceiver<RunEvent>) {
     let agent = tau_agent::agent::Agent::new(llm.clone()).name("coder");
     let (host, events) = Host::with_agent(runtime, agent, store, config);
     let host = host
-        .with_plugin_settings(
-            tau_memory::NAME,
+        .with_luau_settings(
+            tau_luau_plugins::names::MEMORY,
             json!({ "after_each_run": false }),
         )
         .with_repository(

@@ -58,7 +58,12 @@ in the same change. Nothing switches between the two, and no shim
 keeps the Rust names.
 
 The twelve stay Rust. Each keeps its reason in this ADR, and parity
-stays where it is for the slots and services they fill.
+stays where it is for the slots and services they fill. Two of them
+moved later all the same, once Luau reached what they hold: tau-skills
+(gap K, the person's files) and tau-memory (gap L, its notes' files,
+once ADR 0052 took its embeddings away). Ten stay: tau-vcs, tau-mcp,
+tau-tools, tau-agents, tau-sqlite, tau-chatgpt, tau-jev, tau-phones,
+tau-direnv and tau-notify.
 
 ### The gaps, and how each closes
 
@@ -1017,6 +1022,216 @@ from } }` saves a field of the JSON that comes back as a secret the
   job within a second rather than as it is typed, and the setup step
   waits for Continue rather than ending itself once signed in.
 
+### Gap L, and tau-memory
+
+Decided on 2026-11-10. tau-memory was one of the twelve to stay Rust,
+for its embeddings and its files. The embeddings went with ColBERT (ADR
+0052), so it moves too; what it needed besides is gap L.
+
+- **The write gap.** A folder of `uses.files` named `{ name, write =
+true }` is written as well as read (`Uses::writes`):
+  `ctx.files.write(path, text)` writes a file whole, to a file beside it
+  then in its place, making the folders it is in, at most 8 MiB;
+  `remove`, `rename` and `mkdir` do what they say. A path is written
+  where it really is: the nearest part of it that is there is followed
+  through its links, the rest may not climb out with `..`, and it must
+  land in a written folder and not be that folder. `repository` names
+  tau's own directory for the run's repository, beside its rules and
+  archive. A plugin's own folders, `data/<name>` and
+  `repository/<name>`, are written with no Allow; any other folder it
+  writes waits for an Allow of its own, apart from reading it
+  (`Uses::grown_from` names it, "writing files in `~/x`"). `ctx.files`
+  reaches `rewritten`, `turn_end` and `run_end`, jobs and actions too;
+  outside a run, `ctx.files.repository(name)` is tau's directory for
+  each repository the host has, by name.
+- **`infer` takes tools.** `ctx.tools.infer{ task, context, tools,
+wait_for?, rounds?, instructions?, effort?, model? }` offers the
+  plugin's own tools, by name and no other: `tau.luau` asks one round
+  at a time (`infer_turn`, in a run's hooks and outside them alike),
+  calls each tool the model asks for with the hook's own `ctx`, in the
+  same VM, and sends back what each answered, as tau-memory's
+  `write_notes_from` did: up to four rounds, ending at a round that
+  calls none of `wait_for` (its searches), an unknown tool or one that
+  raises answering the model with the error. A tool called so changes
+  `ctx.state` as the hook does, so nothing waits on the run's state
+  twice. The message is the task as written, then the context as JSON,
+  with the plugin's instructions; the answer is `{ ok, value, calls }`.
+- **`turn_end` hears the commit.** In a run with a workspace, its input
+  has `commit = { change, paths }`: the commit the turn left, as the
+  run's `TurnHooks` tell it, which the workspace's plugin hears before
+  the Luau plugins hear the turn end. A turn with no commit has none.
+- **`ctx.files.remote(path)`**: the Git remote of the repository a
+  folder it reads is in, read as tau-memory's importers read it, from
+  the Git config of a checkout, a worktree (its `gitdir` file and
+  `commondir`) or a jj repository's Git store, `origin` first, else the
+  first listed: `{ url, normalized }`, normalised as tau-memory's
+  `normalize_remote` does, or nil. The importers parse the config
+  themselves rather than through gix, so the helper does the same, to
+  read as they did.
+- **Tests.** `t.run` fakes the writes into `spec.files` (`run.files`,
+  `run.folders`), `spec.remotes`, `spec.repositories` and `infer`'s
+  rounds (`spec.infer`, `run.infers`); `t.loop` takes `data`,
+  `repository` and `commits`, and gives back `data` and `repository`
+  as the loop left them.
+- **The rest moves to Luau** as the user decided: imports (memory
+  files, JSONL chats, proposals, the checkpoint, the import job), BM25,
+  and the safety checks, in Luau patterns, held to the Rust by a parity
+  property. tau-memory-e2e runs the Luau plugin through
+  `Active::built_in`.
+
+As built, the core (`plugins/tau-memory`, with the imports beside it):
+
+- **Where notes are.** The repository's scope in `repository/tau-memory`
+  and the person's in `data/tau-memory`, the plugin's own folders, so
+  no Allow; read and written through `ctx.files`. There are no notes to
+  move: tau has no users yet.
+- **Notes' files** are written byte for byte as the toml crate (1.1,
+  `toml_writer`) wrote them (`toml.luau`, `note.luau`), and read by a
+  parser of TOML 1.1 whole: comments, every string kind, inline tables
+  and dotted keys, as a person editing one might write; a key it does
+  not know is left alone, as serde did, and a file that does not read
+  is reported, not dropped.
+- **Words** are Rust's: `char::is_alphanumeric` runs and `_`, lowered as
+  `str::to_lowercase` lowers them, final sigma and the dotted capital I
+  included, and white space as `trim` reads it, from tables
+  (`unicode.luau`) that tau-built-in-tests writes from Rust's own and the
+  regex crate's and holds the file to (`BLESS=1` writes it again).
+- **BM25** works in single precision as the Rust did, each step rounded
+  with `string.pack("f")`. The scores agree to two units in the last
+  place: Rust's `ln` is the platform's `logf`, which glibc does not
+  always round to the nearest (one input in 1,000 or so), where Luau's
+  is.
+- **Secrets and instructions** are matched by a small backtracking
+  matcher over the Rust patterns written as trees, reading them as the
+  regex crate does: leftmost first, `\b` and `\s` by Unicode, and `(?i)`
+  folding the Kelvin sign into `k` and the long s into `s`.
+- **What the host gained for it**: `ctx.transcript()` in `rewritten` is
+  what the rewrite replaced, and in `run_end` the run's conversation;
+  `after_tool_result` reaches `ctx.files`; `ctx.now.ms`, as notes keep
+  milliseconds. While the Rust plugin, of the same name and tools, was
+  there, `built_in::NOT_YET` kept the Luau one out of the app; it went
+  with the Rust crates.
+- **What interfaces draw** is the run's state, not records: `recalled`
+  (the notes the task found), `log` (each `recalled`, `saved`, `marked`
+  and `error`, in order) and `given` (what the conversation has of
+  memory, which a fork or the chat's next run inherits; a rewrite that
+  drops the conversation empties it).
+- **Differences kept.** A conversation shown to a memory request lists
+  an answer's text before its calls, as Luau's messages keep no order of
+  blocks, and a call's nested arguments in JSON's own order. Stale
+  marks of a turn's commit reach the notes last written before that turn
+  began, every turn moving the mark, as the reference says; the Rust
+  moved it only on the turns its hook heard. Why a file does not read
+  is said in Luau's words. A whole number past 2^53 in a note edited by
+  hand reads rounded.
+- **Parity**, in tau-built-in-tests (`memory::parity`), each over 1,000
+  drawn cases: a note's file both ways, byte for byte, and what
+  `validate` refuses; words, `trim` and `lines`; BM25's scores and
+  order; recall; redaction and refusal; sequences of writes, links,
+  supersessions, stale marks and searches, answer by answer and file by
+  file, history included; and the four tools call by call in both
+  scopes. The prompts, the tools' descriptions and their arguments are
+  the Rust's.
+
+As built, the imports (`import_read.luau`, the readers;
+`import.luau`, the proposals, the checkpoint and the job):
+
+- **Modules are flat.** A package's modules are `src/<name>.luau`,
+  loaded by `require("name")`; none sit in folders of `src/`.
+- **What the host gained for it**: `ctx.files.read` takes an `offset`
+  and `lossy`, and a listing's entries carry `modified` in milliseconds;
+  `ctx.tools.infer{ tools }` takes tools given as tables
+  (`{ name, description, parameters, call }`) beside names of the
+  plugin's own, as the import's `memory_search` and `memory_propose`
+  are not the agent's; and `run:call(f)` runs `f(ctx)` in tests.
+- **Claude Code's front matter** is read by the Rust's own small parser,
+  ported, not by `ctx.files.frontmatter`, so a note reads as it did.
+- **Differences kept.** The import is a job that reads one chunk of
+  32 kB a tick, where the Rust read three files at once; a chat past
+  8 MiB is read in parts across imports. A model ask that fails stops
+  the import, where the Rust waited for a restart. A remote is read only
+  of a folder the plugin may read, so places match listed repositories
+  through `ctx.files.repositories()`; and decoding a Claude Code
+  project's folder from its name walks from `/`, which the app's
+  plugin does not read, so a project no chat records the `cwd` of gets
+  no place.
+- **Parity**, in tau-built-in-tests (`memory_import::parity`), over
+  1,000 drawn homes of Claude Code and Codex files: what each reader
+  finds and reads, the proposals and places of an import of the saved
+  notes, the tallies, and what a second import reads after drawn
+  changes.
+- **The runtime's lost wake-up.** The parity found a Luau script making
+  thousands of host calls sometimes never woke again, stopped by its
+  60 s limit with every thread idle; it is fixed in the runtime in
+  the same change.
+
+As built, the UI, and what the interface gained for it (gap L's part of
+gap E):
+
+- **Pages of the app.** A plugin's `pages` are drawn outside any
+  repository too: a link of a page of the app, or of a run's view, that
+  names no `repo` opens that page of the app (`app_page_link`), drawn on
+  the host as a repository's page is, `ctx.files` reaching its folders,
+  and fetched again whenever what `app` keeps changes. A repository's
+  page and `repo_data` reach `ctx.files` too, of that repository.
+  `nav.page` makes the sidebar entry open one of them in place of the
+  plugin's card. A map's nodes (`ui.graph`) open the plugin's pages as
+  links do.
+- **What a page reads as typed.** A plugin's `drafts` names inputs whose
+  drafts its pages read, as `params.drafts`: a page is drawn again as
+  one changes, the search over memory's notes and over what imports
+  propose.
+- **`tau.open`**: a button, or an action's `tau.interface("open", { page,
+params, repo })`, opens one of the plugin's own pages, of `repo` or of
+  the app. A repository page's actions answer what they ask of the
+  interface as an app page's do.
+- **`ui.switch(label, detail, on, action, args)`**: a switch that
+  carries out an action, as memory's review page ticks a proposal.
+- **The repository's menu.** `repo_menu = { label, page, icon }` is an
+  entry in each repository's menu opening that page of it, and what
+  `app` keeps as `menu`, a tree of the app's, is drawn there after it
+  (memory's way into an import).
+- **Keys.** `keys = { ["ctrl-2"] = "notes" }` binds a key tau leaves to
+  Luau plugins (`KEYS`) to one of its pages of the repository the person
+  is in, the first active plugin by name taking it, an earlier plugin's
+  key winning: `KEYS` is ctrl-2, which tau-memory binds to its notes.
+- **Setup.** Each of tau's own plugins draws its own step (it was the
+  first one only), and with repositories picked the step's body is
+  drawn again of them, as `ctx.run.picked` (`{ name, id, folder,
+remote }` each).
+- **The repositories tau lists**: `ctx.files.repositories()`, `{ id,
+name, folder, remote, normalized }` each, for a plugin whose
+  `uses.files` names `repository`: memory's imports match proposals'
+  places by folder or remote as the Rust half did with the host's list,
+  without reading project folders. Outside any repository, a
+  `repository/...` folder of `uses.files` is that folder of each
+  repository tau has, which keeping a proposal into one writes.
+- **Tests.** `run:app_page_of(name, params)` draws a page of the app,
+  `run:setup(app, picked)` the step of picked repositories, and
+  `spec.repos` is what `ctx.files.repositories()` lists.
+- **Memory's UI** (`ui_notes.luau`, `ui_import.luau`,
+  `ui_settings.luau`): the notes pages, a repository's (its sidebar
+  entry, menu entry and ctrl-2) and the person's (a page of the app,
+  its sidebar entry counting their notes); a note open, with its map
+  and links; the transcript's marks and the plugin list's line from the
+  run's state; the banner, the menu's way into an import and the review
+  page; the Memories step; and the settings pane. What a page drew in
+  the Rust UI's view state (the setup step's choices, what keeping last
+  did) is a file in `data/tau-memory`.
+- **Differences kept.** The settings pane binds its settings
+  (`ui.toggle`, `ui.choice`), so a switch's line under it is text below
+  it and each choice is the interface's own control, not a button per
+  family and effort. A page of a Luau plugin has no title of its own in
+  the frame. A stale mark is not drawn in the transcript, as in the Rust
+  UI.
+- **Parity**, in tau-built-in-tests (`memory::ui`): a scope's notebook
+  from the same files (500 cases); and the notes pages with every note
+  open, the transcript's marks, the banner and menu entry, the review
+  page in each tab and the setup step, piece by piece against the Rust
+  UI's trees over drawn notebooks and imports (300 to 500 cases each).
+  What a click asks, and where a link goes, are each side's own, so the
+  comparison leaves them out and the Luau tests hold them.
+
 ## Alternatives considered
 
 - **Port the plugins and leave the gaps**, calling Jev over HTTP with
@@ -1058,3 +1273,30 @@ from } }` saves a field of the JSON that comes back as a secret the
 - **Many model calls at once.** A plugin wraps its `infer` calls in
   codemode's `parallel(...)`; nothing new is built for it. If the
   compaction ports find that too little, "As built" says so.
+
+### tau-memory's Rust crates go
+
+With the core, the imports and the UI held to them, tau-memory and
+tau-memory-host were deleted (2026-11-10), and the parity properties
+with them (`memory::parity`, `memory::ui`, `memory_import::parity`);
+what Rust can say and Luau cannot stays in tau-built-in-tests: the
+Unicode tables, and a remote read from real Git configs.
+
+- **The app** runs the Luau plugin among tau's own; ctrl-2 is in
+  `KEYS`. Tests that turned memory's pass after each run off set it as
+  a Luau plugin's settings (`Host::with_luau_settings`).
+- **The demo** draws memory from its fixture `demo`
+  (`plugins/tau-memory/tests/demo.luau`): the notes of tau-agent,
+  docbert and homelab.nix and their pages, a note open, the review page
+  and banner of synthetic imports, the setup step, the settings pane,
+  and what the demo run recalled and saved, each made by the plugin's
+  own functions and held to it by its tests.
+- **tau-memory-e2e** runs the Luau plugin as tau does
+  (`Active::built_in`), on the run's own model, with its notes in a
+  directory of the trial's. The commit between a trial's runs reaches
+  it as a turn's commit does (`turn_end`), whether the second run
+  started with memory is read from its first message, and the
+  `transcripts` arm keeps a BM25 and the conversation's text of its own.
+- **The interface's window tests of imports** (tau-ui-remote's
+  `memory_import`) went: the Luau tests hold what they checked, the
+  pages' trees being the plugin's.

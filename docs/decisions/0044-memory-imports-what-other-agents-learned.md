@@ -6,7 +6,12 @@
   steps, the status bar and a repository page's actions. Builds on
   [0006](0006-plugin-crates.md), [0028](0028-async-all-the-way-blocking-only-in-spawn-blocking.md),
   [0030](0030-host-halves-are-crates.md) and
-  [0043](0043-local-repositories-in-place.md).
+  [0043](0043-local-repositories-in-place.md). Built in
+  `tau-memory-host` first; since [0050](0050-tau-s-plugins-in-luau.md)
+  (gap L, 2026-11-10) the import is tau-memory's Luau (`plugins/tau-memory`:
+  `import_read.luau`, `import.luau`, `ui_import.luau`), a job of the
+  plugin's whose pages and setup step draw it; what this ADR says of
+  host halves is now what a Luau plugin's `app`, jobs and actions do.
 - Date: 2026-10-17
 
 ## Context

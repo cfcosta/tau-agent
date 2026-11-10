@@ -83,6 +83,11 @@ struct Shared {
     /// The person's skills folder, as the host has it (`uses.files`'
     /// `skills`, ADR 0050 gap K).
     skills: Option<PathBuf>,
+    /// tau's directory for each repository, by name, as the host last
+    /// listed them (`uses.files`' `repository`, ADR 0050, gap L).
+    repositories: std::sync::RwLock<Vec<(String, PathBuf)>>,
+    /// The repositories tau lists, as it last said them.
+    listed: std::sync::RwLock<Vec<tau_ui_plugin::RepoCtx>>,
     /// What runs' tools ask the person to allow, waiting for an answer.
     allows: crate::chats::Allows,
     /// The forms runs' tools ask the person, waiting for the answers.
@@ -210,6 +215,8 @@ impl Registry {
             stores: Arc::new(crate::store::Stores::memory()),
             blobs: std::env::temp_dir().join("tau-luau-blobs"),
             skills: None,
+            repositories: Default::default(),
+            listed: Default::default(),
             allows: crate::chats::Allows::default(),
             forms: crate::forms::Forms::default(),
             chats: None,
@@ -224,6 +231,72 @@ impl Registry {
         let shared = Arc::into_inner(self.0)
             .expect("the chats are given before the registry is shared");
         Self(Arc::new(Shared { chats, ..shared }))
+    }
+
+    /// Takes tau's directory for each of `repos`, by name: what hooks
+    /// outside a run reach of them (`ctx.files.repository`), and a repo's
+    /// hooks as its `repository`.
+    pub fn knows_repositories(&self, repos: &[tau_ui_plugin::RepoCtx]) {
+        let mut known = self.0.repositories.write().expect("not poisoned");
+        for repo in repos {
+            match known.iter_mut().find(|(name, _)| name == &repo.name) {
+                Some(found) => found.1 = repo.dir.clone(),
+                None => known.push((repo.name.clone(), repo.dir.clone())),
+            }
+        }
+    }
+
+    /// Takes `repos` as the repositories tau lists, which
+    /// `ctx.files.repositories` gives, and tau's directory for each.
+    pub fn lists_repositories(&self, repos: &[tau_ui_plugin::RepoCtx]) {
+        self.knows_repositories(repos);
+        *self.0.listed.write().expect("not poisoned") = repos.to_vec();
+    }
+
+    /// What `ctx.files` reaches of `declaration`'s folders in a hook
+    /// outside a run, in the repository `repo` when it is in one: none
+    /// when `uses.files` names none.
+    pub fn files_for(
+        &self,
+        declaration: &tau_luau_plugins::Declaration,
+        repo: Option<&str>,
+    ) -> Option<crate::files::Files> {
+        if declaration.uses.files.is_empty() {
+            return None;
+        }
+        let known = self.0.repositories.read().expect("not poisoned").clone();
+        let repository = repo.and_then(|repo| {
+            known
+                .iter()
+                .find(|(name, _)| name == repo)
+                .map(|(_, dir)| dir.clone())
+        });
+        Some(
+            crate::files::Files::new(&declaration.uses.files, None, None)
+                .writing(&declaration.uses.writes)
+                .with_package(crate::runtime::package_dir(&declaration.name))
+                .with_skills(self.0.skills.clone())
+                .with_repository(repository)
+                .with_repositories(known)
+                .with_listed(&self.0.listed.read().expect("not poisoned")),
+        )
+    }
+
+    /// `reach`, with `ctx.files` too when `declaration`'s `uses.files`
+    /// names folders, in the repository `repo` when the hook is in one.
+    pub fn with_files(
+        &self,
+        declaration: &tau_luau_plugins::Declaration,
+        repo: Option<&str>,
+        reach: Arc<dyn crate::runtime::Reach>,
+    ) -> Arc<dyn crate::runtime::Reach> {
+        match self.files_for(declaration, repo) {
+            Some(files) => Arc::new(crate::runtime::WithFiles {
+                reach,
+                files: Arc::new(files),
+            }),
+            None => reach,
+        }
     }
 
     /// The host's chats, when it has them.
@@ -506,10 +579,9 @@ impl Registry {
     /// it lists and draws of it.
     async fn app_view(&self, active: &Active) -> tau_luau_plugins::AppView {
         let declaration = &active.loaded.declaration;
-        let files =
+        let files = self.files_for(declaration, None).unwrap_or_else(|| {
             crate::files::Files::new(&declaration.uses.files, None, None)
-                .with_package(crate::runtime::package_dir(&declaration.name))
-                .with_skills(self.0.skills.clone());
+        });
         let context = self.app_context(active).await;
         app_view(active, files, &context).await
     }
@@ -553,7 +625,11 @@ impl Registry {
                         &crate::runtime::Hook::Action(action.clone()),
                         args,
                         &context,
-                        Arc::new(crate::runtime::ActionReach(jev)),
+                        self.with_files(
+                            &active.loaded.declaration,
+                            None,
+                            Arc::new(crate::runtime::ActionReach(jev)),
+                        ),
                         CancellationToken::new(),
                     )
                     .await;
@@ -586,13 +662,19 @@ impl Registry {
                 continue;
             };
             let context = self.repo_context(&active, repo).await;
+            // What it reads of its folders there, as its pages do.
+            let reach = self.with_files(
+                &active.loaded.declaration,
+                Some(repo),
+                Arc::new(crate::runtime::NoReach),
+            );
             let outcome = active
                 .loaded
                 .call(
                     &crate::runtime::Hook::RepoData,
                     serde_json::Value::Null,
                     &context,
-                    Arc::new(crate::runtime::NoReach),
+                    reach,
                     CancellationToken::new(),
                 )
                 .await;
@@ -647,15 +729,18 @@ impl Registry {
         }
     }
 
-    /// Draws `plugin`'s page `page` of `params`, `repo` among them, as a
-    /// fetched tree: its actions carried out in that repository. `jev`
-    /// says whether a Jev key is saved, as `ctx.run.jev`.
+    /// Draws `plugin`'s page `page` of `params` as a fetched tree: of the
+    /// repository `repo` among them, its actions carried out there, or
+    /// of the app without one (ADR 0050, gap L). `jev` says whether a Jev
+    /// key is saved, as `ctx.run.jev`; `drafts`, what the inputs its
+    /// `drafts` names hold, as `params.drafts`.
     pub async fn page(
         &self,
         plugin: &str,
         page: &str,
         params: &BTreeMap<String, String>,
         jev: bool,
+        drafts: &BTreeMap<String, String>,
     ) -> serde_json::Value {
         let failed = |why: String| {
             serde_json::json!({ "tree": {
@@ -665,28 +750,96 @@ impl Registry {
         let Some(active) = self.plugin(plugin).await else {
             return failed(format!("{plugin} is not active"));
         };
-        let Some(repo) = params.get("repo") else {
-            return failed("the page names no repository".into());
+        let repo = params.get("repo").filter(|repo| !repo.is_empty());
+        let mut context = match repo {
+            Some(repo) => self.repo_context(&active, repo).await,
+            None => self.app_context(&active).await,
         };
-        let mut context = self.repo_context(&active, repo).await;
         context.run["jev"] = serde_json::json!(jev);
+        let mut input = serde_json::json!(params);
+        if !drafts.is_empty() {
+            input["drafts"] = serde_json::json!(drafts);
+        }
+        let reach = self.with_files(
+            &active.loaded.declaration,
+            repo.map(String::as_str),
+            Arc::new(crate::runtime::NoReach),
+        );
         let outcome = active
             .loaded
             .call(
                 &crate::runtime::Hook::Page(page.to_owned()),
-                serde_json::json!(params),
+                input,
                 &context,
-                Arc::new(crate::runtime::NoReach),
+                reach,
                 CancellationToken::new(),
             )
             .await;
         match outcome.error {
             Some(error) => failed(error),
             None => {
-                let tree = tau_luau_plugins::ui::embed_repo(
-                    &outcome.value,
+                let tree = match repo {
+                    Some(repo) => tau_luau_plugins::ui::embed_repo(
+                        &outcome.value,
+                        plugin,
+                        repo,
+                    ),
+                    None => {
+                        tau_luau_plugins::ui::embed_app(&outcome.value, plugin)
+                    }
+                };
+                serde_json::json!({ "tree": tree.value() })
+            }
+        }
+    }
+
+    /// `plugin`'s step of first-run setup with the repositories `picked`
+    /// so far, as `ctx.run.picked`: its body, as a fetched tree (ADR 0050,
+    /// gap L).
+    pub async fn setup(
+        &self,
+        plugin: &str,
+        picked: &[serde_json::Value],
+    ) -> serde_json::Value {
+        let failed = |why: String| {
+            serde_json::json!({ "tree": {
+                "piece": "status", "text": format!("Its step failed: {why}"), "tone": "bad",
+            } })
+        };
+        let Some(active) = self.plugin(plugin).await else {
+            return failed(format!("{plugin} is not active"));
+        };
+        let declaration = &active.loaded.declaration;
+        if !declaration.hooks.setup {
+            return failed(format!("{plugin} has no setup"));
+        }
+        let app = match self.app_views().await.get(plugin) {
+            Some(view) => view.value.clone(),
+            None => serde_json::Value::Null,
+        };
+        let mut context = self.app_context(&active).await;
+        context.run["picked"] = serde_json::json!(picked);
+        let reach = self.with_files(
+            declaration,
+            None,
+            Arc::new(crate::runtime::NoReach),
+        );
+        let outcome = active
+            .loaded
+            .call(
+                &crate::runtime::Hook::AppSetup,
+                app,
+                &context,
+                reach,
+                CancellationToken::new(),
+            )
+            .await;
+        match outcome.error {
+            Some(error) => failed(error),
+            None => {
+                let tree = tau_luau_plugins::ui::embed_app(
+                    &outcome.value["body"],
                     plugin,
-                    repo,
                 );
                 serde_json::json!({ "tree": tree.value() })
             }
@@ -741,7 +894,11 @@ impl Registry {
                 &crate::runtime::Hook::Action(action.to_owned()),
                 args,
                 &context,
-                Arc::new(crate::runtime::ActionReach(jev)),
+                self.with_files(
+                    &active.loaded.declaration,
+                    Some(repo),
+                    Arc::new(crate::runtime::ActionReach(jev)),
+                ),
                 CancellationToken::new(),
             )
             .await;
@@ -1185,7 +1342,11 @@ impl Registry {
                 &hook,
                 args.clone(),
                 &context,
-                Arc::new(crate::runtime::ActionReach(jev.clone())),
+                self.with_files(
+                    &loaded.declaration,
+                    repo,
+                    Arc::new(crate::runtime::ActionReach(jev.clone())),
+                ),
                 CancellationToken::new(),
             )
             .await;

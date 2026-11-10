@@ -84,9 +84,12 @@ return tau.plugin {
   on_event = function(event, ctx) end,
   run_end = function(run, ctx) end,
   view = function(state, ctx) end,
-  nav = { label = "Deploys", icon = "plug" },  -- its sidebar entry
-  pages = { board = function(params, ctx) end },  -- its pages of a repository
+  nav = { label = "Deploys", icon = "plug", page = "deploys" },  -- its sidebar entry
+  pages = { board = function(params, ctx) end },  -- its pages, of a repository or of the app
   repo_nav = { label = "Todo", page = "board", icon = "list" },
+  repo_menu = { label = "Todo", page = "board", icon = "list" },  -- in each repository's menu
+  keys = { ["ctrl-2"] = "board" },  -- a key tau leaves to plugins, to a page of the repository
+  drafts = { "search" },           -- inputs its pages read as typed: params.drafts
   repo_data = function(ctx) end,   -- what its entry under a repository shows
   recover = function(input, ctx) end,  -- as tau starts: the runs cut off
   commands = { name = { description, args, icon, popover, run = function(text, ctx) end } },
@@ -119,7 +122,7 @@ tool's `call`, `ctx.run.call` is the call's id.
 | `rewrite_context`   | `{ trigger, turn, tokens, window, messages }`                             | `nil`, or `tau.rewrite{ keep, insert, drop_calls, texts, ... }`               | 10 s   |
 | `rewritten`         | `{ plugin, before, after, drops_conversation }`                           | nothing                                                                       | 2 s    |
 | `before_stop`       | `{ text, turn, reason }`                                                  | `nil`, or `tau.continue(message)`                                             | 10 s   |
-| `turn_end`          | `{ turn, text, calls = { { name, ok } }, cost }`                          | nothing                                                                       | 2 s    |
+| `turn_end`          | `{ turn, text, calls = { { name, ok } }, cost, commit? }`                 | nothing                                                                       | 2 s    |
 | `on_event`          | `{ kind, turn, ... }`, for each of `events`                               | nothing                                                                       | 200 ms |
 | `run_end`           | `{ stop, turns, cost, text }`, `text` its last reply                      | nothing                                                                       | 10 s   |
 | `title`             | `{ task, model }`, outside any run                                        | a title, or `nil`                                                             | 2 s    |
@@ -219,7 +222,9 @@ order, json }`, `json` the arguments as the model wrote them; a
 - `tau.fail(why)`, from `start`, ends the run at once with `why` as its
   error: for a plugin whose own setup is broken, so the run does not go
   on unchecked.
-- `turn_end`'s `cost` is what the turn cost, in US dollars.
+- `turn_end`'s `cost` is what the turn cost, in US dollars. In a run
+  with a workspace, `commit = { change, paths }` is the commit the turn
+  left: its change id and the paths it changed, however they changed.
 - A hook that errors or runs out of time counts as `nil`, and its error
   shows on the Plugins screen. After three failures in a run the plugin
   is off for the rest of it. Never rely on an error to block.
@@ -255,6 +260,25 @@ a model the person picks in the plugin's settings.
 An answer that stopped with an error, was cut off at the model's output
 limit or called a tool is refused: `{ ok = false, error, reason }`,
 `reason` being `"error"`, `"length"` or `"tool_call"`.
+
+With `tools`, the names of the plugin's own tools (no other tool), the
+model may call them: each call runs the tool's `call` with the hook's
+`ctx`, its answer goes back, and the model is asked again, until it
+calls none, or none of `wait_for` (every one named, unless given), or
+`rounds` (4) are done. `task` goes as written, then `context` as JSON
+unless it is `json.null`, with `instructions` if given; it takes no
+`schema`. It answers `{ ok, value, calls }`, `value` the last answer's
+text and `calls` each `{ name, args, ok }` it made; a tool that raises
+an error answers the model with it. Changes a tool makes to
+`ctx.state` stay, as the hook's do.
+
+```luau
+local answer = ctx.tools.infer({
+  task = "Keep what this conversation learned.", context = said,
+  instructions = KEEPER, tools = { "note_search", "note_write" },
+  wait_for = { "note_search" },     -- a round of only writes ends it
+})
+```
 
 With `instructions`, the request is the plugin's own: its instructions
 in place of `infer`'s, `task` as the message, as written, then
@@ -305,24 +329,24 @@ is an input whose text goes straight to the store.
 
 ### `ctx`
 
-| Field                                          | What it is                                                                                                                                                                                     |
-| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ctx.run`                                      | `{ id, kind = "main" or "chat" or "sub_agent", repo, model, turn }`; in an action, `{ id, live, jev }`: whether the run is going on, and a Jev key is saved                                    |
-| `ctx.now`                                      | `{ unix, iso, weekday, local, offset }`; `weekday` is `"Monday"` and so on, `local` the host's time as `YYYY-MM-DD HH:MM`, `offset` its seconds from UTC                                       |
-| `ctx.time`                                     | the host's local time: `local(at)` writes `at` (seconds since 1970) as `YYYY-MM-DD HH:MM`, `parse(text)` reads one back and `duration(text)` reads `90m`, `2h` or `3d`, nil when they are none |
-| `ctx.settings`                                 | what the person set, over `settings.default`; per repository when one keeps its own copy                                                                                                       |
-| `ctx.state`                                    | the plugin's table for this run; what a hook leaves in it is kept                                                                                                                              |
-| `ctx.tools`                                    | in a tool's `call`: the tools `uses.tools` names, called as `ctx.tools.read({ path = "a" })`; in every hook, `infer` when `uses.infer`, which a fake run's `tools` stands in for               |
-| `ctx.jev`                                      | Jev, when `uses.jev`: in a tool's `call` and every run hook but `on_event`, booked to the run; each call gives what it cost as its second value                                                |
-| `ctx.log`                                      | `ctx.log(text)`: a line on the plugin's page, never for the model                                                                                                                              |
-| `ctx.store`                                    | with `uses.store`: the plugin's store in the repository the hook works in (below)                                                                                                              |
-| `ctx.transcript()`                             | with `uses.transcript`, in `before_request`, `after_tool_result` and `rewrite_context`: the run's conversation, whole (below)                                                                  |
-| `ctx.archive`                                  | with `uses.archive`: `ctx.archive.path(kind)` names a new file in tau's archive of the repository, and `ctx.archive.write(path, text)` writes it, once, for its owner alone                    |
-| `ctx.measure`                                  | in `rewrite_context`: `ctx.measure(rewrite)`, the bytes of JSON before and after `rewrite` (above)                                                                                             |
-| `ctx.models`                                   | the plan's models, newest of each family: `{ id, family, efforts }`                                                                                                                            |
-| `ctx.files`                                    | in a tool's `call`, with `uses.files`: `read(path, { bytes, limit })`, `list(path)` and `image(path)` under the folders it names, read-only (below)                                            |
-| `ctx.blobs`                                    | in a tool's `call`, with `uses.files`: `put_file(path)` keeps a file's bytes in the run's repository, for `ui.image` (below)                                                                   |
-| `ctx.repos()`, `ctx.stores(repo)`, `ctx.chats` | in a job, with `uses.chats`: the repositories the plugin keeps a store in, each one's store, and `ctx.chats.wake(run, text)` (below)                                                           |
+| Field                                          | What it is                                                                                                                                                                                                                 |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ctx.run`                                      | `{ id, kind = "main" or "chat" or "sub_agent", repo, model, turn }`; in an action, `{ id, live, jev }`: whether the run is going on, and a Jev key is saved                                                                |
+| `ctx.now`                                      | `{ unix, iso, weekday, local, offset, ms }`; `weekday` is `"Monday"` and so on, `local` the host's time as `YYYY-MM-DD HH:MM`, `offset` its seconds from UTC, `ms` milliseconds since 1970                                 |
+| `ctx.time`                                     | the host's local time: `local(at)` writes `at` (seconds since 1970) as `YYYY-MM-DD HH:MM`, `parse(text)` reads one back and `duration(text)` reads `90m`, `2h` or `3d`, nil when they are none                             |
+| `ctx.settings`                                 | what the person set, over `settings.default`; per repository when one keeps its own copy                                                                                                                                   |
+| `ctx.state`                                    | the plugin's table for this run; what a hook leaves in it is kept                                                                                                                                                          |
+| `ctx.tools`                                    | in a tool's `call`: the tools `uses.tools` names, called as `ctx.tools.read({ path = "a" })`; in every hook, `infer` when `uses.infer`, which a fake run's `tools` stands in for                                           |
+| `ctx.jev`                                      | Jev, when `uses.jev`: in a tool's `call` and every run hook but `on_event`, booked to the run; each call gives what it cost as its second value                                                                            |
+| `ctx.log`                                      | `ctx.log(text)`: a line on the plugin's page, never for the model                                                                                                                                                          |
+| `ctx.store`                                    | with `uses.store`: the plugin's store in the repository the hook works in (below)                                                                                                                                          |
+| `ctx.transcript()`                             | with `uses.transcript`, in `before_request`, `after_tool_result` and `rewrite_context`: the run's conversation, whole (below); in `rewritten`, what the rewrite replaced; in `run_end`, the run's conversation as it ended |
+| `ctx.archive`                                  | with `uses.archive`: `ctx.archive.path(kind)` names a new file in tau's archive of the repository, and `ctx.archive.write(path, text)` writes it, once, for its owner alone                                                |
+| `ctx.measure`                                  | in `rewrite_context`: `ctx.measure(rewrite)`, the bytes of JSON before and after `rewrite` (above)                                                                                                                         |
+| `ctx.models`                                   | the plan's models, newest of each family: `{ id, family, efforts }`                                                                                                                                                        |
+| `ctx.files`                                    | in a tool's `call`, with `uses.files`: `read(path, { bytes, limit })`, `list(path)` and `image(path)` under the folders it names; `write`, `remove`, `rename`, `mkdir` in those it writes (below)                          |
+| `ctx.blobs`                                    | in a tool's `call`, with `uses.files`: `put_file(path)` keeps a file's bytes in the run's repository, for `ui.image` (below)                                                                                               |
+| `ctx.repos()`, `ctx.stores(repo)`, `ctx.chats` | in a job, with `uses.chats`: the repositories the plugin keeps a store in, each one's store, and `ctx.chats.wake(run, text)` (below)                                                                                       |
 
 `ctx.state` is stored with the run: a resumed or forked run keeps it.
 JSON has no empty array: use `array({})` for one that must stay a list.
@@ -425,7 +449,9 @@ Plain tables, drawn by tau on the computer and on the phone:
   typed in an input, under its `id`, on every device and across
   restarts
 - `ui.link(label, page, { plugin = "...", params = { ... } })`: opens
-  another plugin's page
+  one of its pages, or another plugin's
+- `ui.switch(label, detail, on, action, args)`: a switch, `on` or off,
+  that carries out `actions[action]` with `args` when flipped
 - `ui.status(text, detail, tone)`: the run's status line, from `view`
 
 `view` is called after each hook that changed the state. It must only
@@ -622,6 +648,27 @@ between `---` lines at its start: `{ keys, body }`, each key
 `boolean`, `null` or `other`, `text` the value as written), or
 `{ error }` when it has none or is no mapping.
 
+A folder named `{ "data/x", write = true }` is written too:
+`ctx.files.write(path, text)` writes a file whole or not at all, making
+the folders it is in; `ctx.files.remove(path)` removes a file or an
+empty folder; `ctx.files.rename(from, to)` moves one, in place of a file
+there; `ctx.files.mkdir(path)` makes a folder. A path is written where
+it really is, and nothing past the written folders, nor the folder
+itself, is. `"repository"` names tau's own folder for the run's
+repository, beside its rules; a plugin's own folders, `"data/<name>"`
+and `"repository/<name>"`, are written with no Allow, and any other it
+writes waits for an Allow of its own. Outside a run (a job, an action
+of the app) `ctx.files.repository(name)` is that folder for each
+repository tau has, by name, or `nil`; a `"repository/..."` folder is
+that folder of each of them there, and `ctx.files.repositories()` lists
+them, `{ id, name, folder, remote, normalized }` each, for a plugin
+whose `uses.files` names `repository`. `ctx.files.remote(path)` is the
+Git remote of the repository a folder it reads is in (a checkout, a
+worktree or a jj repository), `origin` first: `{ url, normalized }`,
+`normalized` its host lowercased and its path, with no scheme, user,
+port or `.git`, or `nil`. `ctx.files` reaches `after_tool_result`,
+`rewritten`, `turn_end`, `run_end`, jobs and actions too.
+
 ### The app: `app`, `page`, `setup`, `models` and listed commands
 
 What a plugin keeps of the whole app, outside any run:
@@ -649,9 +696,24 @@ composer's commands by name, and `run` carries one out. A test reaches
 them with `run:app()`, `run:app_page(app)` and `run:commands(app)`, its
 `spec.roots` saying where each folder is.
 
+A page of `pages` is drawn outside any repository too, as a page of
+the app: a link that names no `repo` opens it there, as `nav.page`
+does, with `ctx.files` and the plugin's store of the app, and it is
+drawn again as what `app` keeps changes. A page reads what the inputs
+`drafts` names hold as `params.drafts`, drawn again as they change. A
+button may name `tau.open` (`{ page, params, repo }`), and an action
+answer `tau.interface("open", { ... })`: one of the plugin's own pages,
+of `repo` or of the app. What `app` keeps as `menu`, a piece, is drawn
+in each repository's menu, after its `repo_menu` entry.
+`ui.switch(label, detail, on, action, args)` is a switch whose flip
+carries out `actions[action]`. A test draws a page of the app with
+`run:app_page_of(name, params)`.
+
 `setup(app)` gives one of tau's own plugins' step of first-run setup,
 `{ step, at, title, heading, detail, body }` (`at` is `"model"`,
-`"before_repositories"` or `"after_repositories"`), and `models(app)` its
+`"before_repositories"` or `"after_repositories"`), drawn again of the
+repositories picked so far, `ctx.run.picked` (`{ name, id, folder,
+remote }` each); `run:setup(app, picked)` in a test. `models(app)` its
 section of the Models screen. Their buttons may name `tau.copy` (`text`,
 and a `url` to open after), `tau.open_url` (an `https` one) and
 `tau.setup_done`. Outside a repository, `ctx.store` in `app`, a page of
@@ -717,6 +779,12 @@ t.case("what it checks", function()
     job_state = { ... },           -- a job's own state, else {}
     files = { ["plot.png"] = { size = 120, image = { mime = "image/png", width = 4, height = 3 } },
               ["notes.md"] = "text" },  -- what ctx.files reads, by path; a blob is its path
+    roots = { data = "d" },        -- what ctx.files.roots() gives
+    remotes = { ["."] = "git@host:o/n.git" },  -- ctx.files.remote, by path
+    repositories = { tau = "r" },  -- ctx.files.repository, by name
+    repos = { { name = "tau", folder = "/f", remote = "..." } },  -- ctx.files.repositories()
+    infer = { { calls = { { name = "note_search", args = {} } } }, { text = "done" } },
+                                   -- infer{ tools }' rounds, in order, or a function of the request
   }
   t.equal(run:before_tool { name = "exec_command", args = { cmd = "ls" } }, nil)
 end)
@@ -732,6 +800,9 @@ end)
   `run:run_end(run)`, `run:title(run)`, `run:notify(notice)`,
   `run:job(name)`,
   `run:view()`; each takes what the hook is given.
+- `run.files` is `files` as the plugin left them, what it wrote too;
+  `run.folders` the folders it made; `run.infers` each round
+  `infer{ tools }` asked, with the `turns` before it.
 - `run.state` is the state the last hook left; `run.logs` its log lines;
   `run.job_state` a job's; `run.woken` each `{ run, text }` a job woke.
 - `t.equal(got, want, what)` compares tables by what they hold.
@@ -835,14 +906,18 @@ end)
   first match answers: `{ id = "call_", noul = 0.9 }`,
   `{ has = "error[", noul = 0.95 }`, or `{ error = 503 }`), and `then`
   (forks, each from where the run before it ended, with its own
-  `prompt`, `steer`, `settings` and `jev`).
+  `prompt`, `steer`, `settings` and `jev`), `data` and `repository`
+  (what tau's data folder and its folder for the repository hold, as
+  `files`), and `commits` (`{ turn, change, paths }`, the commit a turn
+  leaves, for `turn_end`).
 - What the check gets: `results` (each call's `text` and `error`),
   `outcome` (`text`, `stop`, `usage`), `error`, `events`, `state`,
   `rewrites` (the context's, by plugin), `logs`, `charged`, `archive`
   (each archived file's `text` and `mode`), and for the first run
   `forks`, `requests` (each request the model got: its `messages`,
-  `instructions`, `tools`), `jev` (what Jev was asked), `workspace` and
-  `blobs`.
+  `instructions`, `tools`), `jev` (what Jev was asked), `workspace`,
+  `blobs`, and `data` and `repository` (each file there as the loop left
+  it, by path).
 - A loop runs for 60 s at most; its check, like a case, 10 s.
 
 ## Six plugins

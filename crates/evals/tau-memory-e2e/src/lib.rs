@@ -4,7 +4,8 @@
 //! arms (no memory, one `MEMORY.md`, search over the earlier run's raw
 //! transcript, tau-memory, tau-memory with consolidation, and the
 //! earlier run folded into a tree to zoom into), with the calls, tokens,
-//! cost and time each takes.
+//! cost and time each takes. tau-memory is the Luau plugin tau comes
+//! with, run as tau runs it.
 //!
 //! [`scenario`] holds the tasks, [`arm`] builds each arm's agent,
 //! [`runner`] runs the trials and [`metrics`] reads and sums them up.
@@ -14,6 +15,7 @@ use std::path::PathBuf;
 
 pub mod access;
 pub mod arm;
+pub mod bm25;
 pub mod metrics;
 pub mod runner;
 pub mod scenario;
@@ -38,8 +40,9 @@ pub enum E2eError {
     },
     #[error("the check stopped: {0}")]
     Stopped(#[from] tokio::task::JoinError),
-    #[error(transparent)]
-    Notes(#[from] tau_memory_host::store::StoreError),
+    /// tau-memory, a Luau plugin, would not load or failed.
+    #[error("tau-memory: {0}")]
+    Plugin(String),
     #[error(transparent)]
     Store(#[from] tau_store::StoreError),
     #[error(transparent)]

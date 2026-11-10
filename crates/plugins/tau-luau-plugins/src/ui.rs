@@ -42,6 +42,7 @@ use tau_ui_plugin::{
         AtSetup,
         CardView,
         SetupAt,
+        SetupRepo,
         SetupView,
     },
     tree::{Kind, Node, Tab, Tone, draft_key},
@@ -424,39 +425,90 @@ pub(crate) fn rewrite(node: Node, f: &mut dyn FnMut(Node) -> Node) -> Node {
 /// marked as the plugin's. A piece it does not know draws as a red box
 /// that says so.
 pub fn embed(piece: &Value, plugin: &str) -> Node {
-    // A link to one of its own pages that names a repository opens that
-    // page of the repository.
-    rewrite(embed_as(piece, plugin, LUAU), &mut |node| match node {
-        Node::Link { label, to }
-            if to.plugin.is_none() && to.params.contains_key(REPO_PARAM) =>
-        {
-            let mut link =
-                repo_page_link(plugin, &to.page, &to.params[REPO_PARAM]);
-            for (name, value) in to.params {
-                if name != PAGE_PARAM && name != REPO_PARAM {
-                    link = link.param(name, value);
-                }
-            }
-            Node::Link { label, to: link }
+    own_links(embed_as(piece, plugin, LUAU), plugin)
+}
+
+/// `node`'s links to `plugin`'s own pages, opening them: of the
+/// repository a link names, or of the app when it names none (ADR 0050,
+/// gap L).
+fn own_links(node: Node, plugin: &str) -> Node {
+    let own = |to: Link| {
+        if to.plugin.is_some() {
+            return to;
         }
+        let mut link = match to.params.get(REPO_PARAM) {
+            Some(repo) => repo_page_link(plugin, &to.page, repo),
+            None => app_page_link(plugin, &to.page),
+        };
+        for (name, value) in to.params {
+            if name != PAGE_PARAM && name != REPO_PARAM {
+                link = link.param(name, value);
+            }
+        }
+        link
+    };
+    rewrite(node, &mut |node| match node {
+        Node::Link { label, to } => Node::Link { label, to: own(to) },
+        Node::Graph {
+            height,
+            nodes,
+            edges,
+        } => Node::Graph {
+            height,
+            nodes: nodes
+                .into_iter()
+                .map(|mut node| {
+                    node.to = node.to.map(own);
+                    node
+                })
+                .collect(),
+            edges,
+        },
         other => other,
     })
+}
+
+/// `piece`, a Luau plugin's page of the app (ADR 0050, gap L), as a tree
+/// whose actions are the plugin's outside any run and repository, and
+/// whose links open its pages: of a repository a link names, or of the
+/// app.
+pub fn embed_app(piece: &Value, plugin: &str) -> Node {
+    own_links(embed_as(piece, plugin, LUAU_APP), plugin)
 }
 
 /// `piece`, a Luau plugin's page of `repo`, as a tree whose actions are
 /// carried out in that repository, and whose links to the plugin's own
 /// pages open them of that repository.
 pub fn embed_repo(piece: &Value, plugin: &str, repo: &str) -> Node {
-    rewrite(embed_as(piece, plugin, LUAU_REPO), &mut |node| match node {
-        Node::Link { label, to } if to.plugin.is_none() => {
-            let mut link = repo_page_link(plugin, &to.page, repo);
-            for (name, value) in to.params {
-                if name != PAGE_PARAM && name != REPO_PARAM {
-                    link = link.param(name, value);
-                }
-            }
-            Node::Link { label, to: link }
+    let own = |to: Link| {
+        if to.plugin.is_some() {
+            return to;
         }
+        let mut link = repo_page_link(plugin, &to.page, repo);
+        for (name, value) in to.params {
+            if name != PAGE_PARAM && name != REPO_PARAM {
+                link = link.param(name, value);
+            }
+        }
+        link
+    };
+    rewrite(embed_as(piece, plugin, LUAU_REPO), &mut |node| match node {
+        Node::Link { label, to } => Node::Link { label, to: own(to) },
+        Node::Graph {
+            height,
+            nodes,
+            edges,
+        } => Node::Graph {
+            height,
+            nodes: nodes
+                .into_iter()
+                .map(|mut node| {
+                    node.to = node.to.map(own);
+                    node
+                })
+                .collect(),
+            edges,
+        },
         other => other,
     })
 }
@@ -672,6 +724,34 @@ fn kernel_action(
     true
 }
 
+/// `tau.open`, which opens one of `plugin`'s own pages: `{ page, params,
+/// repo }`, of the repository `repo` names or of the app without one
+/// (ADR 0050, gap L). Whether `action` was it.
+fn open_own(plugin: &str, action: &str, args: &Value, handle: &Handle) -> bool {
+    if action != "tau.open" {
+        return false;
+    }
+    let page = args["page"].as_str().unwrap_or_default();
+    let mut link = match args["repo"].as_str().filter(|repo| !repo.is_empty()) {
+        Some(repo) => repo_page_link(plugin, page, repo),
+        None => app_page_link(plugin, page),
+    };
+    if let Some(params) = args["params"].as_object() {
+        for (name, value) in params {
+            if name == PAGE_PARAM || name == REPO_PARAM {
+                continue;
+            }
+            let value = match value {
+                Value::String(text) => text.clone(),
+                other => other.to_string(),
+            };
+            link = link.param(name.clone(), value);
+        }
+    }
+    handle.navigate(link);
+    true
+}
+
 /// What a call asked the person to allow: what it would do, and while
 /// it waits and its run goes on, Allow and Deny; then what came of it.
 fn allow_card(ask: &crate::Ask, at: &AtCard) -> Node {
@@ -807,6 +887,14 @@ impl UiPlugin for LuauPluginsUi {
             // What it asked the interface to do, on its run.
             if let Some(asked) = &done.interface {
                 let action = asked["action"].as_str().unwrap_or_default();
+                if open_own(
+                    &done.plugin,
+                    &format!("tau.{action}"),
+                    &asked["args"],
+                    handle,
+                ) {
+                    return;
+                }
                 kernel_action(
                     &format!("tau.{action}"),
                     &asked["args"],
@@ -840,6 +928,9 @@ impl UiPlugin for LuauPluginsUi {
             .strip_prefix(LUAU)
             .and_then(|rest| rest.split_once('/'))
         {
+            if open_own(plugin, own, args, &view.handle) {
+                return;
+            }
             let run = view.run.map(|run| run.id.clone());
             if kernel_action(own, args, run.as_ref(), &view.handle) {
                 return;
@@ -856,6 +947,9 @@ impl UiPlugin for LuauPluginsUi {
             .strip_prefix(LUAU_PAGE)
             .and_then(|rest| rest.split_once('/'))
         {
+            if open_own(plugin, own, args, &view.handle) {
+                return;
+            }
             let run = page_run(plugin, view);
             let id = run.as_ref().map(|(run, _, _)| run.id.clone());
             if kernel_action(own, args, id.as_ref(), &view.handle) {
@@ -888,6 +982,9 @@ impl UiPlugin for LuauPluginsUi {
                 }
                 return;
             }
+            if open_own(plugin, own, args, &view.handle) {
+                return;
+            }
             if kernel_action(own, args, None, &view.handle) {
                 return;
             }
@@ -902,6 +999,9 @@ impl UiPlugin for LuauPluginsUi {
             .strip_prefix(LUAU_REPO)
             .and_then(|rest| rest.split_once('/'))
         {
+            if open_own(plugin, own, args, &view.handle) {
+                return;
+            }
             if kernel_action(own, args, None, &view.handle) {
                 return;
             }
@@ -956,6 +1056,8 @@ impl UiPlugin for LuauPluginsUi {
                 tau_ui_plugin::services::names::IDENTITY,
                 tau_ui_plugin::services::names::MODEL,
                 tau_ui_plugin::services::names::CONVERSATIONS,
+                // Each turn's commit, for `turn_end` (ADR 0050, gap L).
+                tau_ui_plugin::services::names::TURN_HOOKS,
                 tau_jev::SERVICE,
             ])
     }
@@ -1119,16 +1221,48 @@ impl UiPlugin for LuauPluginsUi {
             })
             // A built-in's step of first-run setup and its section of the
             // Models screen, drawn of what its `app` keeps (gap E).
-            .contribute(points::SETUP, |_: &AtSetup, view| {
-                setup_step(view.data)
-            })
             .contribute(points::MODELS, |_: &AtApp, view| {
                 models_section(view.data)
             });
+        // Each of tau's own plugins' steps of first-run setup.
+        let manifest = (0..NAV_ENTRIES).fold(manifest, |manifest, nth| {
+            manifest.contribute(points::SETUP, move |at: &AtSetup, view| {
+                setup_step(view.data, nth, &at.repos)
+            })
+        });
         // The plugins that ask for one, in the sidebar: the first few.
         let manifest = (0..NAV_ENTRIES).fold(manifest, |manifest, at| {
             manifest.contribute(points::SIDEBAR, move |_: &AtApp, view| {
                 nav_entries(view.data).nth(at)
+            })
+        });
+        // In each repository's menu, the plugins' entries for it, and
+        // what their `app` adds there (ADR 0050, gap L).
+        let manifest = (0..NAV_ENTRIES).fold(manifest, |manifest, nth| {
+            manifest.contribute_at(
+                points::REPO_MENU,
+                -10,
+                move |at: &AtRepo, view| {
+                    repo_menu(view.data, &at.repo).nth(nth)
+                },
+            )
+        });
+        // Each key tau leaves to Luau plugins, to the first that binds it.
+        let manifest = crate::KEYS.iter().fold(manifest, |manifest, key| {
+            manifest.key(key, move |at, view| {
+                let Some(repo) = at.repo.clone() else {
+                    return;
+                };
+                let bound = view.data.plugins.iter().find_map(|entry| {
+                    if !matches!(entry.standing, Standing::Active) {
+                        return None;
+                    }
+                    let page = entry.declaration.as_ref()?.keys.get(*key)?;
+                    Some(repo_page_link(&entry.name, page, &repo))
+                });
+                if let Some(link) = bound {
+                    view.handle.navigate(link);
+                }
             })
         });
         // Under each repository, the plugins' entries for it.
@@ -1148,18 +1282,54 @@ impl UiPlugin for LuauPluginsUi {
 /// gap E): `{ step, at, title, heading, detail, body }`, `at` one of
 /// `model`, `before_repositories` and `after_repositories`. A person's
 /// plugin draws none: setup runs before theirs load.
-fn setup_step(overview: &Overview) -> Option<SetupView> {
-    let (plugin, setup) = overview
+///
+/// The `nth` of them: each plugin draws its own. With repositories
+/// picked, the body is drawn again of them, as `ctx.run.picked` (ADR
+/// 0050, gap L).
+fn setup_step(
+    overview: &Overview,
+    nth: usize,
+    picked: &[SetupRepo],
+) -> Option<SetupView> {
+    let (plugin, setup, app) = overview
         .plugins
         .iter()
         .filter(|entry| {
             entry.built_in && matches!(entry.standing, Standing::Active)
         })
-        .find_map(|entry| {
-            let setup = entry.app.as_ref()?.setup.as_ref()?;
-            (!setup.is_null()).then_some((entry.name.as_str(), setup))
-        })?;
+        .filter_map(|entry| {
+            let app = entry.app.as_ref()?;
+            let setup = app.setup.as_ref()?;
+            (!setup.is_null()).then_some((
+                entry.name.as_str(),
+                setup,
+                &app.value,
+            ))
+        })
+        .nth(nth)?;
     let text = |key: &str| setup[key].as_str().unwrap_or_default().to_owned();
+    let body = if picked.is_empty() {
+        embed_as(&setup["body"], plugin, LUAU_APP)
+    } else {
+        let picked: Vec<Value> = picked
+            .iter()
+            .map(|repo| {
+                json!({
+                    "name": repo.name,
+                    "id": repo.id.as_ref().map(|id| id.0.to_string()),
+                    "folder": repo.folder.as_ref().map(|f| f.display().to_string()),
+                    "remote": repo.remote,
+                })
+            })
+            .collect();
+        Node::Fetched {
+            key: format!("luau-setup/{plugin}/{}/{app}", json!(picked)),
+            fetch: json!(Act::Setup {
+                plugin: plugin.to_owned(),
+                picked,
+            }),
+        }
+    };
     Some(SetupView {
         step: crate::interned(&format!("{plugin}/{}", text("step"))),
         at: match setup["at"].as_str() {
@@ -1170,7 +1340,7 @@ fn setup_step(overview: &Overview) -> Option<SetupView> {
         title: text("title"),
         heading: text("heading"),
         detail: text("detail"),
-        body: embed_as(&setup["body"], plugin, LUAU_APP),
+        body,
         required: false,
         link: None,
     })
@@ -1426,6 +1596,48 @@ fn repo_nav_entries<'a>(
         })
 }
 
+/// The active plugins' entries in `repo`'s menu: a link to the page its
+/// `repo_menu` names, then what its `app` keeps as `menu`, a tree of the
+/// app's (ADR 0050, gap L).
+fn repo_menu<'a>(
+    overview: &'a Overview,
+    repo: &'a str,
+) -> impl Iterator<Item = Node> + 'a {
+    overview
+        .plugins
+        .iter()
+        .filter(|entry| matches!(entry.standing, Standing::Active))
+        .flat_map(move |entry| {
+            let link = entry
+                .declaration
+                .as_ref()
+                .and_then(|declaration| declaration.repo_menu.as_ref())
+                .map(|menu| {
+                    Node::row([
+                        Node::Icon {
+                            name: if menu.icon.is_empty() {
+                                "plug".into()
+                            } else {
+                                menu.icon.clone()
+                            },
+                            tone: Tone::Neutral,
+                        },
+                        Node::Link {
+                            label: menu.label.clone(),
+                            to: repo_page_link(&entry.name, &menu.page, repo),
+                        },
+                    ])
+                });
+            let kept = entry
+                .app
+                .as_ref()
+                .map(|app| &app.value["menu"])
+                .filter(|menu| !menu.is_null())
+                .map(|menu| embed_app(menu, &entry.name));
+            link.into_iter().chain(kept)
+        })
+}
+
 fn nav_tone(nav: Option<&Value>) -> Option<tau_ui_kit::theme::Tone> {
     Some(match nav?["tone"].as_str()? {
         "good" => tau_ui_kit::theme::Tone::Good,
@@ -1448,8 +1660,12 @@ fn nav_entries(overview: &Overview) -> impl Iterator<Item = NavEntry> + '_ {
         .filter_map(|entry| {
             let nav = entry.declaration.as_ref()?.nav.as_ref()?;
             let icon = Icon::named(&nav.icon).unwrap_or(Icon::Plug);
-            let mut item =
-                NavEntry::new(nav.label.clone(), icon, entry_link(&entry.name));
+            // Its page of the app, when it names one; else its card's.
+            let to = match &nav.page {
+                Some(page) => app_page_link(&entry.name, page),
+                None => entry_link(&entry.name),
+            };
+            let mut item = NavEntry::new(nav.label.clone(), icon, to);
             // What its `app` keeps says the entry's detail and badge.
             let said = entry.app.as_ref().map(|app| &app.value["nav"]);
             item.detail = said
@@ -1470,12 +1686,14 @@ fn nav_entries(overview: &Overview) -> impl Iterator<Item = NavEntry> + '_ {
 /// writing them. Opened for one plugin, the page is that plugin's. A
 /// view tree in the frame the interface gives a page (ADR 0045).
 fn page(view: &mut ViewCx<'_, LuauPluginsUi>) -> Node {
-    if let (Some(entry), Some(page), Some(repo)) = (
+    if let (Some(entry), Some(page)) = (
         view.entry().map(str::to_owned),
         view.params.get(PAGE_PARAM).cloned(),
-        view.params.get(REPO_PARAM).cloned(),
     ) {
-        return repo_page(&entry, &page, &repo, view);
+        return match view.params.get(REPO_PARAM).cloned() {
+            Some(repo) => repo_page(&entry, &page, &repo, view),
+            None => app_page(&entry, &page, view),
+        };
     }
     match view.entry().map(str::to_owned) {
         Some(entry) => plugin_page(&entry, view),
@@ -1499,15 +1717,88 @@ fn repo_page(
     let params = view.params.clone();
     // Whether a Jev key is saved, as the page's `ctx.run.jev`.
     let jev = tau_jev::keyed(view);
+    let drafts = page_drafts(plugin, view);
     Node::Fetched {
-        key: format!("luau-repo-page/{plugin}/{}/{kept}/{jev}", json!(params)),
+        key: format!(
+            "luau-repo-page/{plugin}/{}/{kept}/{jev}/{}",
+            json!(params),
+            json!(drafts)
+        ),
         fetch: json!(Act::Page {
             plugin: plugin.to_owned(),
             page: page.to_owned(),
             params,
             jev,
+            drafts,
         }),
     }
+}
+
+/// `plugin`'s page `page` of the app (ADR 0050, gap L), drawn by its host
+/// half: fetched again whenever what its `app` keeps changes.
+fn app_page(
+    plugin: &str,
+    page: &str,
+    view: &mut ViewCx<'_, LuauPluginsUi>,
+) -> Node {
+    let kept = view
+        .data
+        .plugins
+        .iter()
+        .find(|entry| entry.name == plugin)
+        .and_then(|entry| entry.app.as_ref())
+        .map(|app| app.value.to_string())
+        .unwrap_or_default();
+    let params = view.params.clone();
+    let jev = tau_jev::keyed(view);
+    let drafts = page_drafts(plugin, view);
+    Node::Fetched {
+        key: format!(
+            "luau-app-page/{plugin}/{}/{kept}/{jev}/{}",
+            json!(params),
+            json!(drafts)
+        ),
+        fetch: json!(Act::Page {
+            plugin: plugin.to_owned(),
+            page: page.to_owned(),
+            params,
+            jev,
+            drafts,
+        }),
+    }
+}
+
+/// What the inputs `plugin`'s `drafts` names hold, by id: its pages are
+/// drawn again as they change.
+fn page_drafts(
+    plugin: &str,
+    view: &ViewCx<'_, LuauPluginsUi>,
+) -> BTreeMap<String, String> {
+    let Some(declaration) = view
+        .data
+        .plugins
+        .iter()
+        .find(|entry| entry.name == plugin)
+        .and_then(|entry| entry.declaration.as_ref())
+    else {
+        return BTreeMap::new();
+    };
+    declaration
+        .drafts
+        .iter()
+        .filter_map(|id| {
+            let said = view
+                .ui_value(&draft_key(&format!("{plugin}/{id}")))?
+                .as_str()?
+                .to_owned();
+            (!said.is_empty()).then(|| (id.clone(), said))
+        })
+        .collect()
+}
+
+/// The link to `plugin`'s page `page` of the app (ADR 0050, gap L).
+pub fn app_page_link(plugin: &str, page: &str) -> Link {
+    entry_link(plugin).param(PAGE_PARAM, page)
 }
 
 /// The link to `plugin`'s page `page` of `repo`.
@@ -2519,6 +2810,7 @@ mod tests {
                     nav: Some(crate::Nav {
                         label: "Skills".into(),
                         icon: "skill".into(),
+                        page: None,
                     }),
                     listed_commands: true,
                     ..Declaration::named("tau-skills")
@@ -2570,6 +2862,7 @@ mod tests {
             Some(crate::Nav {
                 label: label.into(),
                 icon: "not-an-icon".into(),
+                page: None,
             })
         };
         let overview = Overview {
@@ -2769,11 +3062,116 @@ mod tests {
             repo_page_link("rules-plugin", "rules", "docbert")
                 .param("rule", "R2")
         );
-        assert_eq!(to(link(json!({}), Value::Null)), Link::page("rules"));
+        // One that names no repository opens its page of the app (ADR
+        // 0050, gap L).
+        assert_eq!(
+            to(link(json!({ "note": "a" }), Value::Null)),
+            app_page_link("rules-plugin", "rules").param("note", "a")
+        );
         assert_eq!(
             to(link(json!({ "repo": "docbert" }), json!("tau-jev"))).plugin,
             Some("tau-jev".into())
         );
+    }
+
+    /// A plugin's pages of the app (ADR 0050, gap L): its sidebar entry
+    /// opens the one `nav.page` names; its entry in a repository's menu
+    /// opens its page of that repository, and what `app` keeps as `menu`
+    /// follows it, as a tree of the app's; its setup step is drawn again
+    /// of the repositories picked; a map's nodes open its pages.
+    #[test]
+    fn a_plugins_pages_of_the_app_are_opened_from_its_places() {
+        let app = crate::AppView {
+            value: json!({
+                "nav": { "detail": "3 notes" },
+                "menu": { "piece": "button", "label": "Import", "action": "import", "args": {}, "kind": "secondary" },
+            }),
+            setup: Some(json!({
+                "step": "memories", "at": "after_repositories", "title": "Memories",
+                "heading": "h", "detail": "d", "body": { "piece": "text", "text": "none picked" },
+            })),
+            ..crate::AppView::default()
+        };
+        let overview = Overview {
+            plugins: vec![Entry {
+                name: "tau-memory".into(),
+                description: String::new(),
+                version: String::new(),
+                standing: Standing::Active,
+                declaration: Some(Declaration {
+                    nav: Some(crate::Nav {
+                        label: "Your notes".into(),
+                        icon: "memory".into(),
+                        page: Some("notes".into()),
+                    }),
+                    repo_menu: Some(crate::RepoNav {
+                        label: "Memory".into(),
+                        page: "notes".into(),
+                        icon: "memory".into(),
+                    }),
+                    pages: vec!["notes".into()],
+                    ..Declaration::named("tau-memory")
+                }),
+                tests: Vec::new(),
+                keeps_earlier: false,
+                built_in: true,
+                app: Some(app),
+            }],
+            ..Overview::default()
+        };
+        let nav: Vec<NavEntry> = nav_entries(&overview).collect();
+        assert_eq!(nav[0].to, app_page_link("tau-memory", "notes"));
+        let menu: Vec<Node> = repo_menu(&overview, "shop").collect();
+        assert_eq!(menu.len(), 2);
+        let opens = |node: &Node| -> Vec<Link> {
+            let mut found = Vec::new();
+            rewrite(node.clone(), &mut |node| {
+                if let Node::Link { to, .. } = &node {
+                    found.push(to.clone());
+                }
+                node
+            });
+            found
+        };
+        assert_eq!(
+            opens(&menu[0]),
+            [repo_page_link("tau-memory", "notes", "shop")]
+        );
+        match &menu[1] {
+            Node::Button { action, .. } => {
+                assert_eq!(action, &format!("{LUAU_APP}tau-memory/import"))
+            }
+            other => panic!("not the app's button: {other:?}"),
+        }
+
+        let step = setup_step(&overview, 0, &[]).unwrap();
+        assert_eq!(step.body, Node::text("none picked"));
+        assert!(setup_step(&overview, 1, &[]).is_none());
+        let picked = [SetupRepo {
+            name: "acme/shop".into(),
+            id: None,
+            remote: Some("https://github.com/acme/shop".into()),
+            folder: None,
+            clone: tau_ui_plugin::points::SetupClone::Picked,
+        }];
+        match setup_step(&overview, 0, &picked).unwrap().body {
+            Node::Fetched { fetch, .. } => {
+                assert_eq!(fetch["act"], "setup");
+                assert_eq!(fetch["picked"][0]["name"], "acme/shop");
+            }
+            other => panic!("not drawn again: {other:?}"),
+        }
+
+        let graph = json!({ "piece": "graph", "height": 10.0, "edges": [], "nodes": [
+            { "id": "a", "x": 0.5, "y": 0.5, "to": { "plugin": null, "page": "notes", "params": { "note": "b" } } },
+        ] });
+        match embed_app(&graph, "tau-memory") {
+            Node::Graph { nodes, .. } => assert_eq!(
+                nodes[0].to,
+                Some(app_page_link("tau-memory", "notes").param("note", "b"))
+            ),
+            other => panic!("not a map: {other:?}"),
+        }
     }
 
     /// `tau.open_run` from a plugin's tree opens the run it names.

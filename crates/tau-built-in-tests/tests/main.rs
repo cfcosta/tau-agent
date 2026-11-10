@@ -13,6 +13,8 @@ mod binaries;
 mod built_ins;
 mod constitution;
 mod github;
+mod memory;
+mod memory_import;
 mod package;
 mod reasoning;
 mod schedule;

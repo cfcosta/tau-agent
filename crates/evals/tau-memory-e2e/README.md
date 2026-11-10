@@ -49,9 +49,11 @@ and read, and in the changed variant whether the old fact was used.
 
 ## How it fits
 
-It builds on `tau-memory-host` (the memory plugin, its notes and its
-index), `tau-compaction` (run by `tau-luau-plugins-host`), `tau-tools-host`, `tau-agent`, `tau-ai`,
-`tau-store` and `tau-store-sqlite`. No other crate depends on it.
+It runs tau-memory and tau-compaction, Luau plugins tau comes with,
+through `tau-luau-plugins-host` (`Active::built_in`), and builds on
+`tau-tools-host`, `tau-agent`, `tau-ai`, `tau-store` and
+`tau-store-sqlite`. The `transcripts` arm keeps a BM25 of its own
+(`bm25`). No other crate depends on it.
 
 ## Usage
 

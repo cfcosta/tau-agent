@@ -220,9 +220,12 @@ fn a_new_folder_waits_for_an_allow() {
         files: vec!["workspace".into(), "~/Pictures".into()],
         ..Default::default()
     };
-    assert_eq!(after.grown_from(&before), ["reading files in `~/Pictures`"]);
     assert_eq!(
-        before.grown_from(&Default::default()),
+        after.grown_from(&before, "p"),
+        ["reading files in `~/Pictures`"]
+    );
+    assert_eq!(
+        before.grown_from(&Default::default(), "p"),
         ["reading the run's workspace"]
     );
 }

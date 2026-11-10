@@ -1,0 +1,3160 @@
+{
+  "app": {
+    "imports": {
+      "banners": {
+        "docbert": {
+          "folder": "~/Code/cfcosta/docbert",
+          "places": [
+            {
+              "folder": "/home/demo/Code/cfcosta/docbert",
+              "remote": "git@github.com:cfcosta/docbert.git"
+            }
+          ],
+          "ready": 2,
+          "saved": [
+            ["claude_code", 9],
+            ["codex", 4]
+          ],
+          "unread_chats": 23,
+          "unread_saved": 0
+        }
+      },
+      "failed": ["~/.codex/sessions/2026/09/30/rollout-cut-short.jsonl"],
+      "found": [
+        {
+          "about_you": 18,
+          "chats": 180,
+          "folders": [
+            {
+              "chats": 64,
+              "label": "~/Code/cfcosta/tau-agent",
+              "place": {
+                "folder": "/home/demo/Code/cfcosta/tau-agent",
+                "remote": "git@github.com:cfcosta/tau-agent.git"
+              },
+              "saved": 41,
+              "unread_chats": 64,
+              "unread_saved": 41
+            },
+            {
+              "chats": 23,
+              "label": "~/Code/cfcosta/docbert",
+              "place": {
+                "folder": "/home/demo/Code/cfcosta/docbert",
+                "remote": "git@github.com:cfcosta/docbert.git"
+              },
+              "saved": 9,
+              "unread_chats": 23,
+              "unread_saved": 9
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-0",
+              "place": {
+                "folder": "/home/demo/scratch/project-0",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-1",
+              "place": {
+                "folder": "/home/demo/scratch/project-1",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-2",
+              "place": {
+                "folder": "/home/demo/scratch/project-2",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-3",
+              "place": {
+                "folder": "/home/demo/scratch/project-3",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-4",
+              "place": {
+                "folder": "/home/demo/scratch/project-4",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-5",
+              "place": {
+                "folder": "/home/demo/scratch/project-5",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-6",
+              "place": {
+                "folder": "/home/demo/scratch/project-6",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-7",
+              "place": {
+                "folder": "/home/demo/scratch/project-7",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-8",
+              "place": {
+                "folder": "/home/demo/scratch/project-8",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-9",
+              "place": {
+                "folder": "/home/demo/scratch/project-9",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-10",
+              "place": {
+                "folder": "/home/demo/scratch/project-10",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-11",
+              "place": {
+                "folder": "/home/demo/scratch/project-11",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-12",
+              "place": {
+                "folder": "/home/demo/scratch/project-12",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-13",
+              "place": {
+                "folder": "/home/demo/scratch/project-13",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-14",
+              "place": {
+                "folder": "/home/demo/scratch/project-14",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-15",
+              "place": {
+                "folder": "/home/demo/scratch/project-15",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-16",
+              "place": {
+                "folder": "/home/demo/scratch/project-16",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-17",
+              "place": {
+                "folder": "/home/demo/scratch/project-17",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-18",
+              "place": {
+                "folder": "/home/demo/scratch/project-18",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-19",
+              "place": {
+                "folder": "/home/demo/scratch/project-19",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-20",
+              "place": {
+                "folder": "/home/demo/scratch/project-20",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-21",
+              "place": {
+                "folder": "/home/demo/scratch/project-21",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-22",
+              "place": {
+                "folder": "/home/demo/scratch/project-22",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-23",
+              "place": {
+                "folder": "/home/demo/scratch/project-23",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-24",
+              "place": {
+                "folder": "/home/demo/scratch/project-24",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-25",
+              "place": {
+                "folder": "/home/demo/scratch/project-25",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-26",
+              "place": {
+                "folder": "/home/demo/scratch/project-26",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-27",
+              "place": {
+                "folder": "/home/demo/scratch/project-27",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-28",
+              "place": {
+                "folder": "/home/demo/scratch/project-28",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-29",
+              "place": {
+                "folder": "/home/demo/scratch/project-29",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-30",
+              "place": {
+                "folder": "/home/demo/scratch/project-30",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-31",
+              "place": {
+                "folder": "/home/demo/scratch/project-31",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-32",
+              "place": {
+                "folder": "/home/demo/scratch/project-32",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-33",
+              "place": {
+                "folder": "/home/demo/scratch/project-33",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-34",
+              "place": {
+                "folder": "/home/demo/scratch/project-34",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-35",
+              "place": {
+                "folder": "/home/demo/scratch/project-35",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-36",
+              "place": {
+                "folder": "/home/demo/scratch/project-36",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-37",
+              "place": {
+                "folder": "/home/demo/scratch/project-37",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-38",
+              "place": {
+                "folder": "/home/demo/scratch/project-38",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-39",
+              "place": {
+                "folder": "/home/demo/scratch/project-39",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-40",
+              "place": {
+                "folder": "/home/demo/scratch/project-40",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-41",
+              "place": {
+                "folder": "/home/demo/scratch/project-41",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-42",
+              "place": {
+                "folder": "/home/demo/scratch/project-42",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-43",
+              "place": {
+                "folder": "/home/demo/scratch/project-43",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-44",
+              "place": {
+                "folder": "/home/demo/scratch/project-44",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-45",
+              "place": {
+                "folder": "/home/demo/scratch/project-45",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-46",
+              "place": {
+                "folder": "/home/demo/scratch/project-46",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-47",
+              "place": {
+                "folder": "/home/demo/scratch/project-47",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-48",
+              "place": {
+                "folder": "/home/demo/scratch/project-48",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-49",
+              "place": {
+                "folder": "/home/demo/scratch/project-49",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-50",
+              "place": {
+                "folder": "/home/demo/scratch/project-50",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-51",
+              "place": {
+                "folder": "/home/demo/scratch/project-51",
+                "remote": null
+              },
+              "saved": 8,
+              "unread_chats": 2,
+              "unread_saved": 8
+            }
+          ],
+          "saved": 501,
+          "tool": "claude_code"
+        },
+        {
+          "about_you": 0,
+          "chats": 748,
+          "folders": [
+            {
+              "chats": 120,
+              "label": "~/Code/cfcosta/tau-agent",
+              "place": {
+                "folder": "/home/demo/Code/cfcosta/tau-agent",
+                "remote": "git@github.com:cfcosta/tau-agent.git"
+              },
+              "saved": 14,
+              "unread_chats": 120,
+              "unread_saved": 14
+            },
+            {
+              "chats": 30,
+              "label": "~/Code/cfcosta/docbert",
+              "place": {
+                "folder": "/home/demo/Code/cfcosta/docbert",
+                "remote": "git@github.com:cfcosta/docbert.git"
+              },
+              "saved": 4,
+              "unread_chats": 30,
+              "unread_saved": 4
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-0",
+              "place": {
+                "folder": "/home/demo/scratch/project-0",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-1",
+              "place": {
+                "folder": "/home/demo/scratch/project-1",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-2",
+              "place": {
+                "folder": "/home/demo/scratch/project-2",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-3",
+              "place": {
+                "folder": "/home/demo/scratch/project-3",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-4",
+              "place": {
+                "folder": "/home/demo/scratch/project-4",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-5",
+              "place": {
+                "folder": "/home/demo/scratch/project-5",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-6",
+              "place": {
+                "folder": "/home/demo/scratch/project-6",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-7",
+              "place": {
+                "folder": "/home/demo/scratch/project-7",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-8",
+              "place": {
+                "folder": "/home/demo/scratch/project-8",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-9",
+              "place": {
+                "folder": "/home/demo/scratch/project-9",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-10",
+              "place": {
+                "folder": "/home/demo/scratch/project-10",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-11",
+              "place": {
+                "folder": "/home/demo/scratch/project-11",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-12",
+              "place": {
+                "folder": "/home/demo/scratch/project-12",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-13",
+              "place": {
+                "folder": "/home/demo/scratch/project-13",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-14",
+              "place": {
+                "folder": "/home/demo/scratch/project-14",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-15",
+              "place": {
+                "folder": "/home/demo/scratch/project-15",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-16",
+              "place": {
+                "folder": "/home/demo/scratch/project-16",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-17",
+              "place": {
+                "folder": "/home/demo/scratch/project-17",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-18",
+              "place": {
+                "folder": "/home/demo/scratch/project-18",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-19",
+              "place": {
+                "folder": "/home/demo/scratch/project-19",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-20",
+              "place": {
+                "folder": "/home/demo/scratch/project-20",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-21",
+              "place": {
+                "folder": "/home/demo/scratch/project-21",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-22",
+              "place": {
+                "folder": "/home/demo/scratch/project-22",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-23",
+              "place": {
+                "folder": "/home/demo/scratch/project-23",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-24",
+              "place": {
+                "folder": "/home/demo/scratch/project-24",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-25",
+              "place": {
+                "folder": "/home/demo/scratch/project-25",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-26",
+              "place": {
+                "folder": "/home/demo/scratch/project-26",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-27",
+              "place": {
+                "folder": "/home/demo/scratch/project-27",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-28",
+              "place": {
+                "folder": "/home/demo/scratch/project-28",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-29",
+              "place": {
+                "folder": "/home/demo/scratch/project-29",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            },
+            {
+              "chats": 2,
+              "label": "~/scratch/project-30",
+              "place": {
+                "folder": "/home/demo/scratch/project-30",
+                "remote": null
+              },
+              "saved": 2,
+              "unread_chats": 2,
+              "unread_saved": 2
+            }
+          ],
+          "saved": 93,
+          "tool": "codex"
+        }
+      ],
+      "held": 0,
+      "pending": [
+        {
+          "description": "The outcome first, then the detail that backs it.",
+          "flags": {
+            "secret": false
+          },
+          "id": "p-1",
+          "in_both": false,
+          "keep": true,
+          "origins": ["Claude Code · memory/result-first.md"],
+          "repo": null,
+          "title": "Answers lead with the result",
+          "type": "preference"
+        },
+        {
+          "description": "One change per commit; every commit passes the tests.",
+          "flags": {
+            "secret": false
+          },
+          "id": "p-2",
+          "in_both": true,
+          "keep": true,
+          "origins": ["Claude Code · memory/small-commits.md", "Codex · task summary, 2026-10-09"],
+          "repo": null,
+          "title": "Commits are small, and each one builds",
+          "type": "preference"
+        },
+        {
+          "description": "Says the suite needs the staging database; tau has n-0441 saying it runs offline.",
+          "flags": {
+            "disagrees": "n-0441",
+            "secret": false
+          },
+          "id": "p-3",
+          "in_both": false,
+          "keep": false,
+          "origins": ["Codex · task summary, 2026-10-09"],
+          "repo": "tau-agent",
+          "title": "Run the integration suite with --features live",
+          "type": "procedure"
+        },
+        {
+          "description": "Bind port 0 and read it back; a fixed port collides in CI.",
+          "flags": {
+            "secret": false
+          },
+          "id": "p-4",
+          "in_both": false,
+          "keep": true,
+          "origins": ["Claude Code · chat on 2026-10-04"],
+          "repo": "tau-agent",
+          "title": "The fixture server needs a free port",
+          "type": "gotcha"
+        },
+        {
+          "description": "The chat pasted a secret; tau kept it out of the note.",
+          "flags": {
+            "secret": true
+          },
+          "id": "p-5",
+          "in_both": false,
+          "keep": false,
+          "origins": ["Codex · chat on 2026-09-22"],
+          "repo": "tau-agent",
+          "title": "[redacted] token for the staging API",
+          "type": "fact"
+        },
+        {
+          "description": "Candidates come from BM25 before ColBERT reranks them.",
+          "flags": {
+            "secret": false
+          },
+          "id": "p-6",
+          "in_both": false,
+          "keep": true,
+          "origins": ["Claude Code · memory/bm25-first.md"],
+          "repo": "docbert",
+          "title": "Searches go through the BM25 index first",
+          "type": "fact"
+        },
+        {
+          "description": "The cache is keyed by model, so a new model re-encodes.",
+          "flags": {
+            "secret": false
+          },
+          "id": "p-7",
+          "in_both": false,
+          "keep": true,
+          "origins": ["Codex · task summary, 2026-10-02"],
+          "repo": "docbert",
+          "title": "Embeddings are rebuilt when the model changes",
+          "type": "decision"
+        }
+      ],
+      "progress": {
+        "fraction": 0.36,
+        "line": "Reading Claude Code chats · 64 of 180"
+      },
+      "tally": {
+        "known": 0,
+        "left_out": 380,
+        "merged": 15,
+        "read": {
+          "claude_code.saved": 501,
+          "codex.saved": 17
+        },
+        "refused": 0
+      }
+    },
+    "menu": {
+      "children": [
+        {
+          "name": "memory",
+          "piece": "icon",
+          "tone": "neutral"
+        },
+        {
+          "action": "import",
+          "args": {
+            "request": {}
+          },
+          "kind": "secondary",
+          "label": "Import from Claude Code or Codex…",
+          "piece": "button"
+        }
+      ],
+      "piece": "row"
+    },
+    "nav": {
+      "detail": "0 notes"
+    },
+    "you": {
+      "notes": 0
+    }
+  },
+  "pages": {
+    "docbert": {
+      "children": [
+        {
+          "children": [
+            {
+              "piece": "heading",
+              "text": "Claude Code and Codex know this repository"
+            },
+            {
+              "piece": "text",
+              "text": "Claude Code kept 9 notes for ~/Code/cfcosta/docbert, and Codex 4 task summaries. 2 notes are ready to look at."
+            },
+            {
+              "children": [
+                {
+                  "action": "tau.open",
+                  "args": {
+                    "page": "import",
+                    "params": {
+                      "repo": "docbert"
+                    }
+                  },
+                  "kind": "primary",
+                  "label": "Review 2 notes",
+                  "piece": "button"
+                },
+                {
+                  "action": "act",
+                  "args": {
+                    "act": {
+                      "act": "import",
+                      "only": [
+                        {
+                          "folder": "/home/demo/Code/cfcosta/docbert",
+                          "remote": "git@github.com:cfcosta/docbert.git"
+                        }
+                      ]
+                    }
+                  },
+                  "kind": "secondary",
+                  "label": "Read its 23 chats too",
+                  "piece": "button"
+                },
+                {
+                  "action": "act",
+                  "args": {
+                    "act": {
+                      "act": "not_now",
+                      "repo": "docbert"
+                    }
+                  },
+                  "kind": "secondary",
+                  "label": "Not now",
+                  "piece": "button"
+                }
+              ],
+              "piece": "row"
+            }
+          ],
+          "piece": "card"
+        },
+        {
+          "children": [
+            {
+              "name": "search",
+              "piece": "icon",
+              "tone": "neutral"
+            },
+            {
+              "id": "search",
+              "keep": true,
+              "multiline": false,
+              "piece": "input",
+              "placeholder": "Search notes",
+              "submit": null
+            },
+            {
+              "piece": "pill",
+              "text": "All 3",
+              "tone": "info"
+            },
+            {
+              "label": "Facts 3",
+              "piece": "link",
+              "to": {
+                "page": "notes",
+                "params": {
+                  "kind": "fact"
+                },
+                "plugin": null
+              }
+            },
+            {
+              "action": "import",
+              "args": {
+                "request": {}
+              },
+              "kind": "secondary",
+              "label": "Import from Claude Code or Codex…",
+              "piece": "button"
+            }
+          ],
+          "piece": "row"
+        },
+        {
+          "head": ["Note", "Kind", "Links", "Edited"],
+          "piece": "table",
+          "rows": [
+            [
+              {
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "label": "The BM25 tokenizer keeps identifiers whole",
+                        "piece": "link",
+                        "to": {
+                          "page": "notes",
+                          "params": {
+                            "note": "d-0131"
+                          },
+                          "plugin": null
+                        }
+                      },
+                      {
+                        "piece": "mono",
+                        "text": "d-0131"
+                      }
+                    ],
+                    "piece": "row"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "snake_case and CamelCase stay one token, and are also split into their parts, so both searches hit."
+                  }
+                ],
+                "piece": "stack"
+              },
+              {
+                "piece": "badge",
+                "text": "fact",
+                "tone": "info"
+              },
+              {
+                "piece": "text",
+                "text": "1 link"
+              },
+              {
+                "piece": "text",
+                "text": "2 days ago"
+              }
+            ],
+            [
+              {
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "label": "Scanned pages have no text layer",
+                        "piece": "link",
+                        "to": {
+                          "page": "notes",
+                          "params": {
+                            "note": "d-0102"
+                          },
+                          "plugin": null
+                        }
+                      },
+                      {
+                        "piece": "mono",
+                        "text": "d-0102"
+                      }
+                    ],
+                    "piece": "row"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "PDFs made from scans come in with empty pages. "
+                  }
+                ],
+                "piece": "stack"
+              },
+              {
+                "piece": "badge",
+                "text": "fact",
+                "tone": "info"
+              },
+              {
+                "piece": "text",
+                "text": "no links"
+              },
+              {
+                "piece": "text",
+                "text": "3 days ago"
+              }
+            ],
+            [
+              {
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "label": "Rerank only the top 50",
+                        "piece": "link",
+                        "to": {
+                          "page": "notes",
+                          "params": {
+                            "note": "d-0118"
+                          },
+                          "plugin": null
+                        }
+                      },
+                      {
+                        "piece": "mono",
+                        "text": "d-0118"
+                      }
+                    ],
+                    "piece": "row"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "ColBERT reranking costs grow with the candidate list. "
+                  }
+                ],
+                "piece": "stack"
+              },
+              {
+                "piece": "badge",
+                "text": "fact",
+                "tone": "info"
+              },
+              {
+                "piece": "text",
+                "text": "1 link"
+              },
+              {
+                "piece": "text",
+                "text": "4 days ago"
+              }
+            ]
+          ],
+          "widths": [6, 1.3, 1, 1.5]
+        }
+      ],
+      "piece": "stack"
+    },
+    "homelab.nix": {
+      "children": [
+        {
+          "children": [
+            {
+              "name": "search",
+              "piece": "icon",
+              "tone": "neutral"
+            },
+            {
+              "id": "search",
+              "keep": true,
+              "multiline": false,
+              "piece": "input",
+              "placeholder": "Search notes",
+              "submit": null
+            },
+            {
+              "piece": "pill",
+              "text": "All 1",
+              "tone": "info"
+            },
+            {
+              "label": "Facts 1",
+              "piece": "link",
+              "to": {
+                "page": "notes",
+                "params": {
+                  "kind": "fact"
+                },
+                "plugin": null
+              }
+            },
+            {
+              "action": "import",
+              "args": {
+                "request": {}
+              },
+              "kind": "secondary",
+              "label": "Import from Claude Code or Codex…",
+              "piece": "button"
+            }
+          ],
+          "piece": "row"
+        },
+        {
+          "head": ["Note", "Kind", "Links", "Edited"],
+          "piece": "table",
+          "rows": [
+            [
+              {
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "label": "Backups run from a systemd timer",
+                        "piece": "link",
+                        "to": {
+                          "page": "notes",
+                          "params": {
+                            "note": "h-0007"
+                          },
+                          "plugin": null
+                        }
+                      },
+                      {
+                        "piece": "mono",
+                        "text": "h-0007"
+                      }
+                    ],
+                    "piece": "row"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "restic runs from backup.timer at 03:00, never from cron, so a missed run catches up on boot."
+                  }
+                ],
+                "piece": "stack"
+              },
+              {
+                "piece": "badge",
+                "text": "fact",
+                "tone": "info"
+              },
+              {
+                "piece": "text",
+                "text": "no links"
+              },
+              {
+                "piece": "text",
+                "text": "1 day ago"
+              }
+            ]
+          ],
+          "widths": [6, 1.3, 1, 1.5]
+        }
+      ],
+      "piece": "stack"
+    },
+    "import": {
+      "children": [
+        {
+          "piece": "title",
+          "subtitle": "From 501 Claude Code notes and 17 Codex summaries: 380 were about folders you left out, 15 said the same as another.",
+          "text": "7 notes to keep"
+        },
+        {
+          "label": "Reading Claude Code chats · 64 of 180 · 36%",
+          "piece": "progress",
+          "share": 0.36
+        },
+        {
+          "children": [
+            {
+              "piece": "text",
+              "text": "New notes join this list as they come."
+            },
+            {
+              "action": "act",
+              "args": {
+                "act": "stop"
+              },
+              "kind": "secondary",
+              "label": "Stop",
+              "piece": "button"
+            }
+          ],
+          "piece": "row"
+        },
+        {
+          "children": [
+            {
+              "piece": "pill",
+              "text": "All 7",
+              "tone": "info"
+            },
+            {
+              "label": "About you 2",
+              "piece": "link",
+              "to": {
+                "page": "import",
+                "params": {
+                  "repo": "you"
+                },
+                "plugin": null
+              }
+            },
+            {
+              "label": "docbert 2",
+              "piece": "link",
+              "to": {
+                "page": "import",
+                "params": {
+                  "repo": "docbert"
+                },
+                "plugin": null
+              }
+            },
+            {
+              "label": "tau-agent 3",
+              "piece": "link",
+              "to": {
+                "page": "import",
+                "params": {
+                  "repo": "tau-agent"
+                },
+                "plugin": null
+              }
+            },
+            {
+              "label": "Need a look 2",
+              "piece": "link",
+              "to": {
+                "page": "import",
+                "params": {
+                  "look": "1"
+                },
+                "plugin": null
+              }
+            },
+            {
+              "piece": "spacer"
+            },
+            {
+              "name": "search",
+              "piece": "icon",
+              "tone": "neutral"
+            },
+            {
+              "id": "review-search",
+              "keep": true,
+              "multiline": false,
+              "piece": "input",
+              "placeholder": "Search",
+              "submit": null
+            }
+          ],
+          "piece": "row"
+        },
+        {
+          "piece": "heading",
+          "text": "About you · 2 · saved for every repository"
+        },
+        {
+          "head": [],
+          "piece": "table",
+          "rows": [
+            [
+              {
+                "action": "act",
+                "args": {
+                  "act": {
+                    "act": "tick",
+                    "id": "p-1",
+                    "keep": false
+                  }
+                },
+                "detail": "The outcome first, then the detail that backs it. · Claude Code · memory/result-first.md",
+                "label": "Answers lead with the result",
+                "on": true,
+                "piece": "switch"
+              },
+              {
+                "children": [
+                  {
+                    "piece": "badge",
+                    "text": "preference",
+                    "tone": "info"
+                  }
+                ],
+                "piece": "row"
+              }
+            ],
+            [
+              {
+                "action": "act",
+                "args": {
+                  "act": {
+                    "act": "tick",
+                    "id": "p-2",
+                    "keep": false
+                  }
+                },
+                "detail": "One change per commit; every commit passes the tests. · Claude Code · memory/small-commits.md, and 1 more",
+                "label": "Commits are small, and each one builds",
+                "on": true,
+                "piece": "switch"
+              },
+              {
+                "children": [
+                  {
+                    "piece": "badge",
+                    "text": "preference",
+                    "tone": "info"
+                  },
+                  {
+                    "piece": "badge",
+                    "text": "also in Codex",
+                    "tone": "info"
+                  }
+                ],
+                "piece": "row"
+              }
+            ]
+          ],
+          "widths": [5, 2]
+        },
+        {
+          "piece": "heading",
+          "text": "docbert · 2"
+        },
+        {
+          "head": [],
+          "piece": "table",
+          "rows": [
+            [
+              {
+                "action": "act",
+                "args": {
+                  "act": {
+                    "act": "tick",
+                    "id": "p-6",
+                    "keep": false
+                  }
+                },
+                "detail": "Candidates come from BM25 before ColBERT reranks them. · Claude Code · memory/bm25-first.md",
+                "label": "Searches go through the BM25 index first",
+                "on": true,
+                "piece": "switch"
+              },
+              {
+                "children": [
+                  {
+                    "piece": "badge",
+                    "text": "fact",
+                    "tone": "info"
+                  }
+                ],
+                "piece": "row"
+              }
+            ],
+            [
+              {
+                "action": "act",
+                "args": {
+                  "act": {
+                    "act": "tick",
+                    "id": "p-7",
+                    "keep": false
+                  }
+                },
+                "detail": "The cache is keyed by model, so a new model re-encodes. · Codex · task summary, 2026-10-02",
+                "label": "Embeddings are rebuilt when the model changes",
+                "on": true,
+                "piece": "switch"
+              },
+              {
+                "children": [
+                  {
+                    "piece": "badge",
+                    "text": "decision",
+                    "tone": "info"
+                  }
+                ],
+                "piece": "row"
+              }
+            ]
+          ],
+          "widths": [5, 2]
+        },
+        {
+          "piece": "heading",
+          "text": "tau-agent · 3"
+        },
+        {
+          "head": [],
+          "piece": "table",
+          "rows": [
+            [
+              {
+                "action": "act",
+                "args": {
+                  "act": {
+                    "act": "tick",
+                    "id": "p-3",
+                    "keep": true
+                  }
+                },
+                "detail": "Says the suite needs the staging database; tau has n-0441 saying it runs offline. · Codex · task summary, 2026-10-09",
+                "label": "Run the integration suite with --features live",
+                "on": false,
+                "piece": "switch"
+              },
+              {
+                "children": [
+                  {
+                    "piece": "badge",
+                    "text": "procedure",
+                    "tone": "good"
+                  },
+                  {
+                    "piece": "badge",
+                    "text": "disagrees with n-0441",
+                    "tone": "warn"
+                  }
+                ],
+                "piece": "row"
+              }
+            ],
+            [
+              {
+                "action": "act",
+                "args": {
+                  "act": {
+                    "act": "tick",
+                    "id": "p-4",
+                    "keep": false
+                  }
+                },
+                "detail": "Bind port 0 and read it back; a fixed port collides in CI. · Claude Code · chat on 2026-10-04",
+                "label": "The fixture server needs a free port",
+                "on": true,
+                "piece": "switch"
+              },
+              {
+                "children": [
+                  {
+                    "piece": "badge",
+                    "text": "gotcha",
+                    "tone": "warn"
+                  }
+                ],
+                "piece": "row"
+              }
+            ],
+            [
+              {
+                "action": "act",
+                "args": {
+                  "act": {
+                    "act": "tick",
+                    "id": "p-5",
+                    "keep": true
+                  }
+                },
+                "detail": "The chat pasted a secret; tau kept it out of the note. · Codex · chat on 2026-09-22",
+                "label": "[redacted] token for the staging API",
+                "on": false,
+                "piece": "switch"
+              },
+              {
+                "children": [
+                  {
+                    "piece": "badge",
+                    "text": "fact",
+                    "tone": "info"
+                  },
+                  {
+                    "piece": "badge",
+                    "text": "held a secret",
+                    "tone": "bad"
+                  }
+                ],
+                "piece": "row"
+              }
+            ]
+          ],
+          "widths": [5, 2]
+        },
+        {
+          "children": [
+            {
+              "piece": "text",
+              "text": "5 to keep · 2 left for you to decide"
+            },
+            {
+              "piece": "spacer"
+            },
+            {
+              "action": "act",
+              "args": {
+                "act": {
+                  "act": "drop",
+                  "ids": ["p-1", "p-2", "p-3", "p-4", "p-5", "p-6", "p-7"]
+                }
+              },
+              "kind": "secondary",
+              "label": "Keep none",
+              "piece": "button"
+            },
+            {
+              "action": "act",
+              "args": {
+                "act": {
+                  "act": "keep",
+                  "ids": ["p-1", "p-2", "p-4", "p-6", "p-7"]
+                }
+              },
+              "kind": "primary",
+              "label": "Keep 5 notes",
+              "piece": "button"
+            }
+          ],
+          "piece": "row"
+        },
+        {
+          "children": [
+            {
+              "piece": "heading",
+              "text": "Could not read 1 file"
+            },
+            {
+              "piece": "mono",
+              "text": "~/.codex/sessions/2026/09/30/rollout-cut-short.jsonl"
+            }
+          ],
+          "piece": "stack"
+        }
+      ],
+      "piece": "stack"
+    },
+    "tau-agent": {
+      "children": [
+        {
+          "children": [
+            {
+              "name": "search",
+              "piece": "icon",
+              "tone": "neutral"
+            },
+            {
+              "id": "search",
+              "keep": true,
+              "multiline": false,
+              "piece": "input",
+              "placeholder": "Search notes",
+              "submit": null
+            },
+            {
+              "piece": "pill",
+              "text": "All 8",
+              "tone": "info"
+            },
+            {
+              "label": "Facts 8",
+              "piece": "link",
+              "to": {
+                "page": "notes",
+                "params": {
+                  "kind": "fact"
+                },
+                "plugin": null
+              }
+            },
+            {
+              "action": "import",
+              "args": {
+                "request": {}
+              },
+              "kind": "secondary",
+              "label": "Import from Claude Code or Codex…",
+              "piece": "button"
+            }
+          ],
+          "piece": "row"
+        },
+        {
+          "head": ["Note", "Kind", "Links", "Edited"],
+          "piece": "table",
+          "rows": [
+            [
+              {
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "label": "429 vs 503 in the Responses API",
+                        "piece": "link",
+                        "to": {
+                          "page": "notes",
+                          "params": {
+                            "note": "n-0390"
+                          },
+                          "plugin": null
+                        }
+                      },
+                      {
+                        "piece": "mono",
+                        "text": "n-0390"
+                      }
+                    ],
+                    "piece": "row"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "429 means we sent too much; 503 means they are overloaded. "
+                  }
+                ],
+                "piece": "stack"
+              },
+              {
+                "piece": "badge",
+                "text": "fact",
+                "tone": "info"
+              },
+              {
+                "piece": "text",
+                "text": "1 link"
+              },
+              {
+                "piece": "text",
+                "text": "2 days ago"
+              }
+            ],
+            [
+              {
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "label": "Spread reconnects with jitter",
+                        "piece": "link",
+                        "to": {
+                          "page": "notes",
+                          "params": {
+                            "note": "n-0433"
+                          },
+                          "plugin": null
+                        }
+                      },
+                      {
+                        "piece": "mono",
+                        "text": "n-0433"
+                      }
+                    ],
+                    "piece": "row"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "Connections opened together expire together unless the deadline moves. "
+                  }
+                ],
+                "piece": "stack"
+              },
+              {
+                "piece": "badge",
+                "text": "fact",
+                "tone": "info"
+              },
+              {
+                "piece": "text",
+                "text": "2 links"
+              },
+              {
+                "piece": "text",
+                "text": "2 days ago"
+              }
+            ],
+            [
+              {
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "label": "16 in flight per connection",
+                        "piece": "link",
+                        "to": {
+                          "page": "notes",
+                          "params": {
+                            "note": "n-0301"
+                          },
+                          "plugin": null
+                        }
+                      },
+                      {
+                        "piece": "mono",
+                        "text": "n-0301"
+                      }
+                    ],
+                    "piece": "row"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "The pool enforces the limit per socket, not per client. "
+                  }
+                ],
+                "piece": "stack"
+              },
+              {
+                "piece": "badge",
+                "text": "fact",
+                "tone": "info"
+              },
+              {
+                "piece": "text",
+                "text": "1 link"
+              },
+              {
+                "piece": "text",
+                "text": "3 days ago"
+              }
+            ],
+            [
+              {
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "label": "Retry policy honors server hints",
+                        "piece": "link",
+                        "to": {
+                          "page": "notes",
+                          "params": {
+                            "note": "n-0388"
+                          },
+                          "plugin": null
+                        }
+                      },
+                      {
+                        "piece": "mono",
+                        "text": "n-0388"
+                      }
+                    ],
+                    "piece": "row"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "When the server sends retry-after, it wins over our backoff, capped at max_delay. "
+                  }
+                ],
+                "piece": "stack"
+              },
+              {
+                "piece": "badge",
+                "text": "fact",
+                "tone": "info"
+              },
+              {
+                "piece": "text",
+                "text": "2 links"
+              },
+              {
+                "piece": "text",
+                "text": "4 days ago"
+              }
+            ],
+            [
+              {
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "label": "Rewrites force one full resend",
+                        "piece": "link",
+                        "to": {
+                          "page": "notes",
+                          "params": {
+                            "note": "n-0350"
+                          },
+                          "plugin": null
+                        }
+                      },
+                      {
+                        "piece": "mono",
+                        "text": "n-0350"
+                      }
+                    ],
+                    "piece": "row"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "Any edit to the transcript breaks the delta chain once. "
+                  }
+                ],
+                "piece": "stack"
+              },
+              {
+                "piece": "badge",
+                "text": "fact",
+                "tone": "info"
+              },
+              {
+                "piece": "text",
+                "text": "1 link"
+              },
+              {
+                "piece": "text",
+                "text": "5 days ago"
+              }
+            ],
+            [
+              {
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "label": "Rotation must drain lanes first",
+                        "piece": "link",
+                        "to": {
+                          "page": "notes",
+                          "params": {
+                            "note": "n-0417"
+                          },
+                          "plugin": null
+                        }
+                      },
+                      {
+                        "piece": "mono",
+                        "text": "n-0417"
+                      }
+                    ],
+                    "piece": "row"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "A connection that is past its deadline can still carry lanes with a response in flight. "
+                  }
+                ],
+                "piece": "stack"
+              },
+              {
+                "piece": "badge",
+                "text": "fact",
+                "tone": "info"
+              },
+              {
+                "piece": "text",
+                "text": "5 links"
+              },
+              {
+                "piece": "text",
+                "text": "7 days ago"
+              }
+            ],
+            [
+              {
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "label": "Continuation ids are call_id|item_id",
+                        "piece": "link",
+                        "to": {
+                          "page": "notes",
+                          "params": {
+                            "note": "n-0212"
+                          },
+                          "plugin": null
+                        }
+                      },
+                      {
+                        "piece": "mono",
+                        "text": "n-0212"
+                      }
+                    ],
+                    "piece": "row"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "The Responses API needs both halves to resume a tool call. "
+                  }
+                ],
+                "piece": "stack"
+              },
+              {
+                "piece": "badge",
+                "text": "fact",
+                "tone": "info"
+              },
+              {
+                "piece": "text",
+                "text": "2 links"
+              },
+              {
+                "piece": "text",
+                "text": "9 days ago"
+              }
+            ],
+            [
+              {
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "label": "Tests use the fake OpenAI server",
+                        "piece": "link",
+                        "to": {
+                          "page": "notes",
+                          "params": {
+                            "note": "n-0205"
+                          },
+                          "plugin": null
+                        }
+                      },
+                      {
+                        "piece": "mono",
+                        "text": "n-0205"
+                      }
+                    ],
+                    "piece": "row"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "tau-testing runs a fake Responses server over WebSocket. "
+                  }
+                ],
+                "piece": "stack"
+              },
+              {
+                "piece": "badge",
+                "text": "fact",
+                "tone": "info"
+              },
+              {
+                "piece": "text",
+                "text": "no links"
+              },
+              {
+                "piece": "text",
+                "text": "11 days ago"
+              }
+            ]
+          ],
+          "widths": [6, 1.3, 1, 1.5]
+        }
+      ],
+      "piece": "stack"
+    },
+    "tau-agent/n-0417": {
+      "children": [
+        {
+          "children": [
+            {
+              "name": "back",
+              "piece": "icon",
+              "tone": "neutral"
+            },
+            {
+              "label": "All notes",
+              "piece": "link",
+              "to": {
+                "page": "notes",
+                "params": {},
+                "plugin": null
+              }
+            }
+          ],
+          "piece": "row"
+        },
+        {
+          "piece": "mono",
+          "text": "n-0417 · fact by the agent · edited 7 days ago"
+        },
+        {
+          "piece": "title",
+          "subtitle": null,
+          "text": "Rotation must drain lanes first"
+        },
+        {
+          "piece": "markdown",
+          "text": "A connection that is past its deadline can still carry lanes with a response in flight. Retiring it right away breaks their continuation: the next request would name a `previous_response_id` that the new socket has never seen.\n\nSo the pool marks the connection as draining, sends no new lanes to it, and closes it when its last lane finishes.\n\nJitter on the deadline only moves when draining starts. It does not replace it."
+        },
+        {
+          "children": [
+            {
+              "piece": "badge",
+              "text": "crates/tau-ai/src/ws/proto/lane.rs",
+              "tone": "neutral"
+            },
+            {
+              "piece": "badge",
+              "text": "crates/tau-ai/src/ws/proto/pool.rs",
+              "tone": "neutral"
+            }
+          ],
+          "piece": "row"
+        },
+        {
+          "piece": "heading",
+          "text": "Neighborhood"
+        },
+        {
+          "edges": [
+            ["note", "out-0"],
+            ["note", "out-1"],
+            ["note", "back-2"],
+            ["note", "back-3"],
+            ["note", "back-4"]
+          ],
+          "height": 12.5,
+          "nodes": [
+            {
+              "focus": true,
+              "id": "note",
+              "label": null,
+              "to": null,
+              "tone": "neutral",
+              "x": 0.5,
+              "y": 0.5
+            },
+            {
+              "focus": false,
+              "id": "out-0",
+              "label": "Continuation ids are call_id|item_id",
+              "to": {
+                "page": "notes",
+                "params": {
+                  "note": "n-0212"
+                },
+                "plugin": null
+              },
+              "tone": "info",
+              "x": 0.22,
+              "y": 0.2
+            },
+            {
+              "focus": false,
+              "id": "out-1",
+              "label": "Spread reconnects with jitter",
+              "to": {
+                "page": "notes",
+                "params": {
+                  "note": "n-0433"
+                },
+                "plugin": null
+              },
+              "tone": "info",
+              "x": 0.78,
+              "y": 0.26
+            },
+            {
+              "focus": false,
+              "id": "back-2",
+              "label": "Spread reconnects with jitter",
+              "to": {
+                "page": "notes",
+                "params": {
+                  "note": "n-0433"
+                },
+                "plugin": null
+              },
+              "tone": "neutral",
+              "x": 0.22,
+              "y": 0.7
+            },
+            {
+              "focus": false,
+              "id": "back-3",
+              "label": "16 in flight per connection",
+              "to": {
+                "page": "notes",
+                "params": {
+                  "note": "n-0301"
+                },
+                "plugin": null
+              },
+              "tone": "neutral",
+              "x": 0.5,
+              "y": 0.82
+            },
+            {
+              "focus": false,
+              "id": "back-4",
+              "label": "Rewrites force one full resend",
+              "to": {
+                "page": "notes",
+                "params": {
+                  "note": "n-0350"
+                },
+                "plugin": null
+              },
+              "tone": "neutral",
+              "x": 0.78,
+              "y": 0.66
+            }
+          ],
+          "piece": "graph"
+        },
+        {
+          "piece": "heading",
+          "text": "Links out · 2"
+        },
+        {
+          "children": [
+            {
+              "label": "Continuation ids are call_id|item_id",
+              "piece": "link",
+              "to": {
+                "page": "notes",
+                "params": {
+                  "note": "n-0212"
+                },
+                "plugin": null
+              }
+            },
+            {
+              "piece": "text",
+              "text": "why: how a lane knows what it continues"
+            }
+          ],
+          "piece": "stack"
+        },
+        {
+          "children": [
+            {
+              "label": "Spread reconnects with jitter",
+              "piece": "link",
+              "to": {
+                "page": "notes",
+                "params": {
+                  "note": "n-0433"
+                },
+                "plugin": null
+              }
+            },
+            {
+              "piece": "text",
+              "text": "why: jitter moves the deadline"
+            }
+          ],
+          "piece": "stack"
+        },
+        {
+          "piece": "heading",
+          "text": "Backlinks · 3"
+        },
+        {
+          "children": [
+            {
+              "label": "Spread reconnects with jitter",
+              "piece": "link",
+              "to": {
+                "page": "notes",
+                "params": {
+                  "note": "n-0433"
+                },
+                "plugin": null
+              }
+            },
+            {
+              "piece": "text",
+              "text": "why: draining still applies"
+            }
+          ],
+          "piece": "stack"
+        },
+        {
+          "children": [
+            {
+              "label": "16 in flight per connection",
+              "piece": "link",
+              "to": {
+                "page": "notes",
+                "params": {
+                  "note": "n-0301"
+                },
+                "plugin": null
+              }
+            },
+            {
+              "piece": "text",
+              "text": "why: draining sockets still count"
+            }
+          ],
+          "piece": "stack"
+        },
+        {
+          "children": [
+            {
+              "label": "Rewrites force one full resend",
+              "piece": "link",
+              "to": {
+                "page": "notes",
+                "params": {
+                  "note": "n-0350"
+                },
+                "plugin": null
+              }
+            },
+            {
+              "piece": "text",
+              "text": "why: a resend can land on a draining socket"
+            }
+          ],
+          "piece": "stack"
+        }
+      ],
+      "piece": "stack"
+    }
+  },
+  "repo_data": {
+    "docbert": {
+      "banner": {
+        "folder": "~/Code/cfcosta/docbert",
+        "places": [
+          {
+            "folder": "/home/demo/Code/cfcosta/docbert",
+            "remote": "git@github.com:cfcosta/docbert.git"
+          }
+        ],
+        "ready": 2,
+        "saved": [
+          ["claude_code", 9],
+          ["codex", 4]
+        ],
+        "unread_chats": 23,
+        "unread_saved": 0
+      },
+      "edited": "2 days ago",
+      "nav": {
+        "detail": "3 notes"
+      },
+      "notes": 3
+    },
+    "homelab.nix": {
+      "edited": "1 day ago",
+      "nav": {
+        "detail": "1 notes"
+      },
+      "notes": 1
+    },
+    "tau-agent": {
+      "edited": "2 days ago",
+      "nav": {
+        "detail": "8 notes"
+      },
+      "notes": 8
+    }
+  },
+  "run": [
+    {
+      "state": {
+        "log": [
+          {
+            "kind": "recalled",
+            "notes": [
+              {
+                "id": "n-0388",
+                "title": "Retry policy honors server hints"
+              },
+              {
+                "id": "n-0390",
+                "title": "429 vs 503 in the Responses API"
+              },
+              {
+                "id": "n-0205",
+                "title": "Tests use the fake OpenAI server"
+              }
+            ]
+          }
+        ],
+        "notes": 8
+      },
+      "view": {
+        "notes": {
+          "m0": {
+            "children": [
+              {
+                "children": [
+                  {
+                    "name": "memory",
+                    "piece": "icon",
+                    "tone": "neutral"
+                  },
+                  {
+                    "detail": "recalled 3 notes for this task",
+                    "piece": "status",
+                    "text": "tau-memory",
+                    "tone": "neutral"
+                  }
+                ],
+                "piece": "row"
+              },
+              {
+                "children": [
+                  {
+                    "label": "Retry policy honors server hints",
+                    "piece": "link",
+                    "to": {
+                      "page": "notes",
+                      "params": {
+                        "note": "n-0388",
+                        "repo": "tau-agent"
+                      },
+                      "plugin": null
+                    }
+                  },
+                  {
+                    "label": "429 vs 503 in the Responses API",
+                    "piece": "link",
+                    "to": {
+                      "page": "notes",
+                      "params": {
+                        "note": "n-0390",
+                        "repo": "tau-agent"
+                      },
+                      "plugin": null
+                    }
+                  },
+                  {
+                    "label": "Tests use the fake OpenAI server",
+                    "piece": "link",
+                    "to": {
+                      "page": "notes",
+                      "params": {
+                        "note": "n-0205",
+                        "repo": "tau-agent"
+                      },
+                      "plugin": null
+                    }
+                  }
+                ],
+                "piece": "row"
+              }
+            ],
+            "piece": "stack"
+          }
+        },
+        "status": {
+          "detail": null,
+          "piece": "status",
+          "text": "8 notes",
+          "tone": "neutral"
+        }
+      }
+    },
+    {
+      "state": {
+        "log": [
+          {
+            "kind": "recalled",
+            "notes": [
+              {
+                "id": "n-0388",
+                "title": "Retry policy honors server hints"
+              },
+              {
+                "id": "n-0390",
+                "title": "429 vs 503 in the Responses API"
+              },
+              {
+                "id": "n-0205",
+                "title": "Tests use the fake OpenAI server"
+              }
+            ]
+          },
+          {
+            "calls": [
+              {
+                "details": {},
+                "tool": "memory_write"
+              },
+              {
+                "details": {},
+                "tool": "memory_write"
+              }
+            ],
+            "kind": "saved"
+          }
+        ],
+        "notes": 8
+      },
+      "view": {
+        "notes": {
+          "m0": {
+            "children": [
+              {
+                "children": [
+                  {
+                    "name": "memory",
+                    "piece": "icon",
+                    "tone": "neutral"
+                  },
+                  {
+                    "detail": "recalled 3 notes for this task",
+                    "piece": "status",
+                    "text": "tau-memory",
+                    "tone": "neutral"
+                  }
+                ],
+                "piece": "row"
+              },
+              {
+                "children": [
+                  {
+                    "label": "Retry policy honors server hints",
+                    "piece": "link",
+                    "to": {
+                      "page": "notes",
+                      "params": {
+                        "note": "n-0388",
+                        "repo": "tau-agent"
+                      },
+                      "plugin": null
+                    }
+                  },
+                  {
+                    "label": "429 vs 503 in the Responses API",
+                    "piece": "link",
+                    "to": {
+                      "page": "notes",
+                      "params": {
+                        "note": "n-0390",
+                        "repo": "tau-agent"
+                      },
+                      "plugin": null
+                    }
+                  },
+                  {
+                    "label": "Tests use the fake OpenAI server",
+                    "piece": "link",
+                    "to": {
+                      "page": "notes",
+                      "params": {
+                        "note": "n-0205",
+                        "repo": "tau-agent"
+                      },
+                      "plugin": null
+                    }
+                  }
+                ],
+                "piece": "row"
+              }
+            ],
+            "piece": "stack"
+          },
+          "m1": {
+            "children": [
+              {
+                "children": [
+                  {
+                    "name": "memory",
+                    "piece": "icon",
+                    "tone": "good"
+                  },
+                  {
+                    "detail": "saved 2 notes",
+                    "piece": "status",
+                    "text": "tau-memory",
+                    "tone": "good"
+                  }
+                ],
+                "piece": "row"
+              }
+            ],
+            "piece": "stack"
+          }
+        },
+        "status": {
+          "detail": null,
+          "piece": "status",
+          "text": "8 notes",
+          "tone": "neutral"
+        }
+      }
+    }
+  ],
+  "settings": {
+    "children": [
+      {
+        "children": [
+          {
+            "key": "after_each_run",
+            "label": "Save after each run",
+            "piece": "toggle"
+          },
+          {
+            "piece": "text",
+            "text": "When a run ends, one request reads it and saves what a later run should know, often nothing. Off, memory keeps what the agent writes and what compaction is about to drop."
+          },
+          {
+            "piece": "rule"
+          },
+          {
+            "children": [
+              {
+                "piece": "heading",
+                "text": "Model"
+              },
+              {
+                "piece": "text",
+                "text": "Writes notes after each run and before compaction drops the conversation. Search runs locally and needs none."
+              }
+            ],
+            "piece": "stack"
+          },
+          {
+            "key": "family",
+            "multi": false,
+            "options": ["sol", "luna", "astra", "terra"],
+            "piece": "choice"
+          },
+          {
+            "piece": "rule"
+          },
+          {
+            "children": [
+              {
+                "piece": "heading",
+                "text": "Reasoning"
+              },
+              {
+                "piece": "text",
+                "text": "How hard it thinks about what is worth keeping. Auto leaves it to the model."
+              }
+            ],
+            "piece": "stack"
+          },
+          {
+            "key": "reasoning",
+            "multi": false,
+            "options": ["auto", "low", "medium", "high"],
+            "piece": "choice"
+          },
+          {
+            "piece": "rule"
+          },
+          {
+            "key": "follow_chat",
+            "label": "Use the chat's model instead",
+            "piece": "toggle"
+          },
+          {
+            "piece": "text",
+            "text": "Notes come from whatever model and effort the run is on."
+          }
+        ],
+        "piece": "card"
+      },
+      {
+        "piece": "mono",
+        "text": "Runs as gpt-6-luna · low."
+      }
+    ],
+    "piece": "stack"
+  },
+  "setup": {
+    "at": "after_repositories",
+    "body": {
+      "children": [
+        {
+          "children": [
+            {
+              "piece": "heading",
+              "text": "Claude Code"
+            },
+            {
+              "piece": "mono",
+              "text": "~/.claude"
+            },
+            {
+              "action": "setup_choose",
+              "args": {
+                "choice": {
+                  "others": false,
+                  "parts": {
+                    "claude_chats": true,
+                    "claude_saved": false,
+                    "codex_chats": true,
+                    "codex_saved": true
+                  }
+                }
+              },
+              "detail": "Notes it saved in 54 folders. Copied as they are, without the model.",
+              "label": "Its memory · 501 notes",
+              "on": true,
+              "piece": "switch"
+            },
+            {
+              "action": "setup_choose",
+              "args": {
+                "choice": {
+                  "others": false,
+                  "parts": {
+                    "claude_chats": false,
+                    "claude_saved": true,
+                    "codex_chats": true,
+                    "codex_saved": true
+                  }
+                }
+              },
+              "detail": "Your model reads them and writes down what was decided, fixed or preferred.",
+              "label": "Its chats · 180 conversations",
+              "on": true,
+              "piece": "switch"
+            },
+            {
+              "head": [],
+              "piece": "table",
+              "rows": [
+                [
+                  {
+                    "piece": "mono",
+                    "text": "~/Code/cfcosta/tau-agent"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "→"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "tau-agent · 41 notes"
+                  }
+                ],
+                [
+                  {
+                    "piece": "mono",
+                    "text": "~/Code/cfcosta/docbert"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "→"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "docbert · 9 notes"
+                  }
+                ],
+                [
+                  {
+                    "piece": "mono",
+                    "text": "about you, in any folder"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "→"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "About you · 18 notes"
+                  }
+                ],
+                [
+                  {
+                    "piece": "mono",
+                    "text": "52 other folders"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "→"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "left out"
+                  }
+                ]
+              ],
+              "widths": [4, 0.5, 4]
+            }
+          ],
+          "piece": "card"
+        },
+        {
+          "children": [
+            {
+              "piece": "heading",
+              "text": "Codex"
+            },
+            {
+              "piece": "mono",
+              "text": "~/.codex"
+            },
+            {
+              "action": "setup_choose",
+              "args": {
+                "choice": {
+                  "others": false,
+                  "parts": {
+                    "claude_chats": true,
+                    "claude_saved": true,
+                    "codex_chats": true,
+                    "codex_saved": false
+                  }
+                }
+              },
+              "detail": "What Codex kept from past tasks, grouped by folder. Your model splits them into notes.",
+              "label": "Its memories · 93 summaries",
+              "on": true,
+              "piece": "switch"
+            },
+            {
+              "action": "setup_choose",
+              "args": {
+                "choice": {
+                  "others": false,
+                  "parts": {
+                    "claude_chats": true,
+                    "claude_saved": true,
+                    "codex_chats": false,
+                    "codex_saved": true
+                  }
+                }
+              },
+              "detail": "Read in full by your model. It keeps going after setup.",
+              "label": "Its chats · 748 sessions",
+              "on": true,
+              "piece": "switch"
+            },
+            {
+              "head": [],
+              "piece": "table",
+              "rows": [
+                [
+                  {
+                    "piece": "mono",
+                    "text": "~/Code/cfcosta/tau-agent"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "→"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "tau-agent · 14 summaries"
+                  }
+                ],
+                [
+                  {
+                    "piece": "mono",
+                    "text": "~/Code/cfcosta/docbert"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "→"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "docbert · 4 summaries"
+                  }
+                ],
+                [
+                  {
+                    "piece": "mono",
+                    "text": "31 other folders"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "→"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "left out"
+                  }
+                ]
+              ],
+              "widths": [4, 0.5, 4]
+            }
+          ],
+          "piece": "card"
+        },
+        {
+          "action": "setup_choose",
+          "args": {
+            "choice": {
+              "others": true,
+              "parts": {
+                "claude_chats": true,
+                "claude_saved": true,
+                "codex_chats": true,
+                "codex_saved": true
+              }
+            }
+          },
+          "detail": null,
+          "label": "Also bring folders tau does not have yet, to use when you add them",
+          "on": false,
+          "piece": "switch"
+        },
+        {
+          "children": [
+            {
+              "piece": "text",
+              "text": "Only chats in the folders above"
+            },
+            {
+              "piece": "spacer"
+            },
+            {
+              "action": "setup_start",
+              "args": {
+                "request": {
+                  "only": [
+                    {
+                      "folder": "/home/demo/Code/cfcosta/tau-agent",
+                      "remote": "git@github.com:cfcosta/tau-agent.git"
+                    },
+                    {
+                      "folder": "/home/demo/Code/cfcosta/docbert",
+                      "remote": "git@github.com:cfcosta/docbert.git"
+                    }
+                  ],
+                  "others": false,
+                  "parts": {
+                    "claude_chats": true,
+                    "claude_saved": true,
+                    "codex_chats": true,
+                    "codex_saved": true
+                  }
+                }
+              },
+              "kind": "primary",
+              "label": "Read and show me the notes",
+              "piece": "button"
+            }
+          ],
+          "piece": "row"
+        },
+        {
+          "piece": "text",
+          "text": "Read only: tau never changes Claude Code's or Codex's files. What they wrote is treated as notes to keep, never as instructions."
+        }
+      ],
+      "piece": "stack"
+    },
+    "detail": "Claude Code and Codex are on this computer. tau can turn what they remember into its own notes, for the repositories you picked and about you. You see every note before it is kept.",
+    "heading": "Bring what your other agents learned",
+    "step": "memories",
+    "title": "Memories"
+  }
+}

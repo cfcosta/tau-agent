@@ -36,9 +36,8 @@ use tokio::{runtime::Runtime, sync::mpsc};
 
 /// What the demo's runs cost each plugin over the last 30 days, as the
 /// store would add it up.
-const SPEND: [(&str, f64); 7] = [
+const SPEND: [(&str, f64); 6] = [
     (tau_luau_plugins::names::REASONING, 0.004),
-    (tau_memory_host::NAME, 0.212),
     (tau_luau_plugins::names::CONSTITUTION, 0.031),
     (tau_luau_plugins::names::FAST_COMPACTION, 0.046),
     (tau_luau_plugins::names::COMPACTION, 0.061),
@@ -143,7 +142,6 @@ impl DemoHost {
                 let _ = pushes.send(push);
             }),
         );
-        tau_memory_host::demo::seed(&cx)?;
         let hosted = runtime.block_on(hosted::host_all(&cx));
         Ok(Self {
             cx,
@@ -220,6 +218,25 @@ impl DemoHost {
                     ctx,
                     &self.cx,
                 ));
+            }
+            // tau-memory's, a Luau plugin's: what its fixture keeps of
+            // the repository.
+            let memory = &crate::luau_fixture(
+                tau_luau_plugins::names::MEMORY,
+                "demo",
+            )["repo_data"][&repo.name];
+            if !memory.is_null() {
+                let values = tau_luau_plugins::RepoValues(
+                    [(
+                        tau_luau_plugins::names::MEMORY.to_owned(),
+                        memory.clone(),
+                    )]
+                    .into(),
+                );
+                repo.plugins.insert(
+                    tau_luau_plugins::NAME.to_owned(),
+                    PluginValue::typed(values),
+                );
             }
             // No server answers in a demo: tau-agent's show as a host
             // that started them would see them.
@@ -373,7 +390,11 @@ fn luau_built_ins(
         tests: Vec::new(),
         keeps_earlier: false,
         built_in: true,
-        app: (name == tau_luau_plugins::names::SKILLS).then(|| skills.clone()),
+        app: match name {
+            tau_luau_plugins::names::SKILLS => Some(skills.clone()),
+            tau_luau_plugins::names::MEMORY => Some(memory_app()),
+            _ => None,
+        },
     };
     let overview = Overview {
         commit: None,
@@ -387,6 +408,7 @@ fn luau_built_ins(
             built_in(tau_luau_plugins::names::TREE_COMPACTION),
             built_in(tau_luau_plugins::names::REASONING),
             built_in(tau_luau_plugins::names::SKILLS),
+            built_in(tau_luau_plugins::names::MEMORY),
             github,
         ],
         error: None,
@@ -422,27 +444,79 @@ fn luau_built_ins(
     (info, PluginValue::typed(overview))
 }
 
-/// tau-constitution's rules page of tau-agent, which the demo cannot draw
-/// with Luau: the tree its fixture keeps for the screen its `demo`
-/// parameter names (the rules when it names none), as tau-luau-plugins'
-/// host half answers a page. `None` for any other action.
+/// What tau-memory keeps of the app in the demo, from its fixture: the
+/// person's notes, the imports, its menu entry and its setup step.
+fn memory_app() -> tau_luau_plugins::AppView {
+    let demo = crate::luau_fixture(tau_luau_plugins::names::MEMORY, "demo");
+    tau_luau_plugins::AppView {
+        value: demo["app"].clone(),
+        setup: Some(demo["setup"].clone()),
+        ..Default::default()
+    }
+}
+
+/// The pages of the Luau plugins the demo cannot draw with Luau, as
+/// tau-luau-plugins' host half answers them: tau-constitution's rules
+/// page of tau-agent, the tree its fixture keeps for the screen its
+/// `demo` parameter names (the rules when it names none); tau-memory's
+/// notes pages, a note open, its review page, its setup step and its
+/// settings pane, from its fixture `demo`. `None` for any other action.
 fn luau_page(plugin: &str, action: &Value) -> Option<Value> {
-    let Ok(tau_luau_plugins::Act::Page {
-        plugin: luau,
-        params,
-        ..
-    }) = serde_json::from_value(action.clone())
-    else {
-        return None;
-    };
-    if plugin != tau_luau_plugins::NAME
-        || luau != tau_luau_plugins::names::CONSTITUTION
-    {
+    use tau_luau_plugins::{Act, names, ui};
+    if plugin != tau_luau_plugins::NAME {
         return None;
     }
-    let pages = crate::luau_fixture(&luau, "pages");
-    let screen = params.get("demo").map_or("constitution", String::as_str);
-    let repo = params.get("repo").map_or("", String::as_str);
-    let tree = tau_luau_plugins::ui::embed_repo(&pages[screen], &luau, repo);
+    let act: Act = serde_json::from_value(action.clone()).ok()?;
+    let memory = || crate::luau_fixture(names::MEMORY, "demo");
+    let tree = match act {
+        Act::Page {
+            plugin: luau,
+            page,
+            params,
+            ..
+        } if luau == names::MEMORY => {
+            let demo = memory();
+            match params.get("repo") {
+                Some(repo) => {
+                    let open = params
+                        .get("note")
+                        .map(|note| &demo["pages"][format!("{repo}/{note}")])
+                        .filter(|tree| !tree.is_null());
+                    let tree = open.unwrap_or(&demo["pages"][repo]);
+                    ui::embed_repo(tree, &luau, repo)
+                }
+                None if page == "import" => {
+                    ui::embed_app(&demo["pages"]["import"], &luau)
+                }
+                None => return None,
+            }
+        }
+        Act::Page {
+            plugin: luau,
+            params,
+            ..
+        } if luau == names::CONSTITUTION => {
+            let pages = crate::luau_fixture(&luau, "pages");
+            let screen =
+                params.get("demo").map_or("constitution", String::as_str);
+            let repo = params.get("repo").map_or("", String::as_str);
+            ui::embed_repo(&pages[screen], &luau, repo)
+        }
+        Act::Setup { plugin: luau, .. } if luau == names::MEMORY => {
+            ui::embed_app(&memory()["setup"]["body"], &luau)
+        }
+        Act::SettingsView {
+            plugin: luau,
+            settings,
+            fields,
+        } if luau == names::MEMORY => {
+            return Some(tau_luau_plugins::pane::settings_view(
+                Ok(memory()["settings"].clone()),
+                &settings,
+                &fields,
+            ));
+        }
+        _ => return None,
+    };
     Some(serde_json::json!({ "tree": tree.value() }))
 }

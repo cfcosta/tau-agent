@@ -61,6 +61,8 @@ use tau_ui_remote::{
 use tau_vcs_host::{Identity, Project, ProjectRepo};
 use tokio::sync::{mpsc::UnboundedReceiver, oneshot};
 
+use crate::common::LuauSettings as _;
+
 /// The models people show, hide and pick: the plan's.
 pub fn models() -> Vec<String> {
     let offered = tau_ai::model::plan_models();
@@ -434,8 +436,8 @@ impl Disk {
         let (host, events) = Host::with_agent(runtime, agent, store, config);
         // Memory's pass after each run asks the model once more: these
         // scripts answer only the requests they write.
-        let host = host.with_plugin_settings(
-            tau_memory::NAME,
+        let host = host.with_luau_settings(
+            tau_luau_plugins::names::MEMORY,
             serde_json::json!({ "after_each_run": false }),
         );
         // Forecasts start at once: no person's burst of changes to wait

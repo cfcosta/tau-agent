@@ -27,6 +27,8 @@ use tau_ui_remote::{
 };
 use tau_vcs_host::{Identity, Project};
 
+use crate::common::LuauSettings as _;
+
 /// Runs GPUI until `done` holds, while runs work on the host's threads:
 /// for a minute at most, since landing works real repositories and a full
 /// test run loads the machine.
@@ -152,8 +154,8 @@ fn runs_land_on_the_main_chat_and_move_main(cx: &mut TestAppContext) {
     let (host, events) = Host::with_agent(runtime, agent, store, config);
     // Memory's pass after each run asks the model once more: these
     // scripts answer only the requests they write.
-    let host = host.with_plugin_settings(
-        tau_memory::NAME,
+    let host = host.with_luau_settings(
+        tau_luau_plugins::names::MEMORY,
         serde_json::json!({ "after_each_run": false }),
     );
     let host = host.with_repository(

@@ -197,6 +197,46 @@ end
 -- each keeps the state the last one left, and a hook that fails keeps
 -- none of what it wrote to the stores. `run.woken` lists each wake, as
 -- `{ run, text }`.
+-- A remote's URL as the host's `ctx.files.remote` normalises it: the
+-- host lowercased, then the path, with no scheme, user, port, `.git` or
+-- trailing slash; a local path stays a path.
+function test.normalize_remote(url)
+	url = string.match(url, "^%s*(.-)%s*$")
+	if url == "" then
+		return nil
+	end
+	local host, path
+	local scheme_at = string.find(url, "://", 1, true)
+	if scheme_at then
+		local rest = string.sub(url, scheme_at + 3)
+		local slash = string.find(rest, "/", 1, true)
+		local authority = slash and string.sub(rest, 1, slash - 1) or rest
+		path = slash and string.sub(rest, slash + 1) or ""
+		host = string.match(authority, "([^@]*)$")
+		host = string.match(host, "^([^:]*)")
+	elseif string.sub(url, 1, 1) ~= "/" and string.find(url, ":", 1, true) then
+		local colon = string.find(url, ":", 1, true)
+		local authority = string.sub(url, 1, colon - 1)
+		if not string.find(authority, "/", 1, true) then
+			host = string.match(authority, "([^@]*)$")
+			path = string.sub(url, colon + 1)
+		else
+			path = url
+		end
+	else
+		path = url
+	end
+	path = string.match(path, "^/*(.-)/*$")
+	if string.sub(path, -4) == ".git" then
+		path = string.sub(path, 1, -5)
+	end
+	path = string.match(path, "^(.-)/*$")
+	if host ~= nil and host ~= "" then
+		return string.lower(host) .. "/" .. path
+	end
+	return "/" .. path
+end
+
 function test.run(spec)
 	spec = spec or {}
 	local plugin = test.load()
@@ -297,10 +337,12 @@ function test.run(spec)
 		end
 	end
 	-- What a tool reads with uses.files: `spec.files`, by path as the tool
-	-- names it, each its text, or `{ text, image = { mime, width, height } }`.
+	-- names it, each its text, or `{ text, image = { mime, width, height },
+	-- modified }`, `modified` what a listing says of it (0 when not given).
 	-- A blob is the file's path.
+	local files = spec.files or {}
+	local folders_made = {}
 	if plugin.uses and plugin.uses.files then
-		local files = spec.files or {}
 		local function file(args)
 			local found = files[args.path]
 			if found == nil then
@@ -313,6 +355,9 @@ function test.run(spec)
 		end
 		fakes.files_read = function(args)
 			local text = file(args).text or ""
+			if args.offset then
+				text = string.sub(text, math.min(args.offset, #text) + 1)
+			end
 			if args.limit then
 				text = string.sub(text, 1, args.limit)
 			end
@@ -328,11 +373,12 @@ function test.run(spec)
 					local slash = string.find(rest, "/")
 					if slash == nil then
 						local text = type(found) == "string" and found or (found.text or "")
-						table.insert(names, { name = rest, dir = false, size = #text })
+						local modified = type(found) == "table" and found.modified or 0
+						table.insert(names, { name = rest, dir = false, size = #text, modified = modified })
 					elseif not folders[string.sub(rest, 1, slash - 1)] then
 						-- A folder is there when a file is under it.
 						folders[string.sub(rest, 1, slash - 1)] = true
-						table.insert(names, { name = string.sub(rest, 1, slash - 1), dir = true, size = 0 })
+						table.insert(names, { name = string.sub(rest, 1, slash - 1), dir = true, size = 0, modified = 0 })
 					end
 				end
 			end
@@ -378,6 +424,100 @@ function test.run(spec)
 		fakes.blobs_put = function(args)
 			local found = file(args)
 			return { id = args.path, digest = "digest:" .. args.path, size_bytes = found.size or #(found.text or "") }
+		end
+		-- What it writes goes in `spec.files` too, by path as the plugin
+		-- names it, for the test to read back (`run.files`); only with a
+		-- folder `{ name, write = true }` (ADR 0050, gap L). A folder made
+		-- is in `run.folders`.
+		local writes = false
+		for _, folder in ipairs(plugin.uses.files) do
+			if type(folder) == "table" and folder.write == true then
+				writes = true
+			end
+		end
+		local function writable(path)
+			if not writes then
+				error("This plugin does not write " .. path .. ": its folder is not one `uses.files` names { name, write = true }", 0)
+			end
+		end
+		fakes.files_write = function(args)
+			writable(args.path)
+			files[args.path] = args.text
+		end
+		fakes.files_remove = function(args)
+			writable(args.path)
+			if files[args.path] == nil then
+				error("Cannot remove " .. args.path .. ": No such file or directory (os error 2)", 0)
+			end
+			files[args.path] = nil
+		end
+		fakes.files_rename = function(args)
+			writable(args.path)
+			writable(args.to)
+			if files[args.path] == nil then
+				error("Cannot move " .. args.path .. ": No such file or directory (os error 2)", 0)
+			end
+			files[args.to], files[args.path] = files[args.path], nil
+		end
+		fakes.files_mkdir = function(args)
+			writable(args.path)
+			folders_made[args.path] = true
+		end
+		-- `spec.remotes`: a folder, as the plugin names it, to its remote's
+		-- URL; normalised as the host does.
+		fakes.files_remote = function(args)
+			local url = (spec.remotes or {})[args.path]
+			if url == nil then
+				return json.null
+			end
+			return { url = url, normalized = test.normalize_remote(url) }
+		end
+		-- `spec.repositories`: tau's folder for each repository, by name.
+		fakes.files_repository = function(args)
+			return (spec.repositories or {})[args.name] or json.null
+		end
+		-- `spec.repos`: the repositories tau lists, `{ id, name, folder,
+		-- remote }` each, normalised as the host does (ADR 0050, gap L).
+		fakes.files_repositories = function()
+			local out = array({})
+			for _, repo in ipairs(spec.repos or {}) do
+				local listed = table.clone(repo)
+				listed.id = listed.id or listed.name
+				listed.normalized = listed.remote and test.normalize_remote(listed.remote) or json.null
+				table.insert(out, listed)
+			end
+			return out
+		end
+	end
+	-- `infer{ tools }` in rounds (ADR 0050, gap L): `spec.infer`, the
+	-- answers taken in order, each `{ text, calls = { { name, args } } }`,
+	-- or a function of the request giving one, or `{ error }`; each
+	-- request is in `run.infers`, with what the tools answered before it.
+	local infers = {}
+	if plugin.uses and plugin.uses.infer then
+		local answers = spec.infer or {}
+		local next_answer = 1
+		fakes.infer_turn = function(request)
+			table.insert(infers, request)
+			local answer
+			if type(answers) == "function" then
+				answer = answers(request)
+			else
+				answer = answers[next_answer]
+				next_answer += 1
+			end
+			if answer == nil then
+				answer = { text = "" }
+			end
+			if answer.error then
+				return { ok = false, error = answer.error }
+			end
+			local calls = array({})
+			for i, call in ipairs(answer.calls or {}) do
+				table.insert(calls, { id = "call_" .. #infers .. "_" .. i, name = call.name, args = call.args or {} })
+			end
+			local text = answer.text or ""
+			return { ok = true, value = { text = text, calls = calls, message = { text = text, calls = calls } } }
 		end
 	end
 	-- What a job reaches with uses.chats: each repository's store, and
@@ -449,6 +589,11 @@ function test.run(spec)
 	local run = {
 		store = kept,
 		stores = stores,
+		-- The files, as the plugin wrote them, and the folders it made.
+		files = files,
+		folders = folders_made,
+		-- Each round `infer{ tools }` asked.
+		infers = infers,
 		woken = woken,
 		job_state = spec.job_state or {},
 		state = spec.state or {},
@@ -473,6 +618,7 @@ function test.run(spec)
 				weekday = weekday(now),
 				["local"] = local_of(unix_of(now), offset),
 				offset = offset,
+				ms = unix_of(now) * 1000,
 			},
 			settings = spec.settings or defaults,
 			models = spec.models or array({}),
@@ -545,6 +691,21 @@ function test.run(spec)
 	end
 	function run:notify(notice)
 		return call(need(plugin.notify, "notify"), notice)
+	end
+	-- `f(ctx)` with the ctx a hook outside any run gets: for a test of a
+	-- module the plugin's hooks call.
+	function run:call(f)
+		local data = run.data
+		run.data = table.clone(data)
+		run.data.run = {}
+		local ok, answer = pcall(call, function(_, ctx)
+			return f(ctx)
+		end, nil)
+		run.data = data
+		if not ok then
+			error(answer, 0)
+		end
+		return answer
 	end
 	function run:job(name)
 		local job = need((plugin.jobs or {})[name], "job " .. name)
@@ -631,8 +792,32 @@ function test.run(spec)
 		local forge = need(plugin.forge, "forge")
 		return call(need(forge[name], "forge." .. name), input or {})
 	end
-	function run:setup(app)
-		return call(need(plugin.setup, "setup"), app)
+	-- Its step of first-run setup of what `app` keeps, with the
+	-- repositories `picked` so far as `ctx.run.picked` (ADR 0050, gap L).
+	function run:setup(app, picked)
+		local data = run.data
+		run.data = table.clone(data)
+		run.data.run = { kind = "app", picked = picked }
+		local ok, answer = pcall(call, need(plugin.setup, "setup"), app)
+		run.data = data
+		if not ok then
+			error(answer, 0)
+		end
+		return answer
+	end
+	-- Its page `name` of the app, outside any repository (ADR 0050, gap
+	-- L), with `params` and what its `drafts` hold, `params.drafts`.
+	function run:app_page_of(name, params)
+		local page = need((plugin.pages or {})[name], "page " .. name)
+		local data = run.data
+		run.data = table.clone(data)
+		run.data.run = { kind = "app" }
+		local ok, answer = pcall(call, page, table.clone(params or {}))
+		run.data = data
+		if not ok then
+			error(answer, 0)
+		end
+		return answer
 	end
 	function run:models(app)
 		return call(need(plugin.models, "models"), app)

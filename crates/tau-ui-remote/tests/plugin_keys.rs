@@ -17,7 +17,8 @@ use tau_ui_remote::{
 
 const REPO: &str = "tau-agent";
 
-/// A plugin after memory that declares tau's ctrl-1, memory's ctrl-2, a
+/// A plugin after tau-luau-plugins that declares tau's ctrl-1, memory's
+/// ctrl-2 (a key Luau plugins bind, tau-memory there), a
 /// key gpui cannot read and a key of its own, each asking its host half
 /// to say which.
 struct Keys;
@@ -33,7 +34,7 @@ impl UiPlugin for Keys {
     }
 
     fn declaration(&self) -> tau_ui_plugin::Declaration {
-        tau_ui_plugin::Declaration::new().after(&["tau-memory"])
+        tau_ui_plugin::Declaration::new().after(&[tau_luau_plugins::NAME])
     }
 
     fn manifest(&self) -> Manifest<Self> {
@@ -58,6 +59,30 @@ fn install() {
     ONCE.call_once(|| plugins::install(tau_plugins::plugins().with(Keys)));
 }
 
+/// tau-luau-plugins' data with tau-memory active, binding ctrl-2 to its
+/// notes page.
+fn memory_binds_ctrl_2() -> tau_ui_plugin::PluginValue {
+    let declaration = tau_luau_plugins::Declaration {
+        name: tau_luau_plugins::names::MEMORY.into(),
+        keys: [("ctrl-2".to_owned(), "notes".to_owned())].into(),
+        ..Default::default()
+    };
+    tau_ui_plugin::PluginValue::typed(tau_luau_plugins::Overview {
+        plugins: vec![tau_luau_plugins::Entry {
+            name: tau_luau_plugins::names::MEMORY.into(),
+            description: String::new(),
+            version: String::new(),
+            standing: tau_luau_plugins::Standing::Active,
+            declaration: Some(declaration),
+            tests: Vec::new(),
+            keeps_earlier: false,
+            built_in: true,
+            app: None,
+        }],
+        ..Default::default()
+    })
+}
+
 #[gpui::test]
 fn ctrl_2_opens_the_repositorys_memory_and_conflicting_keys_are_dropped(
     cx: &mut TestAppContext,
@@ -65,11 +90,14 @@ fn ctrl_2_opens_the_repositorys_memory_and_conflicting_keys_are_dropped(
     install();
     cx.update(tau_ui_remote::init);
     let window = cx.add_window(|window, cx| {
-        let catalog = Catalog {
+        let mut catalog = Catalog {
             repos: vec![Repo::new(REPO, "~/tau-agent")],
             open_repos: vec![REPO.into()],
             ..Default::default()
         };
+        catalog
+            .plugin_data
+            .insert(tau_luau_plugins::NAME.into(), memory_binds_ctrl_2());
         Workspace::new("tau", Vec::new(), catalog, window, cx)
     });
     let workspace = window.root(cx).unwrap();
@@ -106,14 +134,18 @@ fn ctrl_2_opens_the_repositorys_memory_and_conflicting_keys_are_dropped(
     cx.simulate_keystrokes("ctrl-2");
     cx.run_until_parked();
     workspace.read_with(&cx, |ws, _| {
-        assert_eq!(
-            *ws.route(),
+        assert_eq!(*ws.route(), {
+            let link = tau_luau_plugins::ui::repo_page_link(
+                tau_luau_plugins::names::MEMORY,
+                "notes",
+                REPO,
+            );
             Route::Plugin {
-                plugin: tau_memory::NAME.into(),
-                page: "notes".into(),
-                params: [("repo".to_owned(), REPO.to_owned())].into(),
+                plugin: tau_luau_plugins::NAME.into(),
+                page: link.page,
+                params: link.params,
             }
-        )
+        })
     });
 
     // tau's own: the Runs tab.

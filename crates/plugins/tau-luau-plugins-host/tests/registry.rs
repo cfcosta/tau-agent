@@ -927,11 +927,23 @@ fn a_plugins_page_of_a_repository_reads_and_writes_its_store_there() {
         ("entry".to_owned(), "greet".to_owned()),
         ("repo".to_owned(), "home".to_owned()),
     ]);
-    let page = block_on_io(registry.page("greet", "list", &params, false));
+    let page = block_on_io(registry.page(
+        "greet",
+        "list",
+        &params,
+        false,
+        &Default::default(),
+    ));
     let tree = page["tree"].to_string();
     assert!(tree.contains("eggs") && tree.contains("milk"), "{tree}");
     assert!(tree.contains("no key"), "{tree}");
-    let keyed = block_on_io(registry.page("greet", "list", &params, true));
+    let keyed = block_on_io(registry.page(
+        "greet",
+        "list",
+        &params,
+        true,
+        &Default::default(),
+    ));
     assert!(keyed["tree"].to_string().contains("keyed"), "{keyed}");
     // Its buttons act in the repository the page shows.
     assert!(tree.contains("luau-repo/greet/drop"), "{tree}");
@@ -1005,4 +1017,108 @@ fn recover_lets_go_of_what_dead_runs_held() {
     };
     assert_eq!(held("a"), ["claim/td-2"]);
     assert!(held("b").is_empty());
+}
+
+const APP_PAGES: &str = r#"
+local tau = require("tau")
+local ui = tau.ui
+return tau.plugin { uses = { files = { "repository/greet" } },
+  drafts = { "search" },
+  nav = { label = "Greet", page = "notes" },
+  pages = {
+    notes = function(params, ctx)
+      local names = {}
+      for _, repo in ipairs(ctx.files.repositories()) do
+        table.insert(names, repo.name .. "=" .. (repo.normalized ~= json.null and repo.normalized or "none"))
+      end
+      return ui.stack({
+        ui.text("repo " .. tostring(params.repo)),
+        ui.text("search " .. tostring((params.drafts or {}).search)),
+        ui.text("listed " .. table.concat(names, ",")),
+        ui.text("here " .. tostring(ctx.files.roots()["repository/greet"])),
+        ui.link("Open", "notes", { params = { note = "a" } }),
+        ui.switch("Tick", nil, true, "tick", { id = 1 }),
+      })
+    end,
+  },
+  app = function(ctx) return { n = 1 } end,
+  setup = function(app, ctx)
+    return { step = "s", title = "S", heading = "h", detail = "d",
+      body = ui.text(#(ctx.run.picked or {}) .. " picked") }
+  end,
+  actions = { tick = function(args, ctx) end },
+}
+"#;
+
+/// A plugin's page of the app (ADR 0050, gap L): drawn with no
+/// repository, what its `drafts` hold as `params.drafts`, the
+/// repositories tau lists, its links opening its pages of the app; and
+/// its setup step drawn of the repositories picked.
+#[test]
+fn a_plugins_page_of_the_app_reads_what_is_typed_and_the_repositories() {
+    let home = tempfile::tempdir().unwrap();
+    let registry = Registry::at(
+        home.path().join("x"),
+        home.path().join("allowed.json"),
+        Identity::default(),
+        || {},
+    );
+    let (v1, trunk) = project(home.path(), 1, APP_PAGES, None);
+    block_on_io(registry.reload(&v1, &trunk));
+    block_on_io(registry.allow("greet")).unwrap();
+    let repo = |name: &str, remote: Option<&str>| tau_ui_plugin::RepoCtx {
+        id: tau_ui_plugin::RepoId(format!("id-{name}")),
+        name: name.to_owned(),
+        remote: remote.map(str::to_owned),
+        folder: None,
+        checkout: home.path().join(name),
+        dir: home.path().join("tau").join(name),
+        workspaces: home.path().join("ws"),
+    };
+    registry.lists_repositories(&[
+        repo("shop", Some("git@github.com:Acme/Shop.git")),
+        repo("web", None),
+    ]);
+    let params = std::collections::BTreeMap::from([
+        ("entry".to_owned(), "greet".to_owned()),
+        ("page".to_owned(), "notes".to_owned()),
+    ]);
+    let drafts = std::collections::BTreeMap::from([(
+        "search".to_owned(),
+        "milk".to_owned(),
+    )]);
+    let page =
+        block_on_io(registry.page("greet", "notes", &params, false, &drafts));
+    let tree = page["tree"].to_string();
+    assert!(tree.contains("repo nil"), "{tree}");
+    assert!(tree.contains("search milk"), "{tree}");
+    assert!(
+        tree.contains("listed shop=github.com/Acme/Shop,web=none"),
+        "{tree}"
+    );
+    // No repository's own folder: outside one, the plugin reaches each's.
+    assert!(tree.contains("here nil"), "{tree}");
+    // Its links open its pages of the app, its switches its actions.
+    assert!(tree.contains(r#""page":"notes""#), "{tree}");
+    assert!(!tree.contains(r#""repo":"#), "{tree}");
+    assert!(tree.contains("luau-app/greet/tick"), "{tree}");
+
+    let mut of_shop = params.clone();
+    of_shop.insert("repo".into(), "shop".into());
+    let shop = block_on_io(registry.page(
+        "greet",
+        "notes",
+        &of_shop,
+        false,
+        &Default::default(),
+    ));
+    let tree = shop["tree"].to_string();
+    assert!(tree.contains("repo shop"), "{tree}");
+    let folder = home.path().join("tau/shop/greet").display().to_string();
+    assert!(tree.contains(&format!("here {folder}")), "{tree}");
+    assert!(tree.contains("luau-repo/greet/tick"), "{tree}");
+
+    let picked = [serde_json::json!({ "name": "acme/shop" })];
+    let step = block_on_io(registry.setup("greet", &picked));
+    assert!(step["tree"].to_string().contains("1 picked"), "{step}");
 }

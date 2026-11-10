@@ -29,6 +29,8 @@ use tau_ui_remote::{
 use tau_vcs_host::{Identity, Project};
 use tokio::sync::mpsc::UnboundedReceiver;
 
+use crate::common::LuauSettings as _;
+
 const REPO: &str = "repo";
 const WAIT: Duration = Duration::from_secs(60);
 
@@ -88,8 +90,8 @@ fn host_on(
     // Memory's pass after each run asks the model once more: these
     // scripts answer only the requests they write.
     let host = host
-        .with_plugin_settings(
-            tau_memory::NAME,
+        .with_luau_settings(
+            tau_luau_plugins::names::MEMORY,
             json!({ "after_each_run": false }),
         )
         .with_repository(

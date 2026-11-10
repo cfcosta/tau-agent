@@ -1,6 +1,8 @@
 # 0052: memory searches by keywords
 
-- Status: accepted.
+- Status: accepted. With ColBERT gone, tau-memory moved to Luau
+  ([0050](0050-tau-s-plugins-in-luau.md), gap L, 2026-11-10); its
+  BM25 is `plugins/tau-memory/src/bm25.luau`.
 - Date: 2026-11-09
 
 ## Context

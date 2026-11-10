@@ -148,7 +148,11 @@ pub async fn run(
             &Hook::Job(job.to_owned()),
             Value::Null,
             &cx,
-            ModelReach::of(registry, &active, None),
+            registry.with_files(
+                &active.loaded.declaration,
+                None,
+                ModelReach::of(registry, &active, None),
+            ),
             cancel,
         )
         .await;

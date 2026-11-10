@@ -19,12 +19,12 @@ tau-agent.workspace = true
 tau-ai.workspace = true
 tau-luau-plugins.workspace = true
 tau-luau-plugins-host.workspace = true
-tau-memory-host.workspace = true
 tau-store.workspace = true
 tau-tools-host.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time"] }
+tokio-util.workspace = true
 
 [dev-dependencies]
 hegeltest.workspace = true

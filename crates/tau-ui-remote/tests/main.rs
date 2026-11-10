@@ -9,7 +9,6 @@ mod design;
 mod fresh_main;
 mod landed_itself;
 mod markdown;
-mod memory_import;
 mod own_repo;
 mod phone_without_plugins;
 mod plugin_keys;

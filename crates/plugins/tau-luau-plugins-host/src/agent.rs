@@ -138,6 +138,14 @@ struct Inner {
     /// The person's skills folder, as the host has it (`uses.files`'
     /// `skills`).
     skills: Option<std::path::PathBuf>,
+    /// tau's directory for the run's repository, and tau's data folder
+    /// when it is not the app's (`uses.files`' `repository` and `data`,
+    /// ADR 0050, gap L).
+    repository: Option<std::path::PathBuf>,
+    data: Option<std::path::PathBuf>,
+    /// The commit the turn ending left, as the run's workspace told it,
+    /// for `turn_end` (ADR 0050, gap L).
+    commit: Arc<Mutex<Option<tau_ui_plugin::TurnCommit>>>,
     /// What carries out what a tool asked once the person allows it.
     dispatch: Option<Dispatch>,
     /// The state of each run going on, by run.
@@ -194,6 +202,9 @@ impl LuauPlugins {
             workspace: None,
             blobs: None,
             skills: None,
+            repository: None,
+            data: None,
+            commit: Default::default(),
             dispatch: None,
             runs: Mutex::default(),
         }))
@@ -238,6 +249,28 @@ impl LuauPlugins {
         self
     }
 
+    /// The plugins, `uses.files`' `repository` being tau's directory for
+    /// the run's repository, `repository`, and its `data` tau's data
+    /// folder at `data` when given, else the app's (ADR 0050, gap L).
+    pub fn with_folders(
+        mut self,
+        repository: Option<std::path::PathBuf>,
+        data: Option<std::path::PathBuf>,
+    ) -> Self {
+        let inner = Arc::get_mut(&mut self.0)
+            .expect("the folders are given before the plugins are shared");
+        inner.repository = repository;
+        inner.data = data;
+        self
+    }
+
+    /// Hears the commit the turn ending left, which `turn_end` is given
+    /// (ADR 0050, gap L): what the run's [`tau_ui_plugin::TurnHooks`]
+    /// call, before the plugins hear the turn end.
+    pub fn heard(&self, commit: &tau_ui_plugin::TurnCommit) {
+        *self.0.commit.lock().expect("not poisoned") = Some(commit.clone());
+    }
+
     /// The plugins, their tools asking the person through `dispatch`
     /// (`tau.allow`).
     pub fn with_dispatch(mut self, dispatch: Dispatch) -> Self {
@@ -275,6 +308,9 @@ impl LuauPlugins {
             workspace: None,
             blobs: None,
             skills: None,
+            repository: None,
+            data: None,
+            commit: Default::default(),
             dispatch: None,
             runs: Mutex::default(),
         }))
@@ -328,15 +364,19 @@ impl Inner {
             .as_ref()
             .zip(self.run["repo"].as_str())
             .map(|(root, repo)| crate::files::blobs_dir(root, name, repo));
-        Some(Arc::new(
-            crate::files::Files::new(
-                &uses.files,
-                self.workspace.clone(),
-                blobs,
-            )
-            .with_package(crate::runtime::package_dir(name))
-            .with_skills(self.skills.clone()),
-        ))
+        let files = crate::files::Files::new(
+            &uses.files,
+            self.workspace.clone(),
+            blobs,
+        )
+        .writing(&uses.writes)
+        .with_package(crate::runtime::package_dir(name))
+        .with_skills(self.skills.clone())
+        .with_repository(self.repository.clone());
+        Some(Arc::new(match &self.data {
+            Some(data) => files.with_data(data.clone()),
+            None => files,
+        }))
     }
 
     fn reach(
@@ -346,6 +386,33 @@ impl Inner {
         transcript: Option<&[Message]>,
     ) -> Arc<dyn Reach> {
         self.reach_asking(active, ctx, transcript, None, None)
+    }
+
+    /// [`Self::reach`], with `ctx.files` too when `uses.files` names
+    /// folders: for `start`, `after_tool_result`, `rewritten`, `turn_end`
+    /// and `run_end`.
+    fn reach_with_files(
+        &self,
+        active: &Active,
+        ctx: &PluginCtx,
+    ) -> Arc<dyn Reach> {
+        self.reach_with_files_and(active, ctx, None)
+    }
+
+    /// [`Self::reach_with_files`], `ctx.transcript()` giving `transcript`
+    /// with `uses.transcript`: what a rewrite replaced, in `rewritten`,
+    /// and the run's conversation, in `run_end`.
+    fn reach_with_files_and(
+        &self,
+        active: &Active,
+        ctx: &PluginCtx,
+        transcript: Option<&[Message]>,
+    ) -> Arc<dyn Reach> {
+        let reach = self.reach(active, ctx, transcript);
+        match self.files_of(active) {
+            Some(files) => Arc::new(crate::runtime::WithFiles { reach, files }),
+            None => reach,
+        }
     }
 
     /// [`Self::reach`], `infer` asking in the run's own conversation
@@ -917,15 +984,7 @@ impl Plugin for LuauPlugins {
                         input,
                         &mut state,
                         ctx,
-                        match self.0.files_of(active) {
-                            Some(files) => {
-                                Arc::new(crate::runtime::WithFiles {
-                                    reach: self.0.reach(active, ctx, None),
-                                    files,
-                                })
-                            }
-                            None => self.0.reach(active, ctx, None),
-                        },
+                        self.0.reach_with_files(active, ctx),
                     )
                     .await
                 else {
@@ -1161,7 +1220,7 @@ impl PluginRun for LuauRun {
                     input.clone(),
                     &mut state,
                     ctx,
-                    inner.reach(active, ctx, None),
+                    inner.reach_with_files_and(active, ctx, Some(replaced)),
                 )
                 .await;
         }
@@ -1217,7 +1276,7 @@ impl PluginRun for LuauRun {
                     input,
                     &mut state,
                     ctx,
-                    inner.reach(active, ctx, Some(&seen)),
+                    inner.reach_with_files_and(active, ctx, Some(&seen)),
                 )
                 .await
             else {
@@ -1393,10 +1452,19 @@ impl PluginRun for LuauRun {
                 state.calls.push(json!({ "name": name, "ok": !is_error }));
             }
             RunEvent::TurnEnd { turn, usage, .. } => {
-                let input = json!({
+                let mut input = json!({
                     "turn": turn, "text": state.text, "calls": state.calls,
                     "cost": usage.cost.total,
                 });
+                // The turn's commit, which the run's workspace made as it
+                // heard the turn end, before the plugins hear it.
+                let commit = inner.commit.lock().expect("not poisoned").take();
+                if let Some(commit) = commit {
+                    input["commit"] = json!({
+                        "change": commit.change_id,
+                        "paths": commit.paths,
+                    });
+                }
                 for active in inner.active().iter() {
                     inner
                         .call(
@@ -1405,7 +1473,7 @@ impl PluginRun for LuauRun {
                             input.clone(),
                             &mut state,
                             ctx,
-                            inner.reach(active, ctx, None),
+                            inner.reach_with_files(active, ctx),
                         )
                         .await;
                 }
@@ -1432,7 +1500,11 @@ impl PluginRun for LuauRun {
                         input.clone(),
                         &mut state,
                         ctx,
-                        inner.reach(active, ctx, None),
+                        inner.reach_with_files_and(
+                            active,
+                            ctx,
+                            Some(run.transcript),
+                        ),
                     )
                     .await;
             }
@@ -1893,14 +1965,26 @@ struct RunReach {
 #[async_trait]
 impl Reach for RunReach {
     fn tools(&self) -> Vec<ToolEntry> {
-        let mut tools = vec![ToolEntry {
-            name: "infer".into(),
-            description: "Asks the model one task.".into(),
-            input_schema: crate::infer::parameters(),
-            output_schema: None,
-            namespace: None,
-            sequential: false,
-        }];
+        let mut tools = vec![
+            ToolEntry {
+                name: "infer".into(),
+                description: "Asks the model one task.".into(),
+                input_schema: crate::infer::parameters(),
+                output_schema: None,
+                namespace: None,
+                sequential: false,
+            },
+            ToolEntry {
+                name: "infer_turn".into(),
+                description: "Asks the model one round of a task, offering \
+                              the plugin's own tools."
+                    .into(),
+                input_schema: json!({ "type": "object" }),
+                output_schema: None,
+                namespace: None,
+                sequential: false,
+            },
+        ];
         let entry = |name: &str, description: &str| ToolEntry {
             name: name.into(),
             description: description.into(),
@@ -1957,15 +2041,20 @@ impl Reach for RunReach {
             }
             _ => {}
         }
-        if call.name != "infer" {
+        if call.name != "infer" && call.name != "infer_turn" {
             return Err(format!(
                 "`{}` cannot be called from this hook",
                 call.name
             ));
         }
+        let answered = if call.name == "infer_turn" {
+            self.infer_turn(call.args).await
+        } else {
+            self.infer(call.args).await
+        };
         // As `infer` answers in a tool: `{ ok, value }`, or `{ ok, error }`
         // with the `reason` an answer was refused for.
-        let reply = match self.infer(call.args).await {
+        let reply = match answered {
             Ok(value) => json!({ "ok": true, "value": value }),
             Err(crate::infer::Refused { error, reason }) => {
                 let mut reply = json!({ "ok": false, "error": error });
@@ -2019,6 +2108,29 @@ impl RunReach {
             .await
             .map_err(|error| error.to_string())?;
         Ok(request.decode_answer(&answer_text(&answer)?)?)
+    }
+
+    /// One round of `infer{ tools }` (ADR 0050, gap L): the task and the
+    /// rounds before it, offering the plugin's own tools, with its
+    /// instructions or [`crate::infer::TOOL_INSTRUCTIONS`].
+    async fn infer_turn(&self, args: Value) -> Result<Value, Refused> {
+        let round = crate::infer::Round::parse(args)?;
+        let named = round.model.as_deref().or(self.named.as_deref());
+        let model = crate::slots::model_named(named, Some(&self.run_model))
+            .unwrap_or_default();
+        let settings = tau_ai::responses::request::Settings {
+            reasoning: crate::slots::effort_for(&model, round.effort),
+            model,
+            instructions: Some(round.instructions()),
+            tools: round.tools.clone(),
+            ..Default::default()
+        };
+        let answer = self
+            .plugin
+            .ask(settings, &round.messages(self.plugin.now()))
+            .await
+            .map_err(|error| error.to_string())?;
+        crate::infer::round_answer(&answer)
     }
 
     /// A request the plugin writes itself: in the run's own conversation
@@ -2087,6 +2199,13 @@ pub fn now() -> Value {
     let mut now = at(unix);
     now["local"] = json!(tau_clock::local(&clock, unix));
     now["offset"] = json!(clock.offset(unix));
+    // Milliseconds too, for what keeps times finer than a second.
+    now["ms"] = json!(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(unix.saturating_mul(1000), |since| since.as_millis()
+                as i64)
+    );
     now
 }
 

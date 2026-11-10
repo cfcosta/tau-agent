@@ -33,3 +33,24 @@ pub fn project(host: &Host, repo: &str) -> Project {
         .map(Project::from)
         .expect("its project opens")
 }
+
+/// A host's settings for the Luau plugin `plugin` (one of
+/// tau-luau-plugins'), given as a test starts it: memory's pass after
+/// each run turned off, for scripts that answer only what they write.
+pub trait LuauSettings {
+    fn with_luau_settings(self, plugin: &str, value: serde_json::Value)
+    -> Self;
+}
+
+impl LuauSettings for Host {
+    fn with_luau_settings(
+        self,
+        plugin: &str,
+        value: serde_json::Value,
+    ) -> Self {
+        self.with_plugin_settings(
+            tau_luau_plugins::NAME,
+            serde_json::json!({ "plugins": { plugin: value } }),
+        )
+    }
+}

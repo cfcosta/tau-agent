@@ -23,7 +23,6 @@ tau-jev.workspace = true
 tau-luau-plugins.workspace = true
 tau-agents.workspace = true
 tau-mcp.workspace = true
-tau-memory.workspace = true
 # `exec_command` cards draw their output as a terminal
 # (docs/decisions/0010-terminal-rendering.md).
 tau-tools = { workspace = true, features = ["terminal"] }

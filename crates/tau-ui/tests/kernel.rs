@@ -23,7 +23,7 @@ fn crates() -> PathBuf {
         .to_owned()
 }
 
-/// Every plugin, by the name its crate has in Rust: `tau_memory_host`.
+/// Every plugin, by the name its crate has in Rust: `tau_vcs_host`.
 fn plugins() -> BTreeSet<String> {
     // The Rust plugins, and the Luau ones tau comes with (ADR 0051).
     let luau = crates().join("../plugins");

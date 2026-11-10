@@ -48,7 +48,7 @@ tau-agent/
 │       ├── tau-luau-plugins/     # plugins written in Luau, run in codemode's
 │       │                         # sandbox (ADR 0027)
 │       ├── tau-mcp/              # MCP servers' tools (rmcp), the Servers page
-│       ├── tau-memory/           # linked notes each repository's runs keep
+│       ├── tau-memory/           # linked notes each repository's runs keep (Luau)
 │       ├── tau-notify/           # desktop notices while tau is in the
 │       │                         # background, filling `tau.notify`
 │       ├── tau-reasoning/        # picks a run's reasoning effort on auto (Luau)

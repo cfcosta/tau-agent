@@ -105,6 +105,8 @@ use tau_ui_remote::{
 use tau_vcs_host::{Head, Identity, JjRepository, Project, ProjectRepo};
 use tokio::sync::mpsc::UnboundedReceiver;
 
+use crate::common::LuauSettings as _;
+
 const REPO: &str = "repo";
 /// How long a run, or a host settling, has before the test fails.
 const WAIT: Duration = Duration::from_secs(60);
@@ -803,8 +805,8 @@ impl Life {
         let agent = Agent::new(Coder::default()).name("coder");
         let (host, events) = Host::with_agent(runtime, agent, store, config);
         // Memory's pass after each run would ask the model on the side.
-        let host = host.with_plugin_settings(
-            tau_memory::NAME,
+        let host = host.with_luau_settings(
+            tau_luau_plugins::names::MEMORY,
             serde_json::json!({ "after_each_run": false }),
         );
         let project = Project::from(

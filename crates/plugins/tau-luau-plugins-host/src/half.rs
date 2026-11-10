@@ -66,6 +66,7 @@ impl HostHalf for LuauPluginsHost {
         settings: &LuauSettings,
     ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
         let mut plugins: Vec<Box<dyn Plugin>> = Vec::new();
+        host.knows_repositories(std::slice::from_ref(&run.repo));
         // A run in the plugins repository tests plugins as its workspace
         // has them, and runs them from there as soon as they pass.
         let workspace = (run.repo.name == crate::REPO)
@@ -138,6 +139,14 @@ impl HostHalf for LuauPluginsHost {
             Some(config) => luau.with_config(config.0.clone()),
             None => luau,
         };
+        // What they write of the repository is in tau's directory for it
+        // (`uses.files`' `repository`, ADR 0050, gap L).
+        let luau = luau.with_folders(Some(run.repo.dir.clone()), None);
+        // `turn_end` is told the commit the turn left.
+        if let Some(hooks) = run.services.get::<tau_ui_plugin::TurnHooks>() {
+            let heard = luau.clone();
+            hooks.on_turn(move |commit| heard.heard(commit));
+        }
         plugins.push(Box::new(luau));
         Ok(plugins)
     }
@@ -145,6 +154,7 @@ impl HostHalf for LuauPluginsHost {
     /// Starts the Luau plugins' jobs as they come due, for as long as
     /// tau runs: each through the host's jobs, which show it going.
     async fn resume(&self, host: &Self::Host, cx: &HostCx) {
+        host.lists_repositories(&cx.repos);
         // What the plugins held for runs the last tau left cut off goes.
         let repos: Vec<String> =
             cx.repos.iter().map(|repo| repo.name.clone()).collect();
@@ -300,7 +310,8 @@ impl HostHalf for LuauPluginsHost {
         }
     }
 
-    async fn data(&self, host: &Self::Host, _cx: &HostCx) -> Overview {
+    async fn data(&self, host: &Self::Host, cx: &HostCx) -> Overview {
+        host.lists_repositories(&cx.repos);
         host.app_overview().await
     }
 
@@ -311,6 +322,7 @@ impl HostHalf for LuauPluginsHost {
         repo: &RepoCtx,
         _cx: &HostCx,
     ) -> tau_luau_plugins::RepoValues {
+        host.knows_repositories(std::slice::from_ref(repo));
         host.repo_data(&repo.name).await
     }
 
@@ -321,6 +333,7 @@ impl HostHalf for LuauPluginsHost {
         cx: &HostCx,
     ) -> anyhow::Result<Option<Value>> {
         let action: Act = serde_json::from_value(action)?;
+        host.lists_repositories(&cx.repos);
         let chats = cx.conversations();
         let chats = chats.as_deref();
         // The host's Jev, for an action of a plugin that uses it.
@@ -346,8 +359,14 @@ impl HostHalf for LuauPluginsHost {
                 page,
                 params,
                 jev,
+                drafts,
             } => {
-                return Ok(Some(host.page(&plugin, &page, &params, jev).await));
+                return Ok(Some(
+                    host.page(&plugin, &page, &params, jev, &drafts).await,
+                ));
+            }
+            Act::Setup { plugin, picked } => {
+                return Ok(Some(host.setup(&plugin, &picked).await));
             }
             Act::AppAction {
                 plugin,
@@ -379,15 +398,32 @@ impl HostHalf for LuauPluginsHost {
                 action,
                 args,
             } => {
-                host.repo_action(
-                    &plugin,
-                    &repo,
-                    &action,
-                    args,
-                    chats,
-                    host_jev(),
-                )
-                .await?;
+                let value = host
+                    .repo_action(
+                        &plugin,
+                        &repo,
+                        &action,
+                        args,
+                        chats,
+                        host_jev(),
+                    )
+                    .await?;
+                // What it asks the interface, as an app's action does
+                // (ADR 0050, gap L).
+                if let Some(interface) = value.get("tau_interface").cloned() {
+                    let done = tau_luau_plugins::ActionDone {
+                        plugin,
+                        run: String::new(),
+                        on: serde_json::Value::Null,
+                        state: serde_json::Value::Null,
+                        changed: false,
+                        view: None,
+                        logs: Vec::new(),
+                        error: None,
+                        interface: Some(interface),
+                    };
+                    return Ok(Some(serde_json::to_value(done)?));
+                }
             }
             Act::Answer {
                 run,

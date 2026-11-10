@@ -31,7 +31,6 @@ pub fn halves(plugins: Registry) -> Registry {
     plugins
         .host(tau_tools_host::ToolsHost)
         .host(tau_vcs_host::VcsHost)
-        .host(tau_memory_host::MemoryHost)
         .host(tau_direnv::DirenvHost)
         .host(tau_mcp_host::McpHost)
         .host(tau_notify::NotifyHost)

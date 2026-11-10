@@ -23,6 +23,8 @@ use tau_ui_remote::{
     workspace::{LandingState, PickerTarget},
 };
 
+use crate::common::LuauSettings as _;
+
 fn open(
     cx: &mut TestAppContext,
 ) -> (
@@ -439,8 +441,8 @@ fn a_failed_fork_opens_a_dialog(cx: &mut TestAppContext) {
     let (host, events) = Host::with_agent(runtime, agent, store, config);
     // Memory's pass after each run asks the model once more: these
     // scripts answer only the requests they write.
-    let host = host.with_plugin_settings(
-        tau_memory::NAME,
+    let host = host.with_luau_settings(
+        tau_luau_plugins::names::MEMORY,
         serde_json::json!({ "after_each_run": false }),
     );
     cx.update(|_, cx| host.attach(&workspace, events, cx));
@@ -516,17 +518,18 @@ fn settings_changes_are_saved_and_defaults_follow(cx: &mut TestAppContext) {
         // The next run follows coder's new default until one is picked.
         assert_eq!(ws.next_model().model, "gpt-6-luna");
         ws.toggle_model_hidden("gpt-6-astra", cx);
-        // tau-memory's settings, from its pane on the Plugins screen,
-        // through its handle: everywhere, then tau-agent's own copy.
+        // tau-luau-plugins' settings (tau-memory's among them), from its
+        // pane on the Plugins screen, through its handle: everywhere, then
+        // tau-agent's own copy.
         ws.navigate(Route::Plugins, cx);
-        ws.pick_plugin(tau_memory::NAME, None, cx);
-        let memory = ws.plugin_handle(tau_memory::NAME);
-        memory.save_settings(&serde_json::json!({ "after_each_run": false }));
+        ws.pick_plugin(tau_luau_plugins::NAME, None, cx);
+        let memory = ws.plugin_handle(tau_luau_plugins::NAME);
+        memory.save_settings(&serde_json::json!({ "plugins": { "tau-memory": { "after_each_run": false } } }));
         ws.drain_plugin_requests(cx);
         ws.set_plugin_scope(Some("tau-agent".into()), cx);
         memory.save_settings_in(
             Some("tau-agent"),
-            &serde_json::json!({ "follow_chat": true }),
+            &serde_json::json!({ "plugins": { "tau-memory": { "follow_chat": true } } }),
         );
         ws.drain_plugin_requests(cx);
     });
@@ -536,11 +539,11 @@ fn settings_changes_are_saved_and_defaults_follow(cx: &mut TestAppContext) {
         let catalog = ws.catalog();
         assert_eq!(
             catalog
-                .settings_in(tau_memory::NAME, Some("tau-agent"))
+                .settings_in(tau_luau_plugins::NAME, Some("tau-agent"))
                 .map(|value| value.json().clone()),
-            Some(serde_json::json!({ "follow_chat": true }))
+            Some(serde_json::json!({ "plugins": { "tau-memory": { "follow_chat": true } } }))
         );
-        assert!(catalog.has_own_settings("tau-agent", tau_memory::NAME));
+        assert!(catalog.has_own_settings("tau-agent", tau_luau_plugins::NAME));
     });
     let plugin_saved: Vec<(String, Option<String>, Option<serde_json::Value>)> =
         events
@@ -559,14 +562,18 @@ fn settings_changes_are_saved_and_defaults_follow(cx: &mut TestAppContext) {
         plugin_saved,
         [
             (
-                tau_memory::NAME.to_owned(),
+                tau_luau_plugins::NAME.to_owned(),
                 None,
-                Some(serde_json::json!({ "after_each_run": false }))
+                Some(
+                    serde_json::json!({ "plugins": { "tau-memory": { "after_each_run": false } } })
+                )
             ),
             (
-                tau_memory::NAME.to_owned(),
+                tau_luau_plugins::NAME.to_owned(),
                 Some("tau-agent".to_owned()),
-                Some(serde_json::json!({ "follow_chat": true }))
+                Some(
+                    serde_json::json!({ "plugins": { "tau-memory": { "follow_chat": true } } })
+                )
             ),
         ]
     );
@@ -715,10 +722,17 @@ fn repositories_are_added_and_removed(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_demo(cx);
     workspace.update_in(&mut cx, |ws, _, cx| {
         ws.navigate(
-            Route::Plugin {
-                plugin: tau_memory::NAME.into(),
-                page: "notes".into(),
-                params: [("repo".to_owned(), "docbert".to_owned())].into(),
+            {
+                let link = tau_luau_plugins::ui::repo_page_link(
+                    tau_luau_plugins::names::MEMORY,
+                    "notes",
+                    "docbert",
+                );
+                Route::Plugin {
+                    plugin: tau_luau_plugins::NAME.into(),
+                    page: link.page,
+                    params: link.params,
+                }
             },
             cx,
         );
@@ -3161,8 +3175,8 @@ fn a_host_half_makes_an_agent_and_starts_its_turns(cx: &mut TestAppContext) {
         services: Default::default(),
     };
     let (host, events) = Host::with_agent(runtime, agent, store, config);
-    let host = host.with_plugin_settings(
-        tau_memory::NAME,
+    let host = host.with_luau_settings(
+        tau_luau_plugins::names::MEMORY,
         serde_json::json!({ "after_each_run": false }),
     );
     let host = cx.update(|_, cx| host.attach(&workspace, events, cx));
@@ -3291,8 +3305,8 @@ fn a_host_half_wakes_a_chat_that_is_idle(cx: &mut TestAppContext) {
         services: Default::default(),
     };
     let (host, events) = Host::with_agent(runtime, agent, store, config);
-    let host = host.with_plugin_settings(
-        tau_memory::NAME,
+    let host = host.with_luau_settings(
+        tau_luau_plugins::names::MEMORY,
         serde_json::json!({ "after_each_run": false }),
     );
     let host = cx.update(|_, cx| host.attach(&workspace, events, cx));

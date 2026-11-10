@@ -26,7 +26,7 @@ use tau_ui::{
 use tau_ui_remote::{models::ModelChoice, push::PushFailure};
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::common::{self, forge::FakeForge};
+use crate::common::{self, LuauSettings as _, forge::FakeForge};
 
 const FULL_NAME: &str = "cfcosta/hello";
 const WAIT: Duration = Duration::from_secs(60);
@@ -119,8 +119,8 @@ fn host(
     let (host, events) = Host::with_agent(runtime, agent, store, config);
     // Memory's pass after each run asks the model once more: these
     // scripts answer only the requests they write.
-    let host = host.with_plugin_settings(
-        tau_memory::NAME,
+    let host = host.with_luau_settings(
+        tau_luau_plugins::names::MEMORY,
         serde_json::json!({ "after_each_run": false }),
     );
     (host.with_forge(forge), events)

@@ -1,0 +1,232 @@
+{
+  "name": "tau-memory",
+  "description": "Linked notes each repository's runs keep, and yours across them; searched at the start of a run",
+  "uses": {
+    "tools": [],
+    "jev": false,
+    "infer": true,
+    "change_args": false,
+    "network": [],
+    "secrets": [],
+    "model": null,
+    "store": false,
+    "transcript": true,
+    "archive": false,
+    "chats": false,
+    "files": ["repository/tau-memory", "data/tau-memory", "~/.claude", "~/.codex"],
+    "writes": ["repository/tau-memory", "data/tau-memory"]
+  },
+  "settings": {
+    "default": {
+      "after_each_run": true,
+      "family": "luna",
+      "follow_chat": false,
+      "reasoning": "low"
+    },
+    "schema": {
+      "properties": {
+        "after_each_run": {
+          "type": "boolean"
+        },
+        "family": {
+          "enum": ["sol", "luna", "astra", "terra"],
+          "type": "string"
+        },
+        "follow_chat": {
+          "type": "boolean"
+        },
+        "reasoning": {
+          "enum": ["auto", "low", "medium", "high"],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "tools": [
+    {
+      "name": "memory_link",
+      "description": "Link two memory notes, typed: relates, refines, supersedes, contradicts or derived_from; or tie a note to a file, crate or symbol with about (the note is then flagged when that file changes). Links are how later searches reach a note that shares none of the query's words.",
+      "parameters": {
+        "properties": {
+          "from": {
+            "description": "The note the link starts from",
+            "type": "string"
+          },
+          "to": {
+            "description": "A note id, or for `about`, a repository path",
+            "type": "string"
+          },
+          "type": {
+            "description": "relates, refines, supersedes, contradicts, derived_from or about",
+            "type": "string"
+          },
+          "why": {
+            "type": "string"
+          }
+        },
+        "required": ["from", "to", "type"],
+        "type": "object"
+      },
+      "card": false
+    },
+    {
+      "name": "memory_read",
+      "description": "Read a memory note in full, with its links and the notes that link to it.",
+      "parameters": {
+        "properties": {
+          "id": {
+            "description": "The note's id, as search listed it",
+            "type": "string"
+          }
+        },
+        "required": ["id"],
+        "type": "object"
+      },
+      "card": false
+    },
+    {
+      "name": "memory_search",
+      "description": "Search long-term memory: notes kept from earlier runs on this repository and the user's preferences. Returns ids, titles, descriptions and the matching line, plus notes linked with the best matches. Superseded notes are listed as history; a note marked may be stale was written before a file it is about changed, so check it. Notes are also plain files you can grep.",
+      "parameters": {
+        "properties": {
+          "limit": {
+            "description": "At most this many notes (default 8, at most 20)",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "query": {
+            "description": "Words, identifiers, paths or error text to look for",
+            "type": "string"
+          }
+        },
+        "required": ["query"],
+        "type": "object"
+      },
+      "card": false
+    },
+    {
+      "name": "memory_write",
+      "description": "Save one idea to long-term memory, for later runs on this repository: a decision and why, a convention, a command, a gotcha (symptom, cause, fix), a case (task, approach, outcome), or a preference the user stated. One idea per note, in full prose. Answers with the nearest existing notes: link to them, or update (id) or supersede (supersedes) one instead of repeating it. Not for task progress or TODOs.",
+      "parameters": {
+        "properties": {
+          "body": {
+            "description": "The note in full prose: exact versions, flags, paths, error strings",
+            "type": "string"
+          },
+          "description": {
+            "description": "One line for the index and search results",
+            "type": "string"
+          },
+          "id": {
+            "description": "Update this note (its id) instead of writing a new one",
+            "type": "string"
+          },
+          "links": {
+            "items": {
+              "properties": {
+                "to": {
+                  "description": "A note id, or for `about`, a repository path.",
+                  "type": "string"
+                },
+                "type": {
+                  "description": "relates, refines, supersedes, contradicts, derived_from or about.",
+                  "type": "string"
+                },
+                "why": {
+                  "type": "string"
+                }
+              },
+              "required": ["to", "type"],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "scope": {
+            "description": "repository (default) or user, for preferences across projects",
+            "type": "string"
+          },
+          "supersedes": {
+            "description": "Write a new note that replaces this one (its id); the old stays",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": {
+            "description": "The claim, on one line",
+            "type": "string"
+          },
+          "type": {
+            "description": "fact, convention, decision, gotcha, procedure, case, preference, or index (the one map note, loaded into every run)",
+            "type": "string"
+          }
+        },
+        "required": ["type", "title", "description", "body"],
+        "type": "object"
+      },
+      "card": false
+    }
+  ],
+  "hooks": {
+    "start": true,
+    "before_tool": false,
+    "before_request": true,
+    "after_tool_result": true,
+    "rewrite_context": false,
+    "rewritten": true,
+    "before_stop": false,
+    "turn_end": true,
+    "on_event": false,
+    "title": false,
+    "notify": false,
+    "repo_data": true,
+    "recover": false,
+    "run_end": true,
+    "view": true,
+    "settings_view": true,
+    "app": true,
+    "page": false,
+    "setup": true,
+    "models": false
+  },
+  "actions": ["act", "import", "setup_choose", "setup_start"],
+  "events": [],
+  "fills": [],
+  "compaction": null,
+  "forge": null,
+  "nav": {
+    "label": "Your notes",
+    "icon": "memory",
+    "page": "notes"
+  },
+  "commands": [],
+  "jobs": [
+    {
+      "name": "import",
+      "every": 1,
+      "label": "Importing notes"
+    }
+  ],
+  "pages": ["import", "notes"],
+  "repo_nav": {
+    "label": "Memory",
+    "page": "notes",
+    "icon": "memory"
+  },
+  "picker_auto": null,
+  "continues": null,
+  "listed_commands": false,
+  "repo_menu": {
+    "label": "Memory",
+    "page": "notes",
+    "icon": "memory"
+  },
+  "drafts": ["search", "review-search"],
+  "keys": {
+    "ctrl-2": "notes"
+  }
+}

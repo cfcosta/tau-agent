@@ -38,8 +38,6 @@ tau-tools-host.workspace = true
 image = { workspace = true, features = ["png"] }
 tau-mcp = { workspace = true, features = ["demo"] }
 tau-mcp-host.workspace = true
-tau-memory.workspace = true
-tau-memory-host = { workspace = true, features = ["demo"] }
 tau-phones.workspace = true
 tau-tools.workspace = true
 tau-vcs.workspace = true

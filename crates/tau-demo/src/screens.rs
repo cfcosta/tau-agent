@@ -19,20 +19,15 @@ pub static SCREENS: &[(&str, Screen)] = &[
     ("repo", |ws, _, cx| ws.open_repo_page("tau-agent", cx)),
     ("history", |ws, _, cx| ws.navigate(Route::History, cx)),
     ("plugins", |ws, _, cx| ws.navigate(Route::Plugins, cx)),
-    // tau-memory's settings: the model it writes notes with.
+    // tau-memory's settings, one of tau's Luau plugins (ADR 0050): the
+    // model it writes notes with.
     ("plugins-memory", |ws, _, cx| {
-        ws.navigate(Route::Plugins, cx);
-        ws.pick_plugin(tau_memory::NAME, None, cx);
+        luau_entry(ws, tau_luau_plugins::names::MEMORY, cx)
     }),
     // tau-compaction, one of tau's Luau plugins (ADR 0050): its entry
     // under tau-luau-plugins.
     ("plugins-compaction", |ws, _, cx| {
-        ws.navigate(Route::Plugins, cx);
-        ws.pick_plugin(
-            tau_luau_plugins::NAME,
-            Some(tau_luau_plugins::names::COMPACTION),
-            cx,
-        );
+        luau_entry(ws, tau_luau_plugins::names::COMPACTION, cx)
     }),
     ("models", |ws, _, cx| ws.navigate(Route::Models, cx)),
     ("plan", |ws, _, cx| ws.navigate(Route::Plan(run_id()), cx)),
@@ -41,42 +36,40 @@ pub static SCREENS: &[(&str, Screen)] = &[
         ws.navigate(Route::Compare { main, fork }, cx)
     }),
     ("memory", |ws, _, cx| {
-        plugin_page(ws, tau_memory_host::NAME, "notes", "repo", cx)
+        memory_at(ws, Some("tau-agent"), "notes", cx)
+    }),
+    // One of tau-agent's notes open, with its map and links.
+    ("memory-note", |ws, _, cx| {
+        let link = tau_luau_plugins::ui::repo_page_link(
+            tau_luau_plugins::names::MEMORY,
+            "notes",
+            "tau-agent",
+        )
+        .param("note", "n-0417");
+        ws.navigate(
+            Route::Plugin {
+                plugin: tau_luau_plugins::NAME.into(),
+                page: link.page,
+                params: link.params,
+            },
+            cx,
+        );
     }),
     // Importing what Claude Code and Codex learned (ADR 0044): setup's
     // Memories step, the review page while chats are read, and the
     // banner on a repository they know.
-    ("memory-import-setup", |ws, host, cx| {
-        memory_imports(ws, host, cx);
+    ("memory-import-setup", |ws, _, cx| {
         let step = SetupStep::Plugin {
-            plugin: tau_memory_host::NAME,
-            step: tau_memory::ui::setup::STEP,
+            plugin: tau_luau_plugins::NAME,
+            step: MEMORY_STEP,
         };
         setup_at(ws, step, cx);
     }),
-    ("memory-import-review", |ws, host, cx| {
-        memory_imports(ws, host, cx);
-        let link = tau_memory::ui::review_link(None);
-        ws.navigate(
-            Route::Plugin {
-                plugin: tau_memory_host::NAME.into(),
-                page: link.page,
-                params: link.params,
-            },
-            cx,
-        );
+    ("memory-import-review", |ws, _, cx| {
+        memory_at(ws, None, "import", cx)
     }),
-    ("memory-import-banner", |ws, host, cx| {
-        memory_imports(ws, host, cx);
-        let link = tau_memory::ui::notes_link("docbert");
-        ws.navigate(
-            Route::Plugin {
-                plugin: tau_memory_host::NAME.into(),
-                page: link.page,
-                params: link.params,
-            },
-            cx,
-        );
+    ("memory-import-banner", |ws, _, cx| {
+        memory_at(ws, Some("docbert"), "notes", cx)
     }),
     ("constitution", |ws, _, cx| rules_at(ws, "constitution", cx)),
     ("mcp", |ws, _, cx| {
@@ -1540,33 +1533,41 @@ fn agents(
     }
 }
 
-/// Memory's data with what the demo's imports show
-/// (`tau_memory_host::demo::imports`), its notes kept.
-fn memory_imports(
-    ws: &mut Workspace,
-    host: &DemoHost,
+/// The Luau plugin `entry`'s page among the person's plugins, with its
+/// settings.
+fn luau_entry(
+    workspace: &mut Workspace,
+    entry: &str,
     cx: &mut Context<Workspace>,
 ) {
-    let mut catalog = ws.catalog().clone();
-    let mut data: tau_memory::ui::MemoryData = catalog
-        .plugin_data
-        .get(tau_memory_host::NAME)
-        .and_then(|data| serde_json::from_value(data.json().clone()).ok())
-        .unwrap_or_default();
-    data.imports = tau_memory_host::demo::imports();
-    let data = PluginValue::typed(data);
-    catalog
-        .plugin_data
-        .insert(tau_memory_host::NAME.into(), data.clone());
-    if let Some(info) = catalog
-        .plugins
-        .iter()
-        .find(|plugin| plugin.name == tau_memory_host::NAME)
-        .cloned()
-    {
-        host.pin(info, data);
+    if let Some(route) = workspace.yours_route(Some(entry)) {
+        workspace.navigate(route, cx);
     }
-    ws.set_catalog(catalog, cx);
+}
+
+/// tau-memory's step of first-run setup, as tau-luau-plugins names it.
+const MEMORY_STEP: &str = "tau-memory/memories";
+
+/// tau-memory's page `page`: of `repo`, or of the app.
+fn memory_at(
+    workspace: &mut Workspace,
+    repo: Option<&str>,
+    page: &str,
+    cx: &mut Context<Workspace>,
+) {
+    let memory = tau_luau_plugins::names::MEMORY;
+    let link = match repo {
+        Some(repo) => tau_luau_plugins::ui::repo_page_link(memory, page, repo),
+        None => tau_luau_plugins::ui::app_page_link(memory, page),
+    };
+    workspace.navigate(
+        Route::Plugin {
+            plugin: tau_luau_plugins::NAME.into(),
+            page: link.page,
+            params: link.params,
+        },
+        cx,
+    );
 }
 
 fn plugin_page(

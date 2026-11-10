@@ -8915,6 +8915,7 @@ dependencies = [
  "futures-util",
  "hegeltest",
  "jsonschema",
+ "regex",
  "serde",
  "serde_json",
  "tau-agent",
@@ -9043,8 +9044,6 @@ dependencies = [
  "tau-luau-plugins-host",
  "tau-mcp",
  "tau-mcp-host",
- "tau-memory",
- "tau-memory-host",
  "tau-phones",
  "tau-remote",
  "tau-store",
@@ -9206,19 +9205,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tau-memory"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "tau-ai",
- "tau-ui-kit",
- "tau-ui-plugin",
- "thiserror 2.0.21",
- "toml 1.1.6+spec-1.1.0",
-]
-
-[[package]]
 name = "tau-memory-e2e"
 version = "0.1.0"
 dependencies = [
@@ -9232,7 +9218,6 @@ dependencies = [
  "tau-ai",
  "tau-luau-plugins",
  "tau-luau-plugins-host",
- "tau-memory-host",
  "tau-store",
  "tau-store-sqlite",
  "tau-testing",
@@ -9240,32 +9225,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
-]
-
-[[package]]
-name = "tau-memory-host"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "futures-util",
- "hegeltest",
- "regex",
- "schemars",
- "serde",
- "serde_json",
- "tau-agent",
- "tau-ai",
- "tau-memory",
- "tau-store",
- "tau-store-sqlite",
- "tau-testing",
- "tau-ui-plugin",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
  "tokio-util",
- "toml 1.1.6+spec-1.1.0",
 ]
 
 [[package]]
@@ -9361,7 +9321,6 @@ dependencies = [
  "tau-jev",
  "tau-luau-plugins",
  "tau-mcp",
- "tau-memory",
  "tau-notify",
  "tau-phones",
  "tau-sqlite",
@@ -9567,8 +9526,6 @@ dependencies = [
  "tau-luau-plugins-host",
  "tau-mcp",
  "tau-mcp-host",
- "tau-memory",
- "tau-memory-host",
  "tau-notify",
  "tau-phones",
  "tau-plugins",
@@ -9657,7 +9614,6 @@ dependencies = [
  "tau-chatgpt",
  "tau-codemode",
  "tau-luau-plugins",
- "tau-memory",
  "tau-plugins",
  "tau-remote",
  "tau-store",

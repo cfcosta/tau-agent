@@ -47,7 +47,7 @@ use tau_vcs_host::{
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::common::forge::FakeForge;
+use crate::common::{LuauSettings as _, forge::FakeForge};
 
 const WAIT: Duration = Duration::from_secs(60);
 /// The GitHub repository an `origin` on GitHub names.
@@ -271,8 +271,8 @@ impl Disk {
         let agent = tau_agent::agent::Agent::new(llm).name("coder");
         let (host, events) = Host::with_agent(runtime, agent, store, config);
         let host = host
-            .with_plugin_settings(
-                tau_memory::NAME,
+            .with_luau_settings(
+                tau_luau_plugins::names::MEMORY,
                 json!({ "after_each_run": false }),
             )
             .with_forge(std::sync::Arc::new(self.forge()))

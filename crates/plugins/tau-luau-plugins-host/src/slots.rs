@@ -64,21 +64,46 @@ impl ModelReach {
 #[async_trait::async_trait]
 impl crate::runtime::Reach for ModelReach {
     fn tools(&self) -> Vec<tau_codemode_host::ToolEntry> {
-        vec![tau_codemode_host::ToolEntry {
-            name: "infer".into(),
-            description: "Asks the person's model one task.".into(),
-            input_schema:
-                tau_codemode_host::inference::InferRequest::parameters(),
-            output_schema: None,
-            namespace: None,
-            sequential: false,
-        }]
+        vec![
+            tau_codemode_host::ToolEntry {
+                name: "infer".into(),
+                description: "Asks the person's model one task.".into(),
+                input_schema:
+                    tau_codemode_host::inference::InferRequest::parameters(),
+                output_schema: None,
+                namespace: None,
+                sequential: false,
+            },
+            tau_codemode_host::ToolEntry {
+                name: "infer_turn".into(),
+                description: "Asks the person's model one round of a task, \
+                              offering the plugin's own tools."
+                    .into(),
+                input_schema: json!({ "type": "object" }),
+                output_schema: None,
+                namespace: None,
+                sequential: false,
+            },
+        ]
     }
 
     async fn call(
         &self,
         call: tau_codemode_host::ToolCall,
     ) -> Result<tau_codemode_host::ToolReply, String> {
+        if call.name == "infer_turn" {
+            let reply = match self.infer_turn(call.args).await {
+                Ok(value) => json!({ "ok": true, "value": value }),
+                Err(crate::infer::Refused { error, reason }) => {
+                    let mut reply = json!({ "ok": false, "error": error });
+                    if let Some(reason) = reason {
+                        reply["reason"] = json!(reason);
+                    }
+                    reply
+                }
+            };
+            return Ok(tau_codemode_host::ToolReply::success(reply));
+        }
         if call.name != "infer" {
             return Err(format!(
                 "`{}` cannot be called outside a run",
@@ -95,6 +120,35 @@ impl crate::runtime::Reach for ModelReach {
 }
 
 impl ModelReach {
+    /// One round of `infer{ tools }` (ADR 0050, gap L), through the
+    /// person's model.
+    async fn infer_turn(
+        &self,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value, crate::infer::Refused> {
+        let round = crate::infer::Round::parse(args)?;
+        let model = self
+            .model
+            .as_ref()
+            .ok_or("there is no model to ask: the person is signed out")?;
+        let named = round.model.as_deref().or(self.named.as_deref());
+        let name = model_named(named, self.fallback.as_deref())
+            .ok_or("name the model `infer` asks in `uses.model`")?;
+        let effort = effort_for(&name, round.effort);
+        let settings = tau_ui_plugin::AskSettings::new(name, effort)
+            .instructions(round.instructions());
+        let answer = model
+            .ask(
+                &settings,
+                &round.messages(0),
+                &round.tools,
+                &CancellationToken::new(),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        crate::infer::round_answer(&answer)
+    }
+
     async fn infer(
         &self,
         args: serde_json::Value,

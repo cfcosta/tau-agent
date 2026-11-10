@@ -1642,6 +1642,14 @@ pub fn reasoning(fixture: &str) -> [Value; 2] {
     luau(tau_luau_plugins::names::REASONING, fixture)
 }
 
+/// What tau-memory, a Luau plugin (ADR 0050), publishes at the demo
+/// run's `n`th step: what it recalled as the run started (0), then what
+/// it saved as it ended (1), from its fixture `demo`.
+pub fn memory(n: usize) -> [Value; 2] {
+    let demo = luau_fixture(tau_luau_plugins::names::MEMORY, "demo");
+    luau_records(tau_luau_plugins::names::MEMORY, &demo["run"][n])
+}
+
 /// What the Luau plugin `plugin` (ADR 0050) publishes of one of its
 /// fixtures: its state, then the view it draws from it, as
 /// tau-luau-plugins' records. The demo cannot run Luau; each plugin's
@@ -1684,26 +1692,24 @@ fn luau_records(plugin: &str, fixture: &Value) -> [Value; 2] {
 }
 
 /// The run's plugin list: tau-luau-plugins' line holds its plugins',
-/// tau-reasoning's (the first state), tau-constitution's (the third) and
-/// tau-fast-compaction's (the fourth), as the app's does (ADR 0050).
+/// tau-reasoning's (the first state), tau-memory's (the second),
+/// tau-constitution's (the third) and tau-fast-compaction's (the fourth),
+/// as the app's does (ADR 0050).
 fn plugins(states: [&str; 4]) -> Vec<PluginStatus> {
     let [reasoning, memory, constitution, compaction] = states;
     let reasoning = reasoning.trim_start_matches("tau-reasoning: ");
     let luau = format!(
-        "tau-reasoning: {reasoning}; tau-constitution: {constitution}; \
-         tau-fast-compaction: {compaction}"
+        "tau-reasoning: {reasoning}; tau-memory: {memory}; \
+         tau-constitution: {constitution}; tau-fast-compaction: {compaction}"
     );
-    [
-        (tau_luau_plugins::NAME, luau.as_str()),
-        ("tau-memory", memory),
-    ]
-    .into_iter()
-    .map(|(name, state)| PluginStatus {
-        name: name.into(),
-        state: state.into(),
-        tone: Tone::Quiet,
-    })
-    .collect()
+    [(tau_luau_plugins::NAME, luau.as_str())]
+        .into_iter()
+        .map(|(name, state)| PluginStatus {
+            name: name.into(),
+            state: state.into(),
+            tone: Tone::Quiet,
+        })
+        .collect()
 }
 
 /// Builds the script step by step.
@@ -2633,17 +2639,9 @@ pub fn script() -> Vec<Step> {
         s.report(tau_luau_plugins::NAME, record);
     }
     // tau-memory found notes for the task as the run started.
-    s.report(
-        tau_memory_host::NAME,
-        json!({
-            "kind": "recalled",
-            "notes": [
-                { "id": "n-0388", "title": "Retry policy honors server hints" },
-                { "id": "n-0390", "title": "429 vs 503 in the Responses API" },
-                { "id": "n-0205", "title": "Tests use the fake OpenAI server" },
-            ],
-        }),
-    );
+    for record in memory(0) {
+        s.report(tau_luau_plugins::NAME, record);
+    }
     s.at(
         0,
         RunUpdate::Plan(vec![
@@ -3021,16 +3019,9 @@ pub fn script() -> Vec<Step> {
     );
 
     // tau-memory distills in `finish`, after the run is stored.
-    s.report(
-        tau_memory_host::NAME,
-        json!({
-            "kind": "saved",
-            "calls": [
-                { "tool": "memory_write", "details": {} },
-                { "tool": "memory_write", "details": {} },
-            ],
-        }),
-    );
+    for record in memory(1) {
+        s.report(tau_luau_plugins::NAME, record);
+    }
     s.at(
         0,
         RunUpdate::Plugins(plugins([
@@ -3123,34 +3114,6 @@ mod tests {
     }
 
     #[test]
-    fn catalog_links_point_at_notes_of_their_repository() {
-        let host = DemoHost::new(&catalog()).unwrap();
-        let catalog = host.catalog(catalog());
-        let notes = |repo: &Repo| -> tau_memory::ui::Notebook {
-            serde_json::from_value(
-                repo.plugins[tau_memory_host::NAME].json().clone(),
-            )
-            .unwrap()
-        };
-        for repo in &catalog.repos {
-            let memory = &notes(repo);
-            for note in &memory.notes {
-                for link in &note.links {
-                    assert!(
-                        memory.note(&link.to).is_some(),
-                        "{}: {} -> {}",
-                        repo.name,
-                        note.id,
-                        link.to
-                    );
-                }
-            }
-        }
-        let tau = notes(catalog.repo("tau-agent").unwrap());
-        assert!(tau.backlinks("n-0417").count() >= 2);
-    }
-
-    #[test]
     fn the_script_plays_to_a_finished_run() {
         tau_ui::hosted::install();
         let mut view = retry_after();
@@ -3169,7 +3132,7 @@ mod tests {
                 .any(|item| matches!(item, Item::Rewrite { .. }))
         );
         assert!(
-            matches!(view.items.last(), Some(Item::Anchor { plugin, .. }) if plugin == tau_memory_host::NAME)
+            matches!(view.items.last(), Some(Item::Anchor { plugin, .. }) if plugin == tau_luau_plugins::NAME)
         );
         // The ledger lists every call before the rewrite, which it
         // names, and marks the cards it pruned.
@@ -3207,20 +3170,19 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(anchored, [tau_luau_plugins::NAME, tau_memory_host::NAME]);
+        assert_eq!(anchored, [tau_luau_plugins::NAME, tau_luau_plugins::NAME]);
         let luau = view.plugin_states[tau_luau_plugins::NAME].json();
         let reasoning =
             &luau["plugins"][tau_luau_plugins::names::REASONING]["state"];
         assert_eq!(reasoning["plan"], "high");
-        let memory: tau_memory::ui::State = serde_json::from_value(
-            view.plugin_states[tau_memory_host::NAME].json().clone(),
-        )
-        .unwrap();
-        assert!(
-            memory
-                .marks
-                .values()
-                .any(|mark| *mark == tau_memory::ui::Mark::Saved(2))
-        );
+        let memory = &luau["plugins"][tau_luau_plugins::names::MEMORY]["state"];
+        let saved: Vec<usize> = memory["log"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|entry| entry["kind"] == "saved")
+            .map(|entry| entry["calls"].as_array().unwrap().len())
+            .collect();
+        assert_eq!(saved, [2]);
     }
 }

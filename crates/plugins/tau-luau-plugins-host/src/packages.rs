@@ -93,7 +93,7 @@ pub async fn summary(files: Files) -> Result<Summary, String> {
         .await
         .map_err(|error| format!("{name} does not load: {error}"))?;
     Ok(Summary {
-        reaches: loaded.declaration.uses.grown_from(&Uses::default()),
+        reaches: loaded.declaration.uses.grown_from(&Uses::default(), &name),
         name,
         version,
         digest: loaded.digest,

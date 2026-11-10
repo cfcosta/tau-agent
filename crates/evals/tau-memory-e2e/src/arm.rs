@@ -7,14 +7,14 @@
 //! needs the app: version control, Jev, the constitution.
 
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use async_trait::async_trait;
 use futures_util::future::BoxFuture;
 use serde::Serialize;
+use serde_json::{Value, json};
 use tau_agent::{
     agent::Agent,
     error::PluginError,
@@ -23,14 +23,17 @@ use tau_agent::{
 };
 use tau_ai::{
     llm::{Llm, LlmError, LlmSession},
-    message::Message,
+    message::{AssistantBlock, Message, UserContent},
     responses::request::Settings,
 };
-use tau_luau_plugins_host::agent::{Active, LuauPlugins};
-use tau_memory_host::{Memory, MemoryPlugin, Scopes, index::Bm25};
+use tau_luau_plugins_host::{
+    agent::{Active, LuauPlugins},
+    files::Files,
+    runtime::{Context, Hook, NoReach, WithFiles},
+};
 use tau_tools_host::{path::Root, plugin::CodingTools};
 
-use crate::E2eError;
+use crate::{E2eError, bm25::Bm25};
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize,
@@ -132,8 +135,9 @@ pub struct RunSetup<'a> {
     pub model: &'a str,
     pub repo: &'a Path,
     pub arm: Arm,
-    /// The memory plugin, in the memory arms.
-    pub memory: Option<&'a MemoryPlugin>,
+    /// tau's directory for the repository, in the memory arms: where
+    /// tau-memory keeps the repository's notes, in `tau-memory/`.
+    pub memory: Option<&'a Path>,
     /// Text put before the task: `MEMORY.md` or transcript hits.
     pub context: Option<String>,
     pub limits: Limits,
@@ -141,59 +145,144 @@ pub struct RunSetup<'a> {
     pub transcript: Transcript,
 }
 
-/// tau-compaction as tau runs it (a Luau plugin, ADR 0050), by the
-/// window of the run's model, `model`, working in `repo`.
-async fn compaction(model: &str, repo: &Path) -> LuauPlugins {
-    let active = Active::built_in(tau_luau_plugins::names::COMPACTION)
-        .await
-        .expect("tau-compaction loads");
-    LuauPlugins::new(
-        vec![active],
-        serde_json::json!({
+/// tau's Luau plugins for the run, as tau runs them (ADR 0050):
+/// tau-compaction, by the window of the run's model, `model`, working in
+/// `repo`; and in the memory arms tau-memory, keeping its notes under
+/// `memory` and consolidating after the run when `consolidate`, on the
+/// run's own model, as a memory plugin with no writer of its own did.
+async fn luau(
+    model: &str,
+    repo: &Path,
+    memory: Option<&Path>,
+    consolidate: bool,
+) -> LuauPlugins {
+    let mut active = vec![
+        Active::built_in(tau_luau_plugins::names::COMPACTION)
+            .await
+            .expect("tau-compaction loads"),
+    ];
+    if memory.is_some() {
+        let mut plugin = Active::built_in(tau_luau_plugins::names::MEMORY)
+            .await
+            .expect("tau-memory loads");
+        plugin.settings["after_each_run"] = json!(consolidate);
+        plugin.settings["follow_chat"] = json!(true);
+        active.push(plugin);
+    }
+    let plugins = LuauPlugins::new(
+        active,
+        json!({
             "kind": "main",
             "repo": repo.display().to_string(),
             "model": model,
         }),
         None,
-    )
+    );
+    match memory {
+        Some(dir) => plugins
+            .with_files(Some(repo.to_owned()), dir.join("blobs"))
+            .with_folders(Some(dir.to_owned()), Some(dir.join("data"))),
+        None => plugins,
+    }
 }
 
 /// The agent for one run in an arm.
 pub async fn agent(setup: RunSetup<'_>) -> Agent {
-    let compaction = compaction(setup.model, setup.repo).await;
+    let luau = luau(
+        setup.model,
+        setup.repo,
+        setup.memory,
+        setup.arm == Arm::MemoryConsolidate,
+    )
+    .await;
     let mut agent = Agent::new(SharedLlm(setup.llm))
         .name("coder")
         .model(setup.model)
         .instructions(setup.arm.instructions())
         .limits(setup.limits)
-        .plugin(compaction)
+        .plugin(luau)
         .plugin(CodingTools::new(Root::new(setup.repo.to_owned())))
         .plugin(Keep(setup.transcript));
-    if let Some(memory) = setup.memory {
-        agent = agent.plugin(
-            memory
-                .clone()
-                .consolidate(setup.arm == Arm::MemoryConsolidate),
-        );
-    }
     if let Some(context) = setup.context {
         agent = agent.plugin(Given(context));
     }
     agent
 }
 
-/// Milliseconds since the epoch: the memory scopes' clock.
-pub fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_millis() as u64)
+/// Where tau-memory keeps the notes of the repository whose tau
+/// directory is `dir`.
+pub fn notes_dir(dir: &Path) -> PathBuf {
+    dir.join(tau_luau_plugins::names::MEMORY)
 }
 
-/// A fresh repository scope in `dir`, no user scope: the plugin both of
-/// a trial's runs share.
-pub fn memory_plugin(dir: &Path) -> Result<MemoryPlugin, E2eError> {
-    let memory = Memory::open(dir)?;
-    Ok(MemoryPlugin::new(Scopes::new(memory, None, Arc::new(now))))
+/// The notes tau-memory keeps for the repository whose tau directory is
+/// `dir`: one Markdown file each, every earlier version aside in
+/// `.history`.
+pub fn notes(dir: &Path) -> Vec<PathBuf> {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.file_name().is_some_and(|name| name == ".history") {
+                continue;
+            }
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "md") {
+                out.push(path);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(&notes_dir(dir), &mut out);
+    out.sort();
+    out
+}
+
+/// What a commit changing `paths` does to memory in the app: tau-memory
+/// hears it as a turn's commit (`turn_end`) and marks the notes about
+/// them, written before now, as possibly stale. Here the commit comes
+/// between runs, so the plugin is called as a turn of none.
+pub async fn mark_changed(dir: &Path, paths: &[&str]) -> Result<(), E2eError> {
+    let active = Active::built_in(tau_luau_plugins::names::MEMORY)
+        .await
+        .map_err(E2eError::Plugin)?;
+    let declaration = &active.loaded.declaration;
+    let files = Files::new(&declaration.uses.files, None, None)
+        .writing(&declaration.uses.writes)
+        .with_repository(Some(dir.to_owned()))
+        .with_data(dir.join("data"));
+    let now = tau_luau_plugins_host::agent::now();
+    let context = Context {
+        run: json!({ "kind": "main" }),
+        now: now.clone(),
+        settings: active.settings.clone(),
+        // The turn began now: every note there is was written before it.
+        state: json!({ "turn_since": now["ms"] }),
+        ..Default::default()
+    };
+    let input = json!({
+        "commit": { "change": "between runs", "paths": paths },
+    });
+    let outcome = active
+        .loaded
+        .call(
+            &Hook::TurnEnd,
+            input,
+            &context,
+            Arc::new(WithFiles {
+                reach: Arc::new(NoReach),
+                files: Arc::new(files),
+            }),
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await;
+    match outcome.error {
+        Some(error) => Err(E2eError::Plugin(error)),
+        None => Ok(()),
+    }
 }
 
 /// The second run's context in the `memory_md` arm: the file, fenced as
@@ -221,7 +310,7 @@ pub const TRANSCRIPT_HITS: usize = 3;
 /// in order into chunks of at most [`CHUNK_CHARS`]; a longer entry is
 /// cut.
 pub fn chunks(transcript: &[Message]) -> Vec<String> {
-    let text = tau_memory_host::plugin::serialize(transcript);
+    let text = conversation(transcript);
     let mut entries: Vec<String> = Vec::new();
     for part in text.split("\n\n[") {
         let entry = if entries.is_empty() {
@@ -251,6 +340,66 @@ pub fn chunks(transcript: &[Message]) -> Vec<String> {
         out.push(current);
     }
     out
+}
+
+/// Tool results past this many characters are cut when a conversation is
+/// shown as text.
+const RESULT_CHARS: usize = 2_000;
+
+/// A conversation as plain text, as tau-memory shows one to its memory
+/// requests: who said what, the calls made and what they returned, long
+/// results cut.
+fn conversation(transcript: &[Message]) -> String {
+    let mut out = String::new();
+    for message in transcript {
+        match message {
+            Message::User(user) => {
+                let text = match &user.content {
+                    UserContent::Text(text) => text.clone(),
+                    UserContent::Blocks(blocks) => {
+                        tau_ai::message::text_of(blocks)
+                    }
+                };
+                out.push_str(&format!("[user]\n{text}\n\n"));
+            }
+            Message::Assistant(reply) => {
+                for block in &reply.content {
+                    match block {
+                        AssistantBlock::Text(text) => {
+                            out.push_str(&format!(
+                                "[assistant]\n{}\n\n",
+                                text.text
+                            ));
+                        }
+                        AssistantBlock::ToolCall(call) => {
+                            out.push_str(&format!(
+                                "[call {}]\n{}\n\n",
+                                call.name,
+                                Value::Object(call.arguments.clone())
+                            ));
+                        }
+                        AssistantBlock::Thinking(_) => {}
+                    }
+                }
+            }
+            Message::ToolResult(result) => {
+                let text = tau_ai::message::text_of(&result.content);
+                out.push_str(&format!(
+                    "[result {}]\n{}\n\n",
+                    result.tool_name,
+                    cut_marked(&text, RESULT_CHARS)
+                ));
+            }
+        }
+    }
+    out
+}
+
+fn cut_marked(text: &str, chars: usize) -> String {
+    match text.char_indices().nth(chars) {
+        Some((at, _)) => format!("{}… (cut)", &text[..at]),
+        None => text.to_owned(),
+    }
 }
 
 fn cut(text: &str, chars: usize) -> String {

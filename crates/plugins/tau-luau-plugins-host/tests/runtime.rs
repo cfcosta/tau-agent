@@ -141,6 +141,7 @@ async fn a_plugin_declares_what_it_is() {
             archive: false,
             chats: false,
             files: Vec::new(),
+            writes: Vec::new(),
         }
     );
     let tools: Vec<(&str, bool)> = declared

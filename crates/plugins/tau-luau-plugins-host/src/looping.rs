@@ -32,6 +32,11 @@
 //!   the question's id, `has` a text in what the request's state holds
 //!   of it (the object there whose `id` is the question's), then `noul`,
 //!   `choice` (with `probabilities`) or `score`.
+//! - `data` and `repository`: what tau's data folder and its folder for
+//!   the run's repository hold as the run starts (`uses.files`' `data`
+//!   and `repository`), written as `files` is; `commits`: the commit a
+//!   turn leaves, `{ turn, change, paths }` each, which `turn_end` is
+//!   given (ADR 0050, gap L).
 //! - `then`: steps after the run, each with its own `settings` and `jev`:
 //!   a fork from where the run before it ended, with its `prompt` and
 //!   `steer`; `{ resume = true, prompt }`, the same run going on; or
@@ -51,7 +56,9 @@
 //! `state` and `logs`. The first run's also has `forks` (each step's),
 //! `requests` (each request's `settings`, its fields, and its
 //! `messages`), `most_at_once` (the most responses going on at once),
-//! `jev` (what Jev was asked), `workspace` and `blobs`.
+//! `jev` (what Jev was asked), `workspace` and `blobs`, and `data` and
+//! `repository`: each file of those folders as the loop left them, its
+//! path to its text.
 
 use std::{
     collections::BTreeMap,
@@ -106,6 +113,8 @@ pub async fn run(files: &Files, spec: &Value) -> Result<Value, String> {
     if spec["skills"].is_object() {
         workspace(&dir.path().join("skills"), &spec["skills"])?;
     }
+    workspace(&dir.path().join("data"), &spec["data"])?;
+    workspace(&dir.path().join("repository"), &spec["repository"])?;
     let llm = model(&spec["model"])?;
     let looped = Looped {
         name: name.clone(),
@@ -135,6 +144,8 @@ pub async fn run(files: &Files, spec: &Value) -> Result<Value, String> {
     let blobs =
         crate::files::blobs_dir(&dir.path().join("blobs"), &name, &repo);
     came["blobs"] = read_back(&blobs, &came["state"]).await;
+    came["data"] = tree(&dir.path().join("data"));
+    came["repository"] = tree(&dir.path().join("repository"));
     Ok(came)
 }
 
@@ -283,18 +294,28 @@ impl Looped {
                 .is_object()
                 .then(|| self.dir.join("skills")),
         )
-        .with_archive(self.dir.join("archive"));
+        .with_archive(self.dir.join("archive"))
+        .with_folders(
+            Some(self.dir.join("repository")),
+            Some(self.dir.join("data")),
+        );
         let retry = &self.spec["retry"];
-        let mut agent = Agent::new(self.counted.clone()).plugin(plugins).retry(
-            tau_ai::retry::RetryPolicy {
+        // The turns' commits, told before the plugins hear a turn end, as
+        // the run's workspace tells them.
+        let commits = Commits {
+            plugins: plugins.clone(),
+            commits: self.spec["commits"].clone(),
+        };
+        let agent = Agent::new(self.counted.clone()).plugin(commits);
+        let mut agent =
+            agent.plugin(plugins).retry(tau_ai::retry::RetryPolicy {
                 base: Duration::from_millis(1),
                 max_attempts: retry["max_attempts"].as_u64().map_or(
                     tau_ai::retry::RetryPolicy::default().max_attempts,
                     |n| n as u32,
                 ),
                 ..tau_ai::retry::RetryPolicy::default()
-            },
-        );
+            });
         if let Ok(effort) =
             serde_json::from_value(self.spec["reasoning"].clone())
         {
@@ -606,6 +627,86 @@ fn came_to(plugin: &str, events: &[RunEvent]) -> Value {
 
 /// Writes the workspace `files` names under `dir`: each file's bytes as
 /// written, in base64.
+/// Each file under `dir`, its path there to its text.
+fn tree(dir: &Path) -> Value {
+    fn walk(dir: &Path, at: &Path, found: &mut serde_json::Map<String, Value>) {
+        let Ok(entries) = std::fs::read_dir(at) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(dir, &path, found);
+            } else if let (Ok(text), Ok(name)) =
+                (std::fs::read_to_string(&path), path.strip_prefix(dir))
+            {
+                found.insert(name.display().to_string(), Value::String(text));
+            }
+        }
+    }
+    let mut found = serde_json::Map::new();
+    walk(dir, dir, &mut found);
+    Value::Object(found)
+}
+
+/// What tells the loop's plugins the commit each turn leaves, from the
+/// spec's `commits`.
+struct Commits {
+    plugins: LuauPlugins,
+    commits: Value,
+}
+
+#[async_trait]
+impl tau_agent::plugin::Plugin for Commits {
+    fn name(&self) -> &str {
+        "t.loop commits"
+    }
+
+    async fn start(
+        &self,
+        _plan: &mut tau_agent::plugin::RunPlan,
+        _ctx: &tau_agent::plugin::PluginCtx,
+    ) -> Result<
+        Box<dyn tau_agent::plugin::PluginRun>,
+        tau_agent::plugin::PluginError,
+    > {
+        Ok(Box::new(Commits {
+            plugins: self.plugins.clone(),
+            commits: self.commits.clone(),
+        }))
+    }
+}
+
+#[async_trait]
+impl tau_agent::plugin::PluginRun for Commits {
+    async fn on_event(
+        &mut self,
+        event: &RunEvent,
+        _ctx: &tau_agent::plugin::PluginCtx,
+    ) {
+        let RunEvent::TurnEnd { turn, .. } = event else {
+            return;
+        };
+        let commit = self
+            .commits
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|commit| commit["turn"].as_u64() == Some(u64::from(*turn)));
+        if let Some(commit) = commit {
+            self.plugins.heard(&tau_ui_plugin::TurnCommit {
+                change_id: commit["change"].as_str().unwrap_or_default().into(),
+                paths: commit["paths"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|path| path.as_str().map(str::to_owned))
+                    .collect(),
+            });
+        }
+    }
+}
+
 fn workspace(dir: &Path, files: &Value) -> Result<Value, String> {
     let mut written = serde_json::Map::new();
     std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;

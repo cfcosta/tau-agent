@@ -1755,7 +1755,7 @@ impl PluginHost {
 impl PluginHost {
     fn allowed(&self, name: &str) -> bool {
         self.tools.iter().any(|tool| tool == name)
-            || (self.infer && name == "infer")
+            || (self.infer && matches!(name, "infer" | "infer_turn"))
             || (self.transcript && name == "transcript")
             || (self.archive && matches!(name, "archive_path" | "archive_write"))
             || (self.files && crate::files::Files::handles(name))

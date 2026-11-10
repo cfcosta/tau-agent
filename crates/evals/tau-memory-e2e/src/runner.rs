@@ -13,7 +13,6 @@ use regex::Regex;
 use serde::Serialize;
 use tau_agent::limits::Limits;
 use tau_ai::llm::Llm;
-use tau_memory_host::{MemoryPlugin, plugin::START_HITS};
 use tau_store::Store;
 
 use crate::{
@@ -211,11 +210,9 @@ async fn run_trial(
         .tempdir_in(&config.work)?;
     let repo = dir.path().join("repo");
     scenario.setup(&repo)?;
-    let memory = if key.arm.uses_memory() {
-        Some(arm::memory_plugin(&dir.path().join("memory"))?)
-    } else {
-        None
-    };
+    // tau's directory for the repository, where tau-memory keeps its
+    // notes: both of a trial's runs share it.
+    let memory = key.arm.uses_memory().then(|| dir.path().join("tau"));
     let store = tau_store_sqlite::memory().await?;
 
     // The first run.
@@ -226,7 +223,7 @@ async fn run_trial(
             model: &config.model,
             repo: &repo,
             arm: key.arm,
-            memory: memory.as_ref(),
+            memory: memory.as_deref(),
             context: None,
             limits: limits(config, budget),
             transcript: transcript.clone(),
@@ -244,14 +241,8 @@ async fn run_trial(
         Arm::MemoryMd => arm::memory_md_context(&repo).is_some(),
         Arm::Transcripts => !transcript.is_empty(),
         Arm::Memory | Arm::MemoryConsolidate => {
-            let plugin = memory.as_ref().expect("a memory arm");
-            !plugin
-                .scopes()
-                .repo
-                .lock()
-                .expect("not poisoned")
-                .notes()
-                .is_empty()
+            let dir = memory.as_deref().expect("a memory arm");
+            !arm::notes(dir).is_empty()
         }
     };
     if budget.exhausted() {
@@ -262,9 +253,9 @@ async fn run_trial(
     let variant = key.variant;
     on_blocking(&repo, move |repo| scenario.between(repo, variant)).await?;
     if variant == Variant::Changed
-        && let Some(plugin) = &memory
+        && let Some(dir) = &memory
     {
-        mark_changed(plugin, scenario.change.paths)?;
+        arm::mark_changed(dir, scenario.change.paths).await?;
     }
 
     // The second run, with what the arm carries over.
@@ -276,26 +267,32 @@ async fn run_trial(
             arm::transcript_context(&arm::chunks(&transcript), prompt)
         }
     };
-    let memory_given = match &memory {
-        Some(plugin) => starts_with_memory(plugin, prompt)?,
-        None => context.is_some(),
-    };
+    let given = context.is_some();
+    let second_transcript = Transcript::default();
     let (mut second, calls) = run_once(
         RunSetup {
             llm: models(Stage::Second),
             model: &config.model,
             repo: &repo,
             arm: key.arm,
-            memory: memory.as_ref(),
+            memory: memory.as_deref(),
             context,
             limits: limits(config, budget),
-            transcript: Transcript::default(),
+            transcript: second_transcript.clone(),
         },
         prompt,
         &store,
     )
     .await?;
     budget.charge(second.cost_usd);
+    // tau-memory gives a run what it has for the task in its first
+    // message: the index note, or hits for the task.
+    let memory_given = match &memory {
+        Some(_) => started_with_memory(
+            &second_transcript.lock().expect("not poisoned"),
+        ),
+        None => given,
+    };
     second.success =
         Some(on_blocking(&repo, move |repo| scenario.second_done(repo)).await?);
     let stale_used = match variant {
@@ -320,32 +317,22 @@ async fn run_trial(
     }))
 }
 
-/// What a commit changing `paths` does to memory in the app
-/// (tau-ui's `stale_on_commit`): the notes about them, written before
-/// now, are marked as possibly stale.
-pub fn mark_changed(
-    plugin: &MemoryPlugin,
-    paths: &[&str],
-) -> Result<Vec<String>, E2eError> {
-    let paths: Vec<String> =
-        paths.iter().map(|path| (*path).to_owned()).collect();
-    Ok(plugin.mark_stale(
-        &paths,
-        "commit between runs changed it",
-        plugin.now(),
-    )?)
+/// Whether a run's first message holds what tau-memory gives a run as
+/// it starts.
+fn started_with_memory(transcript: &[tau_ai::message::Message]) -> bool {
+    use tau_ai::message::{Message, UserContent};
+    let Some(Message::User(first)) = transcript.first() else {
+        return false;
+    };
+    let text = match &first.content {
+        UserContent::Text(text) => text.clone(),
+        UserContent::Blocks(blocks) => tau_ai::message::text_of(blocks),
+    };
+    text.contains(MEMORY_FENCE)
 }
 
-/// Whether a run on `task` starts with memory in its context: the index
-/// note, or a hit for the task.
-fn starts_with_memory(
-    plugin: &MemoryPlugin,
-    task: &str,
-) -> Result<bool, E2eError> {
-    let memory = plugin.scopes().repo.lock().expect("not poisoned");
-    Ok(memory.index_note().is_some()
-        || !memory.search(task, START_HITS).is_empty())
-}
+/// How tau-memory fences what it gives a run as it starts.
+const MEMORY_FENCE: &str = "<memory note=\"notes kept from earlier runs";
 
 /// A run's limits: its turns and time, and what is left of the budget.
 fn limits(config: &Config, budget: &Budget) -> Limits {

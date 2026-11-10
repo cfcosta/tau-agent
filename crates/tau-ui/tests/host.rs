@@ -27,7 +27,7 @@ use tau_ui_remote::{
 use tau_vcs_host::{Identity, Project};
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::common::{self, forge::FakeForge};
+use crate::common::{self, LuauSettings as _, forge::FakeForge};
 
 /// The repository a host under test lists, made from the checkout it
 /// is given, as a clone from GitHub would be.
@@ -141,8 +141,8 @@ fn host_of(
     let (host, events) = Host::with_agent(runtime, agent, store, config);
     // Memory's pass after each run asks the model once more: these
     // scripts answer only the requests they write.
-    let host = host.with_plugin_settings(
-        tau_memory::NAME,
+    let host = host.with_luau_settings(
+        tau_luau_plugins::names::MEMORY,
         serde_json::json!({ "after_each_run": false }),
     );
     (
@@ -2115,6 +2115,9 @@ fn an_effort_the_model_does_not_take_runs_at_auto() {
 /// even through a command, marks it as maybe stale.
 #[test]
 fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
+    // tau-memory is a Luau plugin: the app's plugins, Luau's host half
+    // with them.
+    tau::install();
     let src = tempfile::tempdir().unwrap();
     git(src.path(), &["init", "--quiet"]);
     std::fs::write(src.path().join("a.txt"), "one\n").unwrap();
@@ -2149,7 +2152,8 @@ fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
             Identity::default(),
         )),
     );
-    let memory_of = |host: &Host| {
+    // What memory keeps of the repository, and its notes page as text.
+    let kept = |host: &Host| {
         let catalog = host.block_on(host.catalog());
         let repo = catalog
             .repos
@@ -2157,17 +2161,37 @@ fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
             .find(|repo| repo.name == REPO)
             .expect("the repository is listed")
             .clone();
-        serde_json::from_value::<tau_memory::ui::Notebook>(
-            repo.plugins[tau_memory_host::NAME].json().clone(),
-        )
-        .unwrap()
+        repo.plugins
+            .get(tau_luau_plugins::NAME)
+            .map(|data| {
+                data.json()[tau_luau_plugins::names::MEMORY]["notes"]
+                    .as_u64()
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0)
     };
-    assert!(memory_of(&host).notes.is_empty());
+    let page = |host: &Host| {
+        let act = tau_luau_plugins::Act::Page {
+            plugin: tau_luau_plugins::names::MEMORY.into(),
+            page: "notes".into(),
+            params: [("repo".to_owned(), REPO.to_owned())].into(),
+            jev: false,
+            drafts: Default::default(),
+        };
+        host.block_on(host.plugin_act(
+            tau_luau_plugins::NAME,
+            serde_json::to_value(act).unwrap(),
+        ))
+        .unwrap()
+        .expect("a page answers")["tree"]
+            .to_string()
+    };
+    assert_eq!(kept(&host), 0);
     assert!(
         host.block_on(host.catalog())
             .plugins
             .iter()
-            .any(|plugin| plugin.name == "tau-memory")
+            .any(|plugin| plugin.name == tau_luau_plugins::NAME)
     );
 
     let first = host
@@ -2175,12 +2199,11 @@ fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &first.id);
-    let memory = memory_of(&host);
-    assert_eq!(memory.notes.len(), 1, "{memory:?}");
-    let kept = &memory.notes[0];
-    assert_eq!(kept.title, "a.txt holds the count");
-    assert_eq!(kept.paths, ["a.txt"]);
-    assert!(!kept.body[0].starts_with("May be stale"), "{:?}", kept.body);
+    assert_eq!(kept(&host), 1);
+    let shown = page(&host);
+    assert!(shown.contains("a.txt holds the count"), "{shown}");
+    assert!(shown.contains("a.txt"), "{shown}");
+    assert!(!shown.contains("May be stale"), "{shown}");
 
     let second = host
         .block_on(host.start("change it", &ModelChoice::default(), REPO))
@@ -2190,13 +2213,13 @@ fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
     // The mark is made off the run's thread; give it a moment.
     let deadline = std::time::Instant::now() + WAIT;
     loop {
-        let memory = memory_of(&host);
-        if memory.notes[0].body[0].starts_with("May be stale") {
+        let shown = page(&host);
+        if shown.contains("May be stale") {
             break;
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "never marked stale: {memory:?}"
+            "never marked stale: {shown}"
         );
         std::thread::sleep(Duration::from_millis(20));
     }
@@ -2719,14 +2742,17 @@ fn conversations_go_back_to_their_connections() {
 /// prompt, on the newest luna at low.
 #[test]
 fn memory_saves_after_each_run_on_luna_by_default() {
+    tau::install();
     let llm = ScriptedModel::new()
         .turn(|t| t.text("hello"))
         .turn(|t| t.text("nothing worth keeping"));
     let (host, mut events) =
         host_on(llm.clone(), &tempfile::tempdir().unwrap().keep());
     // Memory's own defaults, not the quiet ones the other tests take.
-    let host =
-        host.with_plugin_settings(tau_memory::NAME, serde_json::json!({}));
+    let host = host.with_luau_settings(
+        tau_luau_plugins::names::MEMORY,
+        serde_json::json!({}),
+    );
     let main = on_main(&host, "hi");
     until_end(&mut events);
     wait_until_done(&host, &main);
