@@ -260,8 +260,6 @@ unknown-git = "warn"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 # List of URLs for allowed Git repositories
 allow-git = [
-  # docbert's ColBERT model (tau-memory's `docbert` feature).
-  "https://github.com/cfcosta/docbert",
   # gpui on Android (tau-phone).
   "https://github.com/longbridge/gpui-mobile",
 ]

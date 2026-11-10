@@ -43,20 +43,9 @@ use crate::{
     Scopes,
     import::{Importer, JOB, Reach},
     importers::Roots,
-    index::{Bm25, Index},
     plugin::{Scope, Writer},
     store::Notes,
 };
-
-/// How a host searches notes: by meaning, with docbert's model, or by
-/// keywords alone, as in tests, where no model is loaded. The host puts
-/// one in its services ([`tau_memory::SEARCH`]); without one, keywords.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Search {
-    Semantic,
-    #[default]
-    Keywords,
-}
 
 /// The plugin on the host: every scope open this session, where the
 /// user's notes are, and its imports.
@@ -75,26 +64,14 @@ impl Host {
 }
 
 /// The scopes open this session, by their notes directory.
+#[derive(Default)]
 pub struct Memories {
-    /// What semantic search encodes with, loaded on first use; `None`
-    /// searches by keywords alone.
-    #[cfg(feature = "docbert")]
-    encoder: Option<crate::colbert::Shared<crate::docbert::Docbert>>,
     open: Mutex<HashMap<PathBuf, Scope>>,
 }
 
 impl Memories {
-    /// Memories that search as `search` says; by keywords when built
-    /// without docbert's model.
-    #[cfg_attr(not(feature = "docbert"), allow(unused_variables))]
-    pub fn new(search: Search) -> Self {
-        Self {
-            #[cfg(feature = "docbert")]
-            encoder: (search == Search::Semantic).then(|| {
-                crate::colbert::Shared::new(crate::docbert::Docbert::new())
-            }),
-            open: Mutex::default(),
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// The scope whose notes are in `dir`, opened on first use.
@@ -103,17 +80,7 @@ impl Memories {
         if let Some(scope) = open.get(dir) {
             return Ok(scope.clone());
         }
-        #[cfg(feature = "docbert")]
-        let index: Box<dyn Index> = match &self.encoder {
-            Some(encoder) => Box::new(
-                crate::colbert::Colbert::new(encoder.clone())
-                    .cached(embeddings_dir(dir)),
-            ),
-            None => Box::new(Bm25::new()),
-        };
-        #[cfg(not(feature = "docbert"))]
-        let index: Box<dyn Index> = Box::new(Bm25::new());
-        let scope = Arc::new(Mutex::new(Memory::open(dir, index)?));
+        let scope = Arc::new(Mutex::new(Memory::open(dir)?));
         open.insert(dir.to_owned(), scope.clone());
         Ok(scope)
     }
@@ -151,17 +118,6 @@ impl Memories {
             },
         }
     }
-}
-
-/// Where the embeddings of the notes in `dir` are cached: beside it, so
-/// the notes directory holds notes alone.
-#[cfg_attr(not(feature = "docbert"), allow(dead_code))]
-fn embeddings_dir(dir: &Path) -> PathBuf {
-    let name = dir.file_name().map_or_else(
-        || "memory".to_owned(),
-        |name| name.to_string_lossy().into_owned(),
-    );
-    dir.with_file_name(format!("{name}-embeddings"))
 }
 
 /// Milliseconds since the epoch.
@@ -376,8 +332,7 @@ impl HostHalf for MemoryHost {
 
 impl PluginHost for Host {
     async fn new(cx: &HostCx) -> anyhow::Result<Self> {
-        let search = cx.services.get::<Search>().copied().unwrap_or_default();
-        let memories = Arc::new(Memories::new(search));
+        let memories = Arc::new(Memories::new());
         let user = cx.dir.join("memory");
         let importer = Arc::new(
             Importer::open(

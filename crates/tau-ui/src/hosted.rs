@@ -46,13 +46,11 @@ pub fn halves(plugins: Registry) -> Registry {
 
 /// What the app gives its plugins beside the host's own services
 /// (`HostConfig::services`): the person's identity for commits, under
-/// their jj config; their skills in `home`'s `~/.agents/skills`; memory
-/// searching by meaning, with docbert's model.
+/// their jj config; their skills in `home`'s `~/.agents/skills`.
 pub fn app_services(home: Option<&std::path::Path>) -> tau_ui_plugin::Services {
     use tau_ui_plugin::services::names;
     let services = tau_ui_plugin::Services::default()
-        .offer(names::IDENTITY, tau_vcs_host::Identity::from_environment())
-        .offer(tau_memory_host::SEARCH, tau_memory_host::Search::Semantic);
+        .offer(names::IDENTITY, tau_vcs_host::Identity::from_environment());
     match home {
         Some(home) => services.offer(
             tau_skills::DIR_SERVICE,

@@ -18,7 +18,7 @@ use tau_store::Store;
 
 use crate::{
     E2eError,
-    arm::{self, Arm, IndexFactory, MAX_TURNS, RunSetup, Transcript},
+    arm::{self, Arm, MAX_TURNS, RunSetup, Transcript},
     metrics::{self, Meter, RunMetrics, Trial},
     scenario::{Scenario, Variant},
 };
@@ -52,10 +52,6 @@ pub struct Config {
     /// Where trials make their repositories, each in a directory of its
     /// own, removed when it ends.
     pub work: PathBuf,
-    /// What memory and transcript search index with.
-    pub index: IndexFactory,
-    /// Its name, for the report.
-    pub index_name: String,
     /// The most turns a run may take.
     pub max_turns: u32,
     /// The longest a run may take.
@@ -63,7 +59,7 @@ pub struct Config {
 }
 
 impl Config {
-    /// Every scenario, variant and arm, once, BM25 for search.
+    /// Every scenario, variant and arm, once.
     pub fn new(model: impl Into<String>, work: impl Into<PathBuf>) -> Self {
         Self {
             model: model.into(),
@@ -73,8 +69,6 @@ impl Config {
             trials: 1,
             budget: Budget::default(),
             work: work.into(),
-            index: arm::keyword_index(),
-            index_name: "bm25".into(),
             max_turns: MAX_TURNS,
             timeout: Duration::from_secs(15 * 60),
         }
@@ -119,7 +113,6 @@ impl Budget {
 #[derive(Debug, Clone, Serialize)]
 pub struct Report {
     pub model: String,
-    pub index: String,
     pub trials: Vec<Trial>,
     pub summaries: Vec<metrics::Summary>,
     pub spent_usd: f64,
@@ -188,7 +181,6 @@ pub async fn evaluate(
     }
     Ok(Report {
         model: config.model.clone(),
-        index: config.index_name.clone(),
         summaries: metrics::summarize(&trials),
         trials,
         spent_usd: budget.spent,
@@ -220,10 +212,7 @@ async fn run_trial(
     let repo = dir.path().join("repo");
     scenario.setup(&repo)?;
     let memory = if key.arm.uses_memory() {
-        Some(arm::memory_plugin(
-            &dir.path().join("memory"),
-            &config.index,
-        )?)
+        Some(arm::memory_plugin(&dir.path().join("memory"))?)
     } else {
         None
     };
@@ -283,11 +272,9 @@ async fn run_trial(
     let context = match key.arm {
         Arm::None | Arm::Memory | Arm::MemoryConsolidate => None,
         Arm::MemoryMd => arm::memory_md_context(&repo),
-        Arm::Transcripts => arm::transcript_context(
-            &arm::chunks(&transcript),
-            prompt,
-            (config.index)(&dir.path().join("transcript-embeddings")),
-        )?,
+        Arm::Transcripts => {
+            arm::transcript_context(&arm::chunks(&transcript), prompt)
+        }
     };
     let memory_given = match &memory {
         Some(plugin) => starts_with_memory(plugin, prompt)?,
@@ -357,7 +344,7 @@ fn starts_with_memory(
 ) -> Result<bool, E2eError> {
     let memory = plugin.scopes().repo.lock().expect("not poisoned");
     Ok(memory.index_note().is_some()
-        || !memory.search(task, START_HITS)?.is_empty())
+        || !memory.search(task, START_HITS).is_empty())
 }
 
 /// A run's limits: its turns and time, and what is left of the budget.

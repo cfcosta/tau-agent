@@ -6,7 +6,7 @@
 use std::{fmt, path::PathBuf};
 
 use crate::{
-    index::{Index, IndexError, index_text},
+    index::{Bm25, index_text},
     note::{Link, LinkType, Note, NoteType, Source, is_id, slug},
     recall::{Hit, recall},
     safety,
@@ -65,24 +65,12 @@ pub enum WriteError {
     Refused(String),
     #[error(transparent)]
     Store(StoreError),
-    #[error("index: {0}")]
-    Index(#[from] IndexError),
 }
 
 impl From<WriteError> for tau_agent::tool::ToolError {
     fn from(error: WriteError) -> Self {
         Self::other(error)
     }
-}
-
-/// Why a scope's memory could not open: its notes would not read, or
-/// would not index.
-#[derive(Debug, thiserror::Error)]
-pub enum OpenError {
-    #[error(transparent)]
-    Notes(#[from] std::io::Error),
-    #[error(transparent)]
-    Index(#[from] IndexError),
 }
 
 impl From<StoreError> for WriteError {
@@ -104,7 +92,7 @@ pub struct Reading {
 /// One scope's notes and their index.
 pub struct Memory {
     notes: Notes,
-    index: Box<dyn Index>,
+    index: Bm25,
 }
 
 impl fmt::Debug for Memory {
@@ -118,13 +106,11 @@ impl fmt::Debug for Memory {
 impl Memory {
     /// Reads the notes in `dir` and indexes them all: the index is
     /// derived, and rebuilt from the files on every open.
-    pub fn open(
-        dir: impl Into<PathBuf>,
-        mut index: Box<dyn Index>,
-    ) -> Result<Self, OpenError> {
+    pub fn open(dir: impl Into<PathBuf>) -> std::io::Result<Self> {
         let notes = Notes::open(dir)?;
+        let mut index = Bm25::new();
         for note in notes.iter() {
-            index.upsert(&note.id, &index_text(note))?;
+            index.upsert(&note.id, &index_text(note));
         }
         Ok(Self { notes, index })
     }
@@ -262,19 +248,18 @@ impl Memory {
             }
         };
         let written = self.notes.get(&target).expect("just written").clone();
-        self.index.upsert(&target, &index_text(&written))?;
+        self.index.upsert(&target, &index_text(&written));
         if let Some(old) = &supersedes
             && let Some(old) = self.notes.get(old)
         {
-            self.index.upsert(&old.id, &index_text(old))?;
+            self.index.upsert(&old.id, &index_text(old));
         }
         let query = format!("{} {}", written.title, written.description);
-        let nearest =
-            recall(&self.notes, self.index.as_ref(), &query, NEAREST + 1)?
-                .into_iter()
-                .filter(|hit| hit.id != target)
-                .take(NEAREST)
-                .collect();
+        let nearest = recall(&self.notes, &self.index, &query, NEAREST + 1)
+            .into_iter()
+            .filter(|hit| hit.id != target)
+            .take(NEAREST)
+            .collect();
         Ok(Written {
             id: target,
             action,
@@ -320,12 +305,8 @@ impl Memory {
     }
 
     /// Up to `budget` notes for `query`.
-    pub fn search(
-        &self,
-        query: &str,
-        budget: usize,
-    ) -> Result<Vec<Hit>, IndexError> {
-        recall(&self.notes, self.index.as_ref(), query, budget)
+    pub fn search(&self, query: &str, budget: usize) -> Vec<Hit> {
+        recall(&self.notes, &self.index, query, budget)
     }
 
     pub fn read(&self, id: &str) -> Option<Reading> {

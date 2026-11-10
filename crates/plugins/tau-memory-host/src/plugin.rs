@@ -48,7 +48,6 @@ use tau_ui_plugin::{AskSettings, PluginModel};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    index::IndexError,
     memory::{Action, Draft, Memory, Reading, WriteError, Written},
     note::{By, Link, LinkType, NoteType, Source},
     recall::Hit,
@@ -65,8 +64,6 @@ pub enum MemoryError {
     NoUserScope,
     #[error("the memory task stopped: {0}")]
     Stopped(#[from] tokio::task::JoinError),
-    #[error(transparent)]
-    Index(#[from] IndexError),
     #[error(transparent)]
     Store(#[from] StoreError),
     #[error(transparent)]
@@ -146,8 +143,8 @@ impl Scopes {
         }
     }
 
-    /// Runs `op` on a scope off the async threads: the index may be
-    /// docbert, whose model is synchronous.
+    /// Runs `op` on a scope off the async threads: it reads and writes
+    /// the note files.
     async fn with<T: Send + 'static>(
         scope: &Scope,
         op: impl FnOnce(&mut Memory) -> T + Send + 'static,
@@ -170,12 +167,12 @@ impl Scopes {
         let owned = query.to_owned();
         let mut hits =
             Self::with(&self.repo, move |memory| memory.search(&owned, limit))
-                .await??;
+                .await?;
         if let Some(user) = &self.user {
             let owned = query.to_owned();
             let theirs =
                 Self::with(user, move |memory| memory.search(&owned, limit))
-                    .await??;
+                    .await?;
             hits.extend(theirs.into_iter().map(|mut hit| {
                 hit.id = format!("{USER}{}", hit.id);
                 hit.via =

@@ -4,12 +4,8 @@
 //! half. The notes' shapes, its records and its pages are
 //! `tau-memory`'s (ADR 0030).
 
-pub mod colbert;
 #[cfg(feature = "demo")]
 pub mod demo;
-#[cfg(feature = "docbert")]
-pub mod docbert;
-pub mod eval;
 mod half;
 pub mod import;
 pub mod importers;
@@ -20,16 +16,8 @@ pub mod recall;
 pub mod safety;
 pub mod store;
 
-pub use half::{
-    Host,
-    Memories,
-    MemoryHost,
-    Search,
-    notebook,
-    now,
-    stale_on_turn,
-};
+pub use half::{Host, Memories, MemoryHost, notebook, now, stale_on_turn};
 pub use memory::Memory;
 pub use plugin::{MemoryPlugin, Scopes, Writer};
 // What it keeps and publishes, from the interface half.
-pub use tau_memory::{NAME, SEARCH, note, record};
+pub use tau_memory::{NAME, note, record};

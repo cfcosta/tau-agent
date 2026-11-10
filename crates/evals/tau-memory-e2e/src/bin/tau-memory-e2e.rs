@@ -44,8 +44,6 @@ Usage: tau-memory-e2e [options]
   --chatgpt ID      use this ChatGPT account's plan (from tau's sign-ins)
   --max-turns N     turns a run may take (default 40)
   --work DIR        where trial repositories are made (default: the temp dir)
-  --keywords        search memory and transcripts with BM25 even when built
-                    with docbert
   --list            list the scenarios and arms, and exit
   --help            print this, and exit
 
@@ -65,7 +63,6 @@ struct Options {
     chatgpt: Option<AccountId>,
     max_turns: u32,
     work: Option<PathBuf>,
-    keywords: bool,
     list: bool,
     help: bool,
 }
@@ -125,7 +122,6 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Options, CliError> {
         chatgpt: None,
         max_turns: arm::MAX_TURNS,
         work: None,
-        keywords: false,
         list: false,
         help: false,
     };
@@ -161,7 +157,6 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Options, CliError> {
                     value()?.parse().map_err(CliError::MaxTurns)?
             }
             "--work" => options.work = Some(value()?.into()),
-            "--keywords" => options.keywords = true,
             "--list" => options.list = true,
             "--help" | "-h" => options.help = true,
             other => return Err(CliError::Unknown(other.to_owned())),
@@ -245,13 +240,6 @@ fn run() -> Result<(), CliError> {
         .model
         .clone()
         .unwrap_or_else(|| access::DEFAULT_MODEL.to_owned());
-    #[cfg(feature = "docbert")]
-    if !options.keywords {
-        config.index = arm::semantic_index();
-        config.index_name = "colbert".into();
-    }
-    #[cfg(not(feature = "docbert"))]
-    let _ = options.keywords;
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -273,12 +261,11 @@ fn run() -> Result<(), CliError> {
     config.work = root.path().to_owned();
 
     eprintln!(
-        "{} trials ({} runs) on {} through {}, searching with {}; budget {}",
+        "{} trials ({} runs) on {} through {}; budget {}",
         config.planned(),
         config.planned() * 2,
         config.model,
         access.label(),
-        config.index_name,
         options
             .budget
             .map_or_else(|| "none".to_owned(), |usd| format!("${usd:.2}")),

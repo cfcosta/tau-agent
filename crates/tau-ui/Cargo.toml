@@ -50,7 +50,7 @@ tau-agents.workspace = true
 tau-luau-plugins.workspace = true
 tau-jev.workspace = true
 tau-mcp-host.workspace = true
-tau-memory-host = { workspace = true, features = ["docbert"] }
+tau-memory-host.workspace = true
 tau-store.workspace = true
 # The product shows `bash` output as a terminal: commands run under a
 # pseudo-terminal (docs/decisions/0010-terminal-rendering.md).

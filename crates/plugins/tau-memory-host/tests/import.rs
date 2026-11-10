@@ -49,7 +49,6 @@ use tau_memory::{
 use tau_memory_host::{
     Host,
     MemoryHost,
-    Search,
     import::{Admitted, Candidate, Proposals},
     importers::claude::encode,
     safety::REDACTED,
@@ -181,7 +180,6 @@ impl World {
             self.store.clone(),
             self.runtime.handle().clone(),
             Services::default()
-                .with(Search::Keywords)
                 .with(HomeDir(self.home()))
                 .with(model)
                 .with(self.jobs.clone()),
@@ -597,11 +595,7 @@ fn the_model_merges_what_both_tools_say_and_flags_disagreement() {
     // tau has a note the summary disagrees with.
     let repo_memory = world.tau.path().join("repos/shop/memory");
     {
-        let mut memory = tau_memory_host::Memory::open(
-            &repo_memory,
-            Box::new(tau_memory_host::index::Bm25::new()),
-        )
-        .unwrap();
+        let mut memory = tau_memory_host::Memory::open(&repo_memory).unwrap();
         memory
             .write(
                 tau_memory_host::memory::Draft {

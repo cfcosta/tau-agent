@@ -130,7 +130,6 @@
               cargoLock = {
                 lockFile = ./Cargo.lock;
                 outputHashes = {
-                  "docbert-pylate-1.0.0" = "sha256-Wp/raPgyXbaWaGHJIF6aVDLoVqgcA5636GaLHiXKrHc=";
                   "gpui-pre-mobile-0.1.0" = "sha256-OsZGo2xypJdkXHT0Fng1yVAuVG7ZeVnhWSFONTZ3IGk=";
                 };
               };

@@ -6,7 +6,6 @@ use std::collections::BTreeMap;
 
 use hegel::{TestCase, generators as gs, stateful::Pool};
 use tau_memory_host::{
-    index::Bm25,
     memory::{Action, Draft, INDEX_BUDGET, INDEX_ID, Memory, WriteError},
     note::{By, Link, LinkType, NoteType, Source, slug},
     safety::redact,
@@ -15,7 +14,7 @@ use tau_memory_host::{
 const SECRET: &str = "ghp_0123456789abcdefghijklmnopqrstuvwxyzAB";
 
 fn open(dir: &std::path::Path) -> Memory {
-    Memory::open(dir, Box::new(Bm25::new())).unwrap()
+    Memory::open(dir).unwrap()
 }
 
 fn draft(title: String, body: String) -> Draft {
@@ -274,7 +273,7 @@ impl Scope {
     #[invariant(always_run)]
     fn every_word_finds_its_note_first(&self, _tc: TestCase) {
         for (id, word) in &self.words {
-            let hits = self.memory.search(word, 3).unwrap();
+            let hits = self.memory.search(word, 3);
             assert_eq!(
                 hits.first().map(|hit| hit.id.as_str()),
                 Some(id.as_str()),
@@ -287,7 +286,7 @@ impl Scope {
     #[invariant(always_run)]
     fn a_retired_word_finds_nothing(&self, _tc: TestCase) {
         for (id, word) in &self.retired {
-            let hits = self.memory.search(word, 3).unwrap();
+            let hits = self.memory.search(word, 3);
             assert!(hits.iter().all(|hit| hit.id != *id), "{word}: {hits:?}");
         }
     }
@@ -365,7 +364,7 @@ fn a_replacement_with_the_same_title_gets_its_own_id() {
     assert_eq!(written.action, Action::Superseded("retry-after".into()));
     assert!(memory.notes().get("retry-after").unwrap().is_superseded());
     // Both are found; the current one first.
-    let hits = memory.search("retry after", 3).unwrap();
+    let hits = memory.search("retry after", 3);
     assert_eq!(hits[0].id, "retry-after-2");
     assert!(
         hits.iter()

@@ -21,8 +21,6 @@ use tau_memory_host::{
     Memory,
     MemoryPlugin,
     Scopes,
-    Search,
-    index::Bm25,
     memory::{Draft, WriteError},
     note::{By, Link, LinkType, NoteType, Source},
     notebook as catalog,
@@ -109,7 +107,7 @@ fn draft_unprinted(tc: &TestCase) -> Draft {
 #[hegel::test(test_cases = 100)]
 fn the_screen_shows_current_notes_as_they_are(tc: TestCase) {
     let dir = tempfile::tempdir().unwrap();
-    let mut memory = Memory::open(dir.path(), Box::new(Bm25::new())).unwrap();
+    let mut memory = Memory::open(dir.path()).unwrap();
     let mut clock = 1_000;
     for _ in 0..tc.draw(gs::integers::<usize>().min_value(1).max_value(8)) {
         clock += 1;
@@ -299,7 +297,7 @@ fn commits_mark_only_notes_written_before_the_previous_commit(tc: TestCase) {
     let clock = Arc::new(AtomicU64::new(1_000));
     let read = clock.clone();
     let scopes = Scopes::new(
-        Memory::open(dir.path(), Box::new(Bm25::new())).unwrap(),
+        Memory::open(dir.path()).unwrap(),
         None,
         Arc::new(move || read.load(Ordering::SeqCst)),
     );
@@ -348,7 +346,7 @@ fn commits_mark_only_notes_written_before_the_previous_commit(tc: TestCase) {
 #[test]
 fn a_scope_opens_once() {
     let data = tempfile::tempdir().unwrap();
-    let memories = Memories::new(Search::Keywords);
+    let memories = Memories::new();
     let a = memories.scope(data.path()).unwrap();
     let b = memories.scope(data.path()).unwrap();
     assert!(std::sync::Arc::ptr_eq(&a, &b));

@@ -9,7 +9,7 @@ use hegel::{
     generators::{self as gs, Generator as _},
 };
 use tau_memory_host::{
-    index::{B, Bm25, Index, IndexError, K1, index_text},
+    index::{B, Bm25, K1, index_text},
     note::{By, Note, NoteType, Source},
     recall::{SUPERSEDED_WEIGHT, linked, recall},
     store::Notes,
@@ -80,15 +80,15 @@ fn bm25_scores_as_its_formula(tc: TestCase) {
             .to_owned();
         if tc.draw(gs::booleans()) || !docs.contains_key(&id) {
             let text = tc.draw(words_text());
-            index.upsert(&id, &text).unwrap();
+            index.upsert(&id, &text);
             docs.insert(id, text);
         } else {
-            index.remove(&id).unwrap();
+            index.remove(&id);
             docs.remove(&id);
         }
     }
     let query = tc.draw(words_text());
-    let got = index.search(&query, 100).unwrap();
+    let got = index.search(&query, 100);
     let want = if docs.is_empty() {
         Vec::new()
     } else {
@@ -126,7 +126,7 @@ fn setup(tc: &TestCase, dir: &std::path::Path) -> (Notes, Bm25) {
         }
         note.valid_to = tc.draw(gs::optional(gs::just(5_u64)));
         if notes.create(note.clone()).is_ok() {
-            index.upsert(&note.id, &index_text(&note)).unwrap();
+            index.upsert(&note.id, &index_text(&note));
         }
     }
     (notes, index)
@@ -137,20 +137,19 @@ fn setup(tc: &TestCase, dir: &std::path::Path) -> (Notes, Bm25) {
 /// first and ties by id.
 fn weighted(
     notes: &Notes,
-    index: &dyn Index,
+    index: &Bm25,
     query: &str,
     limit: usize,
 ) -> Vec<String> {
     let mut seeds: Vec<(String, f32)> = index
         .search(query, limit)
-        .unwrap()
         .into_iter()
         .filter_map(|(id, score)| {
             let note = notes.get(&id)?;
-            let score = match (note.is_superseded(), score >= 0.0) {
-                (false, _) => score,
-                (true, true) => score * SUPERSEDED_WEIGHT,
-                (true, false) => score / SUPERSEDED_WEIGHT,
+            let score = if note.is_superseded() {
+                score * SUPERSEDED_WEIGHT
+            } else {
+                score
             };
             Some((id, score))
         })
@@ -171,7 +170,7 @@ fn recall_keeps_its_budget_and_follows_links(tc: TestCase) {
         gs::integers::<usize>().max_value(3),
         gs::integers::<usize>().max_value(6),
     ));
-    let hits = recall(&notes, &index, &query, budget).unwrap();
+    let hits = recall(&notes, &index, &query, budget);
 
     assert!(hits.len() <= budget);
     let ids: Vec<&str> = hits.iter().map(|hit| hit.id.as_str()).collect();
@@ -227,35 +226,9 @@ fn recall_keeps_its_budget_and_follows_links(tc: TestCase) {
     }
 }
 
-/// An index that answers every query with the same drawn scores, which
-/// may be negative, as MaxSim's can: the dot products of unit vectors.
-struct Scored(Vec<(String, f32)>);
-
-impl Index for Scored {
-    fn upsert(&mut self, _: &str, _: &str) -> Result<(), IndexError> {
-        Ok(())
-    }
-
-    fn remove(&mut self, _: &str) -> Result<(), IndexError> {
-        Ok(())
-    }
-
-    fn search(
-        &self,
-        _: &str,
-        limit: usize,
-    ) -> Result<Vec<(String, f32)>, IndexError> {
-        let mut hits = self.0.clone();
-        hits.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-        hits.truncate(limit);
-        Ok(hits)
-    }
-}
-
 /// The seeds recall lists for `query`, in order.
-fn seeds_of(notes: &Notes, index: &dyn Index, query: &str) -> Vec<String> {
+fn seeds_of(notes: &Notes, index: &Bm25, query: &str) -> Vec<String> {
     recall(notes, index, query, 12)
-        .unwrap()
         .into_iter()
         .filter(|hit| hit.via.is_none())
         .map(|hit| hit.id)
@@ -264,12 +237,7 @@ fn seeds_of(notes: &Notes, index: &dyn Index, query: &str) -> Vec<String> {
 
 /// Supersedes `id`, and checks it did not rise among `index`'s seeds,
 /// and the others kept their order.
-fn supersede_and_check(
-    notes: &mut Notes,
-    index: &dyn Index,
-    query: &str,
-    id: &str,
-) {
+fn supersede_and_check(notes: &mut Notes, index: &Bm25, query: &str, id: &str) {
     let before = seeds_of(notes, index, query);
     let mut note = notes.get(id).unwrap().clone();
     note.valid_to = Some(9);
@@ -284,35 +252,20 @@ fn supersede_and_check(
 }
 
 /// Superseding a note never raises it, and leaves the others in their
-/// order, under BM25 or an index whose scores may be negative.
+/// order.
 #[hegel::test(test_cases = 200)]
 fn superseding_a_note_never_raises_it(tc: TestCase) {
     let dir = tempfile::tempdir().unwrap();
-    let (mut notes, bm25) = setup(&tc, dir.path());
+    let (mut notes, index) = setup(&tc, dir.path());
     let query = tc.draw(words_text());
-    let index: Box<dyn Index> = if tc.draw(gs::booleans()) {
-        tc.event("bm25");
-        Box::new(bm25)
-    } else {
-        tc.event("scored");
-        let scores = notes
-            .iter()
-            .map(|note| {
-                let score =
-                    tc.draw(gs::floats::<f32>().min_value(-5.0).max_value(5.0));
-                (note.id.clone(), score)
-            })
-            .collect();
-        Box::new(Scored(scores))
-    };
     // Any current seed: the first cannot rise, so it proves nothing alone.
-    let current: Vec<String> = seeds_of(&notes, index.as_ref(), &query)
+    let current: Vec<String> = seeds_of(&notes, &index, &query)
         .into_iter()
         .filter(|id| !notes.get(id).unwrap().is_superseded())
         .collect();
     tc.assume(!current.is_empty());
     let id = tc.draw(gs::sampled_from(current));
-    supersede_and_check(&mut notes, index.as_ref(), &query, &id);
+    supersede_and_check(&mut notes, &index, &query, &id);
 }
 
 /// A note with nothing but an id and a description.
@@ -334,27 +287,6 @@ fn plain(id: &str, description: &str) -> Note {
     }
 }
 
-/// Superseding never raises a note whose score is negative: halving it
-/// would. The scores are pinned where that went wrong.
-#[hegel::test(test_cases = 200)]
-#[hegel::explicit_test_case(scores = vec![-1.0_f32, -1.5], pick = 1_usize)]
-fn superseding_never_raises_a_note_whatever_its_score(tc: TestCase) {
-    let scores: Vec<f32> = tc.draw(
-        gs::vecs(gs::floats::<f32>().min_value(-5.0).max_value(5.0))
-            .min_size(1)
-            .max_size(5),
-    );
-    let pick = tc.draw(gs::integers::<usize>().max_value(scores.len() - 1));
-    let dir = tempfile::tempdir().unwrap();
-    let mut notes = Notes::open(dir.path()).unwrap();
-    let ids: Vec<String> = (0..scores.len()).map(|n| format!("n{n}")).collect();
-    for id in &ids {
-        notes.create(plain(id, "a note")).unwrap();
-    }
-    let index = Scored(ids.iter().cloned().zip(scores).collect());
-    supersede_and_check(&mut notes, &index, "q", &ids[pick]);
-}
-
 /// A word only one note holds finds that note first, with the line that
 /// holds it, and nothing else, as the snippet.
 #[hegel::test(test_cases = 100)]
@@ -370,7 +302,7 @@ fn a_word_only_one_note_holds_finds_it_first(tc: TestCase) {
     let mut index = Bm25::new();
     for note in drawn {
         if notes.create(note.clone()).is_ok() {
-            index.upsert(&note.id, &index_text(&note)).unwrap();
+            index.upsert(&note.id, &index_text(&note));
         }
     }
     let ids: Vec<String> = notes.iter().map(|note| note.id.clone()).collect();
@@ -379,9 +311,9 @@ fn a_word_only_one_note_holds_finds_it_first(tc: TestCase) {
     note.body.push_str("\nzanzibar_only_here");
     note.valid_to = None;
     notes.update(note.clone()).unwrap();
-    index.upsert(&note.id, &index_text(&note)).unwrap();
+    index.upsert(&note.id, &index_text(&note));
     // The word alone: any other word could be one a drawn note holds.
-    let hits = recall(&notes, &index, "zanzibar_only_here", 3).unwrap();
+    let hits = recall(&notes, &index, "zanzibar_only_here", 3);
     assert_eq!(hits[0].id, note.id);
     assert_eq!(hits[0].snippet, "zanzibar_only_here");
 }
@@ -439,8 +371,8 @@ fn a_snippet_is_the_line_holding_most_of_the_query(tc: TestCase) {
     note.body = body;
     notes.create(note.clone()).unwrap();
     let mut index = Bm25::new();
-    index.upsert(&note.id, &index_text(&note)).unwrap();
-    let hits = recall(&notes, &index, &query, 3).unwrap();
+    index.upsert(&note.id, &index_text(&note));
+    let hits = recall(&notes, &index, &query, 3);
     assert_eq!(hits.len(), 1);
 
     let terms: Vec<String> = tau_memory_host::index::words(&query).collect();

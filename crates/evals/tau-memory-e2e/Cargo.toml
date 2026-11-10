@@ -8,12 +8,6 @@ repository.workspace = true
 license.workspace = true
 publish.workspace = true
 
-[features]
-default = []
-# Memory and transcript search with docbert's ColBERT model, as the app
-# searches; without it, BM25.
-docbert = ["tau-memory-host/docbert"]
-
 [dependencies]
 tau-store-sqlite.workspace = true
 async-trait.workspace = true

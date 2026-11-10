@@ -115,7 +115,6 @@ impl DemoHost {
         let skills = dir.path().join("skills");
         tau_skills::demo::seed(&skills)?;
         let services = Services::default()
-            .with(tau_memory_host::Search::Keywords)
             .with(saved)
             .with(ConfigDir(dir.path().join("config")))
             .with(tau_skills::SkillsDir(skills))

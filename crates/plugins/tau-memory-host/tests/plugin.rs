@@ -22,15 +22,13 @@ use tau_memory_host::{
     Memory,
     MemoryPlugin,
     Scopes,
-    index::Bm25,
     memory::Draft,
     note::{By, Link, LinkType, NoteType, Source},
 };
 use tau_testing::{block_on_io, scripted::ScriptedModel};
 
 fn scopes(dir: &std::path::Path, user: bool) -> Scopes {
-    let open =
-        |sub: &str| Memory::open(dir.join(sub), Box::new(Bm25::new())).unwrap();
+    let open = |sub: &str| Memory::open(dir.join(sub)).unwrap();
     Scopes::new(open("repo"), user.then(|| open("user")), Arc::new(|| 1_000))
 }
 

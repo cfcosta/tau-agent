@@ -6,8 +6,7 @@
 //!
 //! A repository's notes live in tau's directory for it, beside its
 //! rules; the user's, across repositories, in tau's data directory.
-//! Embeddings are cached beside each. Every scope is opened once and
-//! shared by every run.
+//! Every scope is opened once and shared by every run.
 //!
 //! Everything it draws is a view tree (ADR 0045); its buttons and
 //! switches name their tree's action ([`BANNER`], [`REVIEW`], [`SETUP`],
@@ -290,7 +289,6 @@ impl UiPlugin for MemoryUi {
             ])
             .services(&[
                 tau_ui_plugin::services::names::TURN_HOOKS,
-                crate::SEARCH,
                 tau_ui_plugin::services::names::MODEL,
             ])
             .reads(READS)

@@ -181,8 +181,6 @@ pub struct Host {
     /// Values a test gives every plugin, beside the host's own
     /// ([`Host::with_service`]).
     given: Services,
-    /// How tau-memory searches notes: by meaning in the app, by keywords
-    /// in tests, where no model is loaded.
     /// The tools plugins offer outside any run: an agent's polls call
     /// them (ADR 0037).
     outside_tools: tau_ui_plugin::OutsideTools,

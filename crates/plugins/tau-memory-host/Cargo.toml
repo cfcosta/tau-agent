@@ -10,19 +10,11 @@ publish.workspace = true
 
 [features]
 default = []
-# docbert's ColBERT model as the encoder.
-docbert = ["dep:docbert-pylate", "dep:candle-core"]
 # The notes tau-ui's demo shows.
 demo = []
 
-[[bin]]
-name = "tau-memory-eval"
-required-features = ["docbert"]
-
 [dependencies]
 anyhow.workspace = true
-candle-core = { workspace = true, optional = true }
-docbert-pylate = { workspace = true, optional = true }
 async-trait.workspace = true
 futures-util.workspace = true
 serde.workspace = true

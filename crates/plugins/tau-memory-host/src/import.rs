@@ -72,7 +72,7 @@ use crate::{
     NAME,
     half::{Memories, repo_dir},
     importers::{self, Item, Read, Roots, Scan, chunks},
-    index::{Bm25, Index as _},
+    index::Bm25,
     memory::{Draft, WriteError},
     plugin::{MemoryError, Outside, Scope as Shared, Writer, write_notes_from},
     safety,
@@ -1354,7 +1354,6 @@ impl TypedTool for ProposeSearch {
                 scope.lock().expect("not poisoned").search(&query, HITS)
             })
             .await
-            .map_err(MemoryError::from)?
             .map_err(MemoryError::from)?;
             for hit in
                 hits.into_iter().filter(|hit| hit.kind != NoteType::Index)
@@ -1378,7 +1377,7 @@ impl TypedTool for ProposeSearch {
             .collect();
         let mut index = Bm25::new();
         for proposal in &mine {
-            let _ = index.upsert(
+            index.upsert(
                 &proposal.id,
                 &format!(
                     "{} {} {}",
@@ -1386,7 +1385,7 @@ impl TypedTool for ProposeSearch {
                 ),
             );
         }
-        for (id, _) in index.search(&args.query, HITS).unwrap_or_default() {
+        for (id, _) in index.search(&args.query, HITS) {
             if let Some(proposal) = mine.iter().find(|p| p.id == id) {
                 lines.push(format!(
                     "- `{}` [proposed {}] {} — {}",

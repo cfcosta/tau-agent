@@ -1,40 +1,13 @@
-//! What finds notes by their words. [`Index`] is the seam: docbert
-//! (BM25 fused with ColBERT) behind it in the app, and [`Bm25`], a small
-//! in-process keyword index, where docbert's model is not wanted, as in
-//! tests.
+//! What finds notes by their words: [`Bm25`], a small in-process
+//! keyword index (ADR 0052).
 //!
-//! An index holds one text per note ([`index_text`]) and answers a query
-//! with note ids, best first. It is derived: rebuilt from the notes at
-//! any time.
+//! The index holds one text per note ([`index_text`]) and answers a
+//! query with note ids, best first. It is derived: rebuilt from the notes
+//! at any time.
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::{colbert::EncoderError, note::Note};
-
-/// Why an index could not take a note or answer a query.
-#[derive(Debug, thiserror::Error)]
-pub enum IndexError {
-    #[error(transparent)]
-    Encoder(#[from] EncoderError),
-    #[error("the encoder returned nothing")]
-    NoTokens,
-}
-
-/// Finds notes by what they say.
-pub trait Index: Send {
-    /// Adds a note's text, or replaces it.
-    fn upsert(&mut self, id: &str, text: &str) -> Result<(), IndexError>;
-
-    fn remove(&mut self, id: &str) -> Result<(), IndexError>;
-
-    /// Up to `limit` note ids for `query`, best first, with a score that
-    /// only orders hits within one answer.
-    fn search(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<(String, f32)>, IndexError>;
-}
+use crate::note::Note;
 
 /// What an index holds for a note: its title, description, tags and
 /// body.
@@ -75,7 +48,7 @@ impl Bm25 {
         Self::default()
     }
 
-    fn forget(&mut self, id: &str) {
+    pub fn remove(&mut self, id: &str) {
         if let Some((counts, len)) = self.docs.remove(id) {
             self.total_len -= u64::from(len);
             for word in counts.keys() {
@@ -88,11 +61,10 @@ impl Bm25 {
             }
         }
     }
-}
 
-impl Index for Bm25 {
-    fn upsert(&mut self, id: &str, text: &str) -> Result<(), IndexError> {
-        self.forget(id);
+    /// Adds a note's text, or replaces it.
+    pub fn upsert(&mut self, id: &str, text: &str) {
+        self.remove(id);
         let mut counts: HashMap<String, u32> = HashMap::new();
         let mut len = 0;
         for word in words(text) {
@@ -104,22 +76,14 @@ impl Index for Bm25 {
         }
         self.total_len += u64::from(len);
         self.docs.insert(id.to_owned(), (counts, len));
-        Ok(())
     }
 
-    fn remove(&mut self, id: &str) -> Result<(), IndexError> {
-        self.forget(id);
-        Ok(())
-    }
-
-    fn search(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<(String, f32)>, IndexError> {
+    /// Up to `limit` note ids for `query`, best first, with a score that
+    /// only orders hits within one answer.
+    pub fn search(&self, query: &str, limit: usize) -> Vec<(String, f32)> {
         let n = self.docs.len() as f32;
         if n == 0.0 {
-            return Ok(Vec::new());
+            return Vec::new();
         }
         let avg = self.total_len as f32 / n;
         let mut terms: Vec<String> = words(query).collect();
@@ -146,6 +110,6 @@ impl Index for Bm25 {
         // Best first; ties by id, so an answer never depends on order.
         hits.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         hits.truncate(limit);
-        Ok(hits)
+        hits
     }
 }

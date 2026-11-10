@@ -27,7 +27,7 @@ use tau_ai::{
     responses::request::Settings,
 };
 use tau_luau_plugins_host::agent::{Active, LuauPlugins};
-use tau_memory_host::{Memory, MemoryPlugin, Scopes, index::Index};
+use tau_memory_host::{Memory, MemoryPlugin, Scopes, index::Bm25};
 use tau_tools_host::{path::Root, plugin::CodingTools};
 
 use crate::E2eError;
@@ -189,38 +189,10 @@ pub fn now() -> u64 {
         .map_or(0, |since| since.as_millis() as u64)
 }
 
-/// Makes the index for a scope or a transcript; given a directory it may
-/// cache embeddings in.
-pub type IndexFactory =
-    Arc<dyn Fn(&Path) -> Box<dyn Index> + Send + Sync + 'static>;
-
-/// BM25, what memory searches with when there is no model.
-pub fn keyword_index() -> IndexFactory {
-    Arc::new(|_| Box::new(tau_memory_host::index::Bm25::new()))
-}
-
-/// ColBERT with docbert's model, as the app searches; the model loads
-/// once, on first use, and is shared by every index.
-#[cfg(feature = "docbert")]
-pub fn semantic_index() -> IndexFactory {
-    use tau_memory_host::{
-        colbert::{Colbert, Shared},
-        docbert::Docbert,
-    };
-    let encoder = Shared::new(Docbert::new());
-    Arc::new(move |cache| {
-        Box::new(Colbert::new(encoder.clone()).cached(cache.to_owned()))
-    })
-}
-
 /// A fresh repository scope in `dir`, no user scope: the plugin both of
 /// a trial's runs share.
-pub fn memory_plugin(
-    dir: &Path,
-    index: &IndexFactory,
-) -> Result<MemoryPlugin, E2eError> {
-    let cache = dir.with_file_name("memory-embeddings");
-    let memory = Memory::open(dir, index(&cache))?;
+pub fn memory_plugin(dir: &Path) -> Result<MemoryPlugin, E2eError> {
+    let memory = Memory::open(dir)?;
     Ok(MemoryPlugin::new(Scopes::new(memory, None, Arc::new(now))))
 }
 
@@ -291,17 +263,14 @@ fn cut(text: &str, chars: usize) -> String {
 /// The second run's context in the `transcripts` arm: the chunks that
 /// best match its task, best first, fenced as data like tau-memory's
 /// start context. `None` when nothing matches.
-pub fn transcript_context(
-    chunks: &[String],
-    task: &str,
-    mut index: Box<dyn Index>,
-) -> Result<Option<String>, E2eError> {
+pub fn transcript_context(chunks: &[String], task: &str) -> Option<String> {
+    let mut index = Bm25::new();
     for (n, chunk) in chunks.iter().enumerate() {
-        index.upsert(&format!("chunk-{n}"), chunk)?;
+        index.upsert(&format!("chunk-{n}"), chunk);
     }
-    let hits = index.search(task, TRANSCRIPT_HITS)?;
+    let hits = index.search(task, TRANSCRIPT_HITS);
     if hits.is_empty() {
-        return Ok(None);
+        return None;
     }
     let mut text = String::from(
         "<transcript note=\"excerpts from an earlier run on this \
@@ -320,7 +289,7 @@ pub fn transcript_context(
         ));
     }
     text.push_str("</transcript>");
-    Ok(Some(text))
+    Some(text)
 }
 
 /// Where a finished run's transcript is kept.

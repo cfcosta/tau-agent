@@ -35,7 +35,7 @@ tau-luau-plugins.workspace = true
 tau-mcp = { workspace = true, features = ["demo"] }
 tau-mcp-host.workspace = true
 tau-memory.workspace = true
-tau-memory-host = { workspace = true, features = ["docbert", "demo"] }
+tau-memory-host = { workspace = true, features = ["demo"] }
 tau-phones.workspace = true
 tau-skills = { workspace = true, features = ["demo"] }
 tau-tools.workspace = true

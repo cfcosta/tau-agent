@@ -4,8 +4,6 @@
 
 mod common;
 
-mod colbert;
-mod eval;
 mod import;
 mod importers;
 mod memory;
