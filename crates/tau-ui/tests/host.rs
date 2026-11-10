@@ -13,7 +13,6 @@ use tau_agent::{
     agent::Agent,
     event::{RunEvent, StopReason},
 };
-use tau_github_host::Token;
 use tau_store::Store;
 use tau_testing::{git::git, scripted::ScriptedModel};
 use tau_ui::{
@@ -28,7 +27,7 @@ use tau_ui_remote::{
 use tau_vcs_host::{Identity, Project};
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::common;
+use crate::common::{self, forge::FakeForge};
 
 /// The repository a host under test lists, made from the checkout it
 /// is given, as a clone from GitHub would be.
@@ -1690,28 +1689,11 @@ fn served(remote: &Path, full_name: &str) -> std::path::PathBuf {
     src
 }
 
-/// `host`, reaching GitHub's web at `web` and its API nowhere.
-fn with_github_at(host: Host, web: &str) -> Host {
-    let forge = tau_github_host::GitHub::new(
-        &host.credentials().dir,
-        &tau_github_host::Endpoints {
-            web: web.to_owned(),
-            api: "http://127.0.0.1:9".into(),
-        },
-    );
-    host.with_forge(std::sync::Arc::new(forge))
-}
-
 /// `host`, signed in to GitHub and reaching it at `remote`.
 fn on_github(host: Host, remote: &Path) -> Host {
-    let token = Token {
-        token: "ghu_token".into(),
-        user: "cfcosta".into(),
-        expires_at: None,
-    };
-    tau_testing::block_on_io(token.save(&host_credentials(&host).dir)).unwrap();
     let web = format!("file://{}", remote.display());
-    with_github_at(host, &web)
+    let forge = FakeForge::at(web).signed_in("cfcosta");
+    host.with_forge(std::sync::Arc::new(forge))
 }
 
 #[test]
@@ -1793,6 +1775,10 @@ fn repositories_are_listed_and_remembered() {
 /// where a clone from GitHub is fetched from.
 #[test]
 fn a_listed_repository_keeps_its_id() {
+    // Every plugin's host half, as the app has them: tau.forge is
+    // tau-luau-plugins' (tau-github is a Luau plugin), there as tau
+    // starts and lists what it cloned, before the test's own forge.
+    tau::install();
     let data = tempfile::tempdir().unwrap();
     let remote = tempfile::tempdir().unwrap();
     served(remote.path(), "a/proj");
@@ -1971,21 +1957,17 @@ fn github_repositories_clone_into_tau() {
     let src = served(remote.path(), "cfcosta/hello");
 
     let config = config_on(data.path());
-    let credentials = config.credentials.clone();
     let (host, _events) = Host::new(config).unwrap();
     let web = format!("file://{}", remote.path().display());
-    let host = with_github_at(host, &web);
+    // Signed out: the forge's refusal is what the clone says.
+    let forge = std::sync::Arc::new(FakeForge::at(web));
+    let host = host.with_forge(forge.clone());
     let error = host
         .block_on(host.clone_from_forge("cfcosta/hello"))
         .unwrap_err();
     assert!(error.to_string().contains("Sign in to GitHub"), "{error}");
 
-    let token = Token {
-        token: "ghu_token".into(),
-        user: "cfcosta".into(),
-        expires_at: None,
-    };
-    tau_testing::block_on_io(token.save(&credentials.dir)).unwrap();
+    forge.sign_in("cfcosta");
     assert!(host.block_on(host.clone_from_forge("../escape")).is_err());
     assert!(host.block_on(host.clone_from_forge("cfcosta/..")).is_err());
     let repo = host
@@ -2106,11 +2088,6 @@ fn a_finished_run_goes_on_in_its_workspace() {
         })
         .collect();
     assert_eq!(prompts, ["write a.txt", "now b.txt"]);
-}
-
-/// The credentials directory the test hosts use.
-fn host_credentials(host: &Host) -> tau_ui::accounts::Credentials {
-    host.credentials().clone()
 }
 
 #[test]

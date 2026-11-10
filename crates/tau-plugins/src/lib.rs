@@ -13,7 +13,6 @@ pub fn plugins() -> Registry {
         .with(tau_chatgpt::ChatGptUi)
         .with(tau_codemode::CodemodeUi)
         .with(tau_direnv::DirenvUi)
-        .with(tau_github::GitHubUi)
         .with(tau_jev::JevUi)
         .with(tau_luau_plugins::LuauPluginsUi)
         .with(tau_mcp::McpUi)
@@ -26,12 +25,12 @@ pub fn plugins() -> Registry {
         // Who fills each slot first when several plugins can, until the
         // person picks another on the Plugins screen (ADR 0045).
         .slot_order(&tau_ui_plugin::vcs::VCS, &[tau_vcs::ui::NAME])
-        .slot_order(&tau_ui_plugin::forge::FORGE, &[tau_github::NAME])
         .slot_order(&tau_ui_plugin::provider::PROVIDER, &[tau_chatgpt::NAME])
-        // tau-titles, tau-compaction-chain and tau-compaction are Luau
-        // (ADR 0050): the slots are tau-luau-plugins', which fills them
-        // for them.
+        // tau-titles, tau-compaction-chain, tau-compaction and tau-github
+        // are Luau (ADR 0050): the slots are tau-luau-plugins', which
+        // fills them for them.
         .slot_order(&tau_ui_plugin::title::TITLE, &[tau_luau_plugins::NAME])
+        .slot_order(&tau_ui_plugin::forge::FORGE, &[tau_luau_plugins::NAME])
         .slot_order(&tau_ui_plugin::notify::NOTIFY, &[tau_notify::NAME])
         .slot_order(
             &tau_ui_plugin::compaction::COMPACTION,

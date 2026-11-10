@@ -3,7 +3,6 @@
 //! costs (docs/reference/testing.md, "One binary per crate").
 
 mod common;
-mod support;
 #[path = "common/sync.rs"]
 mod sync;
 

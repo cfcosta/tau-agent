@@ -292,6 +292,17 @@ person types each secret's value on the plugin's settings pane, kept for
 this plugin alone. Redirects are not followed. A new host or secret is
 new reach.
 
+`ctx.http.request` is the same, and a test fakes it with
+`spec.http = function(request) return { status, json, body } end`;
+`ctx.http.secret` is `http.secret`. A sign-in's token never reaches the
+plugin: `keep = { secret = "github", from = "access_token" }` on a
+request saves that field of the JSON that comes back as the secret and
+takes it out of the answer (`kept` says it did), and `ui.secret(name)`
+is an input whose text goes straight to the store.
+`ctx.secrets.has(name)` says whether one is set, never its value, and
+`ctx.secrets.forget(name)` empties it: signing out. A test gives
+`spec.secrets = { github = true }` and reads `run.secrets`.
+
 ### `ctx`
 
 | Field                                          | What it is                                                                                                                                                                                     |
@@ -611,7 +622,7 @@ between `---` lines at its start: `{ keys, body }`, each key
 `boolean`, `null` or `other`, `text` the value as written), or
 `{ error }` when it has none or is no mapping.
 
-### The app: `app`, `page` and listed commands
+### The app: `app`, `page`, `setup`, `models` and listed commands
 
 What a plugin keeps of the whole app, outside any run:
 
@@ -637,6 +648,16 @@ actions, run with no run and no repository; `tau.reveal` shows a folder
 composer's commands by name, and `run` carries one out. A test reaches
 them with `run:app()`, `run:app_page(app)` and `run:commands(app)`, its
 `spec.roots` saying where each folder is.
+
+`setup(app)` gives one of tau's own plugins' step of first-run setup,
+`{ step, at, title, heading, detail, body }` (`at` is `"model"`,
+`"before_repositories"` or `"after_repositories"`), and `models(app)` its
+section of the Models screen. Their buttons may name `tau.copy` (`text`,
+and a `url` to open after), `tau.open_url` (an `https` one) and
+`tau.setup_done`. Outside a repository, `ctx.store` in `app`, a page of
+the app, its actions and a job is the plugin's store of the app. A test
+reaches them with `run:setup(app)`, `run:models(app)`, and a forge's
+hooks with `run:forge(name, input)`.
 
 ### Settings
 

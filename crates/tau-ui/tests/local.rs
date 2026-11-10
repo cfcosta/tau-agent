@@ -30,7 +30,6 @@ use gpui::{TestAppContext, VisualTestContext};
 use hegel::{TestCase, generators as gs};
 use serde_json::json;
 use tau_agent::{event::RunEvent, tool::RunId};
-use tau_github_host::Token;
 use tau_testing::{git::git, scripted::ScriptedModel};
 use tau_ui::{
     accounts::Credentials,
@@ -48,7 +47,7 @@ use tau_vcs_host::{
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::support;
+use crate::common::forge::FakeForge;
 
 const WAIT: Duration = Duration::from_secs(60);
 /// The GitHub repository an `origin` on GitHub names.
@@ -144,13 +143,13 @@ impl World {
 }
 
 /// What outlives a host: the person's folder, tau's store, list and
-/// directories, and a fake GitHub.
+/// directories, and whether GitHub lets tau's app push.
 struct Disk {
     _dir: tempfile::TempDir,
     root: PathBuf,
     folder: PathBuf,
     bare: PathBuf,
-    github: String,
+    push: bool,
 }
 
 impl Disk {
@@ -198,33 +197,23 @@ impl Disk {
             }
         }
         let push = matches!(world.origin, Origin::GitHub { push: true });
-        let (github, _) = support::fake(move |line| match line {
-            "GET /repos/octo/hello" => (
-                200,
-                json!({ "permissions": { "pull": true, "push": push } }),
-            ),
-            _ => (404, json!({})),
-        });
         for dir in ["home", "config/jj"] {
             std::fs::create_dir_all(root.join(dir)).unwrap();
         }
-        let disk = Self {
+        Self {
             _dir: dir,
             root,
             folder,
             bare,
-            github,
-        };
-        tau_testing::block_on_io(
-            Token {
-                token: "ghu_token".into(),
-                user: "octo".into(),
-                expires_at: None,
-            }
-            .save(&disk.credentials().dir),
-        )
-        .unwrap();
-        disk
+            push,
+        }
+    }
+
+    /// GitHub, signed in as `octo`, pushing to `octo/hello` when the
+    /// world says it may; it clones from nowhere here.
+    fn forge(&self) -> FakeForge {
+        let web = format!("file://{}", self.root.join("github").display());
+        FakeForge::at(web).signed_in("octo").pushing(self.push)
     }
 
     /// tau's identity under the person's jj config directory and home,
@@ -286,13 +275,7 @@ impl Disk {
                 tau_memory::NAME,
                 json!({ "after_each_run": false }),
             )
-            .with_forge(std::sync::Arc::new(tau_github_host::GitHub::new(
-                self.credentials().dir,
-                &tau_github_host::Endpoints {
-                    web: self.github.clone(),
-                    api: self.github.clone(),
-                },
-            )))
+            .with_forge(std::sync::Arc::new(self.forge()))
             .with_listed_repos()
             .unwrap();
         (host, events)

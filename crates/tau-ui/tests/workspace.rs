@@ -9,7 +9,7 @@
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use tau_agent::event::StopReason;
 use tau_demo as demo;
-use tau_github::{GitHubData, SignIn};
+use tau_demo::github::{self, SignIn};
 use tau_ui_plugin::PluginValue;
 use tau_ui_remote::{
     Workspace,
@@ -58,19 +58,30 @@ fn open(
     (workspace, visual, events)
 }
 
-/// `ws`'s catalog with tau-github's host half saying how the sign-in
-/// stands, and the forge signed in when it says so.
+/// `ws`'s catalog with tau-github, among tau-luau-plugins' entries,
+/// keeping of the app what the real plugin does with its sign-in as
+/// `state`, and the forge signed in when it says so.
 fn github_says(
     ws: &mut Workspace,
-    sign_in: SignIn,
+    state: github::State,
     cx: &mut gpui::Context<Workspace>,
 ) {
+    let entry = tau_testing::block_on_io(async {
+        let plugin = github::GitHub::load().await?;
+        anyhow::Ok(plugin.entry(plugin.app_view(state).await?))
+    })
+    .expect("tau-github draws its sign-in");
     let mut catalog = ws.catalog().clone();
-    catalog.pull_requests = matches!(sign_in, SignIn::SignedIn { .. });
-    catalog.plugin_data.insert(
-        tau_github::NAME.into(),
-        PluginValue::typed(GitHubData { sign_in }),
-    );
+    catalog.pull_requests = state.sign_in == SignIn::SignedIn;
+    let mut overview = catalog
+        .plugin_data
+        .get(tau_luau_plugins::NAME)
+        .and_then(|value| serde_json::from_value(value.json().clone()).ok())
+        .unwrap_or_default();
+    github::put_entry(&mut overview, entry);
+    catalog
+        .plugin_data
+        .insert(tau_luau_plugins::NAME.into(), PluginValue::typed(overview));
     ws.set_catalog(catalog, cx);
 }
 
@@ -83,7 +94,7 @@ fn setup_moves_on_as_sign_ins_land(cx: &mut TestAppContext) {
     workspace.update(&mut cx, |ws, cx| {
         ws.set_setup(demo::setup(SetupStep::Welcome), cx);
         ws.start_setup(SetupStep::Welcome, cx);
-        github_says(ws, SignIn::SignedOut, cx);
+        github_says(ws, github::State::of(SignIn::SignedOut), cx);
         chatgpt_says(ws, tau_chatgpt::ui::SignIn::None, cx);
         // What "Get started" does.
         ws.start_setup_steps(cx);
@@ -97,7 +108,7 @@ fn setup_moves_on_as_sign_ins_land(cx: &mut TestAppContext) {
         assert_eq!(ws.route(), &Route::Setup(demo::GITHUB_STEP));
         // Signed in to GitHub: the plugin ends its step.
         github_says(ws, demo::signed_in(), cx);
-        ws.plugin_setup_step_done(tau_github::NAME, cx);
+        ws.plugin_setup_step_done(tau_luau_plugins::NAME, cx);
         assert_eq!(ws.route(), &Route::Setup(SetupStep::Repos));
         ws.clone_selected(cx);
         assert_eq!(ws.route(), &Route::Setup(SetupStep::Ready));
@@ -776,7 +787,7 @@ fn picking_repositories_from_the_app_signs_in_first(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_demo(cx);
     workspace.update(&mut cx, |ws, cx| {
         ws.navigate(Route::Run(demo::run_id()), cx);
-        github_says(ws, SignIn::SignedOut, cx);
+        github_says(ws, github::State::of(SignIn::SignedOut), cx);
         ws.pick_repos(cx);
         assert_eq!(ws.route(), &Route::Setup(demo::GITHUB_STEP));
         github_says(ws, demo::signed_in(), cx);
@@ -791,7 +802,7 @@ fn picking_repositories_from_the_app_signs_in_first(cx: &mut TestAppContext) {
             }]),
             cx,
         );
-        ws.plugin_setup_step_done(tau_github::NAME, cx);
+        ws.plugin_setup_step_done(tau_luau_plugins::NAME, cx);
         assert_eq!(ws.route(), &Route::Setup(SetupStep::Repos));
         ws.toggle_repo("octocat/hello", cx);
         ws.clone_selected(cx);

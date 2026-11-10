@@ -177,6 +177,8 @@ async fn a_plugin_declares_what_it_is() {
             settings_view: false,
             app: false,
             page: false,
+            setup: false,
+            models: false,
         }
     );
     assert_eq!(declared.actions, ["reset"]);

@@ -1,8 +1,9 @@
-//! A Git URL names a GitHub repository exactly when it is one of the
-//! forms Git and GitHub take for one.
+//! A Git URL names a forge's repository exactly when it is one of the
+//! forms Git and the forge take for one: GitHub's, as tau-github's
+//! `LuauForge` reads them.
 
 use hegel::{TestCase, generators as gs};
-use tau_github_host::url::{Repository, repository_of};
+use tau_luau_plugins_host::slots::repository_of;
 
 /// A URL, and the GitHub repository it names, when it names one.
 #[derive(Debug, Clone, hegel::PrettyPrintable)]
@@ -100,6 +101,11 @@ fn a_url_names_a_github_repository_in_any_form(tc: TestCase) {
     let expected = url
         .github
         .clone()
-        .map(|(owner, name)| Repository { owner, name });
-    assert_eq!(repository_of(&url.url), expected, "{}", url.url);
+        .map(|(owner, name)| format!("{owner}/{name}"));
+    assert_eq!(
+        repository_of("github.com", &url.url),
+        expected,
+        "{}",
+        url.url
+    );
 }

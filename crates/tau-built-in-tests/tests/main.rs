@@ -12,6 +12,7 @@
 mod binaries;
 mod built_ins;
 mod constitution;
+mod github;
 mod package;
 mod reasoning;
 mod schedule;

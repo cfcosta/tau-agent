@@ -8927,6 +8927,7 @@ dependencies = [
  "tau-store",
  "tau-store-sqlite",
  "tau-testing",
+ "tau-tools-host",
  "tau-ui-plugin",
  "tempfile",
  "tokio",
@@ -9037,7 +9038,6 @@ dependencies = [
  "tau-chatgpt",
  "tau-codemode",
  "tau-direnv",
- "tau-github",
  "tau-jev",
  "tau-luau-plugins",
  "tau-luau-plugins-host",
@@ -9050,6 +9050,7 @@ dependencies = [
  "tau-store",
  "tau-testing",
  "tau-tools",
+ "tau-tools-host",
  "tau-ui",
  "tau-ui-kit",
  "tau-ui-plugin",
@@ -9076,36 +9077,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml 1.1.6+spec-1.1.0",
-]
-
-[[package]]
-name = "tau-github"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "tau-agent",
- "tau-ui-plugin",
-]
-
-[[package]]
-name = "tau-github-host"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "gix",
- "hegeltest",
- "reqwest",
- "serde",
- "serde_json",
- "tau-agent",
- "tau-ai",
- "tau-github",
- "tau-store-sqlite",
- "tau-testing",
- "tau-ui-plugin",
- "tempfile",
- "tokio",
 ]
 
 [[package]]
@@ -9146,6 +9117,7 @@ dependencies = [
  "async-trait",
  "base64 0.23.1",
  "futures-util",
+ "gix",
  "hegeltest",
  "hegeltest-c",
  "image",
@@ -9386,7 +9358,6 @@ dependencies = [
  "tau-chatgpt",
  "tau-codemode",
  "tau-direnv",
- "tau-github",
  "tau-jev",
  "tau-luau-plugins",
  "tau-mcp",
@@ -9591,8 +9562,6 @@ dependencies = [
  "tau-chatgpt",
  "tau-demo",
  "tau-direnv",
- "tau-github",
- "tau-github-host",
  "tau-jev",
  "tau-luau-plugins",
  "tau-luau-plugins-host",

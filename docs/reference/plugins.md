@@ -534,7 +534,7 @@ change (tau-jev gives `tau.jev` only while a key is saved);
 (`tau.store`, which every host state is made with) is filled by
 `HostHalf::fill_early`, from the half alone, and read with
 `hosted::early_fills`; the rest by `HostHalf::fill`. The slots so far:
-`tau.vcs` (tau-vcs), `tau.forge` (tau-github), `tau.notify`
+`tau.vcs` (tau-vcs), `tau.forge` (tau-github, through tau-luau-plugins), `tau.notify`
 (tau-notify), `tau.title` (tau-titles), `tau.store` (tau-sqlite) and
 `tau.provider` (tau-chatgpt) and `tau.compaction` (tau-compaction-chain;
 the gate turns off the rewrites of a plugin it does not name).
@@ -807,16 +807,14 @@ settings)` gives what commands in a repository start through: a
   open GitHub" and "I have approved it"), or a fine-grained personal
   access token typed into a secret input, then who is signed in and
   Continue. The same sign-in is a section of the Models screen
-  (`points::MODELS`), with Sign out. Its trees draw from its catalog data
-  (`GitHubData`: the sign-in as `SignIn`, `Unknown` until a host says,
-  which draws nothing), and its buttons send its host half an `Act`
-  (`sign_in`, `check`, `token`, `sign_out`). The host half,
-  tau-github-host, polls the device code in the background, saves the
-  token as `github.json` in tau's config directory, and asks for the
-  catalog again at each change (`HostCx::refresh`); a saved sign-in
-  answers `Signed { user }`, whose reply ends the setup step. The kernel
-  names no forge: the push and pull request screens label it with
-  `Catalog::forge`, the forge's `Forge::name`.
+  (`points::MODELS`), with Sign out. tau-github is a Luau package (ADR
+  0050, gaps E and H): its `setup` and `models` draw them of what its
+  `app` keeps, its buttons are its actions (`sign_in`, `check`,
+  `sign_out`, `token_form`), and a job polls the device code. The token
+  is its `github` secret, which its Luau never sees: the device poll's
+  `keep` saves it from GitHub's answer, and the token input is a
+  `ui.secret`. The kernel names no forge: the push and pull request
+  screens label it with `Catalog::forge`, the forge's `Forge::name`.
 
 - **Declared reach**
   ([0044](../decisions/0044-memory-imports-what-other-agents-learned.md)).

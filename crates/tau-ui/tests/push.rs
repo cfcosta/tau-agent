@@ -1,8 +1,8 @@
 //! Sending work to GitHub (ADR 0023): a repository's main chat pushes
 //! trunk with `git`, and a chat's pull request carries only the chat's
 //! commits, replayed onto GitHub's `main`. GitHub is a bare repository
-//! reached through a `file://` URL, and its API a fake that answers the
-//! calls a pull request makes.
+//! reached through a `file://` URL, and the forge a fake that opens the
+//! pull requests and answers their checks.
 
 #![allow(
     clippy::disallowed_methods,
@@ -15,7 +15,6 @@ use std::{
 };
 
 use tau_agent::{agent::Agent, event::RunEvent, tool::RunId};
-use tau_github_host::Token;
 use tau_testing::{
     git::{self, git},
     scripted::ScriptedModel,
@@ -27,7 +26,7 @@ use tau_ui::{
 use tau_ui_remote::{models::ModelChoice, push::PushFailure};
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::{common, support};
+use crate::common::{self, forge::FakeForge};
 
 const FULL_NAME: &str = "cfcosta/hello";
 const WAIT: Duration = Duration::from_secs(60);
@@ -60,9 +59,10 @@ impl GitHub {
         Self { remote, bare, work }
     }
 
-    /// Where the host reaches GitHub's web: clones and pushes go there.
-    fn web(&self) -> String {
-        format!("file://{}", self.remote.path().display())
+    /// The forge, signed in, its clones and pushes going here.
+    fn forge(&self) -> std::sync::Arc<FakeForge> {
+        let web = format!("file://{}", self.remote.path().display());
+        std::sync::Arc::new(FakeForge::at(web).signed_in("cfcosta"))
     }
 
     /// GitHub's `main`, or another branch.
@@ -93,12 +93,11 @@ impl GitHub {
     }
 }
 
-/// A host signed in to GitHub, reaching its web at `github` and its API
-/// at `api`, on `llm`, with nothing cloned yet.
+/// A host signed in to GitHub, reaching it at `github` through `forge`,
+/// on `llm`, with nothing cloned yet.
 fn host(
     llm: ScriptedModel,
-    github: &GitHub,
-    api: &str,
+    forge: std::sync::Arc<FakeForge>,
     data: &Path,
 ) -> (Host, UnboundedReceiver<RunEvent>) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -116,12 +115,6 @@ fn host(
         home: None,
         services: Default::default(),
     };
-    let token = Token {
-        token: "ghu_token".into(),
-        user: "cfcosta".into(),
-        expires_at: None,
-    };
-    tau_testing::block_on_io(token.save(&config.credentials.dir)).unwrap();
     let agent = Agent::new(llm).name("coder");
     let (host, events) = Host::with_agent(runtime, agent, store, config);
     // Memory's pass after each run asks the model once more: these
@@ -130,14 +123,7 @@ fn host(
         tau_memory::NAME,
         serde_json::json!({ "after_each_run": false }),
     );
-    let forge = tau_github_host::GitHub::new(
-        &host.credentials().dir,
-        &tau_github_host::Endpoints {
-            web: github.web(),
-            api: api.to_owned(),
-        },
-    );
-    (host.with_forge(std::sync::Arc::new(forge)), events)
+    (host.with_forge(forge), events)
 }
 
 fn until_end(events: &mut UnboundedReceiver<RunEvent>) {
@@ -203,8 +189,7 @@ fn main_pushes_and_a_moved_main_fetches_first() {
         .turn(|t| t.tool_call("write", write("n.txt", "main\n")))
         .turn(|t| t.tool_call("vcs_commit", commit("feat: add n")))
         .turn(|t| t.text("done"));
-    let (host, mut events) =
-        host(llm, &github, "http://127.0.0.1:9", data.path());
+    let (host, mut events) = host(llm, github.forge(), data.path());
     let repo = host.block_on(host.clone_from_forge(FULL_NAME)).unwrap();
     let project = common::project(&host, &repo.name);
     let main = host.block_on(host.main_of(&repo.name)).unwrap();
@@ -253,30 +238,6 @@ fn main_pushes_and_a_moved_main_fetches_first() {
     assert!(project.blocking().unpushed().unwrap().is_empty());
 }
 
-/// GitHub's API, answering the calls opening a pull request makes, and
-/// the requests it got.
-fn api() -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
-    support::fake(|line| match line {
-        "POST /repos/cfcosta/hello/pulls" => (
-            201,
-            serde_json::json!({
-                "number": 7,
-                "html_url": "https://github.com/cfcosta/hello/pull/7"
-            }),
-        ),
-        "POST /repos/cfcosta/hello/pulls/7/requested_reviewers" => {
-            (201, serde_json::json!({}))
-        }
-        l if l.starts_with("GET /repos/cfcosta/hello/commits/") => (
-            200,
-            serde_json::json!({ "check_runs": [
-                { "status": "completed", "conclusion": "success" }
-            ]}),
-        ),
-        _ => (404, serde_json::json!({ "message": "Not Found" })),
-    })
-}
-
 /// A chat forked after the main chat committed what GitHub does not
 /// have: its pull request carries the chat's commits alone, replayed on
 /// GitHub's `main`, pushed with `git` to the pull request's branch. The
@@ -286,7 +247,6 @@ fn api() -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
 fn a_chat_pull_request_carries_only_its_commits_after_main_committed() {
     let github = GitHub::new();
     let data = tempfile::tempdir().unwrap();
-    let (api, seen) = api();
     let llm = ScriptedModel::new()
         .turn(|t| t.tool_call("write", write("m.txt", "main\n")))
         .turn(|t| t.tool_call("vcs_commit", commit("feat: add m")))
@@ -297,7 +257,8 @@ fn a_chat_pull_request_carries_only_its_commits_after_main_committed() {
         .turn(|t| t.tool_call("write", write("d.txt", "chat\n")))
         .turn(|t| t.tool_call("vcs_commit", commit("feat: add d")))
         .turn(|t| t.text("Added d.txt."));
-    let (host, mut events) = host(llm, &github, &api, data.path());
+    let forge = github.forge();
+    let (host, mut events) = host(llm, forge.clone(), data.path());
     let repo = host.block_on(host.clone_from_forge(FULL_NAME)).unwrap();
     let project = common::project(&host, &repo.name);
     let main = host.block_on(host.main_of(&repo.name)).unwrap();
@@ -355,25 +316,29 @@ fn a_chat_pull_request_carries_only_its_commits_after_main_committed() {
     );
     assert!(!carries_main.status.success());
     assert_eq!(github.branch("main"), origin, "main was not pushed");
-    // GitHub's API is asked for the pull request and reviews alone.
-    let requests = seen.lock().unwrap().clone();
-    let pull = requests
-        .iter()
-        .find(|request| request.starts_with("POST /repos/cfcosta/hello/pulls "))
-        .unwrap();
-    assert!(pull.contains("\"base\":\"main\""), "{pull}");
-    assert!(
-        pull.contains(&format!("\"head\":\"{}\"", draft.head)),
-        "{pull}"
+    // The forge is asked for the pull request alone, as drafted, with
+    // its reviewers: the commits went with `git`.
+    let pulls = forge.pulls();
+    assert_eq!(pulls.len(), 1);
+    let pull = &pulls[0];
+    assert_eq!(pull.repo, FULL_NAME);
+    assert_eq!(
+        (pull.base.as_str(), pull.head.as_str()),
+        ("main", &*draft.head)
     );
-    assert!(
-        !requests.iter().any(|request| request.contains("/git/")),
-        "no objects made through the API: {requests:?}"
+    assert_eq!(
+        (pull.title.as_str(), pull.body.as_str()),
+        ("Write c", "The body")
     );
+    assert!(pull.draft);
+    assert_eq!(pull.reviewers, ["alice"]);
+    assert_eq!(forge.asked(), [format!("open_pull {FULL_NAME}")]);
     assert_eq!(
         host.block_on(host.pull_request_checks(&chat.id)).unwrap(),
         tau_ui_remote::pull_request::Checks::Passed
     );
+    // Of the commit that went.
+    assert_eq!(forge.asked()[1], format!("checks {FULL_NAME} {head}"));
 
     // A later commit goes on top of the branch.
     assert!(host.keeps_pushing(&chat.id));
@@ -405,8 +370,7 @@ fn a_chat_on_mains_unpushed_file_would_conflict() {
         .turn(|t| t.tool_call("write", write("m.txt", "chat\n")))
         .turn(|t| t.tool_call("vcs_commit", commit("fix: change m")))
         .turn(|t| t.text("done"));
-    let (host, mut events) =
-        host(llm, &github, "http://127.0.0.1:9", data.path());
+    let (host, mut events) = host(llm, github.forge(), data.path());
     let repo = host.block_on(host.clone_from_forge(FULL_NAME)).unwrap();
     let main = host.block_on(host.main_of(&repo.name)).unwrap();
     go_on(&host, &mut events, &main, "write m");

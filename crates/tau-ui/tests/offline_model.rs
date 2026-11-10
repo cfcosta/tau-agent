@@ -56,7 +56,7 @@ const DRAFTS: [&str; 2] = ["draft.name", "draft.answer"];
 const SECTIONS: [&str; 2] = ["open.secrets", "open.notices"];
 /// The slot the person picks a filler for, and what they pick.
 const SLOT: &str = "tau.forge";
-const FILLERS: [&str; 2] = ["tau-github", "tau-forgejo"];
+const FILLERS: [&str; 2] = [tau_luau_plugins::NAME, "tau-forgejo"];
 
 /// One thing the person can set, which holds one value.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

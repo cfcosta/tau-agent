@@ -151,14 +151,18 @@ pub static SCREENS: &[(&str, Screen)] = &[
     // tau-github's step before the repositories: the device code, the
     // token form, and signed in.
     ("github", |ws, host, cx| {
-        let code = device_code();
-        github_step(ws, host, tau_github::SignIn::Waiting { code }, false, cx)
+        let waiting = github::State::of(github::SignIn::Waiting);
+        github_step(ws, host, waiting, cx)
     }),
     ("token", |ws, host, cx| {
-        github_step(ws, host, tau_github::SignIn::SignedOut, true, cx)
+        let token = github::State {
+            sign_in: github::SignIn::SignedOut,
+            token_form: true,
+        };
+        github_step(ws, host, token, cx)
     }),
     ("github-signed-in", |ws, host, cx| {
-        github_step(ws, host, signed_in(), false, cx)
+        github_step(ws, host, signed_in(), cx)
     }),
     ("model", |ws, host, cx| {
         chatgpt_at(ws, host, tau_chatgpt::ui::SignIn::None, cx)
@@ -1589,22 +1593,15 @@ fn setup_at(
     workspace.navigate(Route::Setup(step), cx);
 }
 
-/// tau-github's setup step with its sign-in as `sign_in`, and its token
-/// form open when `token`.
+/// tau-github's setup step with its sign-in, and its token form, as
+/// `state` has them.
 fn github_step(
     workspace: &mut Workspace,
     host: &DemoHost,
-    sign_in: tau_github::SignIn,
-    token: bool,
+    state: github::State,
     cx: &mut Context<Workspace>,
 ) {
-    github_sign_in(workspace, host, sign_in, cx);
-    workspace.set_plugin_ui(
-        tau_github::NAME,
-        tau_github::TOKEN_FORM,
-        token.then_some(serde_json::Value::Bool(true)),
-        cx,
-    );
+    github_sign_in(workspace, host, state, cx);
     setup_at(workspace, GITHUB_STEP, cx);
 }
 

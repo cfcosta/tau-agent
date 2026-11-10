@@ -147,8 +147,6 @@ tau-sqlite = { path = "crates/plugins/tau-sqlite", version = "0.1.0" }
 tau-chatgpt = { path = "crates/plugins/tau-chatgpt", version = "0.1.0" }
 tau-codemode = { path = "crates/plugins/tau-codemode", version = "0.1.0" }
 tau-codemode-host = { path = "crates/plugins/tau-codemode-host", version = "0.1.0" }
-tau-github = { path = "crates/plugins/tau-github", version = "0.1.0" }
-tau-github-host = { path = "crates/plugins/tau-github-host", version = "0.1.0" }
 tau-agents = { path = "crates/plugins/tau-agents", version = "0.1.0" }
 tau-agents-host = { path = "crates/plugins/tau-agents-host", version = "0.1.0" }
 tau-clock = { path = "crates/tau-clock", version = "0.1.0" }

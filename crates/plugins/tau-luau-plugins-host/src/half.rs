@@ -354,8 +354,24 @@ impl HostHalf for LuauPluginsHost {
                 action,
                 args,
             } => {
-                host.app_action(&plugin, &action, args, chats, host_jev())
+                let value = host
+                    .app_action(&plugin, &action, args, chats, host_jev())
                     .await?;
+                // What it asks the interface, as a run's action does.
+                if let Some(interface) = value.get("tau_interface").cloned() {
+                    let done = tau_luau_plugins::ActionDone {
+                        plugin,
+                        run: String::new(),
+                        on: serde_json::Value::Null,
+                        state: serde_json::Value::Null,
+                        changed: false,
+                        view: None,
+                        logs: Vec::new(),
+                        error: None,
+                        interface: Some(interface),
+                    };
+                    return Ok(Some(serde_json::to_value(done)?));
+                }
             }
             Act::RepoAction {
                 plugin,

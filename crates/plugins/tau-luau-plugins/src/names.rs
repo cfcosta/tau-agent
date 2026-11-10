@@ -8,6 +8,7 @@ pub const COMPACTION: &str = "tau-compaction";
 pub const COMPACTION_CHAIN: &str = "tau-compaction-chain";
 pub const CONSTITUTION: &str = "tau-constitution";
 pub const FAST_COMPACTION: &str = "tau-fast-compaction";
+pub const GITHUB: &str = "tau-github";
 pub const GOAL: &str = "tau-goal";
 pub const REASONING: &str = "tau-reasoning";
 pub const SCHEDULE: &str = "tau-schedule";

@@ -6,6 +6,8 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
+pub mod forge;
+
 use std::time::{Duration, Instant};
 
 use tau_ui::host::Host;

@@ -52,7 +52,9 @@
     "view": true,
     "settings_view": false,
     "app": true,
-    "page": true
+    "page": true,
+    "setup": false,
+    "models": false
   },
   "actions": [],
   "events": [],

@@ -40,8 +40,8 @@ Where it keeps its files (`HostConfig`):
 | `~/.agents/skills`                    | The person's skills (tau-skills, a Luau package)      |
 
 `$XDG_DATA_HOME` falls back to `~/.local/share`. ChatGPT sign-ins sit in
-`$XDG_CONFIG_HOME/tau/chatgpt`, and tau-github-host keeps the GitHub token
-in `github.json` beside them. Signing in to GitHub is tau-github's: a setup
+`$XDG_CONFIG_HOME/tau/chatgpt`, and tau-github, a Luau plugin, keeps the
+GitHub token as its `github` secret. Signing in to GitHub is tau-github's: a setup
 step before the repositories and a section of the Models screen; the host
 lists the forge's repositories for setup whenever the catalog says the forge
 is newly signed in.

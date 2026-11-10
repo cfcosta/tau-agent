@@ -35,7 +35,9 @@
     "view": true,
     "settings_view": false,
     "app": false,
-    "page": false
+    "page": false,
+    "setup": false,
+    "models": false
   },
   "actions": [
     "add_place",

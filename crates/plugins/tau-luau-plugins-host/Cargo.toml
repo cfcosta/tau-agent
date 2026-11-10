@@ -38,6 +38,8 @@ tau-luau-plugins.workspace = true
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 tau-vcs-host.workspace = true
+# A forge's repository from a Git URL in any form Git takes.
+gix.workspace = true
 # `built_in::runtime`: tau-plugin and the app start one before anything else.
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 tokio-util.workspace = true

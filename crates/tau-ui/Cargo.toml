@@ -24,7 +24,6 @@ tokio = { workspace = true, features = ["io-util", "net"] }
 tokio-util.workspace = true
 # The plugins whose data and records the tests read.
 tau-remote.workspace = true
-tau-github.workspace = true
 tau-mcp.workspace = true
 tau-memory.workspace = true
 tau-vcs.workspace = true
@@ -55,8 +54,6 @@ tau-store.workspace = true
 tau-tools = { workspace = true, features = ["terminal"] }
 tau-tools-host.workspace = true
 tau-vcs-host.workspace = true
-# GitHub: the forge slot's plugin, with its sign-in.
-tau-github-host.workspace = true
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
 # The interface it drives.

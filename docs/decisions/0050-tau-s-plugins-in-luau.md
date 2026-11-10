@@ -125,10 +125,15 @@ declaration (`continues = 10`), at most 20. `turn_end` gets the
 turn's cost. `start` may replace the run's first message, as tau-goal
 does to state the goal.
 
-**H. A plugin may keep what a sign-in gave it.** `ctx.secrets.put(name,
-value)`, for a name its `uses.secrets` declares: a token from a
-device flow is kept as a secret the person typed is, never in the
-plugin's state or store, and still stripped from what the model reads.
+**H. A plugin may keep what a sign-in gave it.** Its Luau never sees the
+token (chosen on 2026-11-10, in place of `ctx.secrets.put`). An
+`http.request` may say `keep = { secret = "github", from =
+"access_token" }`: the host saves that field of the JSON that comes back
+as the secret, for a name `uses.secrets` declares, and takes it out of
+the answer. A token the person types goes through `ui.secret(name)`, an
+input whose text goes to the store as the settings pane's secrets do,
+and `tau.forget_secret(name)` from an action empties one: signing out.
+A device sign-in is polled by a job, which acts only while one waits.
 
 Each gap changes `parity.rs` (a `NOT_YET` or an exclusion becomes a
 hook) and the skill, which also says, for every hook, what it may
@@ -974,6 +979,43 @@ As built:
 - Differences: the tool is declared even when no skill is found (tau
   ships 51, so a run always has some); a failed `skill` call has the
   default card; the Skills entry is in the sidebar with no skills too.
+
+### Gaps H and E, and tau-github
+
+Added on 2026-11-10, the last port.
+
+- **The token past the plugin (H).** `http.request{ keep = { secret,
+from } }` saves a field of the JSON that comes back as a secret the
+  plugin declares, and takes it out of the answer and anything else it
+  came back in; the HTTP client never sees `keep`. `ui.secret(name)` is
+  a secret input whose Enter is `Act::SetSecret`, as the settings pane's.
+  `ctx.secrets.has(name)` and `ctx.secrets.forget(name)` say whether one
+  is set and empty one, never its value. `ctx.http` is the `http`
+  global through the hook's tools, so a test fakes it (`spec.http`).
+- **The setup step and the Models section (E).** `setup(app)` and
+  `models(app)`, of what `app` keeps; a person's plugin draws no setup
+  step, as its plugins load after setup. Their buttons may name
+  `tau.copy`, `tau.open_url` and `tau.setup_done`; an app action's
+  `tau.interface` reaches the interface as a run's does.
+- **A store of the app.** With no repository, `ctx.store` is the
+  plugin's store of the app (`.app`, which `ctx.repos` never lists), in
+  `app`, an app action, a job and a forge's hooks.
+- **The forge's URLs.** `LuauForge`'s `repository_of` reads Git URLs as
+  tau-github's `url.rs` did, for any forge's host: `www.` and `ssh.`
+  too, any case, an owner and a name the forge allows.
+- **tau-github** is `plugins/tau-github`: its API in `src/github.luau`
+  word for word, the sign-in drawn in `src/sign_in.luau`, a job polling
+  a device code at GitHub's interval, checking a typed token once and
+  forgetting an expired one. A parity property held its forge to the
+  Rust API over 1,500 drawn fake GitHubs (installations or none, pages
+  of a hundred, failed pages, duplicates, push permissions and every
+  status, check runs, a pull request and its reviewers): the same
+  answers and the same errors, and changing one message failed it. Then
+  tau-github and tau-github-host went.
+- **Differences.** A sign-in kept in `github.json` is not read: sign in
+  again (there are no users to move). A typed token is checked by the
+  job within a second rather than as it is typed, and the setup step
+  waits for Continue rather than ending itself once signed in.
 
 ## Alternatives considered
 

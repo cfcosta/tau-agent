@@ -30,6 +30,7 @@ tau-luau-plugins-host.workspace = true
 tau-store.workspace = true
 tau-store-sqlite.workspace = true
 tau-testing.workspace = true
+tau-tools-host.workspace = true
 tau-ui-plugin.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["net", "rt", "time"] }

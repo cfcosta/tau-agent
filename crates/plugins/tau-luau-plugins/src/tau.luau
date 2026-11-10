@@ -422,6 +422,11 @@ end
 
 -- A line in a tone: `good` for a passed test, `neutral` dims it.
 -- `mono` sets it in the monospace face.
+-- A big line, as a screen's headline, with a line under it.
+function ui.title(text, subtitle)
+	return { piece = "title", text = tostring(text), subtitle = subtitle and tostring(subtitle) or json.null }
+end
+
 function ui.toned(text, of, mono)
 	return { piece = "toned", text = tostring(text), tone = tone(of), mono = mono == true }
 end
@@ -527,6 +532,22 @@ function ui.input(id, opts)
 		keep = opts.keep == true,
 		-- A new number gives it the keys, once.
 		focus = opts.focus and math.floor(tonumber(opts.focus) or 0) or nil,
+	}
+end
+
+-- An input for the secret `name`, one `uses.secrets` declares, on a page
+-- of the app (ADR 0050, gap H): what is typed goes to tau's secret store
+-- on Enter, never to the plugin.
+function ui.secret(name, opts)
+	opts = opts or {}
+	return {
+		piece = "input",
+		id = "secret/" .. tostring(name),
+		placeholder = opts.placeholder and tostring(opts.placeholder) or json.null,
+		multiline = false,
+		submit = "tau.secret/" .. tostring(name),
+		keep = false,
+		secret = true,
 	}
 end
 
@@ -813,6 +834,8 @@ function tau._describe(plugin)
 			settings_view = plugin.settings ~= nil and plugin.settings.view ~= nil,
 			app = plugin.app ~= nil,
 			page = plugin.page ~= nil,
+			setup = plugin.setup ~= nil,
+			models = plugin.models ~= nil,
 		},
 		listed_commands = plugin.listed ~= nil,
 		actions = actions,
@@ -1218,6 +1241,29 @@ function tau._ctx(data, with_tools)
 			-- `ui.image`.
 			put_file = function(path)
 				return source.blobs_put({ path = tostring(path) })
+			end,
+		}
+	end
+	-- With uses.network: `ctx.http.request`, as the `http` global, which a
+	-- test fakes (`spec.http`); `keep` saves a field of the answer as a
+	-- secret, past the plugin (ADR 0050, gap H).
+	if source ~= nil and source.http ~= nil then
+		ctx.http = {
+			request = function(request)
+				return source.http(request)
+			end,
+			secret = tau.secret,
+		}
+	end
+	-- With uses.secrets: whether one is set, and emptying one; its value
+	-- never (ADR 0050, gap H).
+	if source ~= nil and source.secret_has ~= nil then
+		ctx.secrets = {
+			has = function(name)
+				return source.secret_has({ name = tostring(name) })
+			end,
+			forget = function(name)
+				return source.secret_forget({ name = tostring(name) })
 			end,
 		}
 	end

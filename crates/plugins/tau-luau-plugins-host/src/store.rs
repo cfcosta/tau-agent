@@ -282,6 +282,11 @@ impl Session {
     }
 }
 
+/// The name of a plugin's store of the whole app, not of a repository:
+/// what its `app`, its jobs and its page of the app keep (ADR 0050, gap
+/// H). No repository's name starts with a dot.
+pub const APP: &str = ".app";
+
 /// Every Luau plugin's stores, opened as they are first asked for: in
 /// `dir`, `<plugin>/<repo>.db`, or in memory.
 #[derive(Default)]
@@ -359,7 +364,8 @@ impl Stores {
         Ok(kv)
     }
 
-    /// The repositories `plugin` keeps a store in: on disk, and opened.
+    /// The repositories `plugin` keeps a store in: on disk, and opened;
+    /// its store of the app ([`APP`]) is no repository's.
     /// The folder is read the first time; stores made since are opened.
     pub async fn repos_of(&self, plugin: &str) -> Vec<String> {
         let mut repos: Vec<String> = self
@@ -393,6 +399,7 @@ impl Stores {
                 repos.push(repo.clone());
             }
         }
+        repos.retain(|repo| repo != APP);
         repos.sort();
         repos
     }

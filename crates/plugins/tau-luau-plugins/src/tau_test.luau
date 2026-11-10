@@ -256,6 +256,46 @@ function test.run(spec)
 			return found
 		end
 	end
+	-- What a plugin with uses.network asks of the web: `spec.http`, a
+	-- function of the request giving `{ status, json?, body? }`; `keep`
+	-- takes its field out of `json` and sets the secret in `run.secrets`.
+	-- `ctx.secrets` reads and empties `run.secrets`: `spec.secrets`, by
+	-- name, whether each is set.
+	local secrets = spec.secrets or {}
+	if plugin.uses and plugin.uses.network then
+		local answer = spec.http
+		fakes.http = function(request)
+			if answer == nil then
+				error("this test's run gives no `http`", 0)
+			end
+			local got = answer(request)
+			if type(got) ~= "table" then
+				error("`spec.http` answers a table", 0)
+			end
+			got = table.clone(got)
+			got.status = got.status or 200
+			got.kept = false
+			if request.keep and type(got.json) == "table" then
+				got.json = table.clone(got.json)
+				local value = got.json[request.keep.from]
+				if type(value) == "string" and value ~= "" then
+					got.json[request.keep.from] = nil
+					secrets[request.keep.secret] = true
+					got.kept = true
+				end
+			end
+			return got
+		end
+	end
+	if plugin.uses and plugin.uses.secrets then
+		fakes.secret_has = function(args)
+			return secrets[args.name] == true
+		end
+		fakes.secret_forget = function(args)
+			secrets[args.name] = nil
+			return json.null
+		end
+	end
 	-- What a tool reads with uses.files: `spec.files`, by path as the tool
 	-- names it, each its text, or `{ text, image = { mime, width, height } }`.
 	-- A blob is the file's path.
@@ -412,6 +452,8 @@ function test.run(spec)
 		woken = woken,
 		job_state = spec.job_state or {},
 		state = spec.state or {},
+		-- Which secrets are set, by name: what `ctx.secrets` and `keep` left.
+		secrets = secrets,
 		logs = {},
 		data = {
 			-- `live` and `jev`, as an action sees them: `spec.live`, and
@@ -583,6 +625,17 @@ function test.run(spec)
 	end
 	function run:app_page(app)
 		return call(need(plugin.page, "page"), app)
+	end
+	-- One of its forge's hooks (`tau.forge`), with `input`.
+	function run:forge(name, input)
+		local forge = need(plugin.forge, "forge")
+		return call(need(forge[name], "forge." .. name), input or {})
+	end
+	function run:setup(app)
+		return call(need(plugin.setup, "setup"), app)
+	end
+	function run:models(app)
+		return call(need(plugin.models, "models"), app)
 	end
 	function run:commands(app)
 		local listed = need(plugin.listed, "listed commands")

@@ -208,13 +208,13 @@ fn a_computer_only_plugin_s_data_and_views_stay_on_the_computer() {
         .plugin_data
         .insert(tau_chatgpt::NAME.into(), chatgpt);
     catalog.plugin_data.insert(
-        tau_github::NAME.into(),
+        tau_luau_plugins::NAME.into(),
         tau_ui_plugin::PluginValue::from_json(serde_json::json!({})),
     );
     let sent = mirror::to_phones(&HostUpdate::catalog(catalog)).unwrap();
     let data = &sent["Catalog"]["plugin_data"];
     assert!(data.get(tau_chatgpt::NAME).is_none(), "{data}");
-    assert!(data.get(tau_github::NAME).is_some(), "{data}");
+    assert!(data.get(tau_luau_plugins::NAME).is_some(), "{data}");
 
     let layout = Layout::default();
     let page = ViewKey {
@@ -247,7 +247,10 @@ fn a_computer_only_plugin_s_data_and_views_stay_on_the_computer() {
             (
                 point,
                 Built::Outs {
-                    outs: vec![outs(tau_chatgpt::NAME), outs(tau_github::NAME)],
+                    outs: vec![
+                        outs(tau_chatgpt::NAME),
+                        outs(tau_luau_plugins::NAME),
+                    ],
                 },
             ),
         ],
@@ -259,7 +262,7 @@ fn a_computer_only_plugin_s_data_and_views_stay_on_the_computer() {
     assert_eq!(
         answers[1].1,
         Built::Outs {
-            outs: vec![outs(tau_github::NAME)]
+            outs: vec![outs(tau_luau_plugins::NAME)]
         }
     );
 }

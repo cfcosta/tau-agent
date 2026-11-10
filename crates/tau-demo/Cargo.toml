@@ -28,11 +28,12 @@ tau-agents.workspace = true
 tau-chatgpt.workspace = true
 tau-codemode.workspace = true
 tau-direnv.workspace = true
-tau-github.workspace = true
 tau-jev.workspace = true
 tau-luau-plugins.workspace = true
 # Where the canvas keeps the demo's chart, as a call would.
 tau-luau-plugins-host.workspace = true
+# tau-github's secret store, as its sign-in leaves it.
+tau-tools-host.workspace = true
 # The demo's chart, drawn as a PNG.
 image = { workspace = true, features = ["png"] }
 tau-mcp = { workspace = true, features = ["demo"] }

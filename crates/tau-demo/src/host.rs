@@ -63,6 +63,10 @@ pub struct DemoHost {
     pinned: Mutex<Vec<(PluginInfo, PluginValue)>>,
     /// What tau-skills keeps of the app, drawn once as the demo starts.
     skills_app: tau_luau_plugins::AppView,
+    /// tau-github, and what it keeps of the app with its sign-in as the
+    /// demo has it now.
+    github: crate::github::GitHub,
+    github_now: Mutex<(crate::github::State, tau_luau_plugins::AppView)>,
     // Dropped last: the plugins' files, and the runtime their work runs
     // on.
     runtime: Runtime,
@@ -118,6 +122,10 @@ impl DemoHost {
         crate::skills::seed(&skills)?;
         let skills_app =
             crate::skills::app_view(&runtime, &skills, dir.path())?;
+        let github = runtime.block_on(crate::github::GitHub::load())?;
+        let signed_in =
+            crate::github::State::of(crate::github::SignIn::SignedIn);
+        let github_app = runtime.block_on(github.app_view(signed_in))?;
         let services = Services::default()
             .with(saved)
             .with(ConfigDir(dir.path().join("config")))
@@ -145,6 +153,8 @@ impl DemoHost {
             pushed: Mutex::new(Some(pushed)),
             pinned: Mutex::default(),
             skills_app,
+            github,
+            github_now: Mutex::new((signed_in, github_app)),
             runtime,
             _dir: dir,
         })
@@ -175,7 +185,9 @@ impl DemoHost {
         catalog.plugin_data = data;
         // tau's Luau plugins, which the demo cannot run: what they
         // declare, from their fixtures (ADR 0050).
-        let (info, data) = luau_built_ins(&self.skills_app);
+        let github = &self.github_now.lock().expect("not poisoned").1;
+        let (info, data) =
+            luau_built_ins(&self.skills_app, self.github.entry(github.clone()));
         catalog.plugins.push(info);
         catalog
             .plugin_data
@@ -228,6 +240,23 @@ impl DemoHost {
             }
         }
         catalog
+    }
+
+    /// How tau-github's sign-in stands in the demo now.
+    pub fn github(&self) -> crate::github::State {
+        self.github_now.lock().expect("not poisoned").0
+    }
+
+    /// Has tau-github's sign-in stand as `state` from now on: what the
+    /// plugin keeps of the app, then, and its entry among the Luau
+    /// plugins.
+    pub fn set_github(
+        &self,
+        state: crate::github::State,
+    ) -> anyhow::Result<tau_luau_plugins::Entry> {
+        let app = self.runtime.block_on(self.github.app_view(state))?;
+        *self.github_now.lock().expect("not poisoned") = (state, app.clone());
+        Ok(self.github.entry(app))
     }
 
     /// The repository listed as `name`, as its host halves see it.
@@ -329,6 +358,7 @@ fn scripted_jev() -> FakeJev {
 /// demo draws: each as it declares itself, from its fixture.
 fn luau_built_ins(
     skills: &tau_luau_plugins::AppView,
+    github: tau_luau_plugins::Entry,
 ) -> (PluginInfo, PluginValue) {
     use tau_luau_plugins::{Entry, Overview, Standing};
     let built_in = |name: &str| Entry {
@@ -357,6 +387,7 @@ fn luau_built_ins(
             built_in(tau_luau_plugins::names::TREE_COMPACTION),
             built_in(tau_luau_plugins::names::REASONING),
             built_in(tau_luau_plugins::names::SKILLS),
+            github,
         ],
         error: None,
     };

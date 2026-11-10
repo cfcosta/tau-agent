@@ -1,0 +1,4 @@
+name = "tau-github"
+version = "0.1.0"
+description = "GitHub as where tau's repositories are hosted: signing in, cloning, pushing and pull requests"
+entry = "src/plugin.luau"

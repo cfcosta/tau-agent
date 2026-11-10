@@ -6,6 +6,7 @@ mod agent;
 mod agents;
 mod dispatch;
 mod files;
+mod forge_urls;
 mod forms;
 mod infer;
 mod install;

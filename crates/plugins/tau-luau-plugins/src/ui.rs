@@ -39,7 +39,10 @@ use tau_ui_plugin::{
         AtMessage,
         AtRepo,
         AtRun,
+        AtSetup,
         CardView,
+        SetupAt,
+        SetupView,
     },
     tree::{Kind, Node, Tab, Tone, draft_key},
 };
@@ -629,6 +632,23 @@ fn kernel_action(
         "alert" => handle.alert(text("title"), text("message")),
         "details" => handle.run_details(),
         "pane" => handle.open_pane(),
+        // A sign-in's code to paste, the page to paste it on, and setup's
+        // step done (ADR 0050, gap E).
+        "copy" => {
+            handle.copy(text("text"));
+            // And the page to paste it on, when it says one.
+            let url = text("url");
+            if url.starts_with("https://") {
+                handle.open_url(url);
+            }
+        }
+        "open_url" => {
+            let url = text("url");
+            if url.starts_with("https://") {
+                handle.open_url(url);
+            }
+        }
+        "setup_done" => handle.setup_done(),
         "open_run" => handle.open_run(&RunId(text("run").into())),
         // Stops the run, as its Stop button does.
         "cancel" => {
@@ -853,6 +873,19 @@ impl UiPlugin for LuauPluginsUi {
         {
             if own == "tau.reveal" {
                 reveal(plugin, args, view);
+                return;
+            }
+            // `ui.secret`'s Enter: the text to the store, past the plugin.
+            if let Some(name) = own.strip_prefix("tau.secret/") {
+                if let Some(value) =
+                    args["text"].as_str().filter(|v| !v.is_empty())
+                {
+                    view.handle.act(Act::SetSecret {
+                        plugin: plugin.to_owned(),
+                        name: name.to_owned(),
+                        value: value.to_owned(),
+                    });
+                }
                 return;
             }
             if kernel_action(own, args, None, &view.handle) {
@@ -1083,6 +1116,14 @@ impl UiPlugin for LuauPluginsUi {
             })
             .contribute(points::CARD_BODY, |at: &AtCard, view| {
                 on_card(view.state?, &at.call_id, "body")
+            })
+            // A built-in's step of first-run setup and its section of the
+            // Models screen, drawn of what its `app` keeps (gap E).
+            .contribute(points::SETUP, |_: &AtSetup, view| {
+                setup_step(view.data)
+            })
+            .contribute(points::MODELS, |_: &AtApp, view| {
+                models_section(view.data)
             });
         // The plugins that ask for one, in the sidebar: the first few.
         let manifest = (0..NAV_ENTRIES).fold(manifest, |manifest, at| {
@@ -1101,6 +1142,53 @@ impl UiPlugin for LuauPluginsUi {
             )
         })
     }
+}
+
+/// The step of first-run setup one of tau's own plugins draws (ADR 0050,
+/// gap E): `{ step, at, title, heading, detail, body }`, `at` one of
+/// `model`, `before_repositories` and `after_repositories`. A person's
+/// plugin draws none: setup runs before theirs load.
+fn setup_step(overview: &Overview) -> Option<SetupView> {
+    let (plugin, setup) = overview
+        .plugins
+        .iter()
+        .filter(|entry| {
+            entry.built_in && matches!(entry.standing, Standing::Active)
+        })
+        .find_map(|entry| {
+            let setup = entry.app.as_ref()?.setup.as_ref()?;
+            (!setup.is_null()).then_some((entry.name.as_str(), setup))
+        })?;
+    let text = |key: &str| setup[key].as_str().unwrap_or_default().to_owned();
+    Some(SetupView {
+        step: crate::interned(&format!("{plugin}/{}", text("step"))),
+        at: match setup["at"].as_str() {
+            Some("model") => SetupAt::Model,
+            Some("before_repositories") => SetupAt::BeforeRepositories,
+            _ => SetupAt::AfterRepositories,
+        },
+        title: text("title"),
+        heading: text("heading"),
+        detail: text("detail"),
+        body: embed_as(&setup["body"], plugin, LUAU_APP),
+        required: false,
+        link: None,
+    })
+}
+
+/// The sections of the Models screen the Luau plugins draw of what their
+/// `app` keeps.
+fn models_section(overview: &Overview) -> Option<Node> {
+    let sections: Vec<Node> = overview
+        .plugins
+        .iter()
+        .filter(|entry| matches!(entry.standing, Standing::Active))
+        .filter_map(|entry| {
+            let models = entry.app.as_ref()?.models.as_ref()?;
+            (!models.is_null()).then(|| embed_as(models, &entry.name, LUAU_APP))
+        })
+        .collect();
+    (!sections.is_empty()).then(|| Node::stack(sections))
 }
 
 /// `tau.reveal` of `plugin`'s page of the app: shows `args.path` in the

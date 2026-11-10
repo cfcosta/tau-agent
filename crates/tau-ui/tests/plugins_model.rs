@@ -1536,8 +1536,8 @@ impl Tau {
             ordered.push(picked.remove(at));
         }
         // What each fills alone. `test.alpha` has two who can fill it,
-        // and `tau.forge` too (tau-github, and tau-luau-plugins for the
-        // person's Luau plugins); together they fill each other slot with
+        // and `tau.forge` is tau-luau-plugins' (tau-github is a Luau
+        // plugin, and so are the person's forges); together they fill each other slot with
         // the one who can, and those with the person's pick or the first
         // in its order.
         let mut alone: BTreeMap<&'static str, Option<String>> =
@@ -1558,24 +1558,26 @@ impl Tau {
         let names: Vec<&str> =
             ordered.iter().map(|hosted| hosted.plugin.name()).collect();
         alone.insert(SLOTS[0].name(), alpha_filler(&names, &self.host.ui));
-        let forge = if names.contains(&tau_github::NAME) {
-            Some("github")
-        } else if names.contains(&tau_luau_plugins::NAME) {
-            // No Luau plugin fills it yet.
-            Some("luau")
-        } else {
-            None
-        };
-        alone.insert(
-            tau_ui_plugin::forge::FORGE.name(),
-            forge.map(str::to_owned),
-        );
         // All of them fill every slot: tau's own fillers, tau-vcs-host
-        // and tau-github-host, are among them.
+        // and tau-luau-plugins-host, are among them.
         let all = slot_table(&hosted::fills(hosted));
         assert!(all.values().all(Option::is_some), "{all:?}");
         let mut fills = hosted::fills(&ordered);
         fills.picks_from(&self.host.ui);
+        // The forge is tau-luau-plugins' when it is there: tau-github's
+        // once the built-ins load, a stand-in's until then.
+        let forge = fills
+            .get(&tau_ui_plugin::forge::FORGE)
+            .map(|forge| forge.id().to_owned());
+        if names.contains(&tau_luau_plugins::NAME) {
+            let id =
+                forge.as_deref().expect("tau-luau-plugins fills tau.forge");
+            assert!(["github", "luau"].contains(&id), "the forge is {id}");
+        }
+        alone.insert(
+            tau_ui_plugin::forge::FORGE.name(),
+            forge.filter(|_| names.contains(&tau_luau_plugins::NAME)),
+        );
         assert_eq!(
             slot_table(&fills),
             alone,

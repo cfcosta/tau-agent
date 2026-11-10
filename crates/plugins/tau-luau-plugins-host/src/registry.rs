@@ -287,7 +287,8 @@ impl Registry {
         if !declaration.uses.store {
             return None;
         }
-        let store = self.0.stores.of(&declaration.name, repo?).await.ok()?;
+        let repo = repo.unwrap_or(crate::store::APP);
+        let store = self.0.stores.of(&declaration.name, repo).await.ok()?;
         Some(crate::runtime::StoreRef(store))
     }
 
@@ -413,6 +414,9 @@ impl Registry {
         tau_tools_host::secrets::SecretStore::new(path)
             .set(name, value)
             .await?;
+        // What `app` keeps may say who is signed in: read it again.
+        self.0.state.write().await.app = None;
+        (self.0.refresh)();
         Ok(())
     }
 
@@ -1417,6 +1421,24 @@ pub async fn app_view(
         match page.error {
             None => view.page = Some(page.value),
             Some(error) => view.error = Some(format!("page: {error}")),
+        }
+    }
+    for (on, hook) in [
+        (declaration.hooks.setup, Hook::AppSetup),
+        (declaration.hooks.models, Hook::AppModels),
+    ] {
+        if !on {
+            continue;
+        }
+        let setup = matches!(hook, Hook::AppSetup);
+        let drawn = call(hook, view.value.clone()).await;
+        match drawn.error {
+            None if setup => view.setup = Some(drawn.value),
+            None => view.models = Some(drawn.value),
+            Some(error) => {
+                let place = if setup { "setup" } else { "models" };
+                view.error = Some(format!("{place}: {error}"));
+            }
         }
     }
     view

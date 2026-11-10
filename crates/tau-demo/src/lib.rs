@@ -50,6 +50,7 @@ pub use self::{
 };
 
 mod chart;
+pub mod github;
 mod host;
 mod screens;
 mod skills;
@@ -594,16 +595,6 @@ pub fn resume_script(run: &RunView, prompt: &str) -> Vec<Step> {
     s.steps
 }
 
-const DEVICE_CODE: &str = "WDJB-MJHT";
-
-pub(crate) fn device_code() -> tau_github::DeviceCode {
-    tau_github::DeviceCode {
-        code: DEVICE_CODE.into(),
-        url: "github.com/login/device".into(),
-        expires: "15 minutes".into(),
-    }
-}
-
 fn repos() -> Vec<RepoChoice> {
     [
         ("cfcosta/tau-agent", "Rust library for LLM agents", true),
@@ -764,7 +755,8 @@ pub fn setup(step: SetupStep) -> Setup {
     // repositories, other plugins' steps after the clones start.
     let clones = match step {
         SetupStep::Plugin { plugin, .. }
-            if plugin == tau_github::NAME || plugin == tau_chatgpt::NAME =>
+            if plugin == tau_luau_plugins::NAME
+                || plugin == tau_chatgpt::NAME =>
         {
             false
         }
@@ -794,8 +786,8 @@ pub fn setup(step: SetupStep) -> Setup {
 /// The pull request the finished demo run would open.
 /// tau-github's step of first-run setup.
 pub const GITHUB_STEP: SetupStep = SetupStep::Plugin {
-    plugin: tau_github::NAME,
-    step: tau_github::STEP,
+    plugin: tau_luau_plugins::NAME,
+    step: github::STEP,
 };
 
 /// tau-chatgpt's sign-in step.
@@ -843,24 +835,40 @@ pub fn connected() -> tau_chatgpt::ui::SignIn {
     }
 }
 
-/// Shows tau-github's sign-in as `sign_in` from now on, in place of what
-/// its host half says: the demo reaches no GitHub.
+/// Shows tau-github's sign-in as `state` from now on, in place of what
+/// the plugin would keep: the demo reaches no GitHub. Its entry among the
+/// Luau plugins is drawn again, by the real plugin, of that sign-in.
 pub fn github_sign_in(
     ws: &mut Workspace,
     host: &DemoHost,
-    sign_in: tau_github::SignIn,
+    state: github::State,
     cx: &mut gpui::Context<Workspace>,
 ) {
+    let entry = host
+        .set_github(state)
+        .expect("tau-github draws the demo's sign-in");
     let mut catalog = ws.catalog().clone();
-    let data =
-        tau_ui_plugin::PluginValue::typed(tau_github::GitHubData { sign_in });
+    let Some(mut overview) = catalog
+        .plugin_data
+        .get(tau_luau_plugins::NAME)
+        .and_then(|value| {
+            serde_json::from_value::<tau_luau_plugins::Overview>(
+                value.json().clone(),
+            )
+            .ok()
+        })
+    else {
+        return;
+    };
+    github::put_entry(&mut overview, entry);
+    let data = tau_ui_plugin::PluginValue::typed(overview);
     catalog
         .plugin_data
-        .insert(tau_github::NAME.into(), data.clone());
+        .insert(tau_luau_plugins::NAME.into(), data.clone());
     if let Some(info) = catalog
         .plugins
         .iter()
-        .find(|plugin| plugin.name == tau_github::NAME)
+        .find(|plugin| plugin.name == tau_luau_plugins::NAME)
         .cloned()
     {
         host.pin(info, data);
@@ -869,10 +877,8 @@ pub fn github_sign_in(
 }
 
 /// The demo's GitHub account, signed in.
-pub fn signed_in() -> tau_github::SignIn {
-    tau_github::SignIn::SignedIn {
-        user: "cfcosta".into(),
-    }
+pub fn signed_in() -> github::State {
+    github::State::of(github::SignIn::SignedIn)
 }
 
 /// What the demo's main chat pushed to GitHub: three changes.
@@ -1077,37 +1083,32 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
             ),
             // The demo reaches no GitHub: tau-github's sign-in shows a
             // code, then signs in, and a check or a token at once.
-            WorkspaceEvent::PluginAct {
-                plugin,
-                action,
-                asker,
-            } if plugin == tau_github::NAME => {
-                use tau_github::{Act, SignIn};
-                let signed = Answer::Host(HostUpdate::PluginReply {
-                    plugin: plugin.clone(),
-                    reply: json!({ "user": "cfcosta" }),
-                    asker: *asker,
-                });
-                let steps = match serde_json::from_value(action.clone()) {
-                    Ok(Act::SignIn) => vec![
-                        (
-                            400,
-                            Answer::GitHub(SignIn::Waiting {
-                                code: device_code(),
-                            }),
-                        ),
+            WorkspaceEvent::PluginAct { plugin, action, .. }
+                if github::act(plugin, action).is_some() =>
+            {
+                use github::{Act, SignIn, State};
+                let now = host.github();
+                let steps = match github::act(plugin, action) {
+                    Some(Act::SignIn) => vec![
+                        (400, Answer::GitHub(State::of(SignIn::Waiting))),
                         (0, setup(SetupUpdate::Repos(repos()))),
                         (5000, Answer::GitHub(signed_in())),
                     ],
-                    Ok(Act::Check | Act::Token { .. }) => vec![
+                    Some(Act::Check) => vec![
                         (600, Answer::GitHub(signed_in())),
                         (0, setup(SetupUpdate::Repos(repos()))),
-                        (0, signed),
                     ],
-                    Ok(Act::SignOut) => {
-                        vec![(0, Answer::GitHub(SignIn::SignedOut))]
+                    Some(Act::SignOut) => {
+                        vec![(0, Answer::GitHub(State::of(SignIn::SignedOut)))]
                     }
-                    Err(_) => Vec::new(),
+                    Some(Act::TokenForm(open)) => vec![(
+                        0,
+                        Answer::GitHub(State {
+                            token_form: open,
+                            ..now
+                        }),
+                    )],
+                    None => Vec::new(),
                 };
                 later(steps, cx)
             }
@@ -1429,7 +1430,7 @@ enum Answer {
     Host(HostUpdate),
     Pair(PairingUpdate),
     /// tau-github's sign-in, as its host half would say it.
-    GitHub(tau_github::SignIn),
+    GitHub(github::State),
     /// tau-chatgpt's, as its host half would say it.
     ChatGpt(tau_chatgpt::ui::Data),
 }

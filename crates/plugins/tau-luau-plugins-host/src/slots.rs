@@ -354,12 +354,15 @@ impl LuauForge {
                 _ => "",
             }
         );
+        // Its store of the app: where a sign-in keeps who it is (gap H).
+        let mut context = context(&self.0, &active);
+        context.store = self.0.store_of(&active.loaded.declaration, None).await;
         let outcome = active
             .loaded
             .call(
                 &hook,
                 input,
-                &context(&self.0, &active),
+                &context,
                 ModelReach::of(&self.0, &active, None),
                 CancellationToken::new(),
             )
@@ -530,27 +533,42 @@ impl tau_ui_plugin::forge::Forge for LuauForge {
     }
 }
 
-/// The full name of the repository the Git URL `url` names on `host`,
-/// in the forms Git takes: `https://host/owner/name(.git)`,
-/// `ssh://git@host/owner/name(.git)` and `git@host:owner/name(.git)`.
+/// The repository `url` names on the forge at `host`, as `owner/name`: an
+/// HTTPS, HTTP, `git://` or SSH URL, or Git's `git@host:owner/name` form,
+/// on `host` (`www.` and `ssh.` too, any case), with or without `.git` and
+/// a closing `/`; an owner and a name the forge allows.
 pub fn repository_of(host: &str, url: &str) -> Option<String> {
-    let url = url.trim();
-    let path = ["https://", "http://", "ssh://git@", "git://"]
-        .iter()
-        .find_map(|scheme| {
-            url.strip_prefix(scheme)?
-                .strip_prefix(host)?
-                .strip_prefix('/')
-        })
-        .or_else(|| {
-            url.strip_prefix("git@")?
-                .strip_prefix(host)?
-                .strip_prefix(':')
-        })?;
-    let path = path.trim_end_matches('/');
-    let path = path.strip_suffix(".git").unwrap_or(path);
-    let mut parts = path.split('/');
-    let (owner, name) = (parts.next()?, parts.next()?);
-    (parts.next().is_none() && !owner.is_empty() && !name.is_empty())
-        .then(|| format!("{owner}/{name}"))
+    use gix::bstr::{BStr, ByteSlice as _};
+    let parsed = gix::url::parse(BStr::new(url.trim())).ok()?;
+    use gix::url::Scheme;
+    if !matches!(
+        parsed.scheme,
+        Scheme::Https | Scheme::Http | Scheme::Ssh | Scheme::Git
+    ) {
+        return None;
+    }
+    let found = parsed.host()?.to_ascii_lowercase();
+    let host = host.to_ascii_lowercase();
+    if found != host
+        && found != format!("www.{host}")
+        && found != format!("ssh.{host}")
+    {
+        return None;
+    }
+    let path = parsed.path.to_str().ok()?;
+    let path = path.strip_prefix('/').unwrap_or(path);
+    let path = path.strip_suffix('/').unwrap_or(path);
+    let (owner, name) = path.split_once('/')?;
+    let name = name.strip_suffix(".git").unwrap_or(name);
+    let owner_ok = !owner.is_empty()
+        && owner.len() <= 39
+        && !owner.starts_with('-')
+        && owner.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    let name_ok = !name.is_empty()
+        && name != "."
+        && name != ".."
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    (owner_ok && name_ok).then(|| format!("{owner}/{name}"))
 }

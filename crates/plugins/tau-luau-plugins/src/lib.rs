@@ -264,6 +264,14 @@ pub struct Hooks {
     /// `page`: the page its `nav` opens, drawn of what `app` keeps.
     #[serde(default)]
     pub page: bool,
+    /// `setup`: its step of first-run setup, drawn of what `app` keeps
+    /// (ADR 0050, gap E); one of tau's own only.
+    #[serde(default)]
+    pub setup: bool,
+    /// `models`: its section of the Models screen, drawn of what `app`
+    /// keeps.
+    #[serde(default)]
+    pub models: bool,
 }
 
 impl Hooks {
@@ -606,6 +614,12 @@ pub struct AppView {
     /// What `page` drew of it: the page `nav` opens.
     #[serde(default)]
     pub page: Option<Value>,
+    /// What `setup` drew: `{ step, at, title, heading, detail, body }`.
+    #[serde(default)]
+    pub setup: Option<Value>,
+    /// What `models` drew: its section of the Models screen.
+    #[serde(default)]
+    pub models: Option<Value>,
     /// The folders `uses.files` names, where they are: what
     /// `tau.interface("reveal")` may show.
     #[serde(default)]
@@ -894,6 +908,20 @@ pub struct Ask {
     pub outcome: Outcome,
 }
 
+/// `text` as a `&'static str`, each once: the few names a setup step or
+/// a forge gives as the interface wants them.
+pub fn interned(text: &str) -> &'static str {
+    static SEEN: std::sync::Mutex<Vec<&'static str>> =
+        std::sync::Mutex::new(Vec::new());
+    let mut seen = SEEN.lock().expect("not poisoned");
+    if let Some(known) = seen.iter().find(|known| **known == text) {
+        return known;
+    }
+    let leaked: &'static str = Box::leak(text.to_owned().into_boxed_str());
+    seen.push(leaked);
+    leaked
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -977,6 +1005,8 @@ mod tests {
             settings_view: true,
             app: false,
             page: false,
+            setup: false,
+            models: false,
         };
         assert_eq!(
             declaration.seams(),

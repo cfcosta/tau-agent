@@ -841,6 +841,8 @@ fn hook_name(hook: &Hook) -> String {
         Hook::RepoData => "repo_data".into(),
         Hook::App => "app".into(),
         Hook::AppPage => "page".into(),
+        Hook::AppSetup => "setup".into(),
+        Hook::AppModels => "models".into(),
         Hook::ListCommands => "commands.list".into(),
         Hook::Recover => "recover".into(),
         Hook::Page(name) => format!("pages.{name}"),

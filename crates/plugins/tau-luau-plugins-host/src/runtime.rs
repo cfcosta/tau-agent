@@ -459,6 +459,10 @@ pub enum Hook {
     AppPage,
     /// Its commands, `commands.list` of what `app` kept.
     ListCommands,
+    /// Its step of first-run setup, of what `app` kept (gap E).
+    AppSetup,
+    /// Its section of the Models screen, of what `app` kept.
+    AppModels,
     /// One of its pages of a repository, by name, with the page's params.
     Page(String),
     /// tau started, with the runs it found cut off as `{ runs }`.
@@ -486,6 +490,8 @@ impl Hook {
             | Self::RepoData
             | Self::App
             | Self::AppPage
+            | Self::AppSetup
+            | Self::AppModels
             | Self::ListCommands
             | Self::Page(_)
             | Self::Title
@@ -557,6 +563,8 @@ impl Hook {
             Self::RepoData => "p.repo_data(ctx)".into(),
             Self::App => "p.app(ctx)".into(),
             Self::AppPage => "p.page(input, ctx)".into(),
+            Self::AppSetup => "p.setup(input, ctx)".into(),
+            Self::AppModels => "p.models(input, ctx)".into(),
             Self::ListCommands => {
                 "require(\"tau\")._commands(p.listed.list(input))".into()
             }
@@ -594,6 +602,8 @@ impl Hook {
             Self::RepoData => declaration.hooks.repo_data,
             Self::App => declaration.hooks.app,
             Self::AppPage => declaration.hooks.page,
+            Self::AppSetup => declaration.hooks.setup,
+            Self::AppModels => declaration.hooks.models,
             Self::ListCommands => declaration.listed_commands,
             Self::Recover => declaration.hooks.recover,
             Self::Page(name) => declaration.pages.contains(name),
@@ -1648,6 +1658,13 @@ impl PluginHost {
         args: &Value,
     ) -> Result<ToolReply, String> {
         use tau_tools_host::http;
+        // `keep` is the host's, not the request's (gap H).
+        let mut sent = args.clone();
+        let keep_spec = sent
+            .as_object_mut()
+            .and_then(|fields| fields.remove("keep"))
+            .unwrap_or(Value::Null);
+        let args = &sent;
         let request = http::Request::parse(args)?;
         let host = request.url.host_str().unwrap_or_default();
         if !network.hosts.iter().any(|allowed| allowed == host) {
@@ -1674,19 +1691,63 @@ impl PluginHost {
             }
             None => return Err("this host keeps no secrets".into()),
         };
-        let fetched = http::fetch(
+        // `keep`: a field of the answer saved as a secret, never seen
+        // (ADR 0050, gap H).
+        let keep = match &keep_spec {
+            Value::Null => None,
+            keep => {
+                let secret = keep["secret"]
+                    .as_str()
+                    .ok_or("`keep` names its `secret`")?;
+                let from = keep["from"]
+                    .as_str()
+                    .ok_or("`keep` names the field it is `from`")?;
+                if !network.secrets.iter().any(|name| name == secret) {
+                    return Err(format!(
+                        "this plugin does not use the secret `{secret}`: add it to `uses.secrets`"
+                    ));
+                }
+                Some((secret.to_owned(), from.to_owned()))
+            }
+        };
+        if keep.is_some() && network.store.is_none() {
+            return Err("this host keeps no secrets".into());
+        }
+        let mut fetched = http::fetch(
             &http::client(),
             store,
             args,
             &CancellationToken::new(),
         )
         .await?;
+        let mut kept = false;
+        if let Some((secret, from)) = keep {
+            let value = fetched
+                .json
+                .as_mut()
+                .and_then(Value::as_object_mut)
+                .and_then(|fields| fields.remove(&from));
+            if let Some(Value::String(value)) = value.filter(|value| {
+                value.as_str().is_some_and(|text| !text.is_empty())
+            }) {
+                store.set(&secret, &value).await.map_err(|error| {
+                    format!("cannot keep `{secret}`: {error}")
+                })?;
+                let hidden = format!("[secret {secret}]");
+                fetched.body = fetched.body.replace(&value, &hidden);
+                for header in fetched.headers.values_mut() {
+                    *header = header.replace(&value, &hidden);
+                }
+                kept = true;
+            }
+        }
         Ok(ToolReply::success(json!({
             "status": fetched.status,
             "headers": fetched.headers,
             "body": fetched.body,
             "json": fetched.json,
             "truncated": fetched.cut,
+            "kept": kept,
         })))
     }
 }
@@ -1794,6 +1855,25 @@ impl Host for PluginHost {
                 sequential: false,
             });
         }
+        // Whether a secret is set, and emptying one (ADR 0050, gap H):
+        // never its value.
+        if self.network.as_ref().is_some_and(|network| {
+            network.store.is_some() && !network.secrets.is_empty()
+        }) {
+            for (name, description) in [
+                ("secret_has", "Whether the secret `name` is set."),
+                ("secret_forget", "Empties the secret `name`."),
+            ] {
+                tools.push(ToolEntry {
+                    name: name.into(),
+                    description: description.into(),
+                    input_schema: json!({ "type": "object" }),
+                    output_schema: None,
+                    namespace: None,
+                    sequential: true,
+                });
+            }
+        }
         if self.network.is_some() {
             tools.push(ToolEntry {
                 name: "http".into(),
@@ -1858,6 +1938,31 @@ impl Host for PluginHost {
         }
         if let (Some(network), "http") = (&self.network, call.name.as_str()) {
             return self.request(network, &call.args).await;
+        }
+        if let (Some(network), "secret_has" | "secret_forget") =
+            (&self.network, call.name.as_str())
+        {
+            let name = call.args["name"].as_str().unwrap_or_default();
+            if !network.secrets.iter().any(|secret| secret == name) {
+                return Err(format!(
+                    "this plugin does not use the secret `{name}`: add it to `uses.secrets`"
+                ));
+            }
+            let store =
+                network.store.as_ref().ok_or("this host keeps no secrets")?;
+            if call.name == "secret_forget" {
+                store.remove(name).await.map_err(|error| {
+                    format!("cannot forget `{name}`: {error}")
+                })?;
+                return Ok(ToolReply::success(Value::Null));
+            }
+            let set = store
+                .read()
+                .await
+                .map_err(|error| error.to_string())?
+                .get(name)
+                .is_some_and(|value| !value.is_empty());
+            return Ok(ToolReply::success(json!(set)));
         }
         if let (Some(driver), "hegel") = (&self.hegel, call.name.as_str()) {
             return crate::hegel::call(driver, &call.args)
