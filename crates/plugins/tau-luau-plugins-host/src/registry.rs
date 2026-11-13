@@ -64,10 +64,11 @@ struct Shared {
     /// other's.
     allowing: tokio::sync::Mutex<()>,
     state: RwLock<State>,
-    /// Versions read from runs' workspaces, by their files' digest: the
-    /// version when it may be active, else `None`. Each is loaded and
-    /// tested once.
-    tried: tokio::sync::Mutex<BTreeMap<String, Option<Loaded>>>,
+    /// Versions read from runs' workspaces, by their files' digest: how
+    /// loading and testing them went, which their files alone decide.
+    /// Each is loaded and tested once; what it may reach is weighed
+    /// against what is allowed as it is each time.
+    tried: tokio::sync::Mutex<BTreeMap<String, Tried>>,
     /// Asks the interface to draw the catalog again.
     refresh: Box<dyn Fn() + Send + Sync>,
     /// The person's settings, as they are now.
@@ -98,6 +99,14 @@ struct Shared {
     forms: crate::forms::Forms,
     /// The host's chats, which what the person allows starts or steers.
     chats: Option<Arc<dyn tau_ui_plugin::Conversations>>,
+}
+
+/// How loading and testing a workspace's version went.
+#[derive(Clone)]
+enum Tried {
+    /// It does not load, or its tests fail.
+    Broken,
+    Passed(Box<Loaded>),
 }
 
 /// A version of trunk's that is not active.
@@ -1035,31 +1044,39 @@ impl Registry {
         allowed: &BTreeMap<String, Allowed>,
     ) -> Option<Loaded> {
         let digest = files.digest();
-        let mut tried = self.0.tried.lock().await;
-        if let Some(known) = tried.get(&digest) {
-            return known.clone();
-        }
-        let version = match load(name, files).await {
-            Ok(loaded) => {
-                let tests = loaded.test(CancellationToken::new()).await;
-                let grown = match allowed.get(name) {
-                    Some(allowed) if allowed.digest == loaded.digest => {
-                        Vec::new()
-                    }
-                    Some(allowed) => {
-                        loaded.declaration.grown_from(&allowed.declaration)
-                    }
-                    None => {
-                        loaded.declaration.grown_from(&Declaration::default())
-                    }
-                };
-                (tests.iter().all(|test| test.passed) && grown.is_empty())
-                    .then_some(loaded)
+        let tried = {
+            let mut tried = self.0.tried.lock().await;
+            match tried.get(&digest) {
+                Some(known) => known.clone(),
+                None => {
+                    let known = match load(name, files).await {
+                        Ok(loaded) => {
+                            let tests =
+                                loaded.test(CancellationToken::new()).await;
+                            if tests.iter().all(|test| test.passed) {
+                                Tried::Passed(Box::new(loaded))
+                            } else {
+                                Tried::Broken
+                            }
+                        }
+                        Err(_) => Tried::Broken,
+                    };
+                    tried.insert(digest, known.clone());
+                    known
+                }
             }
-            Err(_) => None,
         };
-        tried.insert(digest, version.clone());
-        version
+        let Tried::Passed(loaded) = tried else {
+            return None;
+        };
+        let grown = match allowed.get(name) {
+            Some(allowed) if allowed.digest == loaded.digest => Vec::new(),
+            Some(allowed) => {
+                loaded.declaration.grown_from(&allowed.declaration)
+            }
+            None => loaded.declaration.grown_from(&Declaration::default()),
+        };
+        grown.is_empty().then_some(*loaded)
     }
 
     /// The repository as last read, for the Plugins screen.

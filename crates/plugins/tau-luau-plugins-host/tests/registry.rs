@@ -345,6 +345,15 @@ fn a_workspace_is_ready_when_what_it_changes_passes() {
     assert!(!ready(), "one whose tests fail");
     write_greet(workspace.path(), BLOCKING, Some(PASSING));
     assert!(!ready(), "one that reaches further than allowed");
+    // Once the person allows that reach, for trunk's version, the same
+    // workspace version, unchanged, may land.
+    let (blocking, trunk) = project(home.path(), 9, BLOCKING, Some(PASSING));
+    block_on_io(registry.reload(&blocking, &trunk));
+    allow(&registry).unwrap();
+    assert!(ready(), "it reaches only what is allowed now");
+    // Trunk goes back to the version that reaches nothing.
+    let (plain, trunk) = project(home.path(), 10, TOOL_ONLY, Some(PASSING));
+    block_on_io(registry.reload(&plain, &trunk));
 
     // Trunk's failing version, unchanged in the workspace.
     let (failing, trunk) = project(home.path(), 1, TOOL_ONLY, Some(FAILING));
