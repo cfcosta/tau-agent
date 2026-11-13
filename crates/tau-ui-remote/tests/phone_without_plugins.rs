@@ -168,10 +168,29 @@ fn a_phone_without_plugins_draws_and_acts_through_the_computer(
         "it asks for the run's banners: {asked:?}"
     );
 
+    // The status line, drawn without an answer, is asked for once the
+    // frame ends: the phone keeps answers only to what it asked.
+    events.borrow_mut().clear();
+    workspace.update(&mut cx, |ws, cx| {
+        let at = at(ws);
+        ws.contributions_named(points::STATUS, |_| Some(&at));
+        ws.ask_for_views(cx);
+    });
+    let mut keys = asked.clone();
+    keys.extend(
+        events
+            .borrow()
+            .iter()
+            .filter_map(|event| match event {
+                WorkspaceEvent::AskViews(keys) => Some(keys.clone()),
+                _ => None,
+            })
+            .flatten(),
+    );
+    assert!(keys.contains(&point(points::STATUS.name)), "{keys:?}");
+
     // The computer's answer is what it draws, under plugins it has no
     // code of.
-    let mut keys = asked.clone();
-    keys.push(point(points::STATUS.name));
     workspace.update(&mut cx, |ws, cx| ws.apply(answer(&keys), cx));
     cx.run_until_parked();
     let lines = workspace.read_with(&cx, |ws, _| {

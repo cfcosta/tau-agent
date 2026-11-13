@@ -12,6 +12,11 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use gpui::Context;
+use statig::{
+    Outcome::{self, Handled, Super, Transition},
+    blocking::{IntoStateMachineExt as _, StateMachine},
+    state_machine,
+};
 use tau_ui_plugin::{
     Point,
     PointCx,
@@ -39,66 +44,166 @@ use crate::{
 /// drops it, and the computer stops building it for this phone.
 pub const KEEP: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// What a phone has of plugins' views: each one the computer sent, and
-/// those it lacks, to ask for once the window has drawn.
-#[derive(Debug, Default)]
+/// What a phone has of plugins' views: each one it drew, asked for or
+/// not, and what the computer sent of it.
+#[derive(Default)]
 pub struct ViewCache {
-    built: HashMap<ViewKey, Built>,
-    /// When each view was last drawn.
-    drawn: HashMap<ViewKey, std::time::Instant>,
-    /// Drawn without an answer, and not asked for yet.
-    missing: BTreeSet<ViewKey>,
+    views: HashMap<ViewKey, StateMachine<Slot>>,
+}
+
+impl std::fmt::Debug for ViewCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map()
+            .entries(self.views.iter().map(|(key, slot)| (key, slot.state())))
+            .finish()
+    }
+}
+
+/// One view the phone drew: when it last did, and where it is with the
+/// computer.
+struct Slot {
+    drawn: std::time::Instant,
+}
+
+/// What happens to a view the phone drew.
+enum Input {
+    /// The phone drew it then.
+    Drawn(std::time::Instant),
+    /// It is asked for.
+    Asked,
+    /// The computer sent it, built so.
+    Answered(Built),
+    /// The computer the phone reaches may not know it asked.
+    Reconnected,
+}
+
+#[state_machine(initial = "State::missing(None)", state(derive(Debug, Clone)))]
+impl Slot {
+    /// Drawn and not asked for: shows what it `had`, if anything, until
+    /// it is asked for and comes.
+    #[state(superstate = "drawn")]
+    fn missing(had: &mut Option<Built>, event: &Input) -> Outcome<State> {
+        match event {
+            Input::Asked => Transition(State::asked(had.take())),
+            _ => Super,
+        }
+    }
+
     /// Asked for, with no answer yet.
-    asked: BTreeSet<ViewKey>,
+    #[state(superstate = "drawn")]
+    fn asked(had: &mut Option<Built>, event: &Input) -> Outcome<State> {
+        match event {
+            Input::Answered(built) => Transition(State::built(built.clone())),
+            Input::Reconnected => Transition(State::missing(had.take())),
+            _ => Super,
+        }
+    }
+
+    /// As the computer last sent it: it builds it for this phone.
+    #[state(superstate = "drawn")]
+    fn built(built: &mut Built, event: &Input) -> Outcome<State> {
+        match event {
+            Input::Answered(again) => {
+                *built = again.clone();
+                Handled
+            }
+            Input::Reconnected => {
+                Transition(State::missing(Some(built.clone())))
+            }
+            _ => Super,
+        }
+    }
+
+    #[superstate]
+    fn drawn(&mut self, event: &Input) -> Outcome<State> {
+        match event {
+            Input::Drawn(at) => {
+                self.drawn = *at;
+                Handled
+            }
+            // Not asked for: another phone's answer, which the computer
+            // does not build again for this one.
+            Input::Answered(_) | Input::Asked | Input::Reconnected => Handled,
+        }
+    }
+}
+
+impl State {
+    /// What the phone draws of it.
+    fn shown(&self) -> Option<&Built> {
+        match self {
+            Self::Built { built } => Some(built),
+            Self::Missing { had } | Self::Asked { had } => had.as_ref(),
+        }
+    }
 }
 
 impl ViewCache {
-    /// The view `key` names, if the computer sent it; else it is asked
-    /// for once the window has drawn.
-    pub fn get(&mut self, key: &ViewKey) -> Option<&Built> {
-        self.drawn.insert(key.clone(), std::time::Instant::now());
-        if !self.built.contains_key(key) && !self.asked.contains(key) {
-            self.missing.insert(key.clone());
-        }
-        self.built.get(key)
+    /// The view `key` names, as the computer sent it, drawn at `now`; a
+    /// view the phone lacks is asked for once the window has drawn.
+    pub fn get(
+        &mut self,
+        key: &ViewKey,
+        now: std::time::Instant,
+    ) -> Option<&Built> {
+        let slot = self
+            .views
+            .entry(key.clone())
+            .or_insert_with(|| Slot { drawn: now }.state_machine());
+        slot.handle(&Input::Drawn(now));
+        slot.state().shown()
     }
 
-    /// Drops the views not drawn for [`KEEP`] by `now`, and gives them:
-    /// the computer need not build them for this phone any more.
+    /// A frame drew at `now`: the views to ask for, and those to drop.
+    /// The views not drawn for [`KEEP`] go first, so none is asked for
+    /// as it goes.
+    fn drawn_frame(
+        &mut self,
+        now: std::time::Instant,
+    ) -> (Vec<ViewKey>, Vec<ViewKey>) {
+        let stale = self.take_stale(now);
+        (self.take_missing(), stale)
+    }
+
+    /// Drops the views not drawn for [`KEEP`] by `now`, and gives those
+    /// the computer may build for this phone: it need not any more.
     fn take_stale(&mut self, now: std::time::Instant) -> Vec<ViewKey> {
-        let stale: Vec<ViewKey> = self
-            .built
-            .keys()
-            .filter(|key| {
-                self.drawn
-                    .get(*key)
-                    .is_none_or(|at| now.saturating_duration_since(*at) >= KEEP)
-            })
-            .cloned()
-            .collect();
-        for key in &stale {
-            self.built.remove(key);
-            self.drawn.remove(key);
-        }
+        let mut stale = Vec::new();
+        self.views.retain(|key, slot| {
+            let kept = now.saturating_duration_since(slot.drawn) < KEEP;
+            let known = !matches!(slot.state(), State::Missing { had: None });
+            if !kept && known {
+                stale.push(key.clone());
+            }
+            kept
+        });
+        stale.sort();
         stale
     }
 
     /// The views to ask for now: those drawn without one since the last
     /// ask.
     fn take_missing(&mut self) -> Vec<ViewKey> {
-        let missing = std::mem::take(&mut self.missing);
-        self.asked.extend(missing.iter().cloned());
-        missing.into_iter().collect()
+        let mut missing: Vec<ViewKey> = self
+            .views
+            .iter_mut()
+            .filter(|(_, slot)| matches!(slot.state(), State::Missing { .. }))
+            .map(|(key, slot)| {
+                slot.handle(&Input::Asked);
+                key.clone()
+            })
+            .collect();
+        missing.sort();
+        missing
     }
 
-    /// Keeps what the computer sent.
+    /// Keeps what the computer sent of the views this phone asked for or
+    /// has; the others were for another phone.
     fn take(&mut self, answers: Vec<(ViewKey, Built)>) {
-        let now = std::time::Instant::now();
         for (key, built) in answers {
-            self.asked.remove(&key);
-            // Kept from when it came, as if drawn then.
-            self.drawn.entry(key.clone()).or_insert(now);
-            self.built.insert(key, built);
+            if let Some(slot) = self.views.get_mut(&key) {
+                slot.handle(&Input::Answered(built));
+            }
         }
     }
 
@@ -106,8 +211,9 @@ impl ViewCache {
     /// reaches may not know what it asked: it shows what it had until
     /// the answers come.
     fn ask_again(&mut self) {
-        self.asked.clear();
-        self.missing.extend(self.built.keys().cloned());
+        for slot in self.views.values_mut() {
+            slot.handle(&Input::Reconnected);
+        }
     }
 }
 
@@ -144,7 +250,12 @@ impl Workspace {
             view,
             layout: self.view_layout(),
         };
-        Some(cache.borrow_mut().get(&key).cloned())
+        Some(
+            cache
+                .borrow_mut()
+                .get(&key, std::time::Instant::now())
+                .cloned(),
+        )
     }
 
     /// Asks the computer for the views this window drew without, and
@@ -153,13 +264,8 @@ impl Workspace {
         let Some(cache) = &self.remote_views else {
             return;
         };
-        let (missing, stale) = {
-            let mut cache = cache.borrow_mut();
-            (
-                cache.take_missing(),
-                cache.take_stale(std::time::Instant::now()),
-            )
-        };
+        let (missing, stale) =
+            cache.borrow_mut().drawn_frame(std::time::Instant::now());
         if !missing.is_empty() {
             cx.emit(WorkspaceEvent::AskViews(missing));
         }
@@ -657,24 +763,236 @@ mod tests {
     #[test]
     fn a_view_is_asked_once_and_dropped_once_unseen() {
         let mut cache = ViewCache::default();
+        let start = std::time::Instant::now();
         let (shown, gone) = (key("shown"), key("gone"));
-        assert!(cache.get(&shown).is_none());
-        assert!(cache.get(&gone).is_none());
+        assert!(cache.get(&shown, start).is_none());
+        assert!(cache.get(&gone, start).is_none());
         assert_eq!(cache.take_missing().len(), 2);
-        assert!(cache.get(&shown).is_none());
+        assert!(cache.get(&shown, start).is_none());
         assert!(cache.take_missing().is_empty(), "asked, not again");
         cache.take(vec![
             (shown.clone(), Built::Nothing),
             (gone.clone(), Built::Nothing),
         ]);
-        let start = std::time::Instant::now();
         assert!(cache.take_stale(start).is_empty());
         // Only `shown` is drawn again; `gone`'s last draw is older.
-        std::thread::sleep(std::time::Duration::from_millis(5));
-        assert!(cache.get(&shown).is_some());
+        let soon = start + std::time::Duration::from_millis(5);
+        assert!(cache.get(&shown, soon).is_some());
         let later = start + KEEP + std::time::Duration::from_millis(1);
         assert_eq!(cache.take_stale(later), std::slice::from_ref(&gone));
-        assert!(cache.get(&gone).is_none(), "dropped, so asked again");
+        assert!(cache.get(&gone, later).is_none(), "dropped, so asked again");
         assert_eq!(cache.take_missing(), [gone]);
+    }
+
+    /// Answers go to every phone. A phone keeps none for a view it never
+    /// drew, nor for one it drew and has not asked for yet: the computer
+    /// does not build those for it, so it would never hear their
+    /// changes. It asks for the second itself.
+    #[test]
+    fn a_phone_keeps_no_answer_it_did_not_ask_for() {
+        let now = std::time::Instant::now();
+        let (drawn, unseen) = (key("drawn"), key("unseen"));
+        let mut cache = ViewCache::default();
+        assert!(cache.get(&drawn, now).is_none());
+        cache.take(vec![
+            (drawn.clone(), Built::Nothing),
+            (unseen.clone(), Built::Nothing),
+        ]);
+        assert!(cache.get(&drawn, now).is_none(), "not asked for yet");
+        assert!(!cache.views.contains_key(&unseen), "never drawn");
+        assert_eq!(cache.drawn_frame(now), (vec![drawn], vec![]));
+    }
+
+    /// A view not drawn for [`KEEP`] when the phone comes back is dropped,
+    /// not asked for again, and the answer to an ask still on its way is
+    /// not kept: drawn again, it is asked for afresh, so the computer
+    /// builds it for this phone.
+    #[test]
+    fn a_view_stale_when_the_phone_comes_back_is_asked_afresh() {
+        let start = std::time::Instant::now();
+        let view = key("view");
+        let mut cache = ViewCache::default();
+        cache.get(&view, start);
+        assert_eq!(cache.drawn_frame(start), (vec![view.clone()], vec![]));
+        cache.take(vec![(view.clone(), Built::Nothing)]);
+        let later = start + KEEP + std::time::Duration::from_secs(1);
+        cache.ask_again();
+        assert_eq!(cache.drawn_frame(later), (vec![], vec![view.clone()]));
+        cache.take(vec![(view.clone(), Built::Nothing)]);
+        assert!(cache.get(&view, later).is_none(), "dropped, not kept");
+        assert_eq!(cache.drawn_frame(later), (vec![view], vec![]));
+    }
+}
+
+#[cfg(test)]
+mod model {
+    use std::{
+        collections::{BTreeMap, BTreeSet},
+        time::{Duration, Instant},
+    };
+
+    use hegel::{TestCase, generators as gs};
+    use tau_ui_plugin::wire::{AtKey, Built, Layout, View, ViewKey};
+
+    use super::{KEEP, ViewCache};
+
+    const KEYS: [&str; 3] = ["a", "b", "c"];
+    const PHONES: usize = 2;
+
+    fn key(point: &str) -> ViewKey {
+        ViewKey {
+            view: View::Point {
+                point: point.to_owned(),
+                at: AtKey::App,
+            },
+            layout: Layout::default(),
+        }
+    }
+
+    /// What the computer builds for `key` at `version` of its state.
+    fn built(key: &ViewKey, version: u32) -> Built {
+        Built::Title {
+            title: format!("{key:?} v{version}"),
+        }
+    }
+
+    /// Phones drawing plugins' views from a computer that builds them
+    /// (`Workspace::ask_views`, `drop_views`, `forget_phone`,
+    /// `refresh_views`), over a link that carries each message at once,
+    /// its answers going to every phone as the mirror sends them. Time
+    /// passes, phones draw views and finish frames, reconnect, and the
+    /// computer's state changes.
+    struct Phones {
+        start: Instant,
+        now: Duration,
+        phones: Vec<ViewCache>,
+        /// The phones the computer builds each view for.
+        asked: BTreeMap<ViewKey, BTreeSet<usize>>,
+        /// The computer's state, as each view would show it.
+        version: u32,
+    }
+
+    impl Phones {
+        fn now(&self) -> Instant {
+            self.start + self.now
+        }
+
+        /// The computer's answers, to every phone.
+        fn answer(&mut self, answers: Vec<(ViewKey, Built)>) {
+            for phone in &mut self.phones {
+                phone.take(answers.clone());
+            }
+        }
+    }
+
+    #[hegel::state_machine]
+    impl Phones {
+        /// A phone draws a view.
+        #[rule(weight = 4)]
+        fn draw(&mut self, tc: TestCase) {
+            let phone = tc.draw(gs::integers().max_value(PHONES - 1));
+            let key = key(tc.draw(gs::sampled_from(KEYS.to_vec())));
+            let now = self.now();
+            self.phones[phone].get(&key, now);
+        }
+
+        /// A phone's frame ends: it asks for what it lacks and drops what
+        /// it stopped drawing, and the computer answers.
+        #[rule(weight = 4)]
+        fn frame(&mut self, tc: TestCase) {
+            let phone = tc.draw(gs::integers().max_value(PHONES - 1));
+            let now = self.now();
+            let (asks, drops) = self.phones[phone].drawn_frame(now);
+            let answers: Vec<(ViewKey, Built)> = asks
+                .into_iter()
+                .map(|key| {
+                    self.asked.entry(key.clone()).or_default().insert(phone);
+                    let built = built(&key, self.version);
+                    (key, built)
+                })
+                .collect();
+            for key in drops {
+                if let Some(by) = self.asked.get_mut(&key) {
+                    by.remove(&phone);
+                    if by.is_empty() {
+                        self.asked.remove(&key);
+                    }
+                }
+            }
+            self.answer(answers);
+        }
+
+        #[rule(weight = 2)]
+        fn time_passes(&mut self, tc: TestCase) {
+            let seconds = tc.draw(gs::integers::<u64>().max_value(90));
+            self.now += Duration::from_secs(seconds);
+        }
+
+        /// A phone's link drops and comes back: the computer forgets it,
+        /// and it asks again for what it has.
+        #[rule]
+        fn reconnect(&mut self, tc: TestCase) {
+            let phone = tc.draw(gs::integers().max_value(PHONES - 1));
+            self.asked.retain(|_, by| {
+                by.remove(&phone);
+                !by.is_empty()
+            });
+            self.phones[phone].ask_again();
+        }
+
+        /// The computer's state changes: it builds again what phones
+        /// asked for, and sends what changed.
+        #[rule(weight = 2)]
+        fn change(&mut self, _tc: TestCase) {
+            self.version += 1;
+            let answers: Vec<(ViewKey, Built)> = self
+                .asked
+                .keys()
+                .map(|key| (key.clone(), built(key, self.version)))
+                .collect();
+            self.answer(answers);
+        }
+
+        /// A view a phone drew within [`KEEP`] and has shows the
+        /// computer's state as it is now: the computer builds it for that
+        /// phone, so no change passes it by.
+        #[invariant(always_run)]
+        fn a_view_drawn_lately_is_up_to_date(&self, _tc: TestCase) {
+            let now = self.now();
+            for (index, phone) in self.phones.iter().enumerate() {
+                for (key, slot) in &phone.views {
+                    let super::State::Built { built: have } = slot.state()
+                    else {
+                        continue;
+                    };
+                    if now.saturating_duration_since(slot.drawn) >= KEEP {
+                        continue;
+                    }
+                    assert!(
+                        self.asked
+                            .get(key)
+                            .is_some_and(|by| by.contains(&index)),
+                        "phone {index} draws {key:?}, which is not built for it"
+                    );
+                    assert_eq!(
+                        have,
+                        &built(key, self.version),
+                        "phone {index}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[hegel::test(test_cases = 1000)]
+    fn views_drawn_lately_keep_up_with_the_computer(tc: TestCase) {
+        let machine = Phones {
+            start: Instant::now(),
+            now: Duration::ZERO,
+            phones: (0..PHONES).map(|_| ViewCache::default()).collect(),
+            asked: BTreeMap::new(),
+            version: 0,
+        };
+        hegel::stateful::machine(machine).steps(40).run(tc);
     }
 }

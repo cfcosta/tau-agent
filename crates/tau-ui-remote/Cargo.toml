@@ -25,6 +25,7 @@ tau-agents.workspace = true
 [dependencies]
 base64.workspace = true
 sha2.workspace = true
+statig.workspace = true
 gpui = { package = "gpui-pre", version = "=0.3.7" }
 serde.workspace = true
 serde_json.workspace = true
