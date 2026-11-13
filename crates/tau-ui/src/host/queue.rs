@@ -10,6 +10,11 @@
 //! the repository and tests implement on a model.
 
 use serde::{Deserialize, Serialize};
+use statig::{
+    Outcome::{self, Handled, Super, Transition},
+    blocking::StateMachine,
+    state_machine,
+};
 use tau_ui_remote::queue::{MainConflicts, Waiting, conflicts_remain};
 
 /// The plugin name the queue's records are stored under, on the main
@@ -44,6 +49,115 @@ pub enum Record {
     Clean,
 }
 
+/// Main's stack, as the conflict records leave it.
+#[derive(Clone, Default)]
+struct Stack(StateMachine<Records>);
+
+/// Two stacks are alike when they are in the same state, whether or not
+/// a record has reached them yet.
+impl PartialEq for Stack {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.state() == other.0.state()
+    }
+}
+
+impl Eq for Stack {}
+
+impl std::fmt::Debug for Stack {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.state().fmt(f)
+    }
+}
+
+/// The conflict records, folded in the order they were stored.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Records;
+
+#[state_machine(
+    initial = "State::clean()",
+    state(derive(Debug, Clone, PartialEq, Eq))
+)]
+impl Records {
+    /// Nothing in conflict.
+    #[state(superstate = "stack")]
+    fn clean(event: &Record) -> Outcome<State> {
+        let _ = event;
+        Super
+    }
+
+    /// A landing brought conflicts: tau's turn resolves them, told
+    /// `prompt`.
+    #[state(superstate = "stack")]
+    #[allow(
+        clippy::ptr_arg,
+        reason = "statig reads a state's data from its parameters' types"
+    )]
+    fn resolving(
+        from: &mut String,
+        prompt: &mut String,
+        event: &Record,
+    ) -> Outcome<State> {
+        match event {
+            // They outlived tau's turn: still the landing's.
+            Record::Conflicted { files } => {
+                Transition(State::conflicted(MainConflicts {
+                    files: files.clone(),
+                    from: Some(from.clone()),
+                    prompt: prompt.clone(),
+                    dismissed: false,
+                }))
+            }
+            _ => Super,
+        }
+    }
+
+    /// Main's stack holds `conflicts` after a turn.
+    #[state(superstate = "stack")]
+    fn conflicted(
+        conflicts: &mut MainConflicts,
+        event: &Record,
+    ) -> Outcome<State> {
+        match event {
+            Record::Conflicted { files } => {
+                // A landing's stay its own; main's are told again.
+                if conflicts.from.is_none() {
+                    conflicts.prompt = conflicts_remain(files);
+                }
+                conflicts.files = files.clone();
+                Handled
+            }
+            Record::Dismissed => {
+                conflicts.dismissed = true;
+                Handled
+            }
+            _ => Super,
+        }
+    }
+
+    /// What any state does with a record it leaves to its stack.
+    #[superstate]
+    fn stack(event: &Record) -> Outcome<State> {
+        match event {
+            Record::Resolving { from, prompt } => {
+                Transition(State::resolving(from.clone(), prompt.clone()))
+            }
+            Record::Conflicted { files } => {
+                Transition(State::conflicted(MainConflicts {
+                    files: files.clone(),
+                    from: None,
+                    prompt: conflicts_remain(files),
+                    dismissed: false,
+                }))
+            }
+            Record::Clean => Transition(State::clean()),
+            Record::Queued(_)
+            | Record::Previewed { .. }
+            | Record::Left { .. }
+            | Record::Dismissed => Handled,
+        }
+    }
+}
+
 /// What a [`Lane`] calls for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -76,9 +190,9 @@ pub enum Unlandable {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Lane {
     waiting: Vec<Waiting>,
-    conflicts: Option<MainConflicts>,
-    /// The landing whose conflicts tau's turn resolves, and its message.
-    resolving: Option<(String, String)>,
+    /// Main's stack: clean, a landing's conflicts being resolved, or
+    /// conflicted.
+    stack: Stack,
     /// Main is in a turn. Not stored: no turn outlives tau.
     busy: bool,
     /// A landing brought conflicts, and tau's turn resolving them has
@@ -103,7 +217,10 @@ impl Lane {
 
     /// The conflicts a turn left on main, while it is not clean.
     pub fn conflicts(&self) -> Option<&MainConflicts> {
-        self.conflicts.as_ref()
+        match self.stack.0.state() {
+            State::Conflicted { conflicts } => Some(conflicts),
+            State::Clean {} | State::Resolving { .. } => None,
+        }
     }
 
     /// What survives a restart: the queue, the mark of conflicts, and
@@ -129,7 +246,7 @@ impl Lane {
     /// Why a new chat may not fork main now: it would start from
     /// conflicted code.
     pub fn refuse_chat(&self) -> Option<String> {
-        self.conflicts.as_ref().map(|conflicts| {
+        self.conflicts().map(|conflicts| {
             format!(
                 "main has conflicts in {}; resolve them first",
                 conflicts.files.join(", ")
@@ -158,34 +275,10 @@ impl Lane {
                 }
             }
             Record::Left { run } => self.waiting.retain(|w| w.run != *run),
-            Record::Resolving { from, prompt } => {
-                self.resolving = Some((from.clone(), prompt.clone()));
-            }
-            Record::Conflicted { files } => {
-                let (from, prompt) = match &self.resolving {
-                    Some((from, prompt)) => {
-                        (Some(from.clone()), prompt.clone())
-                    }
-                    None => (None, conflicts_remain(files)),
-                };
-                let dismissed =
-                    self.conflicts.as_ref().is_some_and(|c| c.dismissed);
-                self.conflicts = Some(MainConflicts {
-                    files: files.clone(),
-                    from,
-                    prompt,
-                    dismissed,
-                });
-            }
-            Record::Dismissed => {
-                if let Some(conflicts) = &mut self.conflicts {
-                    conflicts.dismissed = true;
-                }
-            }
-            Record::Clean => {
-                self.conflicts = None;
-                self.resolving = None;
-            }
+            Record::Resolving { .. }
+            | Record::Conflicted { .. }
+            | Record::Dismissed
+            | Record::Clean => self.stack.0.handle(record),
         }
     }
 
@@ -231,12 +324,20 @@ impl Lane {
         if self.busy || self.pending {
             return Vec::new();
         }
-        match (&self.conflicts, files.is_empty()) {
-            (None, true) => Vec::new(),
-            (Some(_), true) => vec![self.store(Record::Clean)],
-            (Some(known), false) if known.files == files => Vec::new(),
+        match (self.stack.0.state(), files.is_empty()) {
+            (State::Clean {}, true) => Vec::new(),
+            // A landing's conflicts resolved count as clean too, so the
+            // next conflicts are not taken for that landing's.
+            (State::Resolving { .. } | State::Conflicted { .. }, true) => {
+                vec![self.store(Record::Clean)]
+            }
+            (State::Conflicted { conflicts }, false)
+                if conflicts.files == files =>
+            {
+                Vec::new()
+            }
             (known, false) => {
-                let new = known.is_none();
+                let new = !matches!(known, State::Conflicted { .. });
                 let mut actions = vec![self.store(Record::Conflicted {
                     files: files.clone(),
                 })];
@@ -250,7 +351,7 @@ impl Lane {
 
     /// The person will resolve main's conflicts themselves.
     pub fn dismiss(&mut self) -> Vec<Action> {
-        match &self.conflicts {
+        match self.conflicts() {
             Some(conflicts) if !conflicts.dismissed => {
                 vec![self.store(Record::Dismissed)]
             }
@@ -261,7 +362,7 @@ impl Lane {
     /// The chat whose turn to land it is now, if any may land: main
     /// idle, no landing's conflicts waiting on tau's turn, main clean.
     pub fn next(&self) -> Option<&Waiting> {
-        if self.busy || self.pending || self.conflicts.is_some() {
+        if self.busy || self.pending || self.conflicts().is_some() {
             return None;
         }
         self.waiting.first()

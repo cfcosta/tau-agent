@@ -43,6 +43,9 @@ struct World {
     busy: bool,
     /// Files main's stack holds in conflict.
     stack: BTreeSet<String>,
+    /// The landing that left them there, when one did; `None` when
+    /// main's own turn did.
+    left_by: Option<String>,
     stored: Vec<Record>,
     /// The chats queued and not gone yet, in the order they were
     /// queued: the order they must land in.
@@ -116,6 +119,9 @@ impl Main for World {
         self.chat(run).landed = true;
         self.landed.push(run.to_owned());
         self.left(run);
+        if !chat.conflicts.is_empty() {
+            self.left_by = Some(run.to_owned());
+        }
         self.stack.extend(chat.conflicts.iter().cloned());
         // The chats still waiting now meet these changes on main.
         Ok(chat.conflicts.into_iter().collect())
@@ -320,7 +326,9 @@ impl Machine {
         self.lane.started();
     }
 
-    /// Main's turn ends: it resolved what was on its stack, or left it.
+    /// Main's turn ends: it resolved what was on its stack, or left it,
+    /// and it may leave conflicts of its own, as when it catches up with
+    /// trunk.
     #[rule(weight = 3)]
     fn main_turn_ends(&mut self, tc: TestCase) {
         if !self.world.busy {
@@ -329,6 +337,12 @@ impl Machine {
         let resolves = tc.draw(gs::booleans());
         if resolves {
             self.world.stack.clear();
+        }
+        self.world.stack.extend(Self::files(&tc));
+        // tau sees main's stack only as a turn ends: conflicts are a
+        // landing's until it sees the stack clean.
+        if self.world.stack.is_empty() {
+            self.world.left_by = None;
         }
         self.world.busy = false;
         let actions =
@@ -391,6 +405,14 @@ impl Machine {
             let marked = self.lane.conflicts().map(|c| c.files.clone());
             let stack: Vec<String> = self.world.stack.iter().cloned().collect();
             assert_eq!(marked, (!stack.is_empty()).then_some(stack));
+            // And it names the landing that left them, or none when main
+            // did: "Resolve again" asks about these files.
+            if let Some(conflicts) = self.lane.conflicts() {
+                assert_eq!(
+                    conflicts.from, self.world.left_by,
+                    "who left main's conflicts"
+                );
+            }
         }
         // Until tau's resolving turn has tried, what a landing left is
         // not "still on main".
@@ -412,7 +434,7 @@ impl Machine {
     }
 }
 
-#[hegel::test(test_cases = 300)]
+#[hegel::test(test_cases = 1000)]
 fn the_queue_lands_in_order_and_only_when_it_may(tc: TestCase) {
     let machine = Machine {
         lane: Lane::default(),
@@ -421,6 +443,55 @@ fn the_queue_lands_in_order_and_only_when_it_may(tc: TestCase) {
         resolving: false,
     };
     hegel::stateful::machine(machine).steps(40).run(tc);
+}
+
+/// Once tau's turn resolved what a landing left, main is clean: what a
+/// later turn leaves there is main's own, and "Resolve again" asks about
+/// those files, not the landing's.
+#[test]
+fn conflicts_after_a_resolved_landing_are_mains_own() {
+    let mut lane = Lane::default();
+    let mut stored = Vec::new();
+    let mut keep = |actions: Vec<tau_ui::host::queue::Action>| {
+        for action in actions {
+            if let tau_ui::host::queue::Action::Store(record) = action {
+                stored.push(record);
+            }
+        }
+    };
+    let left = vec!["a.rs".to_owned()];
+    keep(lane.landed(
+        "c1",
+        &left,
+        tau_ui::host::queue::resolve_prompt("chat c1", &left),
+    ));
+    lane.started();
+    keep(lane.ended(Vec::new()));
+    lane.started();
+    keep(lane.ended(vec!["b.rs".to_owned()]));
+    let conflicts = lane.conflicts().expect("main is conflicted");
+    assert_eq!(conflicts.from, None);
+    assert_eq!(
+        conflicts.prompt,
+        tau_ui_remote::queue::conflicts_remain(&["b.rs".to_owned()])
+    );
+    assert_eq!(Lane::restore(&stored), lane.stored(), "it outlives tau");
+}
+
+/// What outlives tau's resolving turn is still the landing's, even when
+/// the turn changed which files are in conflict: tau sees main's stack
+/// only as a turn ends, and never saw it clean.
+#[test]
+fn conflicts_that_outlive_the_resolving_turn_are_the_landings() {
+    let mut lane = Lane::default();
+    let left = vec!["a.rs".to_owned()];
+    let prompt = tau_ui::host::queue::resolve_prompt("chat c1", &left);
+    lane.landed("c1", &left, prompt.clone());
+    lane.started();
+    lane.ended(vec!["a.rs".to_owned(), "b.rs".to_owned()]);
+    let conflicts = lane.conflicts().expect("main is conflicted");
+    assert_eq!(conflicts.from.as_deref(), Some("c1"));
+    assert_eq!(conflicts.prompt, prompt);
 }
 
 /// The message of tau's resolving turn names the chat and the files.

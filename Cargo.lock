@@ -9547,6 +9547,7 @@ dependencies = [
  "image",
  "serde",
  "serde_json",
+ "statig",
  "tau",
  "tau-agent",
  "tau-agents",
