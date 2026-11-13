@@ -59,6 +59,10 @@ struct Shared {
     identity: Identity,
     /// Where what the person allowed is kept.
     allowed_path: PathBuf,
+    /// Held while trunk's plugins are read again or one is allowed: each
+    /// reads what was allowed and writes it, so one never loses the
+    /// other's.
+    allowing: tokio::sync::Mutex<()>,
     state: RwLock<State>,
     /// Versions read from runs' workspaces, by their files' digest: the
     /// version when it may be active, else `None`. Each is loaded and
@@ -96,12 +100,30 @@ struct Shared {
     chats: Option<Arc<dyn tau_ui_plugin::Conversations>>,
 }
 
+/// A version of trunk's that is not active.
+#[derive(Clone)]
+enum Held {
+    /// It reaches further than the person allowed: they may allow it.
+    Waiting(Loaded),
+    /// Its tests fail: nothing allows it.
+    Failing(Loaded),
+}
+
+impl Held {
+    fn loaded(&self) -> &Loaded {
+        match self {
+            Self::Waiting(loaded) | Self::Failing(loaded) => loaded,
+        }
+    }
+}
+
 #[derive(Default)]
 struct State {
     overview: Overview,
     active: Vec<Active>,
-    /// Versions waiting for the person, by plugin.
-    waiting: BTreeMap<String, Loaded>,
+    /// Versions not active, by plugin: waiting for the person, or
+    /// failing their tests.
+    waiting: BTreeMap<String, Held>,
     /// Each plugin's files on trunk, by their digest, whatever its
     /// standing: what a workspace's plugins are told apart from.
     trunk: BTreeMap<String, String>,
@@ -204,6 +226,7 @@ impl Registry {
             root,
             identity,
             allowed_path: allowed,
+            allowing: tokio::sync::Mutex::new(()),
             state: RwLock::default(),
             tried: tokio::sync::Mutex::default(),
             built_in: Vec::new(),
@@ -1080,6 +1103,7 @@ impl Registry {
     /// Loads and tests every plugin at `trunk`, activates what may
     /// activate, and redraws the catalog.
     pub async fn reload(&self, project: &Project, trunk: &str) {
+        let _allowing = self.0.allowing.lock().await;
         let at = trunk.to_owned();
         let read = project.run(move |repo| repo.files_under(&at, "")).await;
         let files = match read {
@@ -1191,6 +1215,7 @@ impl Registry {
                 Standing::Active
             };
             let active = matches!(standing, Standing::Active);
+            let failing = matches!(standing, Standing::Failing);
             state.overview.plugins.push(Entry {
                 name: name.clone(),
                 description: declaration.description.clone(),
@@ -1213,7 +1238,12 @@ impl Registry {
                 let settings = loaded.declaration.default_settings();
                 state.active.push(Active { loaded, settings });
             } else {
-                state.waiting.insert(name, loaded);
+                let held = if failing {
+                    Held::Failing(loaded)
+                } else {
+                    Held::Waiting(loaded)
+                };
+                state.waiting.insert(name, held);
                 state.active.extend(earlier);
             }
         }
@@ -1235,13 +1265,17 @@ impl Registry {
     ) -> crate::SettingsPage {
         let loaded = {
             let state = self.0.state.read().await;
-            state.waiting.get(plugin).cloned().or_else(|| {
-                state
-                    .active
-                    .iter()
-                    .find(|active| active.loaded.declaration.name == plugin)
-                    .map(|active| active.loaded.clone())
-            })
+            state
+                .waiting
+                .get(plugin)
+                .map(|held| held.loaded().clone())
+                .or_else(|| {
+                    state
+                        .active
+                        .iter()
+                        .find(|active| active.loaded.declaration.name == plugin)
+                        .map(|active| active.loaded.clone())
+                })
         };
         let page = match loaded {
             None => Err(format!("{plugin} is not loaded")),
@@ -1425,12 +1459,39 @@ impl Registry {
         done
     }
 
-    /// The person allows `plugin`'s waiting version: it activates, and
-    /// what it reaches becomes what that plugin may reach.
-    pub async fn allow(&self, plugin: &str) -> anyhow::Result<()> {
+    /// The person allows `plugin`'s waiting version, which they saw ask
+    /// for `shown`: it activates, and what it reaches becomes what that
+    /// plugin may reach. A version that fails its tests, or that asks for
+    /// something else now (trunk moved since the page was drawn), is not
+    /// allowed.
+    pub async fn allow(
+        &self,
+        plugin: &str,
+        shown: &[String],
+    ) -> anyhow::Result<()> {
+        let _allowing = self.0.allowing.lock().await;
         let mut state = self.0.state.write().await;
-        let Some(loaded) = state.waiting.remove(plugin) else {
-            anyhow::bail!("{plugin} has no version waiting");
+        let asks = state.overview.plugins.iter().find_map(|entry| match &entry
+            .standing
+        {
+            Standing::Waiting { grown } if entry.name == plugin => {
+                Some(grown.clone())
+            }
+            _ => None,
+        });
+        if asks.as_deref().is_some_and(|asks| asks != shown) {
+            anyhow::bail!(
+                "{plugin}'s waiting version asks for more than was shown: \
+                 look at it again"
+            );
+        }
+        let loaded = match state.waiting.remove(plugin) {
+            Some(Held::Waiting(loaded)) => loaded,
+            Some(failing @ Held::Failing(_)) => {
+                state.waiting.insert(plugin.to_owned(), failing);
+                anyhow::bail!("{plugin}'s waiting version fails its tests");
+            }
+            None => anyhow::bail!("{plugin} has no version waiting"),
         };
         let path = self.0.allowed_path.clone();
         let mut allowed = read_allowed(&path).await;

@@ -731,9 +731,10 @@ impl Overview {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "act", rename_all = "snake_case")]
 pub enum Act {
-    /// Lets `plugin`'s waiting version reach what it asks, and activates
-    /// it.
-    Allow { plugin: String },
+    /// Lets `plugin`'s waiting version reach what it asks, `grown` as
+    /// the page showed it, and activates it: not when the version waiting
+    /// now asks something else.
+    Allow { plugin: String, grown: Vec<String> },
     /// Draws `plugin`'s settings page (`settings.view`) of `settings`,
     /// its inputs' ids starting with `fields`; the answer is a fetched
     /// tree ([`pane::settings_view`]).

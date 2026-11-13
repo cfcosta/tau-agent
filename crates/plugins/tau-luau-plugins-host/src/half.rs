@@ -353,7 +353,7 @@ impl HostHalf for LuauPluginsHost {
                     }
                 }));
             }
-            Act::Allow { plugin } => host.allow(&plugin).await?,
+            Act::Allow { plugin, grown } => host.allow(&plugin, &grown).await?,
             Act::Page {
                 plugin,
                 page,

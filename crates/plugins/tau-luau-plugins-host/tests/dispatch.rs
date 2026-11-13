@@ -136,7 +136,12 @@ fn registry(home: &std::path::Path) -> Registry {
         || {},
     );
     block_on_io(registry.reload(&Project::from(repo), &trunk));
-    block_on_io(registry.allow("greet")).unwrap();
+    let grown =
+        match block_on_io(registry.overview()).plugins[0].standing.clone() {
+            tau_luau_plugins::Standing::Waiting { grown } => grown,
+            _ => Vec::new(),
+        };
+    block_on_io(registry.allow("greet", &grown)).unwrap();
     registry
 }
 

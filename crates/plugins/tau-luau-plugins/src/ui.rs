@@ -1814,8 +1814,15 @@ fn page_action(handle: &Handle, action: &str, args: &Value) {
         WRITE => handle.composer(format!("/{COMMAND} ")),
         ALLOW => {
             if let Some(plugin) = args["plugin"].as_str() {
+                let grown = args["grown"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|word| word.as_str().map(str::to_owned))
+                    .collect();
                 handle.act(Act::Allow {
                     plugin: plugin.to_owned(),
+                    grown,
                 });
             }
         }
@@ -2144,12 +2151,13 @@ pub fn entry_link(entry: &str) -> Link {
     Link::page(PAGE).param(ENTRY, entry)
 }
 
-/// The Allow that lets a waiting version of `plugin` reach what it asks.
-fn allow(plugin: &str) -> Node {
+/// The Allow that lets a waiting version of `plugin` reach `grown`, as
+/// the page shows it.
+fn allow(plugin: &str, grown: &[String]) -> Node {
     Node::Button {
         label: "Allow".into(),
         action: ALLOW.into(),
-        args: json!({ "plugin": plugin }),
+        args: json!({ "plugin": plugin, "grown": grown }),
         kind: Kind::Primary,
         icon: None,
     }
@@ -2200,7 +2208,7 @@ fn plugin_card(entry: &Entry) -> Node {
                 text: format!("It wants to use {}.", grown.join(", ")),
             },
             Node::Spacer,
-            allow(&entry.name),
+            allow(&entry.name, grown),
         ])),
         Standing::Broken { error } => body.push(Node::Code {
             lang: None,
@@ -2306,7 +2314,7 @@ fn plugin_page(entry: &str, view: &mut ViewCx<'_, LuauPluginsUi>) -> Node {
                 children: vec![Node::row([
                     Node::stack(words),
                     Node::Spacer,
-                    allow(&found.name),
+                    allow(&found.name, grown),
                 ])],
             });
         }

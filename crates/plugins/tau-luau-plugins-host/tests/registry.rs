@@ -91,6 +91,19 @@ fn standing(registry: &Registry) -> Standing {
     block_on_io(registry.overview()).plugins[0].standing.clone()
 }
 
+/// What the page shows `greet`'s waiting version asking for.
+fn shown(registry: &Registry) -> Vec<String> {
+    match standing(registry) {
+        Standing::Waiting { grown } => grown,
+        _ => Vec::new(),
+    }
+}
+
+/// The person allows `greet` from its page, as drawn now.
+fn allow(registry: &Registry) -> anyhow::Result<()> {
+    block_on_io(registry.allow("greet", &shown(registry)))
+}
+
 fn active_description(registry: &Registry) -> Option<String> {
     block_on_io(registry.active())
         .first()
@@ -137,8 +150,12 @@ fn versions_activate_wait_or_keep_the_one_before() {
         Some("Says hello.")
     );
 
+    // Allowed from a page drawn before it asked for more: not allowed.
+    assert!(block_on_io(registry.allow("greet", &[])).is_err());
+    assert!(matches!(standing(&registry), Standing::Waiting { .. }));
+
     // Allowed, it activates; read again, it stays active.
-    block_on_io(registry.allow("greet")).unwrap();
+    allow(&registry).unwrap();
     assert_eq!(standing(&registry), Standing::Active);
     assert_eq!(
         active_description(&registry).as_deref(),
@@ -146,14 +163,17 @@ fn versions_activate_wait_or_keep_the_one_before() {
     );
     block_on_io(registry.reload(&v2, &trunk));
     assert_eq!(standing(&registry), Standing::Active);
-    assert!(
-        block_on_io(registry.allow("greet")).is_err(),
-        "nothing waits"
-    );
+    assert!(allow(&registry).is_err(), "nothing waits");
 
-    // Its tests fail: the version before stays.
+    // Its tests fail: the version before stays, and it cannot be
+    // allowed, as from a page that still showed it waiting.
     let (v3, trunk) = project(home.path(), 3, BLOCKING, Some(FAILING));
     block_on_io(registry.reload(&v3, &trunk));
+    assert_eq!(standing(&registry), Standing::Failing);
+    assert!(
+        allow(&registry).is_err(),
+        "a version whose tests fail is never allowed"
+    );
     assert_eq!(standing(&registry), Standing::Failing);
     assert_eq!(
         active_description(&registry).as_deref(),
@@ -182,7 +202,7 @@ fn what_was_allowed_is_kept() {
     );
     block_on_io(first.reload(&v1, &trunk));
     assert!(matches!(standing(&first), Standing::Waiting { .. }));
-    block_on_io(first.allow("greet")).unwrap();
+    allow(&first).unwrap();
 
     let second = Registry::at(
         home.path().join("x"),
@@ -445,7 +465,7 @@ fn a_plugin_fills_the_title_and_compaction_slots() {
     assert_eq!(block_on_io(title.write("fix it", "m")).unwrap(), None);
     assert_eq!(compaction.rewriters(), [tau_luau_plugins::NAME]);
 
-    block_on_io(registry.allow("greet")).unwrap();
+    allow(&registry).unwrap();
     assert_eq!(
         block_on_io(title.write("fix it", "m")).unwrap().as_deref(),
         Some("Asked: fix it")
@@ -524,7 +544,7 @@ return tau.plugin {{
     .with_runtime(runtime.handle().clone());
     let (v1, trunk) = project(home.path(), 1, &source, None);
     block_on_io(registry.reload(&v1, &trunk));
-    block_on_io(registry.allow("greet")).unwrap();
+    allow(&registry).unwrap();
     LuauNotify(registry).show(
         Notice {
             title: "Ready to land".into(),
@@ -576,7 +596,7 @@ fn a_plugin_fills_the_forge_slot() {
     .with_config(home.path().join("config"));
     let (v1, trunk) = project(home.path(), 1, FORGE, None);
     block_on_io(registry.reload(&v1, &trunk));
-    block_on_io(registry.allow("greet")).unwrap();
+    allow(&registry).unwrap();
     let forge = LuauForge(registry.clone());
     assert_eq!((forge.name(), forge.id()), ("Gitea at home", "home"));
     assert_eq!(forge.clone_url("me/tau"), "https://git.home.lan/me/tau.git");
@@ -685,7 +705,7 @@ fn a_title_hook_asks_the_persons_model() {
     .with_model(model);
     let (v1, trunk) = project(home.path(), 1, ASKS_THE_MODEL, None);
     block_on_io(registry.reload(&v1, &trunk));
-    block_on_io(registry.allow("greet")).unwrap();
+    allow(&registry).unwrap();
     let title =
         block_on_io(LuauTitle(registry).write("fix the login bug", "m-run"))
             .unwrap();
@@ -726,7 +746,7 @@ fn a_plugins_job_runs_when_due_and_keeps_its_state() {
         Standing::Waiting { grown } => assert_eq!(grown, ["the job `count`"]),
         other => panic!("{other:?}"),
     }
-    block_on_io(registry.allow("greet")).unwrap();
+    allow(&registry).unwrap();
     let dir = home.path().join("jobs");
     let ran = || std::collections::HashMap::new();
     let due = block_on_io(jobs::due_now(&registry, &dir, &mut ran()));
@@ -906,7 +926,7 @@ fn a_plugins_page_of_a_repository_reads_and_writes_its_store_there() {
     );
     let (v1, trunk) = project(home.path(), 1, LISTS, None);
     block_on_io(registry.reload(&v1, &trunk));
-    block_on_io(registry.allow("greet")).unwrap();
+    allow(&registry).unwrap();
     for text in ["milk", "eggs"] {
         block_on_io(registry.repo_action(
             "greet",
@@ -992,7 +1012,7 @@ fn recover_lets_go_of_what_dead_runs_held() {
     );
     let (v1, trunk) = project(home.path(), 1, CLAIMS, None);
     block_on_io(registry.reload(&v1, &trunk));
-    block_on_io(registry.allow("greet")).unwrap();
+    allow(&registry).unwrap();
     for (repo, issue, run) in [
         ("a", "td-1", "r-dead"),
         ("a", "td-2", "r-live"),
@@ -1065,7 +1085,7 @@ fn a_plugins_page_of_the_app_reads_what_is_typed_and_the_repositories() {
     );
     let (v1, trunk) = project(home.path(), 1, APP_PAGES, None);
     block_on_io(registry.reload(&v1, &trunk));
-    block_on_io(registry.allow("greet")).unwrap();
+    allow(&registry).unwrap();
     let repo = |name: &str, remote: Option<&str>| tau_ui_plugin::RepoCtx {
         id: tau_ui_plugin::RepoId(format!("id-{name}")),
         name: name.to_owned(),
