@@ -23,6 +23,11 @@
 //! [`continuation`]: super::continuation
 
 use serde_json::Value;
+use statig::{
+    Outcome::{self, Handled, Super, Transition},
+    blocking::StateMachine,
+    state_machine,
+};
 
 use super::continuation::{Body, Continuation, RequestKind, prepare};
 
@@ -116,21 +121,30 @@ impl LaneStats {
     }
 }
 
-#[derive(Debug, Default)]
+/// One lane: what it continues from, its counters, and where its
+/// request is.
+#[derive(Default)]
 pub struct Lane {
     continuation: Option<Continuation>,
-    request: Option<Request>,
     stats: LaneStats,
+    request: StateMachine<Requests>,
 }
 
-#[derive(Debug)]
-struct Request {
+impl std::fmt::Debug for Lane {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Lane")
+            .field("continuation", &self.continuation)
+            .field("stats", &self.stats)
+            .field("request", self.request.state())
+            .finish()
+    }
+}
+
+/// A request, as the run gave it and as it went out.
+#[derive(Debug, Clone)]
+pub(crate) struct Request {
     full_body: Body,
     kind: RequestKind,
-    output_started: bool,
-    recovered: bool,
-    /// Waiting for [`Event::Reconnected`] before resending.
-    reconnecting: bool,
 }
 
 impl Lane {
@@ -144,7 +158,7 @@ impl Lane {
 
     /// Whether a request is in flight.
     pub fn is_busy(&self) -> bool {
-        self.request.is_some()
+        !matches!(self.request.state(), State::Idle {})
     }
 
     /// Takes the lane's continuation, as it leaves its connection: the
@@ -161,111 +175,40 @@ impl Lane {
 
     /// Submits the run's next request, given as it would be sent in full.
     pub fn submit(&mut self, full_body: Body) -> Result<Action, LaneError> {
-        if self.request.is_some() {
+        if self.is_busy() {
             return Err(LaneError::Busy);
         }
-        Ok(self.send(full_body))
+        self.give(&Input::Submit(&full_body)).ok_or(LaneError::Busy)
     }
 
     /// Applies one event and returns what the driver must do, if anything.
     pub fn handle(&mut self, event: Event) -> Option<Action> {
-        match event {
-            Event::Output => {
-                if let Some(request) = &mut self.request {
-                    request.output_started = true;
-                }
-                None
-            }
-            Event::Completed {
-                response_id,
-                output_items,
-            } => {
-                // While reconnecting, the old connection is gone; a late
-                // completion from it must not complete the resend.
-                if self.request.as_ref().is_some_and(|r| r.reconnecting) {
-                    return None;
-                }
-                if let Some(request) = self.request.take() {
-                    self.continuation = Some(Continuation::record(
-                        &request.full_body,
-                        output_items,
-                        response_id,
-                    ));
-                }
-                None
-            }
-            Event::ServerError { code } => {
-                // The server evicts its cache after an error.
-                self.continuation = None;
-                let request = self.request.as_ref()?;
-                match code.as_deref() {
-                    Some(PREVIOUS_RESPONSE_NOT_FOUND)
-                        if request.kind == RequestKind::Delta
-                            && !request.recovered =>
-                    {
-                        self.stats.count(Recovery::PreviousResponseNotFound);
-                        let full_body = self.request.take()?.full_body;
-                        // The continuation is gone, so this resend is full.
-                        let action = self.send(full_body);
-                        self.mark_recovered();
-                        Some(action)
-                    }
-                    Some(CONNECTION_LIMIT_REACHED)
-                        if !request.output_started && !request.recovered =>
-                    {
-                        self.stats.count(Recovery::ConnectionLimitReached);
-                        Some(self.start_reconnect())
-                    }
-                    _ => {
-                        self.request = None;
-                        Some(Action::Fail(Failure::Server { code }))
-                    }
-                }
-            }
-            Event::ConnectionLost => {
-                self.continuation = None;
-                let request = self.request.as_ref()?;
-                if request.reconnecting {
-                    // The reconnect itself failed.
-                    self.request = None;
-                    Some(Action::Fail(Failure::ConnectionLost {
-                        before_first_event: true,
-                    }))
-                } else if !request.output_started && !request.recovered {
-                    self.stats.count(Recovery::ConnectionLost);
-                    Some(self.start_reconnect())
-                } else {
-                    let before_first_event = !request.output_started;
-                    self.request = None;
-                    Some(Action::Fail(Failure::ConnectionLost {
-                        before_first_event,
-                    }))
-                }
-            }
-            Event::Reconnected => {
-                self.continuation = None;
-                match self.request.take() {
-                    Some(request) if request.reconnecting => {
-                        let action = self.send(request.full_body);
-                        self.mark_recovered();
-                        Some(action)
-                    }
-                    other => {
-                        self.request = other;
-                        None
-                    }
-                }
-            }
-            Event::Cancel => {
-                self.continuation = None;
-                self.request = None;
-                None
-            }
-        }
+        self.give(&Input::Event(&event))
     }
 
-    /// Prepares and records a request; returns the send action.
-    fn send(&mut self, full_body: Body) -> Action {
+    fn give(&mut self, input: &Input<'_>) -> Option<Action> {
+        let mut context = Context {
+            continuation: &mut self.continuation,
+            stats: &mut self.stats,
+            action: None,
+        };
+        self.request.handle_with_context(input, &mut context);
+        context.action
+    }
+}
+
+/// What a request's state answers with: the lane's continuation and
+/// counters, which it changes, and what the driver must do.
+struct Context<'a> {
+    continuation: &'a mut Option<Continuation>,
+    stats: &'a mut LaneStats,
+    action: Option<Action>,
+}
+
+impl Context<'_> {
+    /// Prepares `full_body` against the continuation, counts it, and
+    /// sends it: the request it is now.
+    fn send(&mut self, full_body: Body) -> Request {
         let prepared = prepare(self.continuation.as_ref(), &full_body);
         match prepared.kind {
             RequestKind::Full => self.stats.full_requests += 1,
@@ -274,28 +217,196 @@ impl Lane {
                 self.stats.last_delta_items = prepared.body.input.len() as u64;
             }
         }
-        self.request = Some(Request {
+        self.action = Some(Action::Send(prepared.body));
+        Request {
             full_body,
             kind: prepared.kind,
-            output_started: false,
-            recovered: false,
-            reconnecting: false,
-        });
-        Action::Send(prepared.body)
-    }
-
-    fn mark_recovered(&mut self) {
-        if let Some(request) = &mut self.request {
-            request.recovered = true;
         }
     }
 
-    fn start_reconnect(&mut self) -> Action {
-        self.continuation = None;
-        if let Some(request) = &mut self.request {
-            request.reconnecting = true;
-            request.recovered = true;
+    /// Opens a new connection for the request; its cache goes.
+    fn reconnect(&mut self, recovery: Recovery) {
+        self.stats.count(recovery);
+        *self.continuation = None;
+        self.action = Some(Action::Reconnect);
+    }
+
+    fn fail(&mut self, failure: Failure) {
+        self.action = Some(Action::Fail(failure));
+    }
+}
+
+/// What reaches a request: the run's next one, or an [`Event`].
+enum Input<'a> {
+    Submit(&'a Body),
+    Event(&'a Event),
+}
+
+/// Where the lane's request is. Each gets at most one transparent
+/// recovery: `retried` once it had it.
+#[derive(Debug, Default)]
+struct Requests;
+
+#[state_machine(
+    initial = "State::idle()",
+    state(derive(Debug)),
+    visibility = "pub(crate)"
+)]
+impl Requests {
+    /// No request in flight.
+    #[state]
+    fn idle(context: &mut Context<'_>, event: &Input<'_>) -> Outcome<State> {
+        match event {
+            Input::Submit(full_body) => Transition(State::awaiting(
+                context.send((*full_body).clone()),
+                false,
+            )),
+            Input::Event(Event::ServerError { .. } | Event::ConnectionLost) => {
+                // The server evicts its cache after an error.
+                *context.continuation = None;
+                Handled
+            }
+            Input::Event(Event::Reconnected | Event::Cancel) => {
+                *context.continuation = None;
+                Handled
+            }
+            Input::Event(Event::Output | Event::Completed { .. }) => Handled,
         }
-        Action::Reconnect
+    }
+
+    /// Sent, with no output yet: a failure here can still be recovered
+    /// from unseen, once.
+    #[state(superstate = "in_flight")]
+    fn awaiting(
+        request: &mut Request,
+        retried: &mut bool,
+        context: &mut Context<'_>,
+        event: &Input<'_>,
+    ) -> Outcome<State> {
+        let Input::Event(event) = event else {
+            return Super;
+        };
+        match event {
+            Event::Output => Transition(State::streaming(request.clone())),
+            Event::ServerError { code } if !*retried => match code.as_deref() {
+                Some(PREVIOUS_RESPONSE_NOT_FOUND)
+                    if request.kind == RequestKind::Delta =>
+                {
+                    context.stats.count(Recovery::PreviousResponseNotFound);
+                    *context.continuation = None;
+                    // The continuation is gone, so this resend is full.
+                    let resent = context.send(request.full_body.clone());
+                    Transition(State::awaiting(resent, true))
+                }
+                Some(CONNECTION_LIMIT_REACHED) => {
+                    context.reconnect(Recovery::ConnectionLimitReached);
+                    Transition(State::reconnecting(request.clone()))
+                }
+                _ => Super,
+            },
+            Event::ConnectionLost if !*retried => {
+                context.reconnect(Recovery::ConnectionLost);
+                Transition(State::reconnecting(request.clone()))
+            }
+            Event::ConnectionLost => {
+                *context.continuation = None;
+                context.fail(Failure::ConnectionLost {
+                    before_first_event: true,
+                });
+                Transition(State::idle())
+            }
+            _ => Super,
+        }
+    }
+
+    /// Its output has started: the run sees it, so nothing is sent again.
+    #[state(superstate = "in_flight")]
+    fn streaming(
+        request: &mut Request,
+        context: &mut Context<'_>,
+        event: &Input<'_>,
+    ) -> Outcome<State> {
+        let _ = request;
+        match event {
+            Input::Event(Event::Output) => Handled,
+            Input::Event(Event::ConnectionLost) => {
+                *context.continuation = None;
+                context.fail(Failure::ConnectionLost {
+                    before_first_event: false,
+                });
+                Transition(State::idle())
+            }
+            _ => Super,
+        }
+    }
+
+    /// Waiting for a new connection, then sent again in full: its
+    /// recovery.
+    #[state(superstate = "in_flight")]
+    fn reconnecting(
+        request: &mut Request,
+        context: &mut Context<'_>,
+        event: &Input<'_>,
+    ) -> Outcome<State> {
+        match event {
+            Input::Event(Event::Reconnected) => {
+                *context.continuation = None;
+                let resent = context.send(request.full_body.clone());
+                Transition(State::awaiting(resent, true))
+            }
+            // The old connection is gone; a late completion from it
+            // completes nothing.
+            Input::Event(Event::Output | Event::Completed { .. }) => Handled,
+            Input::Event(Event::ConnectionLost) => {
+                // The reconnect itself failed.
+                *context.continuation = None;
+                context.fail(Failure::ConnectionLost {
+                    before_first_event: true,
+                });
+                Transition(State::idle())
+            }
+            _ => Super,
+        }
+    }
+
+    /// A request in flight: it completes, fails with the server's error,
+    /// or is cancelled.
+    #[superstate]
+    fn in_flight(
+        request: &mut Request,
+        context: &mut Context<'_>,
+        event: &Input<'_>,
+    ) -> Outcome<State> {
+        match event {
+            // One request at a time: [`Lane::submit`] refuses it first.
+            Input::Submit(_) => Handled,
+            Input::Event(Event::Completed {
+                response_id,
+                output_items,
+            }) => {
+                *context.continuation = Some(Continuation::record(
+                    &request.full_body,
+                    output_items.clone(),
+                    response_id.clone(),
+                ));
+                Transition(State::idle())
+            }
+            Input::Event(Event::ServerError { code }) => {
+                *context.continuation = None;
+                context.fail(Failure::Server { code: code.clone() });
+                Transition(State::idle())
+            }
+            Input::Event(Event::Cancel) => {
+                *context.continuation = None;
+                Transition(State::idle())
+            }
+            // A reconnect notice for a request not reconnecting: the cache
+            // is gone all the same.
+            Input::Event(Event::Reconnected) => {
+                *context.continuation = None;
+                Handled
+            }
+            Input::Event(Event::Output | Event::ConnectionLost) => Handled,
+        }
     }
 }

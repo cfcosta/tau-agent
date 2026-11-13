@@ -812,7 +812,8 @@ impl PoolMachine {
 
     /// The server evicts the response an in-flight delta continues, and
     /// answers it with `previous_response_not_found`: the pool resends the
-    /// request in full on the same connection.
+    /// request in full on the same connection, unless its output started,
+    /// which the caller has seen: then it fails.
     #[rule]
     fn evict(&mut self, tc: TestCase) {
         let deltas: Vec<LaneId> = self
@@ -832,24 +833,37 @@ impl PoolMachine {
             .get_mut(&connection)
             .unwrap()
             .remove(&previous);
-        self.model.not_found += 1;
+        let started = self.model.started.contains(&lane);
+        if started {
+            self.model.drop_request(lane);
+        } else {
+            self.model.not_found += 1;
+        }
         let actions = self.frame_for(
             lane,
             Event::ServerError {
                 code: Some(PREVIOUS_RESPONSE_NOT_FOUND.into()),
             },
         );
-        assert!(
-            matches!(
-                &actions[..],
-                [PoolAction::Send { connection: c, lane: l, body }]
-                    if *c == connection
-                        && *l == lane
-                        && body.previous_response_id.is_none()
-            ),
-            "{actions:?}"
-        );
-        tc.event("resent in full after previous_response_not_found");
+        if started {
+            assert!(
+                matches!(&actions[..], [PoolAction::Fail { lane: l, .. }] if *l == lane),
+                "{actions:?}"
+            );
+            tc.event("failed after output on previous_response_not_found");
+        } else {
+            assert!(
+                matches!(
+                    &actions[..],
+                    [PoolAction::Send { connection: c, lane: l, body }]
+                        if *c == connection
+                            && *l == lane
+                            && body.previous_response_id.is_none()
+                ),
+                "{actions:?}"
+            );
+            tc.event("resent in full after previous_response_not_found");
+        }
         self.after(&tc, actions, false);
     }
 

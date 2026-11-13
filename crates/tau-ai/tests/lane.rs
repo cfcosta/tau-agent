@@ -36,6 +36,9 @@ enum Fault {
     None,
     /// The server forgets every response before this request arrives.
     Evict,
+    /// The server says it lost the previous response after some output:
+    /// too late to send again unseen.
+    EvictAfterOutput,
     ConnectionLimit,
     /// The connection limit, after some output: too late to reconnect.
     LimitAfterOutput,
@@ -61,6 +64,7 @@ impl Fault {
         match self {
             Self::OtherError => Some(server("server_error")),
             Self::UncodedError => Some(Failure::Server { code: None }),
+            Self::EvictAfterOutput => Some(server(PREVIOUS_RESPONSE_NOT_FOUND)),
             Self::LimitAfterOutput => Some(server(CONNECTION_LIMIT_REACHED)),
             Self::LostAfterOutput => Some(Failure::ConnectionLost {
                 before_first_event: false,
@@ -257,6 +261,10 @@ impl LaneMachine {
                         }
                         Fault::OtherError => {
                             lane.handle(refuse("server_error"))
+                        }
+                        Fault::EvictAfterOutput => {
+                            assert_eq!(lane.handle(Event::Output), None);
+                            lane.handle(refuse(PREVIOUS_RESPONSE_NOT_FOUND))
                         }
                         Fault::UncodedError => {
                             lane.handle(Event::ServerError { code: None })
@@ -513,4 +521,57 @@ fn previous_response_not_found_on_full_request_fails() {
         }),
         Some(Action::Fail(_))
     ));
+}
+
+/// The server says it lost the previous response after a delta's output
+/// started: the caller has seen that output, so the lane fails the
+/// request instead of sending it again in full, which would stream it a
+/// second time.
+#[test]
+fn a_lost_previous_response_after_output_fails_the_request() {
+    let mut lane = Lane::new();
+    let first = Body::from(
+        json!({ "input": [{ "role": "user", "content": "hi" }] })
+            .as_object()
+            .unwrap()
+            .clone(),
+    );
+    assert!(matches!(lane.submit(first), Ok(Action::Send(_))));
+    assert_eq!(lane.handle(Event::Output), None);
+    assert_eq!(
+        lane.handle(Event::Completed {
+            response_id: "resp_1".into(),
+            output_items: vec![
+                json!({ "role": "assistant", "content": "hello" })
+            ],
+        }),
+        None
+    );
+    let second = Body::from(
+        json!({ "input": [
+            { "role": "user", "content": "hi" },
+            { "role": "assistant", "content": "hello" },
+            { "role": "user", "content": "again" },
+        ] })
+        .as_object()
+        .unwrap()
+        .clone(),
+    );
+    let Ok(Action::Send(delta)) = lane.submit(second) else {
+        panic!("the second request goes");
+    };
+    assert!(
+        delta.to_map().contains_key("previous_response_id"),
+        "a delta"
+    );
+    assert_eq!(lane.handle(Event::Output), None);
+    assert_eq!(
+        lane.handle(Event::ServerError {
+            code: Some(PREVIOUS_RESPONSE_NOT_FOUND.into()),
+        }),
+        Some(Action::Fail(Failure::Server {
+            code: Some(PREVIOUS_RESPONSE_NOT_FOUND.into()),
+        }))
+    );
+    assert!(!lane.is_busy());
 }
