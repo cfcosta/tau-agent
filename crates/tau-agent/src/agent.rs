@@ -810,7 +810,7 @@ impl Resumed {
         Ok(agent
             .0
             .driver
-            .compact_idle(crate::runner::driver::LoopRun(runner))
+            .compact_idle(crate::runner::driver::IdleRun(runner))
             .await?)
     }
 }

@@ -12,7 +12,7 @@ use tau_agent::{
     agent::Compacted,
     runner::{
         RunResult,
-        driver::{Kernel, Loop, LoopRun},
+        driver::{IdleRun, Kernel, Loop, LoopRun},
     },
 };
 use tau_ai::message::UserContent;
@@ -58,7 +58,7 @@ impl Loop for SlotLoop {
 
     async fn compact_idle(
         &self,
-        run: LoopRun,
+        run: IdleRun,
     ) -> Result<Option<Compacted>, StoreError> {
         self.now().compact_idle(run).await
     }
@@ -95,7 +95,7 @@ mod tests {
 
         async fn compact_idle(
             &self,
-            run: LoopRun,
+            run: IdleRun,
         ) -> Result<Option<Compacted>, StoreError> {
             Kernel.compact_idle(run).await
         }

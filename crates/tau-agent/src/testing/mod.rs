@@ -13,7 +13,7 @@ use crate::{
     agent::Compacted,
     runner::{
         RunResult,
-        driver::{Loop, LoopRun},
+        driver::{IdleRun, Loop, LoopRun},
     },
 };
 
@@ -39,7 +39,8 @@ pub fn filler(tc: &hegel::TestCase) -> std::sync::Arc<dyn Loop> {
 }
 
 /// A loop put together from the run's steps ([`LoopRun::begin`],
-/// [`LoopRun::turn`], [`LoopRun::end`]), apart from
+/// [`BegunRun::turn`](crate::runner::driver::BegunRun::turn),
+/// [`BegunRun::end`](crate::runner::driver::BegunRun::end)), apart from
 /// [`crate::runner::driver::Kernel`]'s own: what the model checks of any
 /// filler, it checks of this one too.
 #[derive(Debug, Clone, Copy, Default)]
@@ -49,10 +50,10 @@ pub struct Stepwise;
 impl Loop for Stepwise {
     async fn run(
         &self,
-        mut run: LoopRun,
+        run: LoopRun,
         input: UserContent,
     ) -> Result<RunResult, StoreError> {
-        let mut turns = run.begin(input).await?;
+        let (mut run, mut turns) = run.begin(input).await?;
         let stop = loop {
             match run.turn(&mut turns).await? {
                 Some(stop) => break stop,
@@ -64,7 +65,7 @@ impl Loop for Stepwise {
 
     async fn compact_idle(
         &self,
-        run: LoopRun,
+        run: IdleRun,
     ) -> Result<Option<Compacted>, StoreError> {
         run.compact_idle().await
     }

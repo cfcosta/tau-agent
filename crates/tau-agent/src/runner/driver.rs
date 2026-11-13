@@ -14,22 +14,33 @@ use super::{RunResult, Runner, Turns};
 use crate::{agent::Compacted, event::StopReason};
 
 /// One run, assembled: its tools, plugins, session and store, ready to
-/// take its first message. What a [`Loop`] drives.
+/// take its first message. What a [`Loop`] drives. Its steps keep the
+/// runner's invariants whole, and their types keep their order: it
+/// begins once, its turns come after, and only its end gives the
+/// [`RunResult`] a loop returns, so a run a loop drove is always ended in
+/// the store.
 pub struct LoopRun(pub(crate) Runner);
 
-/// The run's steps, each keeping the runner's invariants whole: a
-/// filler drives them in its own order and between them decides when
-/// the run goes on.
+/// A run that began: its turns, then its end.
+pub struct BegunRun(Runner);
+
+/// An idle run, assembled to offer its transcript for a rewrite: no
+/// start, no turn, no end.
+pub struct IdleRun(pub(crate) Runner);
+
 impl LoopRun {
     /// Starts the run: `RunStart`, the first message stored, an inherited
     /// transcript offered for a rewrite.
     pub async fn begin(
-        &mut self,
+        mut self,
         input: UserContent,
-    ) -> Result<Turns, StoreError> {
-        self.0.begin(input).await
+    ) -> Result<(BegunRun, Turns), StoreError> {
+        let turns = self.0.begin(input).await?;
+        Ok((BegunRun(self.0), turns))
     }
+}
 
+impl BegunRun {
     /// One turn, whole; the run's stop once it stops.
     pub async fn turn(
         &mut self,
@@ -46,7 +57,9 @@ impl LoopRun {
     ) -> Result<RunResult, StoreError> {
         self.0.end(turns, stop).await
     }
+}
 
+impl IdleRun {
     /// Offers the idle run's transcript for a rewrite, and stops.
     pub async fn compact_idle(self) -> Result<Option<Compacted>, StoreError> {
         self.0.compact_idle().await
@@ -69,7 +82,7 @@ pub trait Loop: Send + Sync {
     /// Offers an idle run's transcript for a rewrite, and stops.
     async fn compact_idle(
         &self,
-        run: LoopRun,
+        run: IdleRun,
     ) -> Result<Option<Compacted>, StoreError>;
 }
 
@@ -89,7 +102,7 @@ impl Loop for Kernel {
 
     async fn compact_idle(
         &self,
-        run: LoopRun,
+        run: IdleRun,
     ) -> Result<Option<Compacted>, StoreError> {
         run.0.compact_idle().await
     }

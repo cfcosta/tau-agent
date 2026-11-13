@@ -188,8 +188,9 @@ pub(crate) struct Runner {
     pub preempted: Option<crate::agent::Prompt>,
 }
 
-/// How a run ended.
+/// How a run ended: only [`driver::BegunRun::end`] makes one.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct RunResult {
     pub transcript: Vec<Message>,
     pub stop: StopReason,

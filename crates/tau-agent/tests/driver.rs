@@ -13,7 +13,7 @@ use tau_agent::{
     agent::{Agent, Compacted},
     runner::{
         RunResult,
-        driver::{Kernel, Loop, LoopRun},
+        driver::{IdleRun, Kernel, Loop, LoopRun},
     },
 };
 use tau_ai::message::UserContent;
@@ -62,7 +62,7 @@ impl Loop for Counting {
 
     async fn compact_idle(
         &self,
-        run: LoopRun,
+        run: IdleRun,
     ) -> Result<Option<Compacted>, StoreError> {
         self.idle.fetch_add(1, Ordering::SeqCst);
         Kernel.compact_idle(run).await
@@ -107,30 +107,25 @@ fn an_agents_loop_drives_its_runs() {
     });
 }
 
-/// A loop that answers without asking the model: what it returns is the
-/// run's outcome.
+/// A loop that ends the run as it begins, without asking the model: how
+/// it ends it is the run's outcome.
 struct Canned;
 
 #[async_trait]
 impl Loop for Canned {
     async fn run(
         &self,
-        _run: LoopRun,
-        _input: UserContent,
+        run: LoopRun,
+        input: UserContent,
     ) -> Result<RunResult, StoreError> {
-        Ok(RunResult {
-            transcript: Vec::new(),
-            stop: tau_agent::event::StopReason::Stop,
-            usage: Default::default(),
-            text: "canned".into(),
-            last_seq: 0,
-            request: Default::default(),
-        })
+        let (run, turns) = run.begin(input).await?;
+        run.end(turns, tau_agent::event::StopReason::Cancelled)
+            .await
     }
 
     async fn compact_idle(
         &self,
-        _run: LoopRun,
+        _run: IdleRun,
     ) -> Result<Option<Compacted>, StoreError> {
         Ok(None)
     }
@@ -143,8 +138,14 @@ fn a_loop_in_place_of_the_kernels_decides_the_outcome() {
         let store = tau_store_sqlite::memory().await.unwrap();
         let agent = Agent::new(model.clone()).with_loop(Arc::new(Canned));
         let mut run = agent.start("go", &store);
+        let id = run.id();
         let _: Vec<_> = run.events().collect().await;
-        assert_eq!(run.outcome().await.unwrap().text, "canned");
+        let outcome = run.outcome().await.unwrap();
+        assert_eq!(outcome.stop, tau_agent::event::StopReason::Cancelled);
         assert!(model.requests().is_empty());
+        // Its loop could only end it through the run's own end, so the
+        // store has it ended too.
+        let record = store.run(&id.0).await.unwrap().unwrap();
+        assert_eq!(record.status, tau_store::Status::Cancelled);
     });
 }
