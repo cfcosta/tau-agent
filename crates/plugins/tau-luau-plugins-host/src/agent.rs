@@ -497,9 +497,42 @@ impl Inner {
     }
 
     fn off(&self, state: &RunState, name: &str) -> bool {
-        state.failures.get(name).copied().unwrap_or(0) >= MAX_FAILURES
+        is_off(state, name)
     }
+}
 
+/// Whether `name` failed often enough in this run to be off.
+fn is_off(state: &RunState, name: &str) -> bool {
+    state.failures.get(name).copied().unwrap_or(0) >= MAX_FAILURES
+}
+
+/// `plugin`'s `hook` failed with `error`: the run hears it, and that it
+/// is off now when this failure turned it off, whichever hook it was.
+async fn failed(
+    state: &mut RunState,
+    ctx: &PluginCtx,
+    plugin: String,
+    hook: String,
+    error: String,
+) {
+    let was_off = is_off(state, &plugin);
+    *state.failures.entry(plugin.clone()).or_default() += 1;
+    ctx.publish(&Record::Error {
+        plugin: plugin.clone(),
+        hook,
+        error,
+    })
+    .await;
+    if !was_off && is_off(state, &plugin) {
+        ctx.publish(&Record::Off {
+            plugin,
+            why: format!("{MAX_FAILURES} of its hooks failed in this run"),
+        })
+        .await;
+    }
+}
+
+impl Inner {
     /// Calls `hook` of `active` and applies what it did: state, log
     /// lines, the view, or the error.
     async fn call(
@@ -610,20 +643,7 @@ impl Inner {
             .await;
         }
         if let Some(error) = outcome.error {
-            *state.failures.entry(plugin.clone()).or_default() += 1;
-            ctx.publish(&Record::Error {
-                plugin: plugin.clone(),
-                hook: hook_name(hook),
-                error,
-            })
-            .await;
-            if self.off(state, &plugin) {
-                ctx.publish(&Record::Off {
-                    plugin,
-                    why: format!("{MAX_FAILURES} hooks failed in this run"),
-                })
-                .await;
-            }
+            failed(state, ctx, plugin, hook_name(hook), error).await;
             return None;
         }
         if state.states.get(&plugin) != Some(&outcome.state) {
@@ -679,13 +699,7 @@ impl Inner {
         let plugin = name;
         match outcome.error {
             Some(error) => {
-                *state.failures.entry(plugin.clone()).or_default() += 1;
-                ctx.publish(&Record::Error {
-                    plugin,
-                    hook: "view".into(),
-                    error,
-                })
-                .await;
+                failed(state, ctx, plugin, "view".into(), error).await;
             }
             None => {
                 let view = Record::View {

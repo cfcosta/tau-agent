@@ -274,6 +274,43 @@ return tau.plugin { before_tool = function(call, ctx) error("no luck") end,
     );
 }
 
+/// A plugin whose view keeps failing is turned off as one whose hooks do,
+/// and the run says so: three failed views, and no fourth is drawn.
+#[test]
+fn a_plugin_whose_view_keeps_failing_is_turned_off_and_says_so() {
+    let broken = r#"
+local tau = require("tau")
+return tau.plugin {
+  turn_end = function(turn, ctx)
+    ctx.state.turns = (ctx.state.turns or 0) + 1
+  end,
+  view = function(state, ctx) error("no view") end,
+}
+"#;
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("exec_command", json!({ "cmd": "a" })))
+        .turn(|t| t.tool_call("exec_command", json!({ "cmd": "b" })))
+        .turn(|t| t.tool_call("exec_command", json!({ "cmd": "c" })))
+        .turn(|t| t.tool_call("exec_command", json!({ "cmd": "d" })))
+        .turn(|t| t.text("done"));
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
+    let plugins =
+        LuauPlugins::new(vec![active("broken", broken)], json!({}), None);
+    let agent = Agent::new(llm.clone()).tool(ExecCommand).plugin(plugins);
+    let outcome = block_on_io(agent.run("go", &store)).unwrap();
+    let stored = records(&store, &outcome.run);
+    let errors = stored
+        .iter()
+        .filter(|record| matches!(record, Record::Error { .. }))
+        .count();
+    assert_eq!(errors, 3, "{stored:?}");
+    let offs = stored
+        .iter()
+        .filter(|record| matches!(record, Record::Off { .. }))
+        .count();
+    assert_eq!(offs, 1, "the run says it is off, once: {stored:?}");
+}
+
 /// An error a tool raises is its answer, as a value is: the model reads
 /// it, the plugin's log keeps it, and the plugin stays on however often
 /// it refuses (ADR 0027).
