@@ -3,7 +3,11 @@
 
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc,
+        Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use serde_json::Value;
@@ -53,10 +57,15 @@ pub struct Host {
     sign_in: Arc<Mutex<SignIn>>,
     /// The sign-in waiting for the browser; dropping it cancels it.
     pending: Arc<Mutex<Option<Pending>>>,
+    /// Sign-ins started, to number the next.
+    attempts: AtomicU64,
 }
 
 /// A sign-in waiting for the browser.
 struct Pending {
+    /// Which sign-in it is: one a newer one replaced, or one cancelled,
+    /// says nothing when it finishes.
+    attempt: u64,
     /// Takes a redirect pasted instead, once.
     paste: Option<oneshot::Sender<String>>,
     _cancel: oneshot::Sender<()>,
@@ -64,6 +73,20 @@ struct Pending {
 
 /// What a cancelled sign-in ends with.
 const CANCELLED: &str = "sign-in cancelled";
+
+/// The sign-in `attempt` finished: whether it is still the one waiting,
+/// so it says how it ended. It is waiting no more.
+fn finished(pending: &mut Option<Pending>, attempt: u64) -> bool {
+    if pending
+        .as_ref()
+        .is_some_and(|waiting| waiting.attempt == attempt)
+    {
+        pending.take();
+        true
+    } else {
+        false
+    }
+}
 
 impl PluginHost for Host {
     async fn new(cx: &HostCx) -> anyhow::Result<Self> {
@@ -76,6 +99,7 @@ impl PluginHost for Host {
             cx: cx.clone(),
             sign_in: Arc::default(),
             pending: Arc::default(),
+            attempts: AtomicU64::new(0),
         })
     }
 }
@@ -151,7 +175,9 @@ impl Host {
         let (paste, pasted) = oneshot::channel::<String>();
         let (cancel, cancelled) = oneshot::channel::<()>();
         // A new sign-in replaces one still waiting.
+        let number = self.attempts.fetch_add(1, Ordering::SeqCst) + 1;
         *self.pending.lock().expect("not poisoned") = Some(Pending {
+            attempt: number,
             paste: Some(paste),
             _cancel: cancel,
         });
@@ -200,9 +226,13 @@ impl Host {
                     }
                 },
             };
-            pending.lock().expect("not poisoned").take();
             // The provider reads the new sign-in as the next run opens.
             provider.client.lock().expect("not poisoned").take();
+            // Replaced or cancelled while it finished: what it did is
+            // kept, but the sign-in going on says how things stand.
+            if !finished(&mut pending.lock().expect("not poisoned"), number) {
+                return;
+            }
             *sign_in.lock().expect("not poisoned") = state;
             cx.refresh();
         });
@@ -468,4 +498,37 @@ pub fn plan_models() -> Vec<ModelOption> {
             efforts: model.efforts.clone(),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::oneshot;
+
+    use super::{Pending, finished};
+
+    fn waiting(attempt: u64) -> Option<Pending> {
+        Some(Pending {
+            attempt,
+            paste: None,
+            _cancel: oneshot::channel().0,
+        })
+    }
+
+    /// A sign-in that finishes while a newer one waits leaves the newer
+    /// one waiting, and says nothing; the one waiting finishes it.
+    #[test]
+    fn only_the_sign_in_waiting_finishes_it() {
+        let mut pending = waiting(2);
+        assert!(!finished(&mut pending, 1), "replaced: it says nothing");
+        assert!(pending.is_some(), "the newer one still waits");
+        assert!(finished(&mut pending, 2));
+        assert!(pending.is_none());
+    }
+
+    /// One cancelled while it finished says nothing either.
+    #[test]
+    fn a_cancelled_sign_in_says_nothing() {
+        let mut pending = None;
+        assert!(!finished(&mut pending, 1));
+    }
 }
