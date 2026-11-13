@@ -72,6 +72,12 @@ struct Workspace {
     status: watch::Sender<Status>,
     /// The runs working in it, which hear of its changes.
     runs: Vec<RunId>,
+    /// Bumped by each load and each change of where it stands: a load
+    /// whose number is not the latest has nothing to say.
+    generation: u64,
+    /// A load was asked for while one ran: it runs again once that one
+    /// ends, as the files may have changed.
+    again: bool,
 }
 
 impl PluginHost for Host {
@@ -290,6 +296,8 @@ impl Inner {
                 repo: repo.to_owned(),
                 status: watch::Sender::new(Status::Unknown),
                 runs: Vec::new(),
+                generation: 0,
+                again: false,
             })
     }
 
@@ -324,10 +332,13 @@ impl Inner {
     /// Changes where `dir` stands, telling the runs in it.
     fn set(&self, dir: &Path, status: Status) {
         let (repo, runs) = {
-            let workspaces = self.workspaces.lock().expect("not poisoned");
-            let Some(workspace) = workspaces.get(dir) else {
+            let mut workspaces = self.workspaces.lock().expect("not poisoned");
+            let Some(workspace) = workspaces.get_mut(dir) else {
                 return;
             };
+            // What a load still going would say is out of date now.
+            workspace.generation += 1;
+            workspace.again = false;
             workspace.status.send_replace(status.clone());
             (workspace.repo.clone(), workspace.runs.clone())
         };
@@ -338,27 +349,57 @@ impl Inner {
         }
     }
 
-    /// Loads `dir`'s environment in the background, unless it is
-    /// loading already.
+    /// Loads `dir`'s environment in the background; asked while it
+    /// loads, it loads again once that load ends.
     fn load(&self, me: &Arc<Self>, dir: &Path) {
-        let Some(direnv) = self.direnv.clone() else {
+        if self.direnv.is_none() {
             return;
-        };
+        }
         {
-            let workspaces = self.workspaces.lock().expect("not poisoned");
-            let Some(workspace) = workspaces.get(dir) else {
+            let mut workspaces = self.workspaces.lock().expect("not poisoned");
+            let Some(workspace) = workspaces.get_mut(dir) else {
                 return;
             };
             if *workspace.status.borrow() == Status::Loading {
+                workspace.again = true;
                 return;
             }
         }
         self.set(dir, Status::Loading);
+        self.spawn_load(me, dir);
+    }
+
+    /// Runs one load of `dir`, which is loading: its result stands,
+    /// unless where `dir` stands changed meanwhile (the person said no,
+    /// say), or another load was asked for, which runs now instead.
+    fn spawn_load(&self, me: &Arc<Self>, dir: &Path) {
+        let Some(direnv) = self.direnv.clone() else {
+            return;
+        };
+        let generation = {
+            let workspaces = self.workspaces.lock().expect("not poisoned");
+            let Some(workspace) = workspaces.get(dir) else {
+                return;
+            };
+            workspace.generation
+        };
         let (me, dir) = (me.clone(), dir.to_owned());
         self.cx.runtime.spawn(async move {
             let status = load(&direnv, &dir).await;
-            // The person may have said no meanwhile.
-            if *me.watch(&dir).borrow() == Status::Loading {
+            let again = {
+                let mut workspaces =
+                    me.workspaces.lock().expect("not poisoned");
+                let Some(workspace) = workspaces.get_mut(&dir) else {
+                    return;
+                };
+                if workspace.generation != generation {
+                    return;
+                }
+                std::mem::take(&mut workspace.again)
+            };
+            if again {
+                me.spawn_load(&me, &dir);
+            } else {
                 me.set(&dir, status);
             }
         });

@@ -249,6 +249,42 @@ fn a_command_waits_while_the_environment_loads() {
     assert_eq!(run(&launch, &dir, "echo $TAU_PROBE"), "1");
 }
 
+/// A load asked for while one runs (the person allowed the repository
+/// again after editing `.envrc`, say) runs once that one ends: direnv
+/// exports twice, and the workspace ends ready.
+#[test]
+fn a_load_asked_for_while_one_runs_runs_after_it() {
+    let fixture = Fixture::new();
+    let gate = fixture.dir.path().join("loaded");
+    let log = fixture.dir.path().join("calls");
+    let host = fixture.host(Some(fixture.direnv(&[
+        ("FAKE_DIRENV_GATE", gate.to_str().unwrap()),
+        ("FAKE_DIRENV_LOG", log.to_str().unwrap()),
+    ])));
+    fixture.runtime.block_on(host.decide("repo", true)).unwrap();
+    let launcher = host.launcher(&fixture.repo).unwrap();
+    let dir = fixture.workspace("edited", Some(PROBE));
+    let waiting = {
+        let (launcher, dir) = (launcher.clone(), dir.clone());
+        fixture
+            .runtime
+            .spawn(async move { launcher.launch(&dir).await })
+    };
+    wait_for(&host, &dir, &Status::Loading);
+    std::fs::write(dir.join(".envrc"), "export TAU_PROBE=2\n").unwrap();
+    fixture.runtime.block_on(host.decide("repo", true)).unwrap();
+    std::fs::write(&gate, "").unwrap();
+    let launch = fixture.runtime.block_on(waiting).unwrap();
+    wait_for(&host, &dir, &Status::Ready);
+    let exports = std::fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .filter(|call| *call == "export")
+        .count();
+    assert_eq!(exports, 2, "loaded again after the first load");
+    assert_eq!(run(&launch, &dir, "echo $TAU_PROBE"), "2");
+}
+
 /// A load that fails says how, with direnv's last lines, and commands
 /// run without the environment.
 #[test]
