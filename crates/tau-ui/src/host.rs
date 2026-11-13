@@ -208,16 +208,14 @@ pub struct Host {
     drafts: Mutex<HashMap<RunId, PullRequest>>,
     /// Pull requests opened from runs, for pushing their later turns.
     prs: Arc<Mutex<HashMap<RunId, OpenPr>>>,
-    /// How to steer and cancel each run going on.
-    runs: Arc<Mutex<HashMap<RunId, RunControl>>>,
+    /// Each run going on: how to steer and cancel it, and whether its
+    /// end went by.
+    runs: Arc<Mutex<HashMap<RunId, Going>>>,
     /// Each repository's main chat's sub-agents, which run beside it
     /// and outlive its turns (ADR 0026), by repository.
     sub_agents: Mutex<HashMap<String, SubAgents>>,
     /// What each run going on was steered with and has not read yet.
     unread: Arc<Mutex<HashMap<RunId, Vec<Prompt>>>>,
-    /// Runs whose `RunEnd` went by while their outcome is still being
-    /// stored: they stop in a moment.
-    ending: Arc<Mutex<HashSet<RunId>>>,
     /// New chats the interface has no view of yet, with their events
     /// that came before it: [`Host::start`] answers once a chat's message
     /// is stored, and the chat may have said more by then.
@@ -528,7 +526,6 @@ impl Host {
             forecasts: Arc::default(),
             drafts: Mutex::default(),
             prs: Arc::default(),
-            ending: Arc::default(),
             unshown: Mutex::default(),
             forecast_wait: forecast::SETTLE,
             jobs: Arc::default(),
@@ -752,9 +749,10 @@ impl Host {
     /// with it. A run still working is not waited on.
     async fn settle(&self, run: &RunId) {
         loop {
-            let ending =
-                self.ending.lock().expect("not poisoned").contains(run)
-                    || self.sub_agent_ending(run);
+            let ending = matches!(
+                self.runs.lock().expect("not poisoned").get(run),
+                Some(Going::Ending(_))
+            ) || self.sub_agent_ending(run);
             if !ending || !self.is_running(run) {
                 return;
             }
@@ -1537,10 +1535,9 @@ impl Host {
         self.runs
             .lock()
             .expect("not poisoned")
-            .insert(id.clone(), run.control());
+            .insert(id.clone(), Going::Live(run.control()));
         let events = self.events.clone();
         let runs = self.runs.clone();
-        let ending = self.ending.clone();
         let idle = self.idle.clone();
         let (stored, on_stored) = tokio::sync::oneshot::channel();
         let mut stored = Some(stored);
@@ -1557,15 +1554,14 @@ impl Host {
                         let _ = stored.send(Ok(()));
                     }
                     // Its end goes by before its outcome is stored: it
-                    // stops in a moment (`Host::settle`). Marked here, by
-                    // the task that unmarks it, so the mark cannot outlive
-                    // the run.
+                    // stops in a moment (`Host::settle`).
                     match &event {
                         RunEvent::RunEnd { run, .. } if *run == id => {
-                            ending
-                                .lock()
-                                .expect("not poisoned")
-                                .insert(id.clone());
+                            if let Some(going) =
+                                runs.lock().expect("not poisoned").get_mut(&id)
+                            {
+                                going.end();
+                            }
                         }
                         RunEvent::TurnEnd { run, usage, .. } if *run == id => {
                             Host::turn_ended(&idle, &id, usage);
@@ -1591,7 +1587,6 @@ impl Host {
                 Host::run_ended(&idle, &id, outcome.request);
             }
             runs.lock().expect("not poisoned").remove(&id);
-            ending.lock().expect("not poisoned").remove(&id);
         });
         (id, Started(Some(on_stored)))
     }
@@ -1656,7 +1651,11 @@ impl Host {
         self.refuse_ended(run).await?;
         // A run whose end went by reads nothing more.
         self.settle(run).await;
-        let control = self.runs.lock().expect("not poisoned").get(run).cloned();
+        // Only a run still working reads what it is steered with.
+        let control = match self.runs.lock().expect("not poisoned").get(run) {
+            Some(Going::Live(control)) => Some(control.clone()),
+            Some(Going::Ending(_)) | None => None,
+        };
         let Some(control) = control.or_else(|| self.sub_agent_control(run))
         else {
             if !self.is_sub_agent(run) {
@@ -1783,12 +1782,36 @@ impl Host {
 
     /// Stops `run`: one of the host's, or a sub-agent going on.
     pub fn cancel(&self, run: &RunId) {
-        if let Some(control) = self.runs.lock().expect("not poisoned").get(run)
-        {
-            control.cancel();
+        if let Some(going) = self.runs.lock().expect("not poisoned").get(run) {
+            going.control().cancel();
             return;
         }
         self.stop_sub_agent(run);
+    }
+}
+
+/// A run going on in this session.
+pub(crate) enum Going {
+    /// Working.
+    Live(RunControl),
+    /// Its `RunEnd` went by while its outcome is still being stored: it
+    /// stops in a moment.
+    Ending(RunControl),
+}
+
+impl Going {
+    /// How to steer and cancel it.
+    pub(crate) fn control(&self) -> &RunControl {
+        match self {
+            Self::Live(control) | Self::Ending(control) => control,
+        }
+    }
+
+    /// Its end went by.
+    fn end(&mut self) {
+        if let Self::Live(control) = self {
+            *self = Self::Ending(control.clone());
+        }
     }
 }
 

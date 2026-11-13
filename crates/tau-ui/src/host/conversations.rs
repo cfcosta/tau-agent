@@ -44,7 +44,7 @@ pub(super) enum Ask {
 
 /// [`Conversations`] on this host.
 pub(super) struct HostConversations {
-    pub(super) runs: Arc<Mutex<HashMap<RunId, RunControl>>>,
+    pub(super) runs: Arc<Mutex<HashMap<RunId, super::Going>>>,
     pub(super) list: Arc<Mutex<RepoList>>,
     pub(super) asks: mpsc::UnboundedSender<Ask>,
 }
