@@ -13,18 +13,17 @@ pub enum ScrollTo {
     Row(usize),
 }
 
-/// A window of `visible` rows over `total`, and whether it follows the
-/// end as rows are added.
+/// A window of `visible` rows over `total`.
 ///
 /// The window never starts past the last full page, so it is always
-/// full once there are enough rows. It starts following the end, and
-/// follows it again whenever it is scrolled back there.
+/// full once there are enough rows. It follows the end exactly when it
+/// is there: it starts there, and is there again whenever it is
+/// scrolled back, or the rows or the window change so that it is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Scroller {
     total: usize,
     visible: usize,
     top: usize,
-    follow: bool,
 }
 
 impl Scroller {
@@ -33,7 +32,6 @@ impl Scroller {
             total: 0,
             visible,
             top: 0,
-            follow: true,
         }
     }
 
@@ -52,9 +50,9 @@ impl Scroller {
         self.top
     }
 
-    /// Whether the window follows the end.
+    /// Whether the window follows the end: it is there.
     pub fn follows(&self) -> bool {
-        self.follow
+        self.top == self.max_top()
     }
 
     /// The highest `top` can be: the last full page.
@@ -75,14 +73,16 @@ impl Scroller {
     /// Sets how many rows there are. A window that follows the end moves
     /// with it; any other keeps its top, within bounds.
     pub fn set_total(&mut self, total: usize) {
+        let follows = self.follows();
         self.total = total;
-        self.settle();
+        self.settle(follows);
     }
 
     /// Sets how many rows the window shows.
     pub fn set_visible(&mut self, visible: usize) {
+        let follows = self.follows();
         self.visible = visible;
-        self.settle();
+        self.settle(follows);
     }
 
     /// Scrolls by `rows` (negative is up). Returns whether the window
@@ -133,12 +133,12 @@ impl Scroller {
     fn move_to(&mut self, top: usize) -> bool {
         let moved = top != self.top;
         self.top = top;
-        self.follow = top == self.max_top();
         moved
     }
 
-    fn settle(&mut self) {
-        self.top = if self.follow {
+    /// Keeps the window within the rows, at the end if it `follows`.
+    fn settle(&mut self, follows: bool) {
+        self.top = if follows {
             self.max_top()
         } else {
             self.top.min(self.max_top())

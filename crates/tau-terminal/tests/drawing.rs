@@ -326,9 +326,11 @@ fn the_scroll_window_stays_in_bounds(tc: TestCase) {
             scroller.range().len(),
             scroller.visible().min(scroller.total())
         );
-        if scroller.follows() {
-            assert_eq!(scroller.top(), scroller.max_top());
-        }
+        assert_eq!(
+            scroller.follows(),
+            scroller.top() == scroller.max_top(),
+            "it follows the end exactly when it is there"
+        );
         match scroller.thumb(200.0, 16.0) {
             Some((offset, len)) => {
                 assert!(scroller.scrolls());
@@ -342,6 +344,20 @@ fn the_scroll_window_stays_in_bounds(tc: TestCase) {
             None => assert!(!scroller.scrolls()),
         }
     }
+}
+
+/// A window scrolled up, then made tall enough to show every row, is at
+/// the end: new output keeps it there, as it follows again.
+#[test]
+fn a_window_grown_past_the_end_follows_it() {
+    let mut scroller = Scroller::new(10);
+    scroller.set_total(30);
+    scroller.scroll_by(-5);
+    assert!(!scroller.follows());
+    scroller.set_visible(40);
+    assert!(scroller.follows());
+    scroller.set_total(50);
+    assert_eq!(scroller.top(), scroller.max_top());
 }
 
 /// A selection reads the same whichever end the drag started from, and
