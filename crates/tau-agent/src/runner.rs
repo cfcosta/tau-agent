@@ -110,6 +110,8 @@ use crate::{
 mod batch;
 pub mod driver;
 pub(crate) mod respond;
+
+use respond::Ended;
 mod seams;
 mod toolbox;
 
@@ -183,9 +185,6 @@ pub(crate) struct Runner {
     /// Turns the run took before this start: a resumed run keeps
     /// counting. Limits apply to the turns of this start alone.
     pub turns_before: u32,
-    /// The steering message that cut the response being streamed short:
-    /// it is the next one the run reads.
-    pub preempted: Option<crate::agent::Prompt>,
 }
 
 /// How a run ended: only [`driver::BegunRun::end`] makes one.
@@ -327,9 +326,9 @@ impl Runner {
         .await;
 
         self.choose_effort(transcript, turn).await;
-        let (mut message, class) = self.respond(transcript, turn).await;
-        let overflow =
-            class == Class::ContextOverflow || is_context_overflow(&message);
+        let (mut message, mut ended) = self.respond(transcript, turn).await;
+        let overflow = ended.class() == Class::ContextOverflow
+            || is_context_overflow(&message);
         if overflow {
             // Rewrite once and retry once; a second overflow fails
             // the run.
@@ -337,7 +336,9 @@ impl Runner {
                 .rewrite_context(transcript, Trigger::Overflow, turn)
                 .await?
             {
-                Ok(_) => message = self.respond(transcript, turn).await.0,
+                Ok(_) => {
+                    (message, ended) = self.respond(transcript, turn).await
+                }
                 Err(failures) => {
                     if !failures.is_empty() {
                         let original =
@@ -371,10 +372,16 @@ impl Runner {
             self.execute(&calls, transcript, &message).await
         };
 
+        // The steer that cut the response short, if one did: the next
+        // one the run reads.
+        let preempted = match ended {
+            Ended::Cut(steer) => Some(steer),
+            Ended::Done(_) => None,
+        };
         // A response cut short before anything in it finished leaves
         // nothing to keep.
         let mut new = Vec::new();
-        if self.preempted.is_none() || !message.content.is_empty() {
+        if preempted.is_none() || !message.content.is_empty() {
             new.push(Message::Assistant(message.clone()));
         }
         new.extend(results.into_iter().map(Message::ToolResult));
@@ -405,10 +412,7 @@ impl Runner {
 
         // One steering message per drain, after the tool batch: the
         // one that cut the response short first.
-        let steered = self
-            .preempted
-            .take()
-            .or_else(|| self.steering.try_recv().ok());
+        let steered = preempted.or_else(|| self.steering.try_recv().ok());
         // Read once stored: a steer the run could not store stays
         // unread, for the host to hand on.
         if let Some(prompt) = steered.clone() {

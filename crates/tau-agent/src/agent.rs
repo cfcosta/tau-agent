@@ -808,7 +808,6 @@ impl Resumed {
             retry: agent.0.retry,
             warmup: false,
             turns_before: u32::try_from(record.turns).unwrap_or(u32::MAX),
-            preempted: None,
         };
         Ok(agent
             .0
@@ -1305,7 +1304,6 @@ async fn run_task(
         retry: agent.0.retry,
         warmup: agent.0.warmup,
         turns_before,
-        preempted: None,
     };
     let result = match agent
         .0

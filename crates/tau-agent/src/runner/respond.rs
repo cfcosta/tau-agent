@@ -156,19 +156,40 @@ pub(super) fn finish(
         .expect("an error event always finishes the stream")
 }
 
+/// What ended a response.
+#[derive(Debug)]
+pub(super) enum Ended {
+    /// It ran its course, as `Class` says.
+    Done(Class),
+    /// A steering message cut it short: the next one the run reads.
+    Cut(crate::agent::Prompt),
+}
+
+impl Ended {
+    /// What a retry makes of it: a cut response is never asked again.
+    pub(super) fn class(&self) -> Class {
+        match self {
+            Self::Done(class) => *class,
+            Self::Cut(_) => Class::Fatal,
+        }
+    }
+}
+
 impl Runner {
     /// Asks for a response, retrying failures classified as retryable
-    /// with the run's policy. Returns the last response and its class.
+    /// with the run's policy. Returns the last response and what ended
+    /// it.
     pub(super) async fn respond(
         &mut self,
         transcript: &[Message],
         turn: u32,
-    ) -> (AssistantMessage, Class) {
+    ) -> (AssistantMessage, Ended) {
         let mut attempts = 1;
         loop {
-            let (message, class) = self.respond_once(transcript).await;
-            if class != Class::Retryable || !self.retry.allows(attempts) {
-                return (message, class);
+            let (message, ended) = self.respond_once(transcript).await;
+            if ended.class() != Class::Retryable || !self.retry.allows(attempts)
+            {
+                return (message, ended);
             }
             let delay = self.retry.delay(attempts, tau_ai::retry::jitter());
             attempts += 1;
@@ -189,7 +210,7 @@ impl Runner {
                     ErrorReason::Aborted,
                     CANCELLED,
                 );
-                return (aborted, Class::Fatal);
+                return (aborted, Ended::Done(Class::Fatal));
             }
         }
     }
@@ -199,7 +220,7 @@ impl Runner {
     pub(super) async fn respond_once(
         &mut self,
         transcript: &[Message],
-    ) -> (AssistantMessage, Class) {
+    ) -> (AssistantMessage, Ended) {
         let timestamp = (self.clock)();
         let stream = self.session.respond(transcript, timestamp);
         let model = self.session.settings().model.clone();
@@ -213,8 +234,7 @@ impl Runner {
                 biased;
                 event = reading.next(&self.cancel) => event,
                 Some(text) = self.steering.recv() => {
-                    self.preempted = Some(text);
-                    return (cut(reading, &model, timestamp), Class::Fatal);
+                    return (cut(reading, &model, timestamp), Ended::Cut(text));
                 }
             };
             let Some(event) = event else {
@@ -250,7 +270,9 @@ impl Runner {
         }
         let streamed = reading.end();
         let (accumulator, reason, text) = match streamed {
-            Streamed::Finished(message, class) => return (message, class),
+            Streamed::Finished(message, class) => {
+                return (message, Ended::Done(class));
+            }
             Streamed::Cancelled(accumulator) => {
                 (accumulator, ErrorReason::Aborted, CANCELLED)
             }
@@ -267,7 +289,7 @@ impl Runner {
         };
         (
             finish(accumulator, &model, timestamp, reason, text),
-            Class::Fatal,
+            Ended::Done(Class::Fatal),
         )
     }
 
