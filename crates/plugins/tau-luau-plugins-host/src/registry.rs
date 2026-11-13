@@ -1056,18 +1056,21 @@ impl Registry {
                         .ok();
             }
             if let Some(open) = &project {
-                match open.run(|repo| repo.trunk()).await {
-                    Ok(trunk) => {
-                        let seen =
-                            self.0.state.read().await.overview.commit.clone();
-                        if seen.as_deref() != Some(trunk.as_str()) {
-                            self.reload(open, &trunk).await;
-                        }
-                    }
-                    Err(error) => {
-                        self.0.state.write().await.overview.error =
-                            Some(error.to_string());
-                    }
+                let read = open
+                    .run(|repo| repo.trunk())
+                    .await
+                    .map_err(|error| error.to_string());
+                let (moved, shown) = {
+                    let overview = &mut self.0.state.write().await.overview;
+                    let before = overview.error.clone();
+                    let moved = overview
+                        .trunk_read(read.as_deref().map_err(Clone::clone));
+                    (moved, overview.error != before)
+                };
+                if moved && let Ok(trunk) = &read {
+                    self.reload(open, trunk).await;
+                } else if shown {
+                    (self.0.refresh)();
                 }
             }
             tokio::time::sleep(POLL).await;

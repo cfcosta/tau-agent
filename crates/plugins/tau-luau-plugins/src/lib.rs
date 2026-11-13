@@ -707,6 +707,26 @@ pub struct Overview {
     pub error: Option<String>,
 }
 
+impl Overview {
+    /// Takes one read of trunk's commit: whether trunk moved, so its
+    /// plugins are to be loaded again. A read that worked clears what the
+    /// last one that failed said; one that failed says why until one
+    /// works.
+    pub fn trunk_read(&mut self, read: Result<&str, String>) -> bool {
+        match read {
+            Ok(trunk) if self.commit.as_deref() == Some(trunk) => {
+                self.error = None;
+                false
+            }
+            Ok(_) => true,
+            Err(error) => {
+                self.error = Some(error);
+                false
+            }
+        }
+    }
+}
+
 /// What the plugins page asks the host.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "act", rename_all = "snake_case")]
@@ -996,6 +1016,26 @@ pub fn interned(text: &str) -> &'static str {
     let leaked: &'static str = Box::leak(text.to_owned().into_boxed_str());
     seen.push(leaked);
     leaked
+}
+
+#[cfg(test)]
+mod overview {
+    use super::Overview;
+
+    /// Trunk could not be read once, then could, at the commit loaded
+    /// before: the error goes, though nothing is loaded again.
+    #[test]
+    fn a_trunk_read_that_works_clears_the_last_error() {
+        let mut overview = Overview {
+            commit: Some("abc".into()),
+            ..Overview::default()
+        };
+        assert!(!overview.trunk_read(Err("the repository is locked".into())));
+        assert!(overview.error.is_some());
+        assert!(!overview.trunk_read(Ok("abc")));
+        assert_eq!(overview.error, None);
+        assert!(overview.trunk_read(Ok("def")), "trunk moved");
+    }
 }
 
 #[cfg(test)]
