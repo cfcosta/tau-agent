@@ -229,12 +229,14 @@ impl Phones {
                 self.save().await;
             }
             Act::ListenOn { ip } => {
-                let running = {
+                // Allowed, it listens there now: whether a server runs,
+                // is starting, or could not start.
+                let allowed = {
                     let mut state = self.state();
                     state.settings.listen = Some(ip);
-                    state.server.is_some()
+                    state.settings.allow
                 };
-                if running {
+                if allowed {
                     self.stop();
                     self.start();
                 }
@@ -303,17 +305,18 @@ impl Phones {
             let started = Server::start(config)
                 .await
                 .map_err(|error| error.to_string());
-            phones.take_up(generation, started);
+            phones.take_up(generation, ip, started);
             phones.changed();
         });
     }
 
-    /// The server [`Self::start`] asked for is up, or could not start: it
-    /// serves phones, unless a later start or stop asked for something
-    /// else.
+    /// The server [`Self::start`] asked for on `ip` is up, or could not
+    /// start: it serves phones, unless a later start or stop asked for
+    /// something else.
     fn take_up(
         &self,
         generation: u64,
+        ip: String,
         started: Result<
             (ServerHandle, mpsc::UnboundedReceiver<ServerEvent>),
             String,
@@ -326,9 +329,6 @@ impl Phones {
             }
             return;
         }
-        let Some(ip) = listen_ip(&state) else {
-            return;
-        };
         let (server, mut events) = match started {
             Ok(started) => started,
             Err(error) => {
@@ -376,6 +376,7 @@ impl Phones {
             task.abort();
         }
         state.listening = None;
+        state.fingerprint = None;
         state.code = None;
         drop(state);
         self.inner.window.mirror(None);

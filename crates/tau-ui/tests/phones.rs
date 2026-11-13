@@ -266,3 +266,48 @@ fn a_computer_only_plugin_s_data_and_views_stay_on_the_computer() {
         }
     );
 }
+
+/// Phones allowed, but the server could not listen (its port was taken):
+/// picking another address listens there, and the error goes, without
+/// turning phones off and on.
+#[gpui::test]
+fn listening_on_another_address_after_a_failed_start_listens(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = taken.local_addr().unwrap().port();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("settings.json"),
+        format!(r#"{{"allow": true, "listen": "127.0.0.1", "port": {port}}}"#),
+    )
+    .unwrap();
+    let (desktop, mut desktop_cx) = window(cx, Vec::new());
+    let app = desktop_cx.update(|_, cx| mirror::app(&desktop, cx));
+    let phones = runtime.block_on(Phones::open(
+        dir.path().to_owned(),
+        app,
+        Arc::new(|| {}),
+    ));
+    phones.resume();
+    until(&mut desktop_cx, "the start to fail", |_| {
+        phones.error().is_some()
+    });
+    assert!(phones.listening().is_none());
+    runtime.block_on(phones.act(Act::ListenOn {
+        ip: "127.0.0.2".into(),
+    }));
+    until(&mut desktop_cx, "the server to listen", |_| {
+        phones.listening().is_some()
+    });
+    let (listening, _) = phones.listening().unwrap();
+    assert_eq!(listening.host, "127.0.0.2");
+    assert_eq!(phones.error(), None);
+    drop(taken);
+}
