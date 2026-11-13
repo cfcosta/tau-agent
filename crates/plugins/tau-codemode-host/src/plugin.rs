@@ -209,6 +209,9 @@ impl AskObserver for InferObserver {
         cancel: &CancellationToken,
     ) -> Result<Box<dyn AskPermit>, String> {
         let permit = self.budget.admit(cancel).await?;
+        // Noted before its record is written: a cancel during the write
+        // leaves it listed as interrupted, whether or not the write landed.
+        self.reservations.lock().unwrap().push(attempt);
         publish_inference(
             &self.plugin,
             inference_trace::Record::Attempt {
@@ -221,7 +224,6 @@ impl AskObserver for InferObserver {
         .map_err(|error| {
             format!("cannot reserve inference attempt: {error}")
         })?;
-        self.reservations.lock().unwrap().push(attempt);
         self.updates
             .send(ToolOutput::text(format!("attempt {attempt} started")));
         Ok(Box::new(InferAttempt {

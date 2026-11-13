@@ -182,12 +182,27 @@ pub fn restore_budget(
         }
         restored.calls += state.reservations.len();
         if let Some((complete, attempts, total)) = &state.finished {
-            if attempts.iter().map(|a| a.number).collect::<Vec<_>>()
-                != state.reservations
-            {
-                return Err(
-                    "inference attempts do not match reservations".into()
-                );
+            let listed: Vec<u32> = attempts.iter().map(|a| a.number).collect();
+            if listed != state.reservations {
+                // Only an attempt whose reservation was cut off as it was
+                // stored (a cancel then) is listed without one: interrupted,
+                // with nothing reported. It counts, and leaves the budget
+                // incomplete. A reservation the end leaves out is never
+                // dropped.
+                let cut_off = attempts.iter().all(|attempt| {
+                    state.reservations.contains(&attempt.number)
+                        || (attempt.outcome == AttemptOutcome::Interrupted
+                            && attempt.reported_usage == Usage::default())
+                });
+                let all_listed =
+                    state.reservations.iter().all(|n| listed.contains(n));
+                if !cut_off || !all_listed {
+                    return Err(
+                        "inference attempts do not match reservations".into()
+                    );
+                }
+                restored.calls += listed.len() - state.reservations.len();
+                restored.incomplete_attempt = true;
             }
             let mut summed = Usage::default();
             for attempt in attempts {

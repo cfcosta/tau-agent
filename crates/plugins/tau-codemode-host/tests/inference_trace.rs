@@ -135,6 +135,40 @@ fn bad_records_never_replenish_the_budget() {
     }
 }
 
+/// A cancel while an attempt's reservation was being written: the end
+/// lists it as interrupted, but the reservation never landed. The run
+/// starts again, the attempt counted and the budget left incomplete.
+#[test]
+fn an_attempt_whose_reservation_was_cut_off_counts_and_blocks() {
+    let interrupted = Attempt {
+        number: 1,
+        outcome: AttemptOutcome::Interrupted,
+        reported_usage: Usage::default(),
+        usage_provenance: UsageProvenance::Unknown,
+    };
+    let records = vec![
+        stored(started("x", owner("run"))),
+        stored(finished("x", owner("run"), vec![interrupted.clone()], None)),
+    ];
+    let restored =
+        inference_trace::restore_budget(&records, &owner("run")).unwrap();
+    assert_eq!(restored.calls, 1);
+    assert!(restored.incomplete_attempt);
+    // One that reported usage had its reservation: without it, the
+    // ledger is wrong.
+    let reported = Attempt {
+        outcome: AttemptOutcome::Finished,
+        reported_usage: usage(5),
+        usage_provenance: UsageProvenance::SdkReported,
+        ..interrupted
+    };
+    let records = vec![
+        stored(started("x", owner("run"))),
+        stored(finished("x", owner("run"), vec![reported], None)),
+    ];
+    assert!(inference_trace::restore_budget(&records, &owner("run")).is_err());
+}
+
 #[test]
 fn raw_output_is_bounded_without_confusing_trace_completion() {
     let raw = format!(
