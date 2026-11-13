@@ -242,7 +242,7 @@ fn viewfinder(t: &Theme) -> Div {
 }
 
 fn scan(ws: &Workspace, t: &Theme, cx: &mut Context<Workspace>) -> Div {
-    let progress = &ws.pairing.progress;
+    let progress = &ws.pairing.progress();
     let (found, certificate, pairing) = match progress {
         Progress::Connecting { address } => (
             (Mark::Now, Some(address.to_string())),
@@ -334,7 +334,7 @@ fn address(ws: &Workspace, t: &Theme, cx: &mut Context<Workspace>) -> Div {
         )
         .on_click(cx.listener(|ws, _, _, cx| ws.connect_typed(cx)))
     };
-    let status = match &ws.pairing.progress {
+    let status = match &ws.pairing.progress() {
         Progress::Idle | Progress::Scanning => connect().into_any_element(),
         Progress::Connecting { address } => notice(
             Icon::Spinner,

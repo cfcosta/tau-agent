@@ -1490,10 +1490,7 @@ impl Workspace {
             self.route,
             Route::Pair(PairStep::Scan | PairStep::Address | PairStep::Paired)
         );
-        let waiting = self.pairing.busy()
-            || matches!(self.pairing.progress, Progress::Compare { .. });
-        if !pairing && waiting {
-            self.pairing.progress = Progress::Idle;
+        if !pairing && self.pairing.leave() {
             cx.emit(WorkspaceEvent::Pair(PairRequest::Cancel));
         }
         self.mark_open_seen();

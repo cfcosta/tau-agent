@@ -711,6 +711,13 @@ pub fn phones() -> tau_phones::PhonesData {
     }
 }
 
+/// Pairing got as far as `progress`.
+fn at(progress: Progress) -> Pairing {
+    let mut pairing = Pairing::default();
+    pairing.update(PairingUpdate::Progress(progress));
+    pairing
+}
+
 /// Pairing as it stands when `step` opens: halfway for the camera, a
 /// certificate to compare for a typed address.
 pub fn pairing(step: PairStep) -> Pairing {
@@ -719,29 +726,24 @@ pub fn pairing(step: PairStep) -> Pairing {
         (computer.address.clone(), computer.fingerprint);
     match step {
         PairStep::Welcome => Pairing::default(),
-        PairStep::Scan => Pairing {
-            progress: Progress::Pairing {
-                address,
-                fingerprint,
-            },
-            ..Pairing::default()
-        },
-        PairStep::Address => Pairing {
-            progress: Progress::Compare {
-                address,
-                fingerprint,
-            },
-            ..Pairing::default()
-        },
-        PairStep::Paired => Pairing {
-            computer: Some(computer),
-            ..Pairing::default()
-        },
-        PairStep::Unreachable => Pairing {
-            computer: Some(computer),
-            tries: 3,
-            ..Pairing::default()
-        },
+        PairStep::Scan => at(Progress::Pairing {
+            address,
+            fingerprint,
+        }),
+        PairStep::Address => at(Progress::Compare {
+            address,
+            fingerprint,
+        }),
+        PairStep::Paired => {
+            let mut pairing = Pairing::default();
+            pairing.computer = Some(computer);
+            pairing
+        }
+        PairStep::Unreachable => {
+            let mut pairing = Pairing::default();
+            pairing.update(PairingUpdate::Unreachable { computer, tries: 3 });
+            pairing
+        }
     }
 }
 

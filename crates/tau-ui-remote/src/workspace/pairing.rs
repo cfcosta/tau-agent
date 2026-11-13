@@ -45,9 +45,14 @@ impl Workspace {
                 matches!(self.route, Route::Pair(PairStep::Unreachable))
                     .then_some(Route::Home)
             }
-            PairingUpdate::Progress(_) | PairingUpdate::Unsent(_) => None,
+            PairingUpdate::Progress(_)
+            | PairingUpdate::Reaching { .. }
+            | PairingUpdate::Unsent(_) => None,
         };
-        self.pairing.update(update);
+        // What the session hears of its computer moves no pairing under
+        // way: the person is comparing another's certificate, say.
+        let moves = self.pairing.update(update);
+        let next = next.filter(|_| moves);
         match next {
             Some(route) => {
                 self.back_stack.clear();
@@ -60,14 +65,15 @@ impl Workspace {
 
     /// Opens the camera to read a computer's pairing code.
     pub fn scan_pairing_code(&mut self, cx: &mut Context<Self>) {
-        self.pairing.progress = Progress::Scanning;
+        self.pairing
+            .update(PairingUpdate::Progress(Progress::Scanning));
         cx.emit(WorkspaceEvent::Pair(PairRequest::Scan));
         self.navigate(Route::Pair(PairStep::Scan), cx);
     }
 
     /// Pairs by typing the address and the code instead.
     pub fn type_address(&mut self, cx: &mut Context<Self>) {
-        self.pairing.progress = Progress::Idle;
+        self.pairing.update(PairingUpdate::Progress(Progress::Idle));
         self.navigate(Route::Pair(PairStep::Address), cx);
     }
 
@@ -80,7 +86,7 @@ impl Workspace {
             tau_remote::Address::typed(self.pair_address.read(cx).text());
         let secret =
             tau_remote::PairingSecret::typed(self.pair_code.read(cx).text());
-        self.pairing.progress = match (address, secret) {
+        let progress = match (address, secret) {
             (Ok(address), Ok(secret)) => {
                 cx.emit(WorkspaceEvent::Pair(PairRequest::Typed {
                     address: address.clone(),
@@ -92,6 +98,7 @@ impl Workspace {
                 Progress::Failed(error.to_string())
             }
         };
+        self.pairing.update(PairingUpdate::Progress(progress));
         cx.notify();
     }
 
@@ -101,13 +108,14 @@ impl Workspace {
         if let Progress::Compare {
             address,
             fingerprint,
-        } = &self.pairing.progress
+        } = self.pairing.progress()
         {
-            cx.emit(WorkspaceEvent::Pair(PairRequest::Trust(*fingerprint)));
-            self.pairing.progress = Progress::Pairing {
-                address: address.clone(),
-                fingerprint: *fingerprint,
-            };
+            cx.emit(WorkspaceEvent::Pair(PairRequest::Trust(fingerprint)));
+            self.pairing
+                .update(PairingUpdate::Progress(Progress::Pairing {
+                    address,
+                    fingerprint,
+                }));
             cx.notify();
         }
     }
@@ -116,11 +124,12 @@ impl Workspace {
     /// code.
     pub fn distrust_certificate(&mut self, cx: &mut Context<Self>) {
         cx.emit(WorkspaceEvent::Pair(PairRequest::Cancel));
-        self.pairing.progress = Progress::Failed(
+        self.pairing
+            .update(PairingUpdate::Progress(Progress::Failed(
             "The certificate is not your computer's, so tau stopped before \
              sending the code. Check the address, or scan the code instead."
                 .into(),
-        );
+        )));
         cx.notify();
     }
 
@@ -141,9 +150,8 @@ impl Workspace {
             return;
         }
         if let Some(computer) = &self.pairing.computer {
-            self.pairing.progress = Progress::Connecting {
-                address: computer.address.clone(),
-            };
+            let address = computer.address.clone();
+            self.pairing.update(PairingUpdate::Reaching { address });
         }
         cx.emit(WorkspaceEvent::Pair(PairRequest::Retry));
         cx.notify();

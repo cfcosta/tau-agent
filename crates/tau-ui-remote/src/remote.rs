@@ -72,17 +72,44 @@ enum News {
     Revoked(Credentials),
 }
 
+/// Who news is from: the session or the pairing attempt it numbers.
+/// News from one the phone stopped is dropped as it arrives, so a
+/// session aborted for another computer, or a pairing cancelled, says
+/// nothing after.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum From {
+    Session(u64),
+    Pairing(u64),
+}
+
+/// What a session or a pairing attempt tells the UI thread.
+#[derive(Clone)]
+struct Tell {
+    news: mpsc::UnboundedSender<(From, News)>,
+    from: From,
+}
+
+impl Tell {
+    fn send(&self, news: News) {
+        let _ = self.news.send((self.from, news));
+    }
+}
+
 struct State {
     runtime: Runtime,
     platform: Platform,
-    news: mpsc::UnboundedSender<News>,
+    news: mpsc::UnboundedSender<(From, News)>,
+    /// The session's and pairing attempt's going on: news from any
+    /// other is stale.
+    numbers: Numbers,
     credentials: Option<Credentials>,
     /// The connection's sender while connected.
     sender: Option<Sender>,
     /// What the person asked here that the computer has not taken: sent
     /// again on each connection, until it is.
     outbox: Outbox,
-    /// The number of the last message applied, to resume from.
+    /// The number of the last message applied, to resume from: each
+    /// session's own, so one aborted cannot write the next one's.
     last_seq: Arc<Mutex<Option<u64>>>,
     /// A typed address and code, until the certificate is compared.
     typed: Option<(Address, PairingSecret)>,
@@ -93,6 +120,36 @@ struct State {
     /// Wakes a session waiting to try again.
     retry: Arc<Notify>,
     _news: Option<Task<()>>,
+}
+
+/// The numbers of the session and the pairing attempt going on.
+#[derive(Debug, Default)]
+struct Numbers {
+    session: u64,
+    pairing: u64,
+}
+
+impl Numbers {
+    /// Whether news `from` comes from the session or pairing attempt
+    /// still going.
+    fn current(&self, from: From) -> bool {
+        match from {
+            From::Session(number) => number == self.session,
+            From::Pairing(number) => number == self.pairing,
+        }
+    }
+
+    /// A new session, in place of any other.
+    fn session(&mut self) -> From {
+        self.session += 1;
+        From::Session(self.session)
+    }
+
+    /// A new pairing attempt, in place of any other.
+    fn pairing(&mut self) -> From {
+        self.pairing += 1;
+        From::Pairing(self.pairing)
+    }
 }
 
 /// Where the phone keeps its credentials.
@@ -178,6 +235,7 @@ pub fn connect(
         runtime,
         platform,
         news,
+        numbers: Numbers::default(),
         credentials: credentials.clone(),
         sender: None,
         outbox: Outbox::new(clock()),
@@ -191,7 +249,10 @@ pub fn connect(
 
     let (reader, entity) = (state.clone(), workspace.downgrade());
     let task = cx.spawn(async move |cx| {
-        while let Some(news) = arrivals.recv().await {
+        while let Some((from, news)) = arrivals.recv().await {
+            if !reader.borrow().numbers.current(from) {
+                continue;
+            }
             if cx.update(|cx| arrive(&reader, &entity, news, cx)).is_none() {
                 return;
             }
@@ -221,9 +282,9 @@ pub fn connect(
         match &credentials {
             Some(credentials) => {
                 ws.update_pairing(
-                    PairingUpdate::Progress(Progress::Connecting {
+                    PairingUpdate::Reaching {
                         address: credentials.address.clone(),
-                    }),
+                    },
                     cx,
                 );
             }
@@ -334,7 +395,8 @@ fn arrive(
 fn forget_requests(state: &Rc<RefCell<State>>) {
     let mut state = state.borrow_mut();
     state.outbox = Outbox::new(clock());
-    *state.last_seq.lock().expect("not poisoned") = None;
+    // A new one: the session going on may still write its own.
+    state.last_seq = Arc::default();
 }
 
 /// Sends `up` once connected, and again on each connection until the
@@ -415,8 +477,7 @@ fn act(
         PairRequest::Scan => scan(state),
         PairRequest::Typed { address, secret } => {
             state.borrow_mut().typed = Some((address.clone(), secret));
-            let news = state.borrow().news.clone();
-            spawn_pairing(state, async move {
+            spawn_pairing(state, |tell| async move {
                 let update = match client::probe(&address).await {
                     Ok(fingerprint) => Progress::Compare {
                         address,
@@ -424,8 +485,7 @@ fn act(
                     },
                     Err(error) => Progress::Failed(failure(&error)),
                 };
-                let _ =
-                    news.send(News::Pairing(PairingUpdate::Progress(update)));
+                tell.send(News::Pairing(PairingUpdate::Progress(update)));
             });
         }
         PairRequest::Trust(fingerprint) => {
@@ -440,43 +500,48 @@ fn act(
         }
         PairRequest::Retry => state.borrow().retry.notify_one(),
         PairRequest::Cancel => {
-            if let Some(pairing) = state.borrow_mut().pairing.take() {
+            let mut state = state.borrow_mut();
+            // What it was about to say goes with it.
+            state.numbers.pairing();
+            if let Some(pairing) = state.pairing.take() {
                 pairing.abort();
             }
         }
     }
 }
 
-fn spawn_pairing(
+/// Starts a pairing attempt in place of any other: `work` tells the UI
+/// thread what it learns, as long as it is the attempt going on.
+fn spawn_pairing<F: Future<Output = ()> + Send + 'static>(
     state: &Rc<RefCell<State>>,
-    work: impl Future<Output = ()> + Send + 'static,
+    work: impl FnOnce(Tell) -> F,
 ) {
     let mut state = state.borrow_mut();
     if let Some(earlier) = state.pairing.take() {
         earlier.abort();
     }
-    state.pairing = Some(state.runtime.spawn(work).abort_handle());
+    let tell = Tell {
+        news: state.news.clone(),
+        from: state.numbers.pairing(),
+    };
+    state.pairing = Some(state.runtime.spawn(work(tell)).abort_handle());
 }
 
 /// Reads a pairing code with the camera, then pairs with it.
 fn scan(state: &Rc<RefCell<State>>) {
-    let (scan, news, name) = {
+    let (scan, name) = {
         let state = state.borrow();
-        (
-            state.platform.scan.clone(),
-            state.news.clone(),
-            state.platform.name.clone(),
-        )
+        (state.platform.scan.clone(), state.platform.name.clone())
     };
-    spawn_pairing(state, async move {
+    spawn_pairing(state, |news| async move {
         let read = tokio::task::spawn_blocking(move || scan()).await;
         let progress = |progress| {
-            let _ = news.send(News::Pairing(PairingUpdate::Progress(progress)));
+            news.send(News::Pairing(PairingUpdate::Progress(progress)));
         };
         let text = match read {
             Ok(Ok(Some(text))) => text,
             Ok(Ok(None)) => {
-                let _ = news.send(News::ScanCancelled);
+                news.send(News::ScanCancelled);
                 return;
             }
             Ok(Err(error)) => return progress(Progress::Failed(error)),
@@ -509,34 +574,30 @@ fn pair(
     fingerprint: Fingerprint,
     secret: PairingSecret,
 ) {
-    let (news, name) = {
-        let state = state.borrow();
-        (state.news.clone(), state.platform.name.clone())
-    };
-    spawn_pairing(state, async move {
+    let name = state.borrow().platform.name.clone();
+    spawn_pairing(state, |news| async move {
         paired(&news, &address, fingerprint, &secret, &name).await;
     });
 }
 
 async fn paired(
-    news: &mpsc::UnboundedSender<News>,
+    news: &Tell,
     address: &Address,
     fingerprint: Fingerprint,
     secret: &PairingSecret,
     name: &str,
 ) {
-    let _ =
-        news.send(News::Pairing(PairingUpdate::Progress(Progress::Pairing {
-            address: address.clone(),
-            fingerprint,
-        })));
+    news.send(News::Pairing(PairingUpdate::Progress(Progress::Pairing {
+        address: address.clone(),
+        fingerprint,
+    })));
     let news_of = match client::pair(address, fingerprint, secret, name).await {
         Ok((connection, credentials)) => News::Paired(credentials, connection),
         Err(error) => News::Pairing(PairingUpdate::Progress(Progress::Failed(
             failure(&error),
         ))),
     };
-    let _ = news.send(news_of);
+    news.send(news_of);
 }
 
 /// What went wrong, as the person can act on it.
@@ -577,11 +638,14 @@ fn start_session(
         earlier.abort();
     }
     state.sender = None;
-    let (news, last_seq, retry) = (
-        state.news.clone(),
-        state.last_seq.clone(),
-        state.retry.clone(),
-    );
+    let news = Tell {
+        news: state.news.clone(),
+        from: state.numbers.session(),
+    };
+    // Its own, from where the last one left off.
+    let from = *state.last_seq.lock().expect("not poisoned");
+    state.last_seq = Arc::new(Mutex::new(from));
+    let (last_seq, retry) = (state.last_seq.clone(), state.retry.clone());
     let work = async move {
         let computer = computer(&credentials);
         let mut first = first;
@@ -597,27 +661,27 @@ fn start_session(
             match connected {
                 Ok(mut connection) => {
                     failures = 0;
-                    let _ = news.send(News::Connected(
+                    news.send(News::Connected(
                         connection.sender(),
                         computer.clone(),
                     ));
                     while let Ok(Some(down)) = connection.recv().await {
                         if let Down::Ack { up } = down {
-                            let _ = news.send(News::Taken(up));
+                            news.send(News::Taken(up));
                             continue;
                         }
                         let seq = down.seq();
                         for update in updates(down) {
-                            let _ = news.send(News::Apply(update));
+                            news.send(News::Apply(update));
                         }
                         if let Some(seq) = seq {
                             *last_seq.lock().expect("not poisoned") = Some(seq);
                         }
                     }
-                    let _ = news.send(News::Disconnected);
+                    news.send(News::Disconnected);
                 }
                 Err(ClientError::Refused(Refusal::UnknownToken)) => {
-                    let _ = news.send(News::Revoked(credentials));
+                    news.send(News::Revoked(credentials));
                     return;
                 }
                 Err(_) => {
@@ -625,12 +689,10 @@ fn start_session(
                     // Past the third, each failure says so again, for
                     // a person who asked to try again.
                     if failures >= TRIES {
-                        let _ = news.send(News::Pairing(
-                            PairingUpdate::Unreachable {
-                                computer: computer.clone(),
-                                tries: failures,
-                            },
-                        ));
+                        news.send(News::Pairing(PairingUpdate::Unreachable {
+                            computer: computer.clone(),
+                            tries: failures,
+                        }));
                     }
                 }
             }
@@ -656,6 +718,25 @@ mod tests {
     use tau_remote::Fingerprint;
 
     use super::*;
+
+    /// What a session the phone replaced says, as when it paired with
+    /// another computer, is dropped: that it was revoked would forget the
+    /// new pairing. So is what a pairing attempt it cancelled or replaced
+    /// was about to say.
+    #[test]
+    fn news_from_a_session_or_pairing_gone_is_dropped() {
+        let mut numbers = Numbers::default();
+        let old = numbers.session();
+        assert!(numbers.current(old));
+        let probe = numbers.pairing();
+        let new = numbers.session();
+        assert!(!numbers.current(old), "the replaced session");
+        assert!(numbers.current(new) && numbers.current(probe));
+        let typed = numbers.pairing();
+        assert!(!numbers.current(probe), "the replaced attempt");
+        numbers.pairing();
+        assert!(!numbers.current(typed), "the cancelled attempt");
+    }
 
     /// What a reader sees while the phone writes its credentials over and
     /// over is what a kill at that moment leaves: always whole.

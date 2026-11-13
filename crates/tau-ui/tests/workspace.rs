@@ -2256,7 +2256,7 @@ fn a_typed_address_compares_the_certificate_first(cx: &mut TestAppContext) {
         // A code that is not one is caught before anything connects.
         ws.pair_fields_for_test("100.84.12.7", "K7QM", cx);
         ws.connect_typed(cx);
-        assert!(matches!(ws.pairing().progress, Progress::Failed(_)));
+        assert!(matches!(ws.pairing().progress(), Progress::Failed(_)));
         ws.pair_fields_for_test("100.84.12.7", "k7qm 2xpa", cx);
         ws.connect_typed(cx);
         assert!(ws.pairing().busy());
@@ -2284,6 +2284,51 @@ fn a_typed_address_compares_the_certificate_first(cx: &mut TestAppContext) {
     assert_eq!(*trusted, fingerprint);
 }
 
+/// The computer the phone was paired with goes on not answering while
+/// the person compares another's certificate: the screen stays on the
+/// certificate, and Trust still pairs.
+#[gpui::test]
+fn the_old_computer_not_answering_keeps_a_pairing_on_screen(
+    cx: &mut TestAppContext,
+) {
+    use tau_ui_remote::pairing::{
+        PairRequest,
+        PairStep,
+        PairingUpdate,
+        Progress,
+    };
+
+    let (workspace, mut cx, events) = open(cx);
+    let compare = Progress::Compare {
+        address: "192.168.1.9:7443".parse().unwrap(),
+        fingerprint: tau_remote::Fingerprint([9; 32]),
+    };
+    workspace.update(&mut cx, |ws, cx| {
+        ws.start_pairing(PairStep::Unreachable, cx);
+        ws.type_address(cx);
+        ws.update_pairing(PairingUpdate::Progress(compare.clone()), cx);
+        ws.update_pairing(
+            PairingUpdate::Unreachable {
+                computer: computer(),
+                tries: 4,
+            },
+            cx,
+        );
+        assert_eq!(ws.route(), &Route::Pair(PairStep::Address));
+        assert_eq!(ws.pairing().progress(), compare);
+        ws.trust_certificate(cx);
+    });
+    cx.run_until_parked();
+    assert!(
+        matches!(
+            events.borrow().last(),
+            Some(WorkspaceEvent::Pair(PairRequest::Trust(_)))
+        ),
+        "{:?}",
+        events.borrow()
+    );
+}
+
 #[gpui::test]
 fn leaving_a_pairing_halfway_cancels_it(cx: &mut TestAppContext) {
     use tau_ui_remote::pairing::{PairRequest, PairStep, Progress};
@@ -2294,7 +2339,7 @@ fn leaving_a_pairing_halfway_cancels_it(cx: &mut TestAppContext) {
         ws.scan_pairing_code(cx);
         ws.back(cx);
         assert_eq!(ws.route(), &Route::Pair(PairStep::Welcome));
-        assert_eq!(ws.pairing().progress, Progress::Idle);
+        assert_eq!(ws.pairing().progress(), Progress::Idle);
     });
     cx.run_until_parked();
     assert_eq!(

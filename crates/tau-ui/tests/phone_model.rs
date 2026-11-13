@@ -98,7 +98,7 @@ use tau_ui_remote::{
     Workspace,
     WorkspaceEvent,
     catalog::Catalog,
-    pairing::{PairRequest, PairStep},
+    pairing::{PairRequest, PairStep, Progress},
     plugins,
     remote::{self, Platform},
     route::Route,
@@ -777,6 +777,12 @@ impl Machine {
         phone
             .workspace
             .update(&mut phone.cx, |ws, cx| ws.scan_pairing_code(cx));
+        self.paired_with(c, &before);
+    }
+
+    /// The phone paired with `c`, which listed `before`: the person opens
+    /// tau, once it says it paired.
+    fn paired_with(&mut self, c: usize, before: &BTreeSet<String>) {
         for _ in 0..LOOKS {
             let phone = self.phone();
             phone.cx.run_until_parked();
@@ -790,7 +796,7 @@ impl Machine {
         }
         let device = self.computers[c]
             .devices()
-            .difference(&before)
+            .difference(before)
             .next()
             .cloned()
             .expect("the computer lists the phone it paired");
@@ -806,6 +812,71 @@ impl Machine {
             address: computer.proxy.address.clone(),
             fingerprint: computer.fingerprint(),
         });
+    }
+
+    /// The phone pairs with `c` by its typed address and code, as from
+    /// "Enter the address instead". While the person compares the
+    /// certificate, the computer the phone was paired with, if any, goes
+    /// on not answering: the pairing stays where it is, and goes on when
+    /// they trust it.
+    fn pair_by_typing_with(&mut self, c: usize) {
+        let before = self.computers[c].devices();
+        let code: PairingCode = self.computers[c].code().parse().unwrap();
+        let (address, secret) =
+            (code.address.to_string(), code.secret.to_string());
+        let phone = self.phone();
+        phone.workspace.update(&mut phone.cx, |ws, cx| {
+            ws.type_address(cx);
+            ws.pair_fields_for_test(&address, &secret, cx);
+            ws.connect_typed(cx);
+        });
+        let comparing = |phone: &Phone| {
+            phone.workspace.read_with(&phone.cx, |ws, _| {
+                ws.route() == &Route::Pair(PairStep::Address)
+                    && matches!(
+                        ws.pairing().progress(),
+                        Progress::Compare { .. }
+                    )
+            })
+        };
+        for _ in 0..LOOKS {
+            let phone = self.phone();
+            phone.cx.run_until_parked();
+            if comparing(phone) {
+                break;
+            }
+            std::thread::sleep(LOOK);
+        }
+        assert!(
+            comparing(self.phone()),
+            "the phone never showed the certificate"
+        );
+        // The person reads the certificate; the old session knocks, as
+        // time passing would, and says it cannot reach its computer.
+        for _ in 0..10 {
+            let phone = self.phone();
+            phone.workspace.update(&mut phone.cx, |_, cx| {
+                cx.emit(WorkspaceEvent::Pair(PairRequest::Retry))
+            });
+            phone.cx.run_until_parked();
+            std::thread::sleep(LOOK);
+        }
+        let shown = {
+            let phone = self.phone();
+            phone.workspace.read_with(&phone.cx, |ws, _| {
+                (ws.route().clone(), ws.pairing().progress())
+            })
+        };
+        assert!(
+            comparing(self.phone()),
+            "the pairing went from the certificate while the person read it: \
+             {shown:?}"
+        );
+        let phone = self.phone();
+        phone
+            .workspace
+            .update(&mut phone.cx, |ws, cx| ws.trust_certificate(cx));
+        self.paired_with(c, &before);
     }
 
     /// Nothing at a computer's address with another certificate took the
@@ -888,6 +959,20 @@ impl Machine {
                 && self.computers[c].impostor.is_none(),
         );
         self.pair_with(c);
+    }
+
+    /// The person pairs with a computer by typing its address and code,
+    /// from a screen that offers pairing.
+    #[rule]
+    fn pair_by_typing(&mut self, tc: TestCase) {
+        trace(|| "pair_by_typing".into());
+        let c = self.pick(&tc);
+        tc.assume(
+            self.offers_pairing()
+                && self.up.load(Ordering::SeqCst)
+                && self.computers[c].impostor.is_none(),
+        );
+        self.pair_by_typing_with(c);
     }
 
     /// The phone pairs, and closes once the computer gave it its token,
@@ -1258,7 +1343,7 @@ fn a_changed_certificate_is_said_so() {
     m.settle();
     let phone = m.phone();
     let said = phone.workspace.read_with(&phone.cx, |ws, _| {
-        format!("{:?} {:?}", ws.alert(), ws.pairing().progress)
+        format!("{:?} {:?}", ws.alert(), ws.pairing().progress())
     });
     assert!(said.contains("certificate"), "{said}");
 }
