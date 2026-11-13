@@ -19,6 +19,7 @@ sha2 = "0.11.0"
 url = { version = "2.5.8", features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
+statig.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "net"] }
 tokio-rustls.workspace = true

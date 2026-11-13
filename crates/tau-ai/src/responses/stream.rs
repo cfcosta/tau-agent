@@ -647,8 +647,11 @@ impl StreamProcessor {
                 });
             }
             // Item type does not match the slot's kind: nothing sensible
-            // to close. Should not happen with real server data.
-            _ => {}
+            // to close it with, so it stays open, and the response ends
+            // in an error. Should not happen with real server data.
+            (_, slot) => {
+                self.slots.insert(output_index, slot);
+            }
         }
     }
 
@@ -673,6 +676,11 @@ impl StreamProcessor {
             .and_then(|d| d.get("reason"))
             .and_then(Value::as_str);
         let outcome = match status {
+            // A block the stream opened and never closed would leave the
+            // message unfinished: the response cannot be `Done`.
+            _ if !self.slots.is_empty() => TerminalOutcome::Error(
+                "The response ended with an output item still open".to_owned(),
+            ),
             Some("completed") => TerminalOutcome::Done(DoneReason::Stop),
             Some("incomplete") => map_incomplete(incomplete_reason),
             // Absent status defensively maps to `stop`, matching pi's

@@ -50,11 +50,13 @@ use std::{
 };
 
 use serde_json::Value;
+use statig::blocking::{IntoStateMachineExt as _, StateMachine};
 use tokio::{
     sync::{mpsc, oneshot},
     time::Instant,
 };
 
+use self::request::{Effects, Input, Request};
 use super::connection::{
     self,
     ConnectionEvent,
@@ -63,14 +65,10 @@ use super::connection::{
     Outgoing,
 };
 use crate::{
-    event::{Accumulator, AssistantEvent, ErrorReason},
-    message::{Timestamp, Usage},
+    event::AssistantEvent,
+    message::Timestamp,
     refusal::Refusal,
-    responses::{
-        input::response_items,
-        request::LITE_MARKER,
-        stream::StreamProcessor,
-    },
+    responses::request::LITE_MARKER,
     retry::Class,
     ws::proto::{
         continuation::Body,
@@ -86,6 +84,8 @@ use crate::{
         },
     },
 };
+
+mod request;
 
 /// How often the driver advances the pool's clock for rotation.
 const TICK: Duration = Duration::from_secs(1);
@@ -281,7 +281,8 @@ struct Driver<C: Connector> {
     pool: Pool,
     connections: HashMap<ConnectionId, ConnectionHandle>,
     connection_events: mpsc::UnboundedSender<ConnectionEvent>,
-    lanes: HashMap<LaneId, Active>,
+    /// The request in flight on each lane, until it is over.
+    lanes: HashMap<LaneId, StateMachine<Request>>,
     /// Connections whose cancelled responses are still streaming: how
     /// many terminal frames to skip on each.
     skipping: HashMap<ConnectionId, usize>,
@@ -293,70 +294,6 @@ struct Driver<C: Connector> {
     /// Lanes whose connection was refused for a while: the error their
     /// request fails with if the reconnect fails too.
     refused: HashMap<LaneId, Refusal>,
-}
-
-/// A request in flight on a lane.
-struct Active {
-    events: mpsc::UnboundedSender<AssistantEvent>,
-    model: String,
-    timestamp: Timestamp,
-    processor: StreamProcessor,
-    accumulator: Accumulator,
-    /// Whether the caller has seen `Start`.
-    start_sent: bool,
-    /// Whether the lane knows output has started.
-    output_reported: bool,
-    /// An error event held back while the lane decides whether to retry.
-    held_error: Option<AssistantEvent>,
-    /// The connection the current attempt was sent on, once sent.
-    sent_on: Option<ConnectionId>,
-    /// Whether the request went as Responses Lite, whose response the
-    /// server can stop.
-    lite: bool,
-}
-
-impl Active {
-    fn new_attempt(&mut self) {
-        self.processor =
-            StreamProcessor::new(self.model.clone(), self.timestamp);
-        self.accumulator = Accumulator::new();
-        self.output_reported = false;
-        self.held_error = None;
-    }
-
-    /// Forwards an event to the caller, dropping repeated `Start`s, and
-    /// keeps the accumulator in step. The processor emits `Start` before
-    /// anything else, even when the first frame is an error, so every
-    /// stream the caller sees begins with one.
-    fn forward(&mut self, event: AssistantEvent) {
-        if matches!(event, AssistantEvent::Start { .. }) {
-            if self.start_sent {
-                // The accumulator of a resent attempt still needs it.
-                let _ = self.accumulator.push(event);
-                return;
-            }
-            self.start_sent = true;
-        }
-        let _ = self.accumulator.push(event.clone());
-        let _ = self.events.send(event);
-    }
-
-    /// Ends the request with `refusal`'s error.
-    fn refuse(&mut self, refusal: &Refusal) {
-        if !self.start_sent {
-            self.forward(AssistantEvent::Start {
-                model: self.model.clone(),
-                response_id: None,
-                timestamp: self.timestamp,
-            });
-        }
-        self.forward(AssistantEvent::Error {
-            reason: ErrorReason::Error,
-            message: refusal.message.clone(),
-            usage: Usage::default(),
-            class: refusal.class(),
-        });
-    }
 }
 
 impl<C: Connector> Driver<C> {
@@ -408,25 +345,17 @@ impl<C: Connector> Driver<C> {
                     .get("client_metadata")
                     .and_then(|metadata| metadata.get(LITE_MARKER))
                     .is_some();
-                let active = Active {
-                    lite,
-                    events,
-                    processor: StreamProcessor::new(model.clone(), timestamp),
-                    model,
-                    timestamp,
-                    accumulator: Accumulator::new(),
-                    start_sent: false,
-                    output_reported: false,
-                    held_error: None,
-                    sent_on: None,
-                };
                 if self.lanes.contains_key(&lane) {
                     // One request at a time per lane; the caller broke that
                     // rule, so this request is refused.
                     return;
                 }
                 self.refused.remove(&lane);
-                self.lanes.insert(lane, active);
+                self.lanes.insert(
+                    lane,
+                    Request::new(events, model, timestamp, lite)
+                        .state_machine(),
+                );
                 match self.pool.submit(lane, body) {
                     Ok(actions) => self.apply(actions),
                     Err(_) => {
@@ -435,28 +364,22 @@ impl<C: Connector> Driver<C> {
                 }
             }
             Command::Cancel(lane) => {
-                let Some(active) = self.lanes.remove(&lane) else {
+                let Some(effects) = self.feed(lane, &Input::Cancel) else {
                     return;
                 };
-                let streaming =
-                    active.sent_on.filter(|_| !active.processor.is_finished());
-                if let Some(connection) = streaming {
-                    *self.skipping.entry(connection).or_default() += 1;
-                }
                 // A Lite response with an id is stopped on the server;
                 // any other goes with its connection.
-                let interrupt = streaming
-                    .filter(|_| active.lite)
-                    .zip(active.processor.response_id())
-                    .and_then(|(connection, id)| {
-                        let handle = self.connections.get(&connection)?;
-                        handle.send(Outgoing::Json(serde_json::json!({
-                            "type": "response.interrupt",
-                            "response_id": id,
-                            "mode": "discard_partial_items",
-                        })));
-                        Some((id.to_owned(), connection))
-                    });
+                let interrupt = effects.cut.and_then(|cut| {
+                    *self.skipping.entry(cut.on).or_default() += 1;
+                    let id = cut.interrupt?;
+                    let handle = self.connections.get(&cut.on)?;
+                    handle.send(Outgoing::Json(serde_json::json!({
+                        "type": "response.interrupt",
+                        "response_id": id,
+                        "mode": "discard_partial_items",
+                    })));
+                    Some((id, cut.on))
+                });
                 let actions = match interrupt {
                     Some((id, connection)) => {
                         self.interrupting.insert(id, connection);
@@ -529,9 +452,7 @@ impl<C: Connector> Driver<C> {
                 self.refused.insert(lane, refusal.clone());
                 continue;
             }
-            if let Some(mut active) = self.lanes.remove(&lane) {
-                active.refuse(&refusal);
-            }
+            self.feed(lane, &Input::Refused(&refusal));
             if let Ok(actions) = self.pool.cancel(lane) {
                 self.apply(actions);
             }
@@ -591,51 +512,33 @@ impl<C: Connector> Driver<C> {
         let Some(lane) = self.pool.lane_on(connection) else {
             return;
         };
-        let Some(active) = self.lanes.get_mut(&lane) else {
+        let Some(effects) = self.feed(lane, &Input::Frame(frame)) else {
             return;
         };
-        let mut lane_events = Vec::new();
-        for event in active.processor.push(frame) {
-            match event {
-                AssistantEvent::Error { .. } => {
-                    active.held_error = Some(event);
-                    lane_events.push(Event::ServerError {
-                        code: active.processor.error_code().map(str::to_owned),
-                    });
-                }
-                AssistantEvent::Done { .. } => {
-                    *self.refusal.lock().expect("not poisoned") = None;
-                    active.forward(event);
-                    let message =
-                        std::mem::take(&mut active.accumulator).finish();
-                    if let Ok(message) = message {
-                        lane_events.push(Event::Completed {
-                            response_id: message
-                                .response_id
-                                .clone()
-                                .unwrap_or_default(),
-                            output_items: response_items(&message),
-                        });
-                    }
-                }
-                AssistantEvent::Start { .. } => active.forward(event),
-                _ => {
-                    if !active.output_reported {
-                        active.output_reported = true;
-                        lane_events.push(Event::Output);
-                    }
-                    active.forward(event);
-                }
-            }
+        self.report(lane, effects.lane);
+    }
+
+    /// Gives `input` to the request on `lane`, dropping it once it is
+    /// over; `None` when the lane has none.
+    fn feed(&mut self, lane: LaneId, input: &Input<'_>) -> Option<Effects> {
+        let request = self.lanes.get_mut(&lane)?;
+        let mut effects = Effects::default();
+        request.handle_with_context(input, &mut effects);
+        if matches!(request.state(), request::State::Over {}) {
+            self.lanes.remove(&lane);
+            self.refused.remove(&lane);
         }
-        for event in lane_events {
-            let completed = matches!(event, Event::Completed { .. });
+        Some(effects)
+    }
+
+    /// Tells the pool what happened on `lane`, in order.
+    fn report(&mut self, lane: LaneId, events: Vec<Event>) {
+        for event in events {
+            if matches!(event, Event::Completed { .. }) {
+                *self.refusal.lock().expect("not poisoned") = None;
+            }
             if let Ok(actions) = self.pool.handle(lane, event) {
                 self.apply(actions);
-            }
-            if completed {
-                self.lanes.remove(&lane);
-                self.refused.remove(&lane);
             }
         }
     }
@@ -671,32 +574,16 @@ impl<C: Connector> Driver<C> {
                     lane,
                     body,
                 } => {
-                    let Some(active) = self.lanes.get_mut(&lane) else {
+                    if self.feed(lane, &Input::Sent(connection)).is_none() {
                         continue;
-                    };
-                    active.new_attempt();
-                    active.sent_on = Some(connection);
+                    }
                     if let Some(handle) = self.connections.get(&connection) {
                         handle.send(Outgoing::Request(body));
                     }
                 }
                 PoolAction::Fail { lane, .. } => {
-                    let Some(mut active) = self.lanes.remove(&lane) else {
-                        continue;
-                    };
-                    if let Some(refusal) = self.refused.remove(&lane)
-                        && active.held_error.is_none()
-                    {
-                        active.refuse(&refusal);
-                        continue;
-                    }
-                    let events = match active.held_error.take() {
-                        Some(error) => vec![error],
-                        None => active.processor.close(),
-                    };
-                    for event in events {
-                        active.forward(event);
-                    }
+                    let refusal = self.refused.get(&lane).cloned();
+                    self.feed(lane, &Input::Failed(refusal.as_ref()));
                 }
             }
         }

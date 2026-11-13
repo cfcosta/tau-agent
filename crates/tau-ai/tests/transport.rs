@@ -915,3 +915,246 @@ fn a_refused_interrupt_moves_to_another_connection(tc: TestCase) {
     want.usage.cost = have.usage.cost.clone();
     assert_eq!(have, want);
 }
+
+/// How the server spoils one response's frames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, hegel::PrettyPrintable)]
+enum Spoil {
+    None,
+    /// An item's `output_item.done` never comes, but the response
+    /// completes.
+    LeaveOpen,
+    /// An item's `output_item.done` names another type than its
+    /// `added` did.
+    Retype,
+}
+
+/// `frames` spoiled as `spoil` says, at the item `at`, the last.
+fn spoiled(mut frames: Vec<Value>, spoil: Spoil, at: usize) -> Vec<Value> {
+    let done = frames.iter().position(|frame| {
+        frame["type"] == "response.output_item.done"
+            && frame["output_index"] == json!(at)
+    });
+    match (spoil, done) {
+        (Spoil::LeaveOpen, Some(done)) => {
+            frames.remove(done);
+        }
+        (Spoil::Retype, Some(done)) => {
+            let item = &mut frames[done]["item"];
+            item["type"] = if item["type"] == "message" {
+                json!("reasoning")
+            } else {
+                json!("message")
+            };
+        }
+        _ => {}
+    }
+    frames
+}
+
+/// Every request on a lane is answered, whatever frames the server sends
+/// before: a response that completes with an item left open, or closed
+/// as another type, ends with an `Error` (never a `Done` the stream does
+/// not hold up), and the lane is free for the next request.
+#[hegel::test(test_cases = 40)]
+fn a_spoiled_response_frees_its_lane(tc: TestCase) {
+    let turns = tc.draw(gs::integers::<usize>().min_value(2).max_value(4));
+    let mut replies = Vec::new();
+    let mut wants = Vec::new();
+    for turn in 0..turns {
+        let id = format!("resp_{turn}");
+        let (message, reply) = respond(&tc, &id);
+        let Reply::Respond {
+            frames,
+            response_id,
+            output_items,
+        } = reply
+        else {
+            unreachable!("respond streams a response")
+        };
+        let spoil = if message.content.is_empty() {
+            Spoil::None
+        } else {
+            tc.draw(gs::sampled_from(vec![
+                Spoil::None,
+                Spoil::LeaveOpen,
+                Spoil::Retype,
+            ]))
+        };
+        // The last item, so the response completes while it is open.
+        let at = message.content.len().saturating_sub(1);
+        replies.push(Reply::Respond {
+            frames: spoiled(frames, spoil, at),
+            response_id,
+            output_items,
+        });
+        wants.push((message, spoil));
+    }
+    let got: Rc<RefCell<Vec<Vec<AssistantEvent>>>> = Rc::default();
+    let seen = got.clone();
+    let labels: Vec<_> = wants
+        .iter()
+        .map(|(message, _)| (message.model.clone(), message.timestamp))
+        .collect();
+    simulate(replies, async move {
+        let transport = Transport::start(SimConnector, limits());
+        let lane = transport.open_lane(Affinity::default()).await.unwrap();
+        let settings = Settings {
+            model: "gpt-5.5".into(),
+            ..Settings::default()
+        };
+        let input = to_input(&[user("hi")]);
+        for (model, timestamp) in labels {
+            let mut response =
+                lane.request(body(&settings, input.clone()), model, timestamp);
+            let mut events = Vec::new();
+            while let Some(event) = response.next().await {
+                events.push(event);
+            }
+            seen.borrow_mut().push(events);
+        }
+        Ok(())
+    });
+    let got = got.borrow();
+    assert_eq!(got.len(), wants.len());
+    for (events, (want, spoil)) in got.iter().zip(&wants) {
+        // A lane that refused the request ends it at once.
+        assert!(
+            matches!(events.first(), Some(AssistantEvent::Start { .. })),
+            "{events:?}"
+        );
+        // The caller's own accumulator takes every stream.
+        let mut accumulator = Accumulator::new();
+        for event in events {
+            accumulator.push(event.clone()).unwrap();
+        }
+        let have = accumulator.finish().unwrap();
+        match spoil {
+            Spoil::None => {
+                let mut want = want.clone();
+                want.usage.cost = have.usage.cost.clone();
+                assert_eq!(&have, &want);
+            }
+            Spoil::LeaveOpen | Spoil::Retype => {
+                assert!(
+                    matches!(events.last(), Some(AssistantEvent::Error { .. })),
+                    "{events:?}"
+                );
+            }
+        }
+    }
+}
+
+/// The frames of a one-message response `id` saying `text`, closed as
+/// `closed` (`None`: never closed).
+fn one_message(id: &str, text: &str, closed: Option<&str>) -> Vec<Value> {
+    let mut frames = vec![
+        json!({"type": "response.created", "response": {"id": id}}),
+        json!({
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": {"type": "message", "id": "msg_1", "role": "assistant",
+                     "status": "in_progress", "content": []},
+        }),
+        json!({"type": "response.output_text.delta", "output_index": 0,
+               "content_index": 0, "delta": text}),
+    ];
+    if let Some(kind) = closed {
+        frames.push(json!({
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "item": {"type": kind, "id": "msg_1", "role": "assistant",
+                     "status": "completed",
+                     "content": [{"type": "output_text", "text": text}]},
+        }));
+    }
+    frames.push(json!({
+        "type": "response.completed",
+        "response": {"id": id, "status": "completed"},
+    }));
+    frames
+}
+
+/// Two requests on one lane: the first answered with `first`, the second
+/// with a clean message. The events each got.
+fn spoiled_then_clean(first: Vec<Value>) -> [Vec<AssistantEvent>; 2] {
+    let got: Rc<RefCell<Vec<Vec<AssistantEvent>>>> = Rc::default();
+    let seen = got.clone();
+    simulate(
+        vec![
+            Reply::Respond {
+                frames: first,
+                response_id: "resp_1".into(),
+                output_items: vec![],
+            },
+            Reply::Respond {
+                frames: one_message("resp_2", "fine", Some("message")),
+                response_id: "resp_2".into(),
+                output_items: vec![],
+            },
+        ],
+        async move {
+            let transport = Transport::start(SimConnector, limits());
+            let lane = transport.open_lane(Affinity::default()).await.unwrap();
+            let settings = Settings {
+                model: "gpt-5.5".into(),
+                ..Settings::default()
+            };
+            for _ in 0..2 {
+                let mut response = lane.request(
+                    body(&settings, to_input(&[user("hi")])),
+                    "gpt-5.5".into(),
+                    0,
+                );
+                let mut events = Vec::new();
+                while let Some(event) = response.next().await {
+                    events.push(event);
+                }
+                seen.borrow_mut().push(events);
+            }
+            Ok(())
+        },
+    );
+    let got = got.borrow();
+    [got[0].clone(), got[1].clone()]
+}
+
+/// Checks a spoiled response ended in an `Error` its caller's stream
+/// takes, and the clean one after it on the lane was answered.
+fn assert_spoiled_then_answered([spoiled, clean]: [Vec<AssistantEvent>; 2]) {
+    assert!(
+        matches!(spoiled.last(), Some(AssistantEvent::Error { .. })),
+        "{spoiled:?}"
+    );
+    let mut accumulator = Accumulator::new();
+    for event in spoiled {
+        accumulator.push(event).unwrap();
+    }
+    let mut accumulator = Accumulator::new();
+    for event in clean {
+        accumulator.push(event).unwrap();
+    }
+    let answer = accumulator.finish().unwrap();
+    assert_eq!(answer.stop_reason, StopReason::Stop);
+    assert!(
+        matches!(&answer.content[..], [AssistantBlock::Text(t)] if t.text == "fine"),
+        "{answer:?}"
+    );
+}
+
+/// The server completes a response whose message it never closed.
+#[test]
+fn a_response_completed_with_its_item_open_fails_and_frees_the_lane() {
+    assert_spoiled_then_answered(spoiled_then_clean(one_message(
+        "resp_1", "cut", None,
+    )));
+}
+
+/// The server closes a message as reasoning, then completes.
+#[test]
+fn a_response_whose_item_closes_as_another_type_fails_and_frees_the_lane() {
+    assert_spoiled_then_answered(spoiled_then_clean(one_message(
+        "resp_1",
+        "cut",
+        Some("reasoning"),
+    )));
+}
