@@ -32,6 +32,12 @@ use std::{
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use serde_json::{Value, json};
+use statig::{
+    Outcome as Next,
+    Outcome::{Handled, Super, Transition},
+    blocking::{IntoStateMachineExt as _, StateMachine},
+    state_machine,
+};
 use tau_agent::{
     agent::{Agent, AgentError, Outcome, Run, RunControl},
     error::ToolError,
@@ -127,25 +133,158 @@ struct Inner {
     on_end: Option<OnEnd>,
 }
 
+/// One sub-agent, from its spawn until someone takes its ending.
 struct Child {
     run: RunId,
     task: String,
     control: RunControl,
-    state: State,
-    /// Its `RunEnd` went by: it reads nothing more, while its work is
-    /// checked.
-    ending: bool,
-    /// The person stopped it.
-    stopped: bool,
-    /// The directory of the workspace its end closed.
-    closed: Option<PathBuf>,
+    life: StateMachine<Life>,
 }
 
-#[derive(Debug, Clone)]
-enum State {
-    Running,
-    Ended(Ending),
-    Taken(Ending),
+/// Where a sub-agent is in its life: reading, ending, its work being
+/// checked, ended, taken.
+#[derive(Default)]
+struct Life;
+
+/// What happens to a sub-agent.
+enum Event {
+    /// The person stopped it.
+    Stop,
+    /// Its `RunEnd` went by: it reads nothing more.
+    RunEnd,
+    /// Its run came out: its work is checked now.
+    Outcome,
+    /// Its work is checked: it ended so, its end closing that workspace.
+    Settled(Ending, Option<PathBuf>),
+    /// Someone takes it, to land it or report it.
+    Take,
+}
+
+/// What a [`Life`] answers an [`Event`] with.
+#[derive(Debug, Default)]
+struct Answer {
+    /// Whether a stop was heard.
+    stopped: bool,
+    /// The run is to be cancelled.
+    cancel: bool,
+    taken: Option<Taken>,
+}
+
+#[state_machine(initial = "State::reading(false)", state(derive(Debug, Clone)))]
+impl Life {
+    /// Running, and reading what it is steered with; `stop` once the
+    /// person stopped it.
+    #[state(superstate = "running")]
+    fn reading(
+        stop: &mut bool,
+        context: &mut Answer,
+        event: &Event,
+    ) -> Next<State> {
+        match event {
+            Event::Stop => {
+                context.cancel = true;
+                *stop = true;
+                context.stopped = true;
+                Handled
+            }
+            Event::RunEnd => Transition(State::ending(*stop)),
+            Event::Outcome => Transition(State::checking(*stop)),
+            _ => Super,
+        }
+    }
+
+    /// Its `RunEnd` went by, its run not out yet: a stop is still in
+    /// time to drop its work.
+    #[state(superstate = "running")]
+    fn ending(
+        stop: &mut bool,
+        context: &mut Answer,
+        event: &Event,
+    ) -> Next<State> {
+        match event {
+            Event::Stop => {
+                *stop = true;
+                context.stopped = true;
+                Handled
+            }
+            Event::Outcome => Transition(State::checking(*stop)),
+            _ => Super,
+        }
+    }
+
+    /// Its work is being checked, as stopped or not: too late to stop.
+    #[state(superstate = "running")]
+    fn checking(stopped: &mut bool, event: &Event) -> Next<State> {
+        let _ = stopped;
+        match event {
+            Event::Settled(ending, closed) => {
+                Transition(State::ended(ending.clone(), closed.clone()))
+            }
+            _ => Super,
+        }
+    }
+
+    /// Still going: nobody can take it yet.
+    #[superstate]
+    fn running(context: &mut Answer, event: &Event) -> Next<State> {
+        if let Event::Take = event {
+            context.taken = Some(Taken::Running);
+        }
+        Handled
+    }
+
+    /// It ended so, and nobody took it yet.
+    #[state]
+    fn ended(
+        ending: &mut Ending,
+        closed: &mut Option<PathBuf>,
+        context: &mut Answer,
+        event: &Event,
+    ) -> Next<State> {
+        match event {
+            Event::Take => {
+                context.taken = Some(Taken::Now(ending.clone()));
+                Transition(State::taken(ending.clone(), closed.clone()))
+            }
+            _ => Handled,
+        }
+    }
+
+    /// Someone took it, ended so.
+    #[state]
+    fn taken(
+        ending: &mut Ending,
+        closed: &mut Option<PathBuf>,
+        context: &mut Answer,
+        event: &Event,
+    ) -> Next<State> {
+        let _ = closed;
+        if let Event::Take = event {
+            context.taken = Some(Taken::Before(ending.clone()));
+        }
+        Handled
+    }
+}
+
+impl State {
+    fn is_running(&self) -> bool {
+        matches!(
+            self,
+            Self::Reading { .. } | Self::Ending { .. } | Self::Checking { .. }
+        )
+    }
+
+    /// How it ended, once its work was checked.
+    fn outcome(&self) -> Option<&Ending> {
+        match self {
+            Self::Ended { ending, .. } | Self::Taken { ending, .. } => {
+                Some(ending)
+            }
+            Self::Reading { .. }
+            | Self::Ending { .. }
+            | Self::Checking { .. } => None,
+        }
+    }
 }
 
 impl Default for SubAgents {
@@ -174,13 +313,32 @@ impl SubAgents {
         f(&mut self.0.children.lock().expect("not poisoned"))
     }
 
-    /// Whether `run` is one of these and still running.
-    pub fn is_running(&self, run: &RunId) -> bool {
+    /// Gives `event` to `run`, if it is one of these, and its answer.
+    fn tell(&self, run: &RunId, event: &Event) -> Option<Answer> {
+        self.with(|children| {
+            let child = children.iter_mut().find(|c| c.run == *run)?;
+            let mut answer = Answer::default();
+            child.life.handle_with_context(event, &mut answer);
+            if answer.cancel {
+                child.control.cancel();
+            }
+            Some(answer)
+        })
+    }
+
+    /// `run`'s state, if it is one of these.
+    fn state(&self, run: &RunId) -> Option<State> {
         self.with(|children| {
             children
                 .iter()
-                .any(|c| c.run == *run && matches!(c.state, State::Running))
+                .find(|c| c.run == *run)
+                .map(|c| c.life.state().clone())
         })
+    }
+
+    /// Whether `run` is one of these and still running.
+    pub fn is_running(&self, run: &RunId) -> bool {
+        self.state(run).is_some_and(|state| state.is_running())
     }
 
     /// The ones still running.
@@ -188,7 +346,7 @@ impl SubAgents {
         self.with(|children| {
             children
                 .iter()
-                .filter(|c| matches!(c.state, State::Running))
+                .filter(|c| c.life.state().is_running())
                 .map(|c| c.run.clone())
                 .collect()
         })
@@ -203,8 +361,7 @@ impl SubAgents {
                 .iter()
                 .find(|c| {
                     c.run == *run
-                        && !c.ending
-                        && matches!(c.state, State::Running)
+                        && matches!(c.life.state(), State::Reading { .. })
                 })
                 .map(|c| c.control.clone())
         })
@@ -213,27 +370,17 @@ impl SubAgents {
     /// Whether `run`'s `RunEnd` went by while its work is still being
     /// checked: it is running for a moment more.
     pub fn is_ending(&self, run: &RunId) -> bool {
-        self.with(|children| {
-            children.iter().any(|c| {
-                c.run == *run && c.ending && matches!(c.state, State::Running)
-            })
-        })
+        matches!(
+            self.state(run),
+            Some(State::Ending { .. } | State::Checking { .. })
+        )
     }
 
-    /// Stops `run`, if it is running: its changes are dropped. Returns
-    /// whether it was.
+    /// Stops `run`, if it is running and its work is not being checked
+    /// yet: its changes are dropped. Returns whether it was.
     pub fn stop(&self, run: &RunId) -> bool {
-        self.with(|children| {
-            let Some(child) = children
-                .iter_mut()
-                .find(|c| c.run == *run && matches!(c.state, State::Running))
-            else {
-                return false;
-            };
-            child.stopped = true;
-            child.control.cancel();
-            true
-        })
+        self.tell(run, &Event::Stop)
+            .is_some_and(|answer| answer.stopped)
     }
 
     /// Waits for `run` to end and its work to be checked. `None` when it
@@ -241,17 +388,8 @@ impl SubAgents {
     pub async fn ended(&self, run: &RunId) -> Option<Ending> {
         let mut changed = self.0.changed.subscribe();
         loop {
-            let state = self.with(|children| {
-                children
-                    .iter()
-                    .find(|c| c.run == *run)
-                    .map(|c| c.state.clone())
-            })?;
-            match state {
-                State::Running => {}
-                State::Ended(ending) | State::Taken(ending) => {
-                    return Some(ending);
-                }
+            if let Some(ending) = self.state(run)?.outcome() {
+                return Some(ending.clone());
             }
             if changed.changed().await.is_err() {
                 return None;
@@ -262,43 +400,27 @@ impl SubAgents {
     /// The directory of `run`'s workspace, if its end closed it: what
     /// it left running there has nowhere to go on.
     pub fn closed(&self, run: &RunId) -> Option<PathBuf> {
-        self.with(|children| {
-            children
-                .iter()
-                .find(|c| c.run == *run)
-                .and_then(|c| c.closed.clone())
-        })
+        match self.state(run)? {
+            State::Ended { closed, .. } | State::Taken { closed, .. } => closed,
+            State::Reading { .. }
+            | State::Ending { .. }
+            | State::Checking { .. } => None,
+        }
     }
 
     /// Takes `run`, once it ended, to land it or report it: one taker
     /// gets it, the others learn it went.
     pub fn take(&self, run: &RunId) -> Taken {
-        self.with(|children| {
-            let Some(child) = children.iter_mut().find(|c| c.run == *run)
-            else {
-                return Taken::Unknown;
-            };
-            match &child.state {
-                State::Running => Taken::Running,
-                State::Taken(ending) => Taken::Before(ending.clone()),
-                State::Ended(ending) => {
-                    let ending = ending.clone();
-                    child.state = State::Taken(ending.clone());
-                    Taken::Now(ending)
-                }
-            }
-        })
+        self.tell(run, &Event::Take)
+            .and_then(|answer| answer.taken)
+            .unwrap_or(Taken::Unknown)
     }
 
     /// Whether someone took `run` ([`Self::take`]); `None` when it is
     /// not one of these.
     pub fn taken(&self, run: &RunId) -> Option<bool> {
-        self.with(|children| {
-            children
-                .iter()
-                .find(|c| c.run == *run)
-                .map(|c| matches!(c.state, State::Taken(_)))
-        })
+        self.state(run)
+            .map(|state| matches!(state, State::Taken { .. }))
     }
 
     /// The task `run` was spawned on.
@@ -335,10 +457,7 @@ impl SubAgents {
                 run: id.clone(),
                 task,
                 control: run.control(),
-                state: State::Running,
-                ending: false,
-                stopped: false,
-                closed: None,
+                life: Life.state_machine(),
             })
         });
         let agents = self.clone();
@@ -350,13 +469,7 @@ impl SubAgents {
                     // steers it after (`Self::control`).
                     if matches!(&event, RunEvent::RunEnd { run, .. } if *run == id)
                     {
-                        agents.with(|children| {
-                            if let Some(child) =
-                                children.iter_mut().find(|c| c.run == id)
-                            {
-                                child.ending = true;
-                            }
-                        });
+                        agents.tell(&id, &Event::RunEnd);
                     }
                     if let Some(sink) = &agents.0.events {
                         let _ = sink.send(event);
@@ -365,19 +478,18 @@ impl SubAgents {
             }
             let outcome = run.outcome().await;
             drop(slot);
-            let stopped = agents.with(|children| {
-                children.iter().any(|c| c.run == id && c.stopped)
-            });
+            // From here a stop is too late: the work is checked as it
+            // stands.
+            agents.tell(&id, &Event::Outcome);
+            let stopped = matches!(
+                agents.state(&id),
+                Some(State::Checking { stopped: true })
+            );
             let settled =
                 settle(outcome, stopped, land, &id, workspace.as_ref(), &base)
                     .await;
             let ending = settled.ending;
-            agents.with(|children| {
-                if let Some(child) = children.iter_mut().find(|c| c.run == id) {
-                    child.state = State::Ended(ending.clone());
-                    child.closed = settled.closed;
-                }
-            });
+            agents.tell(&id, &Event::Settled(ending.clone(), settled.closed));
             agents.0.changed.send_modify(|n| *n += 1);
             if let Some(on_end) = &agents.0.on_end {
                 on_end(&id, &ending);
@@ -405,6 +517,9 @@ async fn settle(
     base: &str,
 ) -> Settled {
     let ending = match outcome {
+        // Stopped before its work was checked: dropped, however its run
+        // came out.
+        _ if stopped => Ending::Stopped,
         Ok(outcome) => match outcome.stop {
             StopReason::Stop => Ending::Done {
                 text: outcome.text,
@@ -417,13 +532,11 @@ async fn settle(
                 text: outcome.text,
                 limit: Some(limit),
             },
-            StopReason::Cancelled if stopped => Ending::Stopped,
             StopReason::Cancelled => Ending::Failed {
                 error: "it was cancelled".into(),
             },
             StopReason::Error(error) => Ending::Failed { error },
         },
-        Err(_) if stopped => Ending::Stopped,
         Err(error) => Ending::Failed {
             error: error.to_string(),
         },
@@ -717,5 +830,173 @@ impl AgentTool for RefusingSpawn {
         _ctx: ToolCtx,
     ) -> Result<ToolOutput, ToolError> {
         Err(ONLY_MAIN_SPAWNS.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hegel::{TestCase, generators as gs};
+
+    use super::*;
+
+    /// Where the model says the sub-agent is.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Phase {
+        Reading,
+        Ending,
+        Checking,
+        Ended,
+        Taken,
+    }
+
+    /// A sub-agent's life against a model of it: its run ends (with or
+    /// without its `RunEnd` seen first), its work is checked and settles,
+    /// while the person stops it and the host takes it at any point.
+    struct Model {
+        life: StateMachine<Life>,
+        phase: Phase,
+        /// A stop was heard.
+        heard: bool,
+        /// How it ended, once it did.
+        ending: Option<Ending>,
+    }
+
+    impl Model {
+        fn tell(&mut self, event: &Event) -> Answer {
+            let mut answer = Answer::default();
+            self.life.handle_with_context(event, &mut answer);
+            answer
+        }
+    }
+
+    #[hegel::state_machine]
+    impl Model {
+        /// The person stops it: heard until its work is checked, and the
+        /// run is cancelled only while it still reads.
+        #[rule(weight = 3)]
+        fn stop(&mut self, _tc: TestCase) {
+            let answer = self.tell(&Event::Stop);
+            let in_time = matches!(self.phase, Phase::Reading | Phase::Ending);
+            assert_eq!(answer.stopped, in_time, "a stop at {:?}", self.phase);
+            assert_eq!(answer.cancel, self.phase == Phase::Reading);
+            self.heard |= in_time;
+        }
+
+        #[rule]
+        fn run_end(&mut self, tc: TestCase) {
+            if self.phase != Phase::Reading {
+                tc.reject();
+            }
+            self.tell(&Event::RunEnd);
+            self.phase = Phase::Ending;
+        }
+
+        /// Its run comes out, its `RunEnd` seen or not.
+        #[rule]
+        fn outcome(&mut self, tc: TestCase) {
+            if !matches!(self.phase, Phase::Reading | Phase::Ending) {
+                tc.reject();
+            }
+            self.tell(&Event::Outcome);
+            self.phase = Phase::Checking;
+            // The check sees every stop that was heard.
+            assert!(
+                matches!(
+                    self.life.state(),
+                    State::Checking { stopped } if *stopped == self.heard
+                ),
+                "{:?}",
+                self.life.state()
+            );
+        }
+
+        #[rule]
+        fn settled(&mut self, tc: TestCase) {
+            if self.phase != Phase::Checking {
+                tc.reject();
+            }
+            let ending = if self.heard {
+                Ending::Stopped
+            } else {
+                Ending::Done {
+                    text: tc.draw(gs::text().max_size(4)),
+                    limit: None,
+                }
+            };
+            self.tell(&Event::Settled(ending.clone(), None));
+            self.ending = Some(ending);
+            self.phase = Phase::Ended;
+        }
+
+        /// The host takes it: one taker gets its ending, once it ended.
+        #[rule(weight = 2)]
+        fn take(&mut self, _tc: TestCase) {
+            let taken = self.tell(&Event::Take).taken;
+            let want = match (self.phase, &self.ending) {
+                (Phase::Ended, Some(ending)) => Taken::Now(ending.clone()),
+                (Phase::Taken, Some(ending)) => Taken::Before(ending.clone()),
+                _ => Taken::Running,
+            };
+            assert_eq!(taken, Some(want));
+            if self.phase == Phase::Ended {
+                self.phase = Phase::Taken;
+            }
+        }
+
+        #[invariant(always_run)]
+        fn the_life_is_the_model(&self, _tc: TestCase) {
+            let state = self.life.state();
+            let phase = match state {
+                State::Reading { .. } => Phase::Reading,
+                State::Ending { .. } => Phase::Ending,
+                State::Checking { .. } => Phase::Checking,
+                State::Ended { .. } => Phase::Ended,
+                State::Taken { .. } => Phase::Taken,
+            };
+            assert_eq!(phase, self.phase);
+            assert_eq!(
+                state.is_running(),
+                matches!(
+                    self.phase,
+                    Phase::Reading | Phase::Ending | Phase::Checking
+                )
+            );
+            assert_eq!(state.outcome(), self.ending.as_ref());
+        }
+    }
+
+    #[hegel::test(test_cases = 500)]
+    fn a_sub_agents_life_keeps_to_its_model(tc: TestCase) {
+        let model = Model {
+            life: Life.state_machine(),
+            phase: Phase::Reading,
+            heard: false,
+            ending: None,
+        };
+        hegel::stateful::machine(model).steps(20).run(tc);
+    }
+
+    /// Stop after the `RunEnd`, before the work is checked: heard, and
+    /// the check drops the work; the run is not cancelled again.
+    #[test]
+    fn a_stop_after_the_run_end_is_heard_by_the_check() {
+        let mut life = Life.state_machine();
+        life.handle_with_context(&Event::RunEnd, &mut Answer::default());
+        let mut answer = Answer::default();
+        life.handle_with_context(&Event::Stop, &mut answer);
+        assert!(answer.stopped && !answer.cancel, "{answer:?}");
+        life.handle_with_context(&Event::Outcome, &mut Answer::default());
+        assert!(matches!(life.state(), State::Checking { stopped: true }));
+    }
+
+    /// Stop while the work is checked is too late, and says so.
+    #[test]
+    fn a_stop_while_the_work_is_checked_stops_nothing() {
+        let mut life = Life.state_machine();
+        life.handle_with_context(&Event::Outcome, &mut Answer::default());
+        let mut answer = Answer::default();
+        life.handle_with_context(&Event::Stop, &mut answer);
+        assert!(!answer.stopped && !answer.cancel, "{answer:?}");
+        assert!(matches!(life.state(), State::Checking { stopped: false }));
     }
 }

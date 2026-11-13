@@ -495,6 +495,56 @@ fn a_sub_agent_that_ended_cannot_be_steered() {
     });
 }
 
+/// Stop pressed as a sub-agent's run ends, while its work is not yet
+/// checked, is heard: the sub-agent is stopped and its changes dropped,
+/// as Stop says, not landed. Once its work is being checked, Stop says
+/// it stopped nothing.
+#[test]
+fn stop_as_a_sub_agent_ends_drops_its_work() {
+    let home = tempfile::tempdir().unwrap();
+    let project = project_with(home.path(), &[("README.md", "hello\n")]);
+    runtime().block_on(async {
+        let store = tau_store_sqlite::memory().await.unwrap();
+        let parent = caller(&project);
+        let (sink, mut events) = tokio::sync::mpsc::unbounded_channel();
+        let agents = SubAgents::new(Some(sink), None);
+        let child = |workspace: Workspace| {
+            let script = ScriptedModel::new()
+                .turn(|t| t.tool_call("write", write("child.txt")))
+                .turn(|t| t.tool_call("vcs_commit", commit("feat: child")))
+                .turn(|t| t.text("child.txt is written"));
+            Ok(coder_in(script, workspace.as_ref()))
+        };
+        let first = ScriptedModel::new()
+            .turn(|t| {
+                t.tool_call("spawn", json!({ "task": "write child.txt" }))
+            })
+            .turn(|t| t.text("started"));
+        spawning(first, &parent, &agents, child)
+            .run("hand child.txt over", &store)
+            .await
+            .unwrap();
+        let ended = loop {
+            match events.recv().await.unwrap() {
+                RunEvent::RunEnd { run, .. } if agents.task(&run).is_some() => {
+                    break run;
+                }
+                _ => {}
+            }
+        };
+        let stopped = agents.stop(&ended);
+        let ending = agents.ended(&ended).await.unwrap();
+        if stopped {
+            assert_eq!(ending, Ending::Stopped);
+            assert_eq!(project.workspaces().unwrap(), ["parent"]);
+        } else {
+            assert!(matches!(ending, Ending::Done { .. }), "{ending:?}");
+        }
+        // Once it ended, there is nothing to stop.
+        assert!(!agents.stop(&ended));
+    });
+}
+
 /// Holds its call until notified, or until the run is cancelled.
 struct Hold(Arc<tokio::sync::Notify>);
 

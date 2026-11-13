@@ -15,6 +15,7 @@ async-trait.workspace = true
 futures-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+statig.workspace = true
 tau-agent = { workspace = true, features = ["serde"] }
 tau-ai.workspace = true
 tau-store.workspace = true

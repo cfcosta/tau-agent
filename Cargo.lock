@@ -9618,6 +9618,7 @@ dependencies = [
  "hegeltest",
  "serde",
  "serde_json",
+ "statig",
  "tau-agent",
  "tau-ai",
  "tau-store",
