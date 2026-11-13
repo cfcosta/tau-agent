@@ -2820,6 +2820,120 @@ fn a_landing_is_proposed_once_from_any_depth(cx: &mut TestAppContext) {
     .run();
 }
 
+/// A run that proposed its landing and was then cancelled or failed
+/// dropped the proposal: resumed, it opens its landing card when it stops
+/// only if it proposed again.
+#[gpui::test]
+fn a_landing_proposed_before_a_cut_is_dropped(cx: &mut TestAppContext) {
+    use hegel::generators::{self as gs, Generator as _};
+    use tau_agent::{
+        event::{RunEvent, StopReason},
+        tool::RunId,
+    };
+    use tau_ui_remote::view::RunView;
+
+    let land = || {
+        hegel::compose!(|tc| {
+            Land {
+                depth: tc.draw(gs::integers::<usize>().max_value(3)),
+                ok: tc.draw(gs::booleans()),
+                seen: tc.draw(gs::booleans()),
+                outer_fails: tc.draw(gs::booleans()),
+            }
+        })
+    };
+    let (workspace, mut cx, events) = open_demo(cx);
+    let mut case = 0;
+    hegel::Hegel::new(|tc: hegel::TestCase| {
+        case += 1;
+        let before: Vec<Land> = tc.draw(gs::vecs(land()).max_size(3));
+        let cut = tc.draw(
+            gs::sampled_from(vec![
+                StopReason::Cancelled,
+                StopReason::Error("it failed".into()),
+            ])
+            .print_as_debug(),
+        );
+        let after: Vec<Land> = tc.draw(gs::vecs(land()).max_size(3));
+        let run = RunId(format!("cut-{case}").into());
+        events.borrow_mut().clear();
+        workspace.update(&mut cx, |ws, cx| {
+            ws.push_run(RunView::new(run.clone(), "run", "coder", "m"), cx);
+            for (n, land) in before.iter().enumerate() {
+                for event in land.events(&run, n) {
+                    ws.apply_event(&event, cx);
+                }
+            }
+            ws.apply_event(
+                &RunEvent::RunEnd {
+                    run: run.clone(),
+                    parent: None,
+                    stop: cut.clone(),
+                    cost: 0.0,
+                },
+                cx,
+            );
+            for (n, land) in after.iter().enumerate() {
+                for event in land.events(&run, 10 + n) {
+                    ws.apply_event(&event, cx);
+                }
+            }
+            ws.apply_event(&calls::run_end(&run, None), cx);
+        });
+        let previews = events
+            .borrow()
+            .iter()
+            .filter(|event| {
+                matches!(event,
+                WorkspaceEvent::PreviewLanding { run: r } if *r == run)
+            })
+            .count();
+        let expected = usize::from(after.iter().any(Land::proposes));
+        assert_eq!(previews, expected, "{before:?} {cut:?} {after:?}");
+    })
+    .settings(hegel::Settings::new().test_cases(100))
+    .run();
+}
+
+/// The case it found: proposed, cancelled, resumed without proposing,
+/// stopped: no landing card.
+#[gpui::test]
+fn a_cancelled_proposal_opens_no_card_after_a_resume(cx: &mut TestAppContext) {
+    use tau_agent::{
+        event::{RunEvent, StopReason},
+        tool::RunId,
+    };
+    use tau_ui_remote::view::RunView;
+
+    let (workspace, mut cx, events) = open_demo(cx);
+    let run = RunId("cut".into());
+    let land = Land {
+        depth: 0,
+        ok: true,
+        seen: true,
+        outer_fails: false,
+    };
+    assert!(land.proposes());
+    workspace.update(&mut cx, |ws, cx| {
+        ws.push_run(RunView::new(run.clone(), "run", "coder", "m"), cx);
+        for event in land.events(&run, 0) {
+            ws.apply_event(&event, cx);
+        }
+        ws.apply_event(
+            &RunEvent::RunEnd {
+                run: run.clone(),
+                parent: None,
+                stop: StopReason::Cancelled,
+                cost: 0.0,
+            },
+            cx,
+        );
+        ws.apply_event(&calls::run_end(&run, None), cx);
+    });
+    assert!(!events.borrow().iter().any(|event| matches!(event,
+        WorkspaceEvent::PreviewLanding { run: r } if *r == run)));
+}
+
 /// A sub-agent a codemode script spawns is a chat of its own on the
 /// task the script handed it, as one the model spawns, open until it
 /// lands.

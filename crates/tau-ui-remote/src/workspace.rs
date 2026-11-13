@@ -552,7 +552,8 @@ pub struct Workspace {
     landings: HashMap<RunId, LandingState>,
     /// Where each repository's push stands, by repository.
     pushes: HashMap<String, PushState>,
-    /// Runs that proposed their landing with `vcs_land` and have not
+    /// Runs that proposed their landing with `vcs_land` in the turns
+    /// since they last ended, and have not
     /// stopped yet.
     proposed: HashSet<RunId>,
     pub(crate) setup: Setup,
@@ -1321,12 +1322,13 @@ impl Workspace {
                 self.proposed.insert(run.clone());
             }
             // A run that proposed its landing stopped: its landing card
-            // opens for the person to confirm (ADR 0014).
-            RunEvent::RunEnd {
-                run,
-                stop: StopReason::Stop,
-                ..
-            } if self.proposed.remove(run) => {
+            // opens for the person to confirm (ADR 0014). Cancelled or
+            // failed, its proposal goes with it: resumed, it proposes
+            // again or lands nothing. The proposal is removed first, so
+            // it goes whichever way the run ended.
+            RunEvent::RunEnd { run, stop, .. }
+                if self.proposed.remove(run) && *stop == StopReason::Stop =>
+            {
                 self.preview_landing(run, cx);
             }
             _ => {}
