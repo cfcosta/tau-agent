@@ -846,8 +846,9 @@ impl PoolMachine {
             },
         );
         if started {
+            // It fails; freed, the lane may let an aged connection go.
             assert!(
-                matches!(&actions[..], [PoolAction::Fail { lane: l, .. }] if *l == lane),
+                matches!(actions.first(), Some(PoolAction::Fail { lane: l, .. }) if *l == lane),
                 "{actions:?}"
             );
             tc.event("failed after output on previous_response_not_found");
@@ -1517,4 +1518,38 @@ fn idle_lanes_reopen_only_for_a_request() {
         "{sent:?}"
     );
     assert_eq!(pool.stats().connections_opened, 2);
+}
+
+/// The case the model found: a delta's output started, time passed, and
+/// the server lost the previous response. The lane fails first, and is
+/// free; the pool may then close a connection it no longer needs.
+#[test]
+fn a_late_eviction_fails_the_lane_first() {
+    let mut pool = Pool::new(Limits::default());
+    let (lane, _) = pool.open_lane(Affinity::default());
+    pool.submit(lane, on_path(None, vec![item("a")])).unwrap();
+    complete(&mut pool, lane, "resp_1");
+    let sent = pool
+        .submit(lane, on_path(None, vec![item("a"), item("b")]))
+        .unwrap();
+    assert!(
+        matches!(&sent[..], [PoolAction::Send { body, .. }]
+            if body.previous_response_id.as_deref() == Some("resp_1")),
+        "{sent:?}"
+    );
+    pool.handle(lane, Event::Output).unwrap();
+    pool.tick(Duration::from_secs(1));
+    let actions = pool
+        .handle(
+            lane,
+            Event::ServerError {
+                code: Some(PREVIOUS_RESPONSE_NOT_FOUND.into()),
+            },
+        )
+        .unwrap();
+    assert!(
+        matches!(actions.first(), Some(PoolAction::Fail { lane: l, .. }) if *l == lane),
+        "{actions:?}"
+    );
+    assert!(!pool.is_busy(lane));
 }
