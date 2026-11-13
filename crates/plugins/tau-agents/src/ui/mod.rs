@@ -153,7 +153,8 @@ pub struct Form {
     pub window_secs: u64,
     /// The person's MCP servers it starts with.
     pub servers: std::collections::BTreeSet<String>,
-    /// The agent the host made, until its conversation opens.
+    /// The agent Start asked the host to make, from then until its
+    /// conversation opens; or until the host says why it could not.
     pub making: Option<String>,
     /// Why the host could not make it.
     pub error: Option<String>,
@@ -208,6 +209,19 @@ impl Form {
             "" => self.suggested(),
             name => name.to_owned(),
         }
+    }
+
+    /// What Start asks of the host, `taken` when an agent has the name
+    /// already: nothing while it is making one, as its answer comes only
+    /// once it made the agent and started its first turn.
+    pub fn start(&self, taken: bool) -> Option<Result<Act, String>> {
+        if self.making.is_some() {
+            return None;
+        }
+        if taken {
+            return Some(Err("An agent has this name already.".into()));
+        }
+        Some(self.act())
     }
 
     /// The form, as what the host is asked to make.
@@ -318,13 +332,21 @@ pub(crate) fn on_action(
                 handle.set_ui(key, value.cloned());
             }
         }
-        START => match Form::of(view).act() {
-            Ok(act) => {
-                view.handle.set_ui(ERROR, None);
-                view.handle.act(act);
+        START => {
+            let form = Form::of(view);
+            let taken = view.data.agent(&form.chosen_name()).is_some();
+            match form.start(taken) {
+                Some(Ok(act)) => {
+                    view.handle.set_ui(ERROR, None);
+                    view.handle.set_ui(MAKING, Some(json!(form.chosen_name())));
+                    view.handle.act(act);
+                }
+                Some(Err(error)) => {
+                    view.handle.set_ui(ERROR, Some(Value::String(error)))
+                }
+                None => {}
             }
-            Err(error) => view.handle.set_ui(ERROR, Some(Value::String(error))),
-        },
+        }
         SETTINGS => {
             if let Ok(settings) =
                 serde_json::from_value::<Settings>(args.clone())

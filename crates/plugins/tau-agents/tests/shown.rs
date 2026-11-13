@@ -439,3 +439,29 @@ fn a_form_left_unnamed_takes_its_purpose_s_name() {
     assert_eq!(empty.chosen_name(), "");
     assert!(empty.act().is_err());
 }
+
+/// Start asks the host once: pressed again while the agent is being made,
+/// it asks nothing, as a second ask would find the name taken; and a name
+/// already taken is refused before it asks.
+#[test]
+fn start_asks_once_while_the_agent_is_made() {
+    use tau_agents::ui::Form;
+    let form = Form {
+        name: "deps".into(),
+        purpose: "watch the advisories feed".into(),
+        model: None,
+        daily_cap: 1.0,
+        window_secs: 30,
+        servers: Default::default(),
+        making: None,
+        error: None,
+    };
+    assert!(matches!(form.start(false), Some(Ok(_))));
+    // A name taken is refused before the host is asked.
+    assert!(matches!(form.start(true), Some(Err(_))));
+    let making = Form {
+        making: Some("deps".into()),
+        ..form
+    };
+    assert!(making.start(false).is_none());
+}
