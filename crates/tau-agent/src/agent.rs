@@ -569,10 +569,10 @@ impl Agent {
 
     /// Starts a run as `launch` describes it.
     fn launch(&self, launch: Launch, input: Prompt, store: &Store) -> Run {
-        let id = launch
-            .resume
-            .clone()
-            .unwrap_or_else(|| RunId(uuid::Uuid::now_v7().to_string().into()));
+        let id = match &launch.start {
+            Start::Resume(run) => run.clone(),
+            Start::New(_) => RunId(uuid::Uuid::now_v7().to_string().into()),
+        };
         let (own_tx, own_rx) = mpsc::channel(EVENT_BUFFER);
         let (events_tx, events) = match launch.events.clone() {
             Events::Own => (Some(own_tx), Some(own_rx)),
@@ -654,14 +654,15 @@ impl Forked {
     }
 
     fn launch(&self, input: &Input) -> Launch {
-        let mut launch = Launch::root(input.workflow.as_deref());
-        launch.kind = RunKind::Fork {
-            parent: self.from.run.0.to_string(),
-            fork_seq: self.from.seq,
+        let start = NewStart {
+            inherit_workflow: input.workflow.is_none(),
+            turns_before: self.after_turn,
+            ..NewStart::of(RunKind::Fork {
+                parent: self.from.run.0.to_string(),
+                fork_seq: self.from.seq,
+            })
         };
-        launch.inherit_workflow = input.workflow.is_none();
-        launch.turns_before = self.after_turn;
-        launch
+        Launch::starting(Start::New(start), input.workflow.as_deref())
     }
 }
 
@@ -676,8 +677,10 @@ impl Resumed {
     /// Starts the run again on `input`.
     pub fn start(&self, input: impl Into<Input>, store: &Store) -> Run {
         let input = input.into();
-        let mut launch = Launch::root(input.workflow.as_deref());
-        launch.resume = Some(self.run.clone());
+        let launch = Launch::starting(
+            Start::Resume(self.run.clone()),
+            input.workflow.as_deref(),
+        );
         self.agent.launch(launch, input.prompt(), store)
     }
 
@@ -887,19 +890,18 @@ impl SubAgent {
             (None, Vec::new())
         };
         let launch = Launch {
-            kind: RunKind::Subagent {
-                parent: ctx.run.0.to_string(),
-                fork_seq,
-            },
+            start: Start::New(NewStart {
+                prelude,
+                ..NewStart::of(RunKind::Subagent {
+                    parent: ctx.run.0.to_string(),
+                    fork_seq,
+                })
+            }),
             parent: Some(ctx.run.clone()),
             workflow: scope.workflow.clone(),
             cancel: CancellationToken::new(),
             text_format: None,
-            inherit_workflow: false,
             events: Events::Own,
-            resume: None,
-            turns_before: 0,
-            prelude,
             call: Some(scope.call.clone()),
         };
         Ok(self.agent.launch(launch, Prompt::new(input), &scope.store))
@@ -922,19 +924,18 @@ impl SubAgent {
             (None, Vec::new())
         };
         let launch = Launch {
-            kind: RunKind::Subagent {
-                parent: ctx.run.0.to_string(),
-                fork_seq,
-            },
+            start: Start::New(NewStart {
+                prelude,
+                ..NewStart::of(RunKind::Subagent {
+                    parent: ctx.run.0.to_string(),
+                    fork_seq,
+                })
+            }),
             parent: Some(ctx.run.clone()),
             workflow: scope.workflow.clone(),
             cancel: ctx.cancel.child_token(),
             text_format: None,
-            inherit_workflow: false,
             events: Events::Forward(scope.events.clone()),
-            resume: None,
-            turns_before: 0,
-            prelude,
             call: Some(scope.call.clone()),
         };
         let outcome = self
@@ -968,23 +969,45 @@ impl fmt::Debug for SubAgent {
 
 /// How a run relates to the rest of its workflow.
 struct Launch {
-    kind: RunKind,
+    start: Start,
     parent: Option<RunId>,
     workflow: Option<Arc<str>>,
     cancel: CancellationToken,
     /// The `text.format` of a typed run.
     text_format: Option<Value>,
-    /// Whether the run joins its parent run's workflow.
-    inherit_workflow: bool,
     events: Events,
-    /// Go on with this stored run instead of starting a new one.
-    resume: Option<RunId>,
-    /// Turns a new run starts after: a fork's, from its parent.
-    turns_before: u32,
-    /// Messages a new run stores as its own before its input.
-    prelude: Vec<Message>,
     /// The parent's tool call that starts the run: a sub-agent's.
     call: Option<Arc<str>>,
+}
+
+/// A new run, or a stored one going on: a resumed run is as it was
+/// stored, so it takes nothing a new one is given.
+enum Start {
+    New(NewStart),
+    /// Go on with this stored run.
+    Resume(RunId),
+}
+
+/// What a new run starts from.
+struct NewStart {
+    kind: RunKind,
+    /// Whether the run joins its parent run's workflow.
+    inherit_workflow: bool,
+    /// Turns it starts after: a fork's, from its parent.
+    turns_before: u32,
+    /// Messages it stores as its own before its input.
+    prelude: Vec<Message>,
+}
+
+impl NewStart {
+    fn of(kind: RunKind) -> Self {
+        Self {
+            kind,
+            inherit_workflow: false,
+            turns_before: 0,
+            prelude: Vec::new(),
+        }
+    }
 }
 
 /// Where a run's events go.
@@ -998,17 +1021,17 @@ enum Events {
 
 impl Launch {
     fn root(workflow: Option<&str>) -> Self {
+        Self::starting(Start::New(NewStart::of(RunKind::Root)), workflow)
+    }
+
+    fn starting(start: Start, workflow: Option<&str>) -> Self {
         Self {
-            kind: RunKind::Root,
+            start,
             parent: None,
             workflow: workflow.map(Into::into),
             cancel: CancellationToken::new(),
             text_format: None,
-            inherit_workflow: false,
             events: Events::Own,
-            resume: None,
-            turns_before: 0,
-            prelude: Vec::new(),
             call: None,
         }
     }
@@ -1077,58 +1100,74 @@ async fn run_task(
     }
     // A resumed run is reopened as it was stored: its kind, workflow and
     // turns. It goes on on this agent's model, which may be another.
-    let resumed = match &launch.resume {
-        Some(run) => Some(store.reopen_run(&run.0, &agent.0.model).await?),
-        None => None,
-    };
-    let kind = resumed
-        .as_ref()
-        .map_or_else(|| launch.kind.clone(), |record| record.kind.clone());
-    let mut workflow = launch.workflow.as_deref().map(str::to_owned);
-    let parent_run = match &launch.kind {
-        RunKind::Root => None,
-        RunKind::Fork { parent, .. } | RunKind::Subagent { parent, .. } => {
-            Some(parent.clone())
-        }
-    };
-    if launch.inherit_workflow
-        && let Some(parent) = &parent_run
-    {
-        let record = store.run(parent).await?;
-        let record = record.ok_or_else(|| {
-            AgentError::Store(StoreError::UnknownRun(parent.clone()))
-        })?;
-        workflow = record.workflow_id;
-    }
-    let fork = matches!(
-        launch.kind,
-        RunKind::Fork { .. }
-            | RunKind::Subagent {
-                fork_seq: Some(_),
-                ..
+    // Only a new run is created, and only it has a parent run to read
+    // its workflow from or fork, and a prelude.
+    let (kind, workflow, fork, parent_run, turns_before, mut prelude, resumed) =
+        match launch.start {
+            Start::Resume(run) => {
+                let record = store.reopen_run(&run.0, &agent.0.model).await?;
+                let turns = u32::try_from(record.turns).unwrap_or(u32::MAX);
+                (
+                    record.kind,
+                    record.workflow_id,
+                    false,
+                    None,
+                    turns,
+                    Vec::new(),
+                    true,
+                )
             }
-    );
-    match &resumed {
-        Some(record) => workflow = record.workflow_id.clone(),
-        None => {
-            store
-                .create_run(&NewRun {
-                    id: &id.0,
-                    workflow_id: workflow.as_deref(),
-                    agent: &agent.0.name,
-                    kind: launch.kind.clone(),
-                    model: &agent.0.model,
-                    turns: i64::from(launch.turns_before),
-                })
-                .await?
-        }
-    }
+            Start::New(start) => {
+                let mut workflow =
+                    launch.workflow.as_deref().map(str::to_owned);
+                let parent_run = match &start.kind {
+                    RunKind::Root => None,
+                    RunKind::Fork { parent, .. }
+                    | RunKind::Subagent { parent, .. } => Some(parent.clone()),
+                };
+                if start.inherit_workflow
+                    && let Some(parent) = &parent_run
+                {
+                    let record = store.run(parent).await?;
+                    let record = record.ok_or_else(|| {
+                        AgentError::Store(StoreError::UnknownRun(
+                            parent.clone(),
+                        ))
+                    })?;
+                    workflow = record.workflow_id;
+                }
+                let fork = matches!(
+                    start.kind,
+                    RunKind::Fork { .. }
+                        | RunKind::Subagent {
+                            fork_seq: Some(_),
+                            ..
+                        }
+                );
+                store
+                    .create_run(&NewRun {
+                        id: &id.0,
+                        workflow_id: workflow.as_deref(),
+                        agent: &agent.0.name,
+                        kind: start.kind.clone(),
+                        model: &agent.0.model,
+                        turns: i64::from(start.turns_before),
+                    })
+                    .await?;
+                (
+                    start.kind,
+                    workflow,
+                    fork,
+                    parent_run,
+                    start.turns_before,
+                    start.prelude,
+                    false,
+                )
+            }
+        };
     // From here the run is `running`, and however it stops, its record
     // ends.
     let record = RunRecord::running(store.clone(), id.clone());
-    let turns_before = resumed.as_ref().map_or(launch.turns_before, |record| {
-        u32::try_from(record.turns).unwrap_or(u32::MAX)
-    });
     let workflow: Option<Arc<str>> = workflow.map(Into::into);
 
     let shared = RunShared {
@@ -1146,7 +1185,7 @@ async fn run_task(
     };
     // A fork starts from its inherited transcript, a resumed run from
     // its own, and from the latest context rewrite in it, if any.
-    let (mut history, last_rewrite) = if fork || resumed.is_some() {
+    let (mut history, last_rewrite) = if fork || resumed {
         let entries = match store.transcript(&id.0).await {
             Ok(entries) => entries,
             Err(error) => {
@@ -1162,7 +1201,6 @@ async fn run_task(
     } else {
         (Vec::new(), None)
     };
-    let mut prelude = launch.prelude;
     let call = launch.call;
     keep_own_reasoning(&mut history, &agent.0.model);
     keep_own_reasoning(&mut prelude, &agent.0.model);
@@ -1228,11 +1266,9 @@ async fn run_task(
     let tools = Arc::new(Toolbox::new(tools, agent.0.sources.clone()));
     let lineage = Lineage {
         path: id.0.to_string(),
-        parent: parent_run
-            .filter(|_| fork && resumed.is_none())
-            .filter(|_| {
-                last_model(&prelude, &history) == Some(agent.0.model.as_str())
-            }),
+        parent: parent_run.filter(|_| fork).filter(|_| {
+            last_model(&prelude, &history) == Some(agent.0.model.as_str())
+        }),
     };
     let settings = agent.settings(&plan, &tools, launch.text_format, lineage);
     let session = match agent.0.llm.open(settings).await {
