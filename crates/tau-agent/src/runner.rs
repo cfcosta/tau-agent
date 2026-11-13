@@ -88,6 +88,7 @@ use crate::{
         ToolResultView,
         Trigger,
     },
+    record::{Ending, RunRecord},
     tool::{
         AgentTool,
         Catalog,
@@ -153,6 +154,8 @@ pub(crate) struct Runner {
     pub limits: Limits,
     pub session: Box<dyn LlmSession>,
     pub store: Store,
+    /// The run's record, which [`Runner::end`] ends.
+    pub record: RunRecord,
     pub events: Option<mpsc::Sender<RunEvent>>,
     pub steering: mpsc::UnboundedReceiver<crate::agent::Prompt>,
     pub cancel: CancellationToken,
@@ -474,8 +477,12 @@ impl Runner {
             }
         };
         self.save_charged().await?;
-        self.store
-            .finish_run(&self.run.0, status, Some(&text), error)
+        self.record
+            .end(Ending {
+                status,
+                result: Some(text.clone()),
+                error: error.map(str::to_owned),
+            })
             .await?;
         let finished = FinishedRun {
             transcript: &transcript,

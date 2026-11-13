@@ -1700,6 +1700,30 @@ impl Machine {
         );
     }
 
+    /// A run that ended is not `running` in the store, however it ended:
+    /// one a store write failed is `failed`, so it can be resumed and
+    /// compacted, not only after the next start of the app.
+    #[invariant(always_run)]
+    fn an_ended_run_is_not_running(&self, _tc: TestCase) {
+        let Phase::Ended(end) = self.model.phase else {
+            return;
+        };
+        let record = self
+            .rt
+            .block_on(self.store.inner.run(&self.run.0))
+            .unwrap()
+            .expect("the run is stored");
+        let want = match end {
+            End::Stop => Status::Done,
+            End::Cancelled => Status::Cancelled,
+            End::Error | End::Store => Status::Failed,
+        };
+        assert_eq!(
+            record.status, want,
+            "the stored status of a run that ended"
+        );
+    }
+
     /// Every steer is read once, in the order sent, or is still unread:
     /// the host hands those on when the run ends. A run that stopped
     /// read them all, and every steer it read is stored, once.

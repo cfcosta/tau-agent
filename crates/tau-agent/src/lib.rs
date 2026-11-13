@@ -9,6 +9,7 @@ pub mod launch;
 pub mod limits;
 pub mod output;
 pub mod plugin;
+mod record;
 pub mod runner;
 pub mod schema;
 #[cfg(feature = "testing")]

@@ -179,8 +179,37 @@ fn a_failed_turn_write_leaves_no_partial_turn(tc: TestCase) {
             })
             .sum();
         assert_eq!(record.input_tokens, input as i64);
-        // The run could not record its end either.
-        assert_eq!(record.status, Status::Running);
+        // Only the messages broke: the run's record ends, as failed, so
+        // it can be resumed without waiting for the app's next start.
+        assert_eq!(record.status, Status::Failed);
+    });
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A run whose turn could not be stored ends failed in the store, with
+/// the store's error, not `running` until the app's next start: so it
+/// can be resumed and compacted at once.
+#[test]
+fn a_run_whose_turn_could_not_be_stored_is_failed() {
+    let llm = ScriptedModel::new().turn(|t| t.tool_call("sabotage", json!({})));
+    let (path, dir) = database();
+    block_on_io(async {
+        let store = tau_store_sqlite::open(&path).await.unwrap();
+        let agent = Agent::new(llm).tool(Sabotage {
+            path: path.clone(),
+            schema: json!({"type": "object"}),
+        });
+        let run = agent.start("go", &store);
+        let id = run.id();
+        let error = run.outcome().await.unwrap_err();
+        assert!(matches!(error, AgentError::Store(_)), "{error:?}");
+        let record = store.run(&id.0).await.unwrap().unwrap();
+        assert_eq!(record.status, Status::Failed);
+        assert!(
+            record.error.as_deref().is_some_and(|e| e.contains("store")),
+            "{:?}",
+            record.error
+        );
     });
     std::fs::remove_dir_all(dir).unwrap();
 }

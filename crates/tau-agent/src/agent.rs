@@ -40,6 +40,7 @@ use crate::{
     event::{RunEvent, StopReason},
     limits::Limits,
     plugin::{Plugin, RunPlan, RunShared},
+    record::RunRecord,
     runner::{ActivePlugin, Clock, LoopTool, Runner, Toolbox, system_clock},
     schema::to_strict,
     tool::{AgentTool, RunId, ToolCtx, ToolError, ToolOutput, ToolSource},
@@ -778,6 +779,8 @@ impl Resumed {
         let session = agent.0.llm.open(request).await?;
         let (_steer, steering) = mpsc::unbounded_channel();
         let runner = Runner {
+            // Idle, the run has ended already: nothing here ends it.
+            record: RunRecord::running(store.clone(), id.clone()),
             run: id.clone(),
             parent: None,
             agent: agent.0.name.clone(),
@@ -1120,6 +1123,9 @@ async fn run_task(
                 .await?
         }
     }
+    // From here the run is `running`, and however it stops, its record
+    // ends.
+    let record = RunRecord::running(store.clone(), id.clone());
     let turns_before = resumed.as_ref().map_or(launch.turns_before, |record| {
         u32::try_from(record.turns).unwrap_or(u32::MAX)
     });
@@ -1144,13 +1150,13 @@ async fn run_task(
         let entries = match store.transcript(&id.0).await {
             Ok(entries) => entries,
             Err(error) => {
-                return Err(fail(&store, &id, AgentError::Store(error)).await);
+                return Err(record.fail(AgentError::Store(error)).await);
             }
         };
         match messages(entries) {
             Ok(loaded) => loaded,
             Err(error) => {
-                return Err(fail(&store, &id, AgentError::Store(error)).await);
+                return Err(record.fail(AgentError::Store(error)).await);
             }
         }
     } else {
@@ -1181,7 +1187,7 @@ async fn run_task(
         let ctx = shared.ctx(plugin.name());
         let records = match plugin_records(&store, &id, plugin.name()).await {
             Ok(records) => records,
-            Err(error) => return Err(fail(&store, &id, error).await),
+            Err(error) => return Err(record.fail(error).await),
         };
         plan.set_records(records);
         plan.set_last_rewrite(
@@ -1197,7 +1203,7 @@ async fn run_task(
                     plugin: plugin.name().to_owned(),
                     message: error.to_string(),
                 };
-                return Err(fail(&store, &id, error).await);
+                return Err(record.fail(error).await);
             }
         }
     }
@@ -1210,7 +1216,7 @@ async fn run_task(
             Some(schema) => schema,
             None => match compile(tool.as_ref()) {
                 Ok(schema) => Arc::new(schema),
-                Err(error) => return Err(fail(&store, &id, error).await),
+                Err(error) => return Err(record.fail(error).await),
             },
         };
         tools.push(LoopTool {
@@ -1232,12 +1238,13 @@ async fn run_task(
     let session = match agent.0.llm.open(settings).await {
         Ok(session) => session,
         Err(error) => {
-            return Err(fail(&store, &id, AgentError::Llm(error)).await);
+            return Err(record.fail(AgentError::Llm(error)).await);
         }
     };
     plan.images = input.images;
     let first = first_message(plan.context, plan.input, plan.images);
     let result = Runner {
+        record: record.clone(),
         run: id.clone(),
         parent: launch.parent,
         agent: agent.0.name.clone(),
@@ -1264,11 +1271,17 @@ async fn run_task(
         turns_before,
         preempted: None,
     };
-    let result = agent
+    let result = match agent
         .0
         .driver
         .run(crate::runner::driver::LoopRun(result), first)
-        .await?;
+        .await
+    {
+        Ok(result) => result,
+        // A store write failed on the way: the run fails, unless its
+        // ending was stored before.
+        Err(error) => return Err(record.fail(error.into()).await),
+    };
     Ok(Outcome {
         run: id,
         text: result.text,
@@ -1299,19 +1312,6 @@ async fn plugin_records(
         .map(|body| serde_json::from_str(body))
         .collect::<Result<_, _>>()
         .map_err(|error| AgentError::Store(StoreError::Json(error)))
-}
-
-/// Marks a run that could not start as failed, and returns why. If even
-/// that write fails, the store's error wins: the run is left `running`.
-async fn fail(store: &Store, run: &RunId, error: AgentError) -> AgentError {
-    let message = error.to_string();
-    match store
-        .finish_run(&run.0, Status::Failed, None, Some(&message))
-        .await
-    {
-        Ok(()) => error,
-        Err(store_error) => AgentError::Store(store_error),
-    }
 }
 
 /// The run's first user message: the plan's context, then its input,

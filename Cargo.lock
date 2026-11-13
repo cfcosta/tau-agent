@@ -8848,6 +8848,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "statig",
  "tau-agent",
  "tau-ai",
  "tau-store",
