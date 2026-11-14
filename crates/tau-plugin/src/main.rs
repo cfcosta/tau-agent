@@ -9,8 +9,11 @@
 //!   it reaches on the Plugins page.
 //! - `tau-plugin check [<folder>...]`: loads each as starting does and
 //!   says what it declares and what it reaches.
-//! - `tau-plugin test [<folder>...]`: runs each package's tests; a line per
-//!   package and one per failure, or one per test with `--verbose`.
+//! - `tau-plugin test [<folder>...]`: runs each package's tests, printing
+//!   a tree: a line per package, and under one that fails a branch per
+//!   test, or under every one with `--verbose`; then each failure in full
+//!   and a summary. In a terminal it is coloured and the package going on
+//!   is drawn as it runs (see [`tree`]).
 //!   `--filter <text>` keeps the tests with `text` in their file or name;
 //!   `--bless` writes the fixtures the tests make into `fixtures/`, and
 //!   removes those none makes; `--watch` runs them again each time a
@@ -26,10 +29,11 @@
     reason = "a command line is a synchronous entry point (ADR 0028)"
 )]
 
+mod tree;
+
 use std::{path::PathBuf, process::ExitCode};
 
 use serde_json::json;
-use tau_luau_plugins::TestResult;
 use tau_luau_plugins_host::{
     built_in,
     packages::{self, Fixtures, Package},
@@ -48,7 +52,7 @@ commands:
 options:
   --json            print what was found as one JSON value
   --filter <text>   test: only the tests with <text> in their file or name
-  --verbose         test: a line per test, not only per failure
+  --verbose         test: every test, also under packages that pass
   --bless           test: write the fixtures the tests make
   --watch           test: run again each time a package changes
   --in <dir>        new: the folder to write it in, else the one it is run in
@@ -350,74 +354,56 @@ fn print_summary(summary: &packages::Summary) {
 async fn test(asked: &Asked, packages: Vec<Package>) -> bool {
     let mut all = true;
     let mut found = Vec::new();
-    let (mut passed, mut ran) = (0, 0);
-    let many = packages.len() > 1;
     let fixtures = if asked.bless {
         Fixtures::Bless
     } else {
         Fixtures::Check
     };
+    let tree = (!asked.json).then(|| {
+        tree::Tree::new(
+            tree::Look::of_stdout(asked.verbose),
+            asked.filter.clone(),
+        )
+    });
     for Package { folder, files } in packages {
         let name = files.manifest.name.clone();
         let cancel = CancellationToken::new();
-        match packages::test(files, &folder, fixtures, cancel).await {
+        let progress = tree
+            .as_ref()
+            .map(|tree| tree.begin(&name))
+            .unwrap_or_default();
+        match packages::test(files, &folder, fixtures, cancel, &progress).await
+        {
             Ok(results) => {
-                let results: Vec<TestResult> = results
+                let results: Vec<_> = results
                     .into_iter()
                     .filter(|test| kept(asked, test))
                     .collect();
-                let ok = results.iter().filter(|test| test.passed).count();
-                passed += ok;
-                ran += results.len();
-                all &= ok == results.len();
-                if !asked.json {
-                    print_results(asked, &name, &results);
+                all &= results.iter().all(|test| test.passed);
+                if let Some(tree) = &tree {
+                    tree.end(Ok(&results));
                 }
                 found.push(json!({ "name": name, "tests": results }));
             }
             Err(error) => {
                 all = false;
-                if !asked.json {
-                    eprintln!("{error}");
+                if let Some(tree) = &tree {
+                    tree.end(Err(&error));
                 }
                 found.push(json!({ "name": name, "error": error }));
             }
         }
     }
-    if asked.json {
-        println!("{}", json!(found));
-    } else if many {
-        println!("{passed} of {ran} tests pass");
+    match tree {
+        Some(tree) => tree.finish(),
+        None => println!("{}", json!(found)),
     }
     all
 }
 
 /// Whether `--filter` keeps `test`.
-fn kept(asked: &Asked, test: &TestResult) -> bool {
+fn kept(asked: &Asked, test: &tau_luau_plugins::TestResult) -> bool {
     asked.filter.as_deref().is_none_or(|filter| {
         test.file.contains(filter) || test.name.contains(filter)
     })
-}
-
-fn print_results(asked: &Asked, name: &str, results: &[TestResult]) {
-    let passed = results.iter().filter(|test| test.passed).count();
-    if results.is_empty() {
-        println!("{name}: no tests");
-        return;
-    }
-    println!("{name}: {passed} of {} tests pass", results.len());
-    for test in results {
-        if test.passed {
-            if asked.verbose {
-                println!("  ok    {} › {}", test.file, test.name);
-            }
-        } else {
-            println!(
-                "  FAIL  {} › {}: {}",
-                test.file,
-                test.name,
-                test.error.as_deref().unwrap_or("")
-            );
-        }
-    }
 }

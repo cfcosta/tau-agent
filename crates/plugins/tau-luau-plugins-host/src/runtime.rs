@@ -32,7 +32,7 @@ use tau_codemode_host::{
     ToolReply,
 };
 use tau_jev::Jev;
-use tau_luau_plugins::TAU_TEST_MODULE;
+use tau_luau_plugins::{TAU_TEST_MODULE, TestKind};
 use tokio_util::sync::CancellationToken;
 
 use crate::{Declaration, TAU_MODULE, TestResult};
@@ -1108,18 +1108,67 @@ impl Loaded {
     /// runs, reaching nothing. A file that fails outside its cases is one
     /// failed result, named after the file.
     pub async fn test(&self, cancel: CancellationToken) -> Vec<TestResult> {
-        self.tested(cancel).await.results
+        self.tested(cancel, &Progress::default()).await.results
     }
 
-    /// [`Self::test`], with the fixtures its files made (ADR 0053).
-    pub async fn tested(&self, cancel: CancellationToken) -> Tested {
+    /// [`Self::test`], with the fixtures its files made (ADR 0053),
+    /// telling `progress` how it goes.
+    pub async fn tested(
+        &self,
+        cancel: CancellationToken,
+        progress: &Progress,
+    ) -> Tested {
         run_all(
             &self.declaration.name,
             self.modules.clone(),
             &self.files,
             cancel,
+            progress,
         )
         .await
+    }
+}
+
+/// How a package's tests go as they run, for a runner to show.
+#[derive(Debug, Clone, Copy)]
+pub enum Step<'a> {
+    /// A test began: a file's cases, named after the file, or a
+    /// property, machine or loop; a property says the cases it asks for.
+    Began {
+        file: &'a str,
+        name: &'a str,
+        kind: TestKind,
+        cases: Option<u64>,
+    },
+    /// The property going on began a case: the cases begun, and the case
+    /// its first failure was found in.
+    Case { ran: u64, failed_at: Option<u64> },
+    /// A test ended.
+    Ended(&'a TestResult),
+}
+
+/// Where [`Step`]s go: nowhere, unless made [`Progress::to`] a runner.
+#[derive(Clone, Default)]
+pub struct Progress(Option<Arc<Tell>>);
+
+/// What a runner does with a [`Step`].
+type Tell = dyn Fn(Step<'_>) + Send + Sync;
+
+impl Progress {
+    pub fn to(tell: impl Fn(Step<'_>) + Send + Sync + 'static) -> Self {
+        Self(Some(Arc::new(tell)))
+    }
+
+    pub fn tell(&self, step: Step<'_>) {
+        if let Some(tell) = &self.0 {
+            tell(step);
+        }
+    }
+
+    /// Tells that `result` ended, and gives it back.
+    fn ended(&self, result: TestResult) -> TestResult {
+        self.tell(Step::Ended(&result));
+        result
     }
 }
 
@@ -1149,15 +1198,19 @@ pub async fn run_tests(
     files: &Files,
     cancel: CancellationToken,
 ) -> Vec<TestResult> {
-    run_all(name, modules, files, cancel).await.results
+    run_all(name, modules, files, cancel, &Progress::default())
+        .await
+        .results
 }
 
-/// [`run_tests`], with the fixtures the files made.
+/// [`run_tests`], with the fixtures the files made, telling `progress`
+/// how it goes.
 pub async fn run_all(
     name: &str,
     modules: Arc<Modules>,
     files: &Files,
     cancel: CancellationToken,
+    progress: &Progress,
 ) -> Tested {
     let Root {
         module, subject, ..
@@ -1166,6 +1219,13 @@ pub async fn run_all(
     let mut results = Vec::new();
     let mut fixtures: Vec<Made> = Vec::new();
     for (file, source) in &files.tests {
+        let whole = format!("tests/{file}.luau");
+        progress.tell(Step::Began {
+            file,
+            name: &whole,
+            kind: TestKind::Case,
+            cases: None,
+        });
         // The file runs as a function, from the script's first line, so
         // its errors keep their line numbers.
         let script = format!(
@@ -1189,26 +1249,26 @@ pub async fn run_all(
         )
         .await;
         if let Some(failed) = error {
-            results.push(TestResult {
+            results.push(progress.ended(TestResult {
                 file: file.clone(),
-                name: format!("tests/{file}.luau"),
+                name: whole,
                 passed: false,
                 error: Some(failed.why),
-            });
+                kind: TestKind::File,
+                ..TestResult::default()
+            }));
             continue;
         }
-        let cases: Vec<TestResult> = value["cases"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(|case| TestResult {
+        for case in value["cases"].as_array().into_iter().flatten() {
+            results.push(progress.ended(TestResult {
                 file: file.clone(),
                 name: case["name"].as_str().unwrap_or_default().to_owned(),
                 passed: case["passed"] == true,
                 error: case["error"].as_str().map(str::to_owned),
-            })
-            .collect();
-        results.extend(cases);
+                millis: case["millis"].as_u64(),
+                ..TestResult::default()
+            }));
+        }
         for fixture in value["fixtures"].as_array().into_iter().flatten() {
             let name = fixture["name"].as_str().unwrap_or_default().to_owned();
             let error = match fixture["error"].as_str() {
@@ -1219,12 +1279,14 @@ pub async fn run_all(
                 None => None,
             };
             match error {
-                Some(error) => results.push(TestResult {
+                Some(error) => results.push(progress.ended(TestResult {
                     file: file.clone(),
                     name: format!("fixture {name}"),
                     passed: false,
                     error: Some(error),
-                }),
+                    kind: TestKind::Fixture,
+                    ..TestResult::default()
+                })),
                 None => fixtures.push(Made {
                     file: file.clone(),
                     name,
@@ -1237,6 +1299,11 @@ pub async fn run_all(
                 name: property["name"].as_str().unwrap_or_default().to_owned(),
                 cases: property["cases"].as_u64(),
                 reproduce: property["reproduce"].as_str().map(str::to_owned),
+                kind: if property["machine"] == true {
+                    TestKind::Machine
+                } else {
+                    TestKind::Property
+                },
             };
             let source = PropertySource {
                 name,
@@ -1245,24 +1312,32 @@ pub async fn run_all(
                 file,
                 script: property_script(source, module, subject),
             };
-            results.push(run_property(&source, property, &cancel).await);
+            let result = run_property(&source, property, &cancel, progress);
+            results.push(progress.ended(result.await));
         }
         for each in value["loops"].as_array().into_iter().flatten() {
             let loop_name = each["name"].as_str().unwrap_or_default();
             let script = loop_script(source, module, subject);
-            results.push(
-                run_loop(
-                    name,
-                    &modules,
-                    files,
-                    file,
-                    loop_name,
-                    &each["spec"],
-                    script,
-                    &cancel,
-                )
-                .await,
-            );
+            progress.tell(Step::Began {
+                file,
+                name: loop_name,
+                kind: TestKind::Loop,
+                cases: None,
+            });
+            let began = std::time::Instant::now();
+            let mut result = run_loop(
+                name,
+                &modules,
+                files,
+                file,
+                loop_name,
+                &each["spec"],
+                script,
+                &cancel,
+            )
+            .await;
+            result.millis = Some(millis(began.elapsed()));
+            results.push(progress.ended(result));
         }
     }
     Tested { results, fixtures }
@@ -1281,6 +1356,13 @@ struct Property {
     name: String,
     cases: Option<u64>,
     reproduce: Option<String>,
+    /// A property, or a machine registered as one.
+    kind: TestKind,
+}
+
+/// `elapsed` in whole milliseconds.
+fn millis(elapsed: Duration) -> u64 {
+    u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
 }
 
 /// Where a property comes from: its plugin, the version's digest, and
@@ -1323,6 +1405,8 @@ async fn run_loop(
         name: loop_name.to_owned(),
         passed: error.is_none(),
         error,
+        kind: TestKind::Loop,
+        ..TestResult::default()
     };
     let ran = match crate::looping::run(files, spec).await {
         Ok(ran) => ran,
@@ -1384,26 +1468,44 @@ async fn run_property(
     source: &PropertySource<'_>,
     property: Property,
     cancel: &CancellationToken,
+    progress: &Progress,
 ) -> TestResult {
     use crate::hegel::{Driver, Run, Settings};
+    let began = std::time::Instant::now();
     let result = |error: Option<String>| TestResult {
         file: source.file.to_owned(),
         name: property.name.clone(),
         passed: error.is_none(),
         error,
+        kind: property.kind,
+        millis: Some(millis(began.elapsed())),
+        ..TestResult::default()
     };
     let settings = Settings {
         cases: property.cases.unwrap_or(CASES).clamp(1, MOST_CASES),
         seed: seed(source.digest, source.file, &property.name),
     };
+    progress.tell(Step::Began {
+        file: source.file,
+        name: &property.name,
+        kind: property.kind,
+        cases: Some(settings.cases),
+    });
     let run = match Run::start(&settings, property.reproduce.as_deref()) {
         Ok(run) => run,
         Err(error) => {
             return result(Some(format!("hegel could not start: {error}")));
         }
     };
-    let driver =
-        Arc::new(std::sync::Mutex::new(Driver::new(run, PROPERTY_LIMIT)));
+    let telling = progress.clone();
+    let on_case = Box::new(move |ran, failed_at| {
+        telling.tell(Step::Case { ran, failed_at });
+    });
+    let driver = Arc::new(std::sync::Mutex::new(Driver::telling(
+        run,
+        PROPERTY_LIMIT,
+        on_case,
+    )));
     let mut reaches = Reaches::none(source.name);
     reaches.hegel = Some(driver.clone());
     let (_, failed) = self::run(
@@ -1420,7 +1522,12 @@ async fn run_property(
     )
     .await;
     let mut driver = driver.lock().expect("not poisoned");
-    result(driver.failure(failed.map(|failed| failed.why)))
+    let (ran, failed_at) = driver.counts();
+    TestResult {
+        cases: Some(failed_at.unwrap_or(ran)),
+        shrinks: failed_at.map(|at| ran - at),
+        ..result(driver.failure(failed.map(|failed| failed.why)))
+    }
 }
 
 /// `text` as a Luau long string, at a level `text` cannot close, nor

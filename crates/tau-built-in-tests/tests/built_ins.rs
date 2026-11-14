@@ -24,6 +24,7 @@ fn every_built_in_passes_tau_plugin_test() {
             &folder,
             Fixtures::Check,
             cancel,
+            &Default::default(),
         )) {
             Ok(results) => {
                 assert!(!results.is_empty(), "{name} has no tests");
@@ -41,6 +42,8 @@ fn every_built_in_passes_tau_plugin_test() {
                     name: "loads".into(),
                     passed: false,
                     error: Some(error),
+                    kind: tau_luau_plugins::TestKind::File,
+                    ..Default::default()
                 },
             )),
         }

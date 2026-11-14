@@ -785,7 +785,19 @@ pub struct Driver {
     drained: bool,
     /// The engine's error, which ended the run.
     broken: Option<String>,
+    /// The cases begun so far.
+    ran: u64,
+    /// The case the first failure was found in; every case after it is
+    /// hegel shrinking that failure.
+    failed_at: Option<u64>,
+    /// Told the cases begun and where the first failure was, as each
+    /// case begins.
+    on_case: Option<OnCase>,
 }
+
+/// What a [`Driver`] tells as each case begins: the cases begun, and the
+/// case the first failure was found in.
+pub type OnCase = Box<dyn Fn(u64, Option<u64>) + Send>;
 
 /// The driver the host gives a property's VM. Its lock is never held
 /// across an await: [`next`] takes the run out while the engine works.
@@ -837,6 +849,10 @@ async fn next(driver: &Shared) -> Result<Value, String> {
         Ok(Some(case)) => {
             let capture = case.should_capture();
             driver.case = Some((case, capture));
+            driver.ran += 1;
+            if let Some(on_case) = &driver.on_case {
+                on_case(driver.ran, driver.failed_at);
+            }
             Ok(json!(true))
         }
         Ok(None) => {
@@ -862,7 +878,23 @@ impl Driver {
             ran_out: false,
             drained: false,
             broken: None,
+            ran: 0,
+            failed_at: None,
+            on_case: None,
         }
+    }
+
+    /// [`Self::new`], telling `on_case` as each case begins.
+    pub fn telling(run: Run, limit: Duration, on_case: OnCase) -> Self {
+        Self {
+            on_case: Some(on_case),
+            ..Self::new(run, limit)
+        }
+    }
+
+    /// The cases begun, and the case the first failure was found in.
+    pub fn counts(&self) -> (u64, Option<u64>) {
+        (self.ran, self.failed_at)
     }
 
     fn end(&mut self, args: &Value) -> Result<Value, String> {
@@ -877,6 +909,9 @@ impl Driver {
         let overran = case.overran();
         if let Err(error) = case.complete(ended, &origin(error)) {
             self.broken = Some(error);
+        }
+        if ended == Ended::Interesting && self.failed_at.is_none() {
+            self.failed_at = Some(self.ran);
         }
         if ended == Ended::Interesting
             && !overran

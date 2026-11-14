@@ -10,7 +10,7 @@
 
 use std::collections::BTreeMap;
 
-use tau_luau_plugins::TestResult;
+use tau_luau_plugins::{TestKind, TestResult};
 use tau_luau_plugins_host::runtime::{Files, load};
 use tau_testing::block_on_io;
 use tokio_util::sync::CancellationToken;
@@ -38,6 +38,14 @@ fn only(tests: &str) -> TestResult {
     results.remove(0)
 }
 
+/// `result` but for how long it took, which no two runs share.
+fn timeless(result: TestResult) -> TestResult {
+    TestResult {
+        millis: None,
+        ..result
+    }
+}
+
 fn error(result: &TestResult) -> &str {
     result.error.as_deref().unwrap_or_default()
 }
@@ -57,6 +65,9 @@ end)
     );
     assert!(result.passed, "{result:?}");
     assert_eq!(result.name, "adding is commutative");
+    assert_eq!(result.kind, TestKind::Property);
+    assert_eq!((result.cases, result.shrinks), (Some(100), None));
+    assert!(result.millis.is_some(), "{result:?}");
 }
 
 /// An integer at least 5 shrinks to 5, and the report says what was
@@ -74,6 +85,9 @@ end)
 "#,
     );
     assert!(!result.passed);
+    // It failed at some case, and every case after was hegel shrinking.
+    assert!(result.cases.is_some_and(|at| at >= 1), "{result:?}");
+    assert!(result.shrinks.is_some(), "{result:?}");
     let error = error(&result);
     assert!(error.contains("n is small"), "{error}");
     assert!(error.contains("draw 1 = 5"), "{error}");
@@ -194,6 +208,7 @@ t.machine("a counter", {
 "#,
     );
     assert!(!result.passed);
+    assert_eq!(result.kind, TestKind::Machine);
     let error = error(&result);
     assert!(error.contains("the counter is never 3"), "{error}");
     let steps: Vec<&str> = error
@@ -220,7 +235,7 @@ t.property("short", function(draw)
 end)
 "#;
     let first = only(tests);
-    assert_eq!(first, only(tests));
+    assert_eq!(timeless(first.clone()), timeless(only(tests)));
     let error = error(&first);
     let blob = error
         .split("reproduce = \"")
@@ -275,6 +290,10 @@ t.property("a property", function(draw) draw(g.booleans()) end)
             ("a property", true)
         ]
     );
+    let kinds: Vec<TestKind> = results.iter().map(|r| r.kind).collect();
+    assert_eq!(kinds, [TestKind::Case, TestKind::Case, TestKind::Property]);
+    assert!(results[0].millis.is_some(), "{:?}", results[0]);
+    assert_eq!(results[0].cases, None);
     assert!(
         error(&results[1]).contains("a draw happens only inside a property"),
         "{:?}",

@@ -900,6 +900,7 @@ fn yours(
         name: name.into(),
         passed: error.is_none(),
         error: error.map(Into::into),
+        ..Default::default()
     };
     let plugin = |name: &str,
                   description: &str,
@@ -1135,6 +1136,7 @@ fn agents(
                 name: format!("case {n}"),
                 passed: n < passed,
                 error: (n >= passed).then(|| "expected 1 event, got 2".into()),
+                ..Default::default()
             })
             .collect::<Vec<_>>()
     };

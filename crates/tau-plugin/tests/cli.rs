@@ -153,20 +153,12 @@ fn test_says_how_a_folder_s_tests_went() {
     fs::write(dir.join("tests/says.luau"), case("hi")).unwrap();
     let output = run();
     assert!(output.status.success(), "{}", text(&output));
-    assert!(
-        text(&output).contains("1 of 1 tests pass"),
-        "{}",
-        text(&output)
-    );
+    assert!(text(&output).contains("1/1"), "{}", text(&output));
 
     fs::write(dir.join("tests/says.luau"), case("bye")).unwrap();
     let output = run();
     assert_eq!(output.status.code(), Some(1), "{}", text(&output));
-    assert!(
-        text(&output).contains("0 of 1 tests pass"),
-        "{}",
-        text(&output)
-    );
+    assert!(text(&output).contains("0/1"), "{}", text(&output));
 
     fs::remove_file(dir.join("tau.toml")).unwrap();
     let output = run();
@@ -185,14 +177,18 @@ fn test_says_how_a_folder_s_tests_went() {
         .output()
         .unwrap();
     assert_eq!(here.status.code(), Some(1), "{}", text(&here));
-    assert!(text(&here).contains("FAIL  says › says"), "{}", text(&here));
+    assert!(
+        text(&here).contains("FAIL  greet › says › says"),
+        "{}",
+        text(&here)
+    );
     // A filter keeps only what it names: here, not the failing case.
     let none = tau_plugin(
         &["test", "--filter", "nothing", dir.to_str().unwrap()],
         &source(),
     );
     assert!(none.status.success(), "{}", text(&none));
-    assert!(text(&none).contains("greet: no tests"), "{}", text(&none));
+    assert!(text(&none).contains("greet  no tests"), "{}", text(&none));
 
     for wrong in [
         &[][..],
@@ -226,11 +222,7 @@ fn a_new_package_passes_and_installs() {
     };
     let made = run(&["new", "greeter"]);
     assert!(made.status.success(), "{}", text(&made));
-    assert!(
-        text(&made).contains("greeter: 2 of 2 tests pass"),
-        "{}",
-        text(&made)
-    );
+    assert!(text(&made).contains("greeter  2/2"), "{}", text(&made));
     let again = run(&["new", "greeter"]);
     assert_eq!(again.status.code(), Some(1), "{}", text(&again));
     let wrong = run(&["new", "Greeter"]);

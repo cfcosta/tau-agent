@@ -620,7 +620,7 @@ impl Declaration {
 }
 
 /// One case of a plugin's tests, as it came out.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TestResult {
     /// Its file under `tests/`, without `.luau`.
     pub file: String,
@@ -628,6 +628,35 @@ pub struct TestResult {
     pub passed: bool,
     #[serde(default)]
     pub error: Option<String>,
+    #[serde(default)]
+    pub kind: TestKind,
+    /// How long it ran, when that is known.
+    #[serde(default)]
+    pub millis: Option<u64>,
+    /// The cases a property or machine ran before it failed, or all it
+    /// ran when it held.
+    #[serde(default)]
+    pub cases: Option<u64>,
+    /// The cases hegel tried after the first failure, shrinking it.
+    #[serde(default)]
+    pub shrinks: Option<u64>,
+}
+
+/// What a test is: `t.case`, `t.property`, `t.machine`, `t.loop`, a
+/// fixture held to its file, or a test file that failed outside its
+/// cases.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum TestKind {
+    #[default]
+    Case,
+    Property,
+    Machine,
+    Loop,
+    Fixture,
+    File,
 }
 
 /// Where a plugin of the plugins repository stands (ADR 0027).

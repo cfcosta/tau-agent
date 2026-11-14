@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use serde_json::Value;
-use tau_luau_plugins::{Declaration, TestResult, Uses, packages};
+use tau_luau_plugins::{Declaration, TestKind, TestResult, Uses, packages};
 use tokio_util::sync::CancellationToken;
 
-use crate::runtime::{Files, MANIFEST, PLUGIN, load};
+use crate::runtime::{Files, MANIFEST, PLUGIN, Progress, Step, load};
 
 /// A package and the folder it was read from.
 pub struct Package {
@@ -112,18 +112,19 @@ pub enum Fixtures {
 
 /// Loads `files`, the package at `folder`, and runs its tests; then holds
 /// the fixtures they made, and its declaration, to `fixtures/`, or with
-/// [`Fixtures::Bless`] writes them there.
+/// [`Fixtures::Bless`] writes them there, telling `progress` how it goes.
 pub async fn test(
     files: Files,
     folder: &Path,
     fixtures: Fixtures,
     cancel: CancellationToken,
+    progress: &Progress,
 ) -> Result<Vec<TestResult>, String> {
     let name = files.manifest.name.clone();
     let loaded = load(&name, files)
         .await
         .map_err(|error| format!("{name} does not load: {error}"))?;
-    let tested = loaded.tested(cancel).await;
+    let tested = loaded.tested(cancel, progress).await;
     let mut results = tested.results;
     let mut made: Vec<(String, Value)> = tested
         .fixtures
@@ -142,6 +143,9 @@ pub async fn test(
     })
     .await
     .map_err(|error| error.to_string())?;
+    for result in &held {
+        progress.tell(Step::Ended(result));
+    }
     results.extend(held);
     Ok(results)
 }
@@ -161,6 +165,8 @@ fn hold(
         name: name.to_owned(),
         passed: error.is_none(),
         error,
+        kind: TestKind::Fixture,
+        ..TestResult::default()
     };
     let mut results = Vec::new();
     for (name, value) in made {
@@ -327,8 +333,10 @@ pub async fn install(folder: &Path, data: &Path) -> Result<Installed, String> {
             "{name} is one of tau's own: name yours otherwise"
         ));
     }
+    let cancel = CancellationToken::new();
+    let progress = Progress::default();
     let results =
-        test(files, folder, Fixtures::Check, CancellationToken::new()).await?;
+        test(files, folder, Fixtures::Check, cancel, &progress).await?;
     let failed: Vec<String> = results
         .iter()
         .filter(|result| !result.passed)

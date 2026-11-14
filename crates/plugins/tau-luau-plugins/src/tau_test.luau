@@ -1194,6 +1194,7 @@ function test.machine(name, spec, opts)
 			end
 		end
 	end, opts)
+	properties[#properties].machine = true
 end
 
 -- `value` as Luau source: keys sorted, so the same value reads the same.
@@ -1447,6 +1448,7 @@ function tau._properties()
 			name = p.name,
 			cases = p.opts.cases or json.null,
 			reproduce = p.opts.reproduce or json.null,
+			machine = p.machine == true,
 		})
 	end
 	return out
@@ -1493,16 +1495,18 @@ function tau._run_cases(name)
 	return { done = true }
 end
 
--- Runs every case, each on its own: what passed, and why the rest
--- failed.
+-- Runs every case, each on its own: what passed, why the rest failed,
+-- and how long each took.
 function tau._run_tests()
 	local results = array({})
 	for _, case in ipairs(cases) do
+		local began = os.clock()
 		local ok, why = pcall(case.check)
 		table.insert(results, {
 			name = case.name,
 			passed = ok,
 			error = (not ok) and tostring(why) or json.null,
+			millis = math.floor((os.clock() - began) * 1000 + 0.5),
 		})
 	end
 	return results

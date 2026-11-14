@@ -132,5 +132,9 @@ async fn test(
     .await
     .map_err(|error| error.to_string())??;
     let fixtures = crate::packages::Fixtures::Check;
-    Ok(crate::packages::test(files, &folder, fixtures, cancel).await?)
+    let progress = crate::runtime::Progress::default();
+    Ok(
+        crate::packages::test(files, &folder, fixtures, cancel, &progress)
+            .await?,
+    )
 }
