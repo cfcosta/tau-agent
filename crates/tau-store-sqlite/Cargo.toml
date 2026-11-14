@@ -13,8 +13,8 @@ serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
 tau-store.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [dev-dependencies]
 hegeltest.workspace = true
 tau-testing.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }

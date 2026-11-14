@@ -28,11 +28,11 @@ tau-mcp.workspace = true
 tau-vcs.workspace = true
 # Luau plugins' files and tau-todo's store, which its tests read.
 tau-luau-plugins-host.workspace = true
+base64.workspace = true
 
 [dependencies]
 gpui = { package = "gpui-pre", version = "=0.3.7" }
 async-trait.workspace = true
-base64.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 statig.workspace = true
@@ -69,3 +69,7 @@ tempfile.workspace = true
 [[test]]
 name = "tests"
 path = "tests/main.rs"
+
+# tau-tools is here for its `terminal` feature, not for its code.
+[package.metadata.cargo-shear]
+ignored = ["tau-tools"]

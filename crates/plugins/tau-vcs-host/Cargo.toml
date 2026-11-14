@@ -21,7 +21,6 @@ gix = { workspace = true, features = [
   "blocking-network-client",
   "status",
 ] }
-reqwest.workspace = true
 tokio-rustls.workspace = true
 jiff.workspace = true
 jj-lib.workspace = true
@@ -53,7 +52,6 @@ tau-store.workspace = true
 tau-testing.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
-tokio-util.workspace = true
 
 [[test]]
 name = "tests"

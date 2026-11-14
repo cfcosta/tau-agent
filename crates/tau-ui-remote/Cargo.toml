@@ -37,9 +37,7 @@ tau-store.workspace = true
 tau-terminal.workspace = true
 tau-ui-kit.workspace = true
 tau-ui-plugin.workspace = true
-futures-util.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
-anyhow.workspace = true
 
 [[test]]
 name = "tests"

@@ -9092,7 +9092,6 @@ dependencies = [
  "tau-phones",
  "tau-remote",
  "tau-store",
- "tau-testing",
  "tau-tools",
  "tau-tools-host",
  "tau-ui",
@@ -9513,13 +9512,11 @@ dependencies = [
  "hegeltest",
  "ignore",
  "image",
- "libc",
  "regex",
  "reqwest",
  "schemars",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "similar 3.2.0",
  "tau-agent",
  "tau-ai",
@@ -9638,9 +9635,7 @@ dependencies = [
 name = "tau-ui-remote"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "base64 0.23.1",
- "futures-util",
  "gpui-pre",
  "hegeltest",
  "serde",
@@ -9692,7 +9687,6 @@ dependencies = [
  "pollster 1.0.1",
  "rand 0.10.3",
  "rand_chacha 0.10.0",
- "reqwest",
  "schemars",
  "serde",
  "serde_json",
@@ -9709,7 +9703,6 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tokio-rustls",
- "tokio-util",
  "uuid",
  "whoami",
 ]

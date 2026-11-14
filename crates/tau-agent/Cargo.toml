@@ -46,3 +46,7 @@ tokio = { workspace = true, features = ["rt"] }
 [[test]]
 name = "tests"
 path = "tests/main.rs"
+
+# trybuild compiles these as compile-fail cases; no module links them.
+[package.metadata.cargo-shear]
+ignored-paths = ["tests/ui/*.rs"]

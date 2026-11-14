@@ -19,10 +19,7 @@ reqwest.workspace = true
 grep-searcher.workspace = true
 ignore.workspace = true
 image.workspace = true
-libc.workspace = true
-regex.workspace = true
 schemars.workspace = true
-sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 similar.workspace = true
@@ -58,6 +55,7 @@ tokio = { workspace = true, features = [
 ] }
 tokio-util.workspace = true
 reqwest.workspace = true
+regex.workspace = true
 
 [[bench]]
 name = "grep"
