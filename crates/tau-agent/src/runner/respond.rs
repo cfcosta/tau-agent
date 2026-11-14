@@ -46,14 +46,16 @@ impl Reading {
         }
     }
 
-    /// The next event, accumulated. `None` once the stream ends, an
-    /// event breaks its grammar, or `cancel` fires: [`Self::end`] says
-    /// which.
+    /// The next event, accumulated. `None` once the stream ends or gave
+    /// its terminal event, an event breaks its grammar, or `cancel`
+    /// fires: [`Self::end`] says which. A stream left open after its
+    /// terminal event is not read on, so nothing after it (a cancel, a
+    /// steer) undoes a finished response.
     pub(crate) async fn next(
         &mut self,
         cancel: &CancellationToken,
     ) -> Option<AssistantEvent> {
-        if self.stopped.is_some() {
+        if self.stopped.is_some() || self.accumulator.is_finished() {
             return None;
         }
         let event = tokio::select! {
@@ -310,5 +312,45 @@ impl Runner {
             results.push(self.result_message(call, output, true));
         }
         results
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use futures_util::{StreamExt, stream};
+    use tau_ai::event::DoneReason;
+
+    use super::*;
+
+    /// A stream that stays open after its terminal event is read up to
+    /// that event: a cancel or a steer that comes later finds a finished
+    /// response, not one to abort or cut short.
+    #[test]
+    fn reading_ends_at_the_terminal_event() {
+        let events = vec![
+            AssistantEvent::Start {
+                model: "m".into(),
+                response_id: None,
+                timestamp: 0,
+            },
+            AssistantEvent::Done {
+                reason: DoneReason::Length,
+                usage: Usage::default(),
+                response_id: Some("r".into()),
+            },
+        ];
+        let stream = stream::iter(events).chain(stream::pending()).boxed();
+        tau_testing::block_on(async {
+            let cancel = CancellationToken::new();
+            let mut reading = Reading::new(stream);
+            assert!(reading.next(&cancel).await.is_some());
+            assert!(reading.next(&cancel).await.is_some());
+            cancel.cancel();
+            assert!(reading.next(&cancel).await.is_none());
+            let Streamed::Finished(message, _) = reading.end() else {
+                panic!("the response finished before the cancel");
+            };
+            assert_eq!(message.stop_reason, MessageStop::Length);
+        });
     }
 }
