@@ -1,6 +1,6 @@
 # 0056: Luau plugins are Elm, written as coroutines
 
-- Status: proposed.
+- Status: accepted.
 - Date: 2026-11-14
 
 ## Context
@@ -270,12 +270,14 @@ holds half of it:
   `catch_up` and the action replay.
 - No plugin keeps the old API; there are no users to migrate.
 
-## Open questions
+## Settled at review, 2026-11-14
 
-- **The loop's limits.** Whether a hook's limit counts the time its
-  commands take (as today) or only its steps, with a limit per command.
-- **Where an idle run's mailbox lives.** In the registry, made when an
-  action comes and let go after its checkpoint, or kept while the run is
-  open in an interface.
-- **Jobs' models.** One per plugin per repository, as `job_state` is now,
-  or one per plugin.
+- **Limits.** A hook's limit counts only its own steps, so its code stays
+  fast. Each waiting command has its own limit (Jev, http and infer as
+  today's), and the loop caps how long it waits for a hook's answer.
+- **An idle run's model is made on demand.** When an action, page or
+  command comes for a run that is not going on, the registry rebuilds its
+  model from the last checkpoint and the log, handles the message, takes
+  a checkpoint, and lets the model go once no hook is under way.
+- **Jobs run against one model per plugin per repository,** as
+  `job_state` is now.
