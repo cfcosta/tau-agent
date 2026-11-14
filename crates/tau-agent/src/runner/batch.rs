@@ -84,6 +84,8 @@ pub(super) struct Queued {
 
 /// One batch's running calls, the model's and the nested ones.
 pub(super) struct Batch {
+    /// The assistant message whose tool calls these are.
+    turn: Arc<AssistantMessage>,
     pending: FuturesUnordered<ToolFuture>,
     scopes: HashMap<u64, Scope>,
     next_scope: u64,
@@ -123,7 +125,6 @@ impl Runner {
         transcript: &[Message],
         message: &AssistantMessage,
     ) -> Vec<ToolResultMessage> {
-        self.pending_turn = Some(Arc::new(message.clone()));
         let mut outcomes: Vec<Option<(ToolOutput, bool)>> =
             vec![None; calls.len()];
         let mut ready: Vec<Ready> = Vec::new();
@@ -147,6 +148,7 @@ impl Runner {
         let (updates_tx, mut updates_rx) = mpsc::unbounded_channel();
         let (requests_tx, mut requests_rx) = mpsc::unbounded_channel();
         let mut batch = Batch {
+            turn: Arc::new(message.clone()),
             pending: FuturesUnordered::new(),
             scopes: HashMap::new(),
             next_scope: 0,
@@ -520,13 +522,13 @@ impl Runner {
             cancel,
             updates: ToolUpdates::new(id.clone(), batch.updates.clone()),
             run: self.run.clone(),
-            scope: self.pending_turn.clone().map(|turn| RunScope {
+            scope: Some(RunScope {
                 store: self.store.clone(),
                 workflow: self.workflow.clone(),
                 events: self.events.clone(),
                 children: self.children.clone(),
                 call: id,
-                turn,
+                turn: batch.turn.clone(),
                 stored: self.last_seq.load(Ordering::SeqCst),
             }),
             plugin: tool

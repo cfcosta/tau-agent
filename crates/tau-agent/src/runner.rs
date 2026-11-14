@@ -167,8 +167,6 @@ pub(crate) struct Runner {
     /// Messages the run starts with, stored as its own before its
     /// input: a forking sub-agent's copy of its caller's pending turn.
     pub prelude: Vec<Message>,
-    /// The assistant message whose tool calls are running.
-    pub pending_turn: Option<Arc<AssistantMessage>>,
     /// The `seq` of the run's last stored entry, -1 before the first.
     /// Shared with plugins, which store records too.
     pub last_seq: Arc<AtomicI64>,
