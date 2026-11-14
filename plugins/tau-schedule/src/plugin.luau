@@ -14,11 +14,17 @@
 local tau = require("tau")
 local ui = tau.ui
 local wake = require("wake")
+local cmd = tau.cmd
+
+-- The host's local time of `at`.
+local function local_time(at)
+	return tau.await(cmd.time["local"](at))
+end
 
 -- What the chat `run` has waiting, soonest first, from `store`.
 local function waiting(store, run)
 	local list = {}
-	for _, item in ipairs(store.list(wake.prefix(run))) do
+	for _, item in ipairs(tau.await(store.list(wake.prefix(run)))) do
 		table.insert(list, item.value)
 	end
 	return wake.sort(list)
@@ -27,37 +33,37 @@ end
 -- The chat's state again from what the store holds of it. A turn woken
 -- on `woken` leaves out what woke it, though due: the job that woke it
 -- lets go of those once the turn started, after this.
-local function refresh(ctx, woken)
+local function refresh(model, env, woken)
 	local gone = {}
 	for _, one in ipairs(woken or {}) do
 		gone[one.name] = true
 	end
 	local list = {}
-	for _, one in ipairs(waiting(ctx.store, ctx.run.id)) do
-		if not (gone[one.name] and one.at <= ctx.now.unix) then
+	for _, one in ipairs(waiting(cmd.store, env.run.id)) do
+		if not (gone[one.name] and one.at <= env.now.unix) then
 			table.insert(list, one)
 		end
 	end
-	ctx.state.waiting = list
+	model.waiting = list
 end
 
 -- `at` when the model gave `in` or `on`, or why not.
-local function when(args, ctx)
-	local now = ctx.now.unix
+local function when(args, env)
+	local now = env.now.unix
 	if args["in"] ~= nil and args.on == nil then
-		local seconds = ctx.time.duration(args["in"])
+		local seconds = tau.await(cmd.time.duration(args["in"]))
 		if seconds == nil then
 			error("`" .. tostring(args["in"]) .. '` is not a duration, like "2h"', 0)
 		end
 		return now + seconds
 	elseif args.on ~= nil and args["in"] == nil then
-		local at = ctx.time.parse(args.on)
+		local at = tau.await(cmd.time.parse(args.on))
 		if at == nil then
 			error(
 				"`"
 					.. tostring(args.on)
 					.. '` is not a local date and time, like "'
-					.. ctx.time["local"](now + 86400)
+					.. local_time(now + 86400)
 					.. '"',
 				0
 			)
@@ -71,8 +77,8 @@ end
 -- to say why they are refused.
 local FIELDS = { name = true, note = true, ["in"] = true, on = true }
 
-local function schedule(args, ctx)
-	if ctx.run.kind == "sub_agent" then
+local function schedule(args, model, env)
+	if env.run.kind == "sub_agent" then
 		error(wake.SUB_AGENTS, 0)
 	end
 	for field in pairs(args) do
@@ -94,56 +100,56 @@ local function schedule(args, ctx)
 	if args.every ~= nil or args.at ~= nil or args.days ~= nil then
 		error(wake.NO_REPEATS, 0)
 	end
-	local now = ctx.now.unix
-	local at = when(args, ctx)
+	local now = env.now.unix
+	local at = when(args, env)
 	if at < now + wake.SOONEST then
-		error("That is " .. ctx.time["local"](at) .. ": a minute from now is the soonest", 0)
+		error("That is " .. local_time(at) .. ": a minute from now is the soonest", 0)
 	end
 	if at > now + wake.FURTHEST then
 		error("A year ahead is the furthest", 0)
 	end
-	local run = ctx.run.id
+	local run = env.run.id
 	local key = wake.key(run, name)
-	local replaced = ctx.store.get(key) ~= nil
-	if not replaced and #waiting(ctx.store, run) >= wake.MAX_WAITING then
+	local replaced = tau.await(cmd.store.get(key)) ~= nil
+	if not replaced and #waiting(cmd.store, run) >= wake.MAX_WAITING then
 		error("This chat has " .. wake.MAX_WAITING .. " waiting, the most it may: cancel some first", 0)
 	end
-	ctx.store.put(key, { run = run, name = name, note = note, at = at, made = now })
-	refresh(ctx)
+	tau.give(cmd.store.put(key, { run = run, name = name, note = note, at = at, made = now }))
+	refresh(model, env)
 	return (replaced and "Replaced" or "Scheduled")
 		.. " `"
 		.. name
 		.. "` for "
-		.. ctx.time["local"](at)
+		.. local_time(at)
 		.. ". This chat wakes then with your note."
 end
 
-local function scheduled(_, ctx)
-	local list = waiting(ctx.store, ctx.run.id)
-	local now = ctx.time["local"](ctx.now.unix)
+local function scheduled(_, _, env)
+	local list = waiting(cmd.store, env.run.id)
+	local now = local_time(env.now.unix)
 	if #list == 0 then
 		return "It is " .. now .. ". Nothing is scheduled."
 	end
 	local lines = { "It is " .. now .. ". " .. #list .. " of the " .. wake.MAX_WAITING .. " this chat may have:" }
 	for _, one in ipairs(list) do
 		local first = string.match(one.note, "^[^\n]*")
-		table.insert(lines, "- " .. one.name .. " · " .. ctx.time["local"](one.at) .. " · " .. first)
+		table.insert(lines, "- " .. one.name .. " · " .. local_time(one.at) .. " · " .. first)
 	end
 	return table.concat(lines, "\n")
 end
 
 -- Cancels what the chat scheduled as `name`: whether there was one.
-local function cancel(name, ctx)
-	local key = wake.key(ctx.run.id, string.match(tostring(name), "^%s*(.-)%s*$"))
-	local had = ctx.store.get(key) ~= nil
-	ctx.store.delete(key)
-	refresh(ctx)
+local function cancel(name, model, env)
+	local key = wake.key(env.run.id, string.match(tostring(name), "^%s*(.-)%s*$"))
+	local had = tau.await(cmd.store.get(key)) ~= nil
+	tau.give(cmd.store.delete(key))
+	refresh(model, env)
 	return had
 end
 
-local function unschedule(args, ctx)
+local function unschedule(args, model, env)
 	local name = tostring(args.name)
-	if cancel(name, ctx) then
+	if cancel(name, model, env) then
 		return "Cancelled `" .. name .. "`."
 	end
 	return "Nothing is scheduled as `" .. name .. "`."
@@ -189,11 +195,13 @@ local function card(woken)
 end
 
 -- Wakes each chat in `store` that has something due at `now` and may
--- take a turn: `retry` says when a chat whose turn did not start is
--- tried again.
-local function wake_due(store, now, retry, ctx)
+-- take a turn: `model.retry` says when a chat whose turn did not start
+-- is tried again. It is read again after each wake, which another step
+-- may have changed meanwhile.
+local function wake_due(store, now, model)
 	local due, runs = {}, {}
-	for _, item in ipairs(store.list("wake/")) do
+	local retry = model.retry or {}
+	for _, item in ipairs(tau.await(store.list("wake/"))) do
 		local one = item.value
 		if one.at <= now and (retry[one.run] or 0) <= now then
 			if due[one.run] == nil then
@@ -208,27 +216,29 @@ local function wake_due(store, now, retry, ctx)
 		local list = wake.sort(due[run])
 		local woken = {}
 		for _, one in ipairs(list) do
-			table.insert(woken, { name = one.name, due = ctx.time["local"](one.at), note = one.note })
+			table.insert(woken, { name = one.name, due = local_time(one.at), note = one.note })
 		end
-		local ok, answer = pcall(ctx.chats.wake, run, wake.message(woken))
+		local ok, answer = pcall(tau.await, cmd.chats.wake(run, wake.message(woken)))
+		model.retry = model.retry or {}
 		if not ok then
-			ctx.log("could not wake " .. run .. ": " .. tostring(answer))
-			retry[run] = now + wake.RETRY
+			tau.log("could not wake " .. run .. ": " .. tostring(answer))
+			model.retry[run] = now + wake.RETRY
 		elseif answer == "started" then
-			retry[run] = nil
+			model.retry[run] = nil
 			for _, one in ipairs(list) do
 				-- One scheduled again meanwhile stays.
-				local kept = store.get(wake.key(run, one.name))
+				local key = wake.key(run, one.name)
+				local kept = tau.await(store.get(key))
 				if kept ~= nil and kept.at == one.at and kept.made == one.made and kept.note == one.note then
-					store.delete(wake.key(run, one.name))
+					tau.give(store.delete(key))
 				end
 			end
 		elseif answer == "gone" then
 			-- A chat that landed or was dropped takes no turn, and what it
 			-- had waiting goes.
-			retry[run] = nil
-			for _, item in ipairs(store.list(wake.prefix(run))) do
-				store.delete(item.key)
+			model.retry[run] = nil
+			for _, item in ipairs(tau.await(store.list(wake.prefix(run)))) do
+				tau.give(store.delete(item.key))
 			end
 		end
 	end
@@ -278,20 +288,20 @@ return tau.plugin({
 
 	-- Each turn: what the chat has waiting, as the store has it now, and
 	-- the card of the message it woke on, if it did.
-	start = function(plan, ctx)
+	start = function(plan, model, env)
 		local woken = type(plan.input) == "string" and wake.parse(plan.input) or nil
-		refresh(ctx, woken)
+		refresh(model, env, woken)
 		if woken ~= nil then
-			ctx.state.cards = ctx.state.cards or {}
-			ctx.state.cards[plan.input] = woken
+			model.cards = model.cards or {}
+			model.cards[plan.input] = woken
 		end
 		return nil
 	end,
 
 	-- The person cancelled a wake-up.
 	actions = {
-		cancel = function(args, ctx)
-			if not cancel(args.name, ctx) then
+		cancel = function(args, model, env)
+			if not cancel(args.name, model, env) then
 				error("Nothing is scheduled as " .. tostring(args.name) .. " in this chat", 0)
 			end
 		end,
@@ -304,31 +314,31 @@ return tau.plugin({
 		wake = {
 			every = 1,
 			label = "Waking chats",
-			run = function(ctx)
-				local now = ctx.now.unix
-				local retry = ctx.state.retry or {}
+			run = function(_, model, env)
+				local now = env.now.unix
+				local retry = model.retry or {}
 				for run, at in pairs(retry) do
 					if at <= now then
 						retry[run] = nil
 					end
 				end
-				for _, repo in ipairs(ctx.repos()) do
-					wake_due(ctx.stores(repo), now, retry, ctx)
+				model.retry = retry
+				for _, repo in ipairs(tau.await(cmd.repos())) do
+					wake_due(cmd.stores(repo), now, model)
 				end
-				ctx.state.retry = retry
 			end,
 		},
 	},
 
 	-- What the chat has waiting, in its inspector, with a way to cancel
 	-- each; and the messages it woke on, as cards.
-	view = function(state, ctx)
+	view = function(state, env)
 		local view = {}
 		local list = state.waiting or {}
 		if #list > 0 then
 			local rows = { ui.heading("Scheduled") }
 			for _, one in ipairs(list) do
-				table.insert(rows, row(ctx.run.id, one))
+				table.insert(rows, row(env.run.id, one))
 			end
 			view.inspector = ui.stack(rows)
 		end
