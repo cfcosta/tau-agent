@@ -27,23 +27,132 @@ local function now(env)
 	return env.now.unix
 end
 
--- The plugin's store, as the issues module reads it: each read awaited,
--- each write given, so a later read in the hook sees it.
+-- The plugin's store, as the issues module reads it: each read awaited.
+-- A hook's writes are kept until it ends, then given together, in its
+-- last step (`atomic`): the host commits what one step gives whole, and
+-- a change that reads between its writes would else be cut in two by a
+-- crash, or keep half of itself when it fails. Its own reads see them.
 local cmd = tau.cmd
+local DELETED = {}
+local pending = setmetatable({}, { __mode = "k" })
+
+local function writes()
+	return pending[coroutine.running()]
+end
+
+-- A copy of what is written, as it is now: what the hook changes after
+-- is not written.
+local function copy(value)
+	if type(value) ~= "table" then
+		return value
+	end
+	local out = {}
+	for key, item in pairs(value) do
+		out[key] = copy(item)
+	end
+	local meta = getmetatable(value)
+	if type(meta) == "table" then
+		return setmetatable(out, meta)
+	elseif meta ~= nil then
+		-- A list read back from JSON: its metatable is the host's, kept.
+		return array(out)
+	end
+	return out
+end
+
+local function give(key, value)
+	if value == DELETED then
+		tau.give(cmd.store.delete(key))
+	else
+		tau.give(cmd.store.put(key, value))
+	end
+end
+
+local function write(key, value)
+	local w = writes()
+	if w == nil then
+		give(key, value)
+		return
+	end
+	if w.values[key] == nil then
+		table.insert(w.order, key)
+	end
+	w.values[key] = value
+end
+
 local STORE = {
 	get = function(key)
+		local w = writes()
+		local mine = w and w.values[key]
+		if mine == DELETED then
+			return nil
+		elseif mine ~= nil then
+			return copy(mine)
+		elseif w and w.read[key] ~= nil then
+			return copy(w.read[key] or nil)
+		end
 		return tau.await(cmd.store.get(key))
 	end,
 	list = function(prefix)
-		return tau.await(cmd.store.list(prefix)) or {}
+		local listed = tau.await(cmd.store.list(prefix)) or {}
+		local w = writes()
+		if w == nil then
+			return listed
+		end
+		local out, seen = {}, {}
+		for _, kept in ipairs(listed) do
+			seen[kept.key] = true
+			local mine = w.values[kept.key]
+			if mine == nil then
+				table.insert(out, kept)
+			elseif mine ~= DELETED then
+				table.insert(out, { key = kept.key, value = copy(mine) })
+			end
+		end
+		for _, key in ipairs(w.order) do
+			local mine = w.values[key]
+			if not seen[key] and mine ~= DELETED and string.sub(key, 1, #prefix) == prefix then
+				table.insert(out, { key = key, value = copy(mine) })
+			end
+		end
+		table.sort(out, function(x, y)
+			return x.key < y.key
+		end)
+		return out
 	end,
 	put = function(key, value)
-		tau.give(cmd.store.put(key, value))
+		write(key, copy(value))
 	end,
 	delete = function(key)
-		tau.give(cmd.store.delete(key))
+		write(key, DELETED)
 	end,
 }
+
+-- `f` as a hook whose writes go in together as it ends, or none of them
+-- when it fails.
+local function atomic(f)
+	return function(input, model, env)
+		local thread = coroutine.running()
+		if pending[thread] ~= nil then
+			return f(input, model, env)
+		end
+		-- `rev`, read first: a change reads the issues, then writes
+		-- them and bumps `rev` with no await between, so what it read
+		-- and what it writes are as near as they may be.
+		local rev = tau.await(cmd.store.get("rev"))
+		pending[thread] = { values = {}, order = {}, read = { rev = if rev == nil then false else rev } }
+		local results = table.pack(pcall(f, input, model, env))
+		local w = pending[thread]
+		pending[thread] = nil
+		if not results[1] then
+			error(results[2], 0)
+		end
+		for _, key in ipairs(w.order) do
+			give(key, w.values[key])
+		end
+		return table.unpack(results, 2, results.n)
+	end
+end
 
 local function store_of()
 	return STORE
@@ -1156,8 +1265,10 @@ end
 
 -- `f` as a hook that leaves the band's issue as the store has it.
 local function refreshing(f)
+	local whole = atomic(f)
 	return function(input, model, env)
-		local out = f(input, model, env)
+		local out = whole(input, model, env)
+		-- What it wrote goes in as this reads: the step ends here.
 		refresh(model, env)
 		return out
 	end
@@ -1240,7 +1351,7 @@ return tau.plugin({
 	end,
 	-- A claim is its run's: as the run ends, what it holds goes back to
 	-- open, with what it did and the steps it left.
-	run_end = function(run, model, env)
+	run_end = atomic(function(run, model, env)
 		local held = issues.held_by(STORE, env.run.id)
 		-- The steps as they are now, after the read.
 		local left = {}
@@ -1264,10 +1375,10 @@ return tau.plugin({
 			bump(STORE)
 		end
 		model.held = nil
-	end,
+	end),
 	-- As tau starts: what the runs it found cut off held goes back to
 	-- open, and no chat is being started any more.
-	recover = function(input, model, env)
+	recover = atomic(function(input, model, env)
 		local any = false
 		for _, run in ipairs(input.runs or {}) do
 			for _, id in ipairs(issues.held_by(STORE, run)) do
@@ -1282,7 +1393,7 @@ return tau.plugin({
 		if any then
 			bump(STORE)
 		end
-	end,
+	end),
 	view = function(model, env)
 		local drawn, id = band(model)
 		if not drawn then
