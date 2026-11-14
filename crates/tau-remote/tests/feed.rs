@@ -158,6 +158,40 @@ impl Machine {
         }
     }
 
+    /// The host answers a snapshot to a phone that takes messages
+    /// already, as a snapshot asked twice: it starts over from it, and
+    /// misses nothing after.
+    #[rule]
+    fn host_answers_a_snapshot_again(&mut self, tc: TestCase) {
+        let i = self.phone(&tc);
+        let phone = &mut self.phones[i];
+        let Some(conn) = phone.conn else { tc.reject() };
+        tc.assume(!phone.waiting);
+        let down = self.feed.snapshot(conn, vec![json!(self.log)]).unwrap();
+        phone.inbox.push_back(down);
+    }
+
+    /// A phone comes back with a number the host never gave, as one
+    /// from a computer whose clock was ahead: it gets a snapshot.
+    #[rule]
+    fn phone_comes_back_from_ahead(&mut self, tc: TestCase) {
+        let i = self.phone(&tc);
+        let ahead = tc.draw(gs::integers::<u64>().min_value(1).max_value(9));
+        let seq = self.feed.seq();
+        let phone = &mut self.phones[i];
+        tc.assume(phone.conn.is_none());
+        let conn = self.next_conn;
+        self.next_conn += 1;
+        phone.conn = Some(conn);
+        let joined = self.feed.join(conn, Some(seq + ahead));
+        assert_eq!(
+            joined,
+            Joined::NeedSnapshot,
+            "it was given what it had not"
+        );
+        phone.waiting = true;
+    }
+
     /// Whatever a phone applied is the start of the host's log, and its
     /// number says how far into it.
     #[invariant(always_run)]

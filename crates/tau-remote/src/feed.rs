@@ -8,11 +8,14 @@
 //! missed more than the feed kept, needs a snapshot: until it has one
 //! it takes no messages, since the snapshot holds them.
 
+mod phone;
+
 use std::{
     collections::{HashMap, VecDeque},
     hash::Hash,
 };
 
+use phone::Phone;
 use serde_json::Value;
 
 use crate::wire::Down;
@@ -39,15 +42,6 @@ pub struct Feed<C> {
     buffer: VecDeque<(u64, Value)>,
     conns: HashMap<C, Phone>,
     keep: usize,
-}
-
-/// Where a connection is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Phone {
-    /// It waits for its snapshot, which holds the messages until then.
-    Waiting,
-    /// It had its replay or snapshot: it takes new messages.
-    Taking,
 }
 
 impl<C: Copy + Eq + Hash> Feed<C> {
@@ -82,7 +76,7 @@ impl<C: Copy + Eq + Hash> Feed<C> {
         let to = self
             .conns
             .iter()
-            .filter(|(_, phone)| **phone == Phone::Taking)
+            .filter(|(_, phone)| phone.is_taking())
             .map(|(conn, _)| *conn)
             .collect();
         (
@@ -100,7 +94,7 @@ impl<C: Copy + Eq + Hash> Feed<C> {
         let to = self
             .conns
             .iter()
-            .filter(|(_, phone)| **phone == Phone::Taking)
+            .filter(|(_, phone)| phone.is_taking())
             .map(|(conn, _)| *conn)
             .collect();
         (Down::Transient { body }, to)
@@ -109,12 +103,7 @@ impl<C: Copy + Eq + Hash> Feed<C> {
     /// `conn` joins, having had every message up to `last`, if any.
     pub fn join(&mut self, conn: C, last: Option<u64>) -> Joined {
         let missed = last.and_then(|last| self.missed(last));
-        let phone = if missed.is_some() {
-            Phone::Taking
-        } else {
-            Phone::Waiting
-        };
-        self.conns.insert(conn, phone);
+        self.conns.insert(conn, Phone::joined(missed.is_some()));
         missed.map_or(Joined::NeedSnapshot, Joined::Replay)
     }
 
@@ -122,7 +111,7 @@ impl<C: Copy + Eq + Hash> Feed<C> {
     /// message; `conn` takes new messages from now on. None if `conn`
     /// left.
     pub fn snapshot(&mut self, conn: C, bodies: Vec<Value>) -> Option<Down> {
-        *self.conns.get_mut(&conn)? = Phone::Taking;
+        self.conns.get_mut(&conn)?.snapshot();
         Some(Down::Snapshot {
             seq: self.seq,
             bodies,
