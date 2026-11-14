@@ -8,6 +8,8 @@ local tau = require("tau")
 local ui = tau.ui
 local effort = require("effort")
 
+local cmd = tau.cmd
+
 local NAME = "tau-reasoning"
 
 -- `value` as text: a field that is null, or not text, is "".
@@ -97,16 +99,21 @@ local function note(key, entry, state)
 	})
 end
 
--- Asks Jev for the effort of `state_for_jev`: the choice, or nil and why.
-local function ask(ctx, levels_of, state_for_jev, redecides)
-	local ok, answers, cost = pcall(ctx.jev.ask, {
+-- Asks Jev for the effort of `state_for_jev`, of `levels_of`: the
+-- choice, or nil and why. It awaits Jev: the model may have changed
+-- when it returns.
+local function ask(env, levels_of, state_for_jev, redecides)
+	local ok, answers, cost = pcall(tau.await, cmd.jev.ask({
 		state = state_for_jev,
 		questions = effort.questions(levels_of, redecides),
-	})
+	}))
 	if not ok then
 		return nil, tostring(answers)
 	end
-	return effort.choice(answers, levels_of, ctx.settings.threshold, cost, redecides)
+	if type(answers) ~= "table" then
+		return nil, "Jev gave no answer"
+	end
+	return effort.choice(answers, levels_of, env.settings.threshold, cost, redecides)
 end
 
 return tau.plugin({
@@ -135,25 +142,25 @@ return tau.plugin({
 	},
 
 	-- As the run starts: on auto, with Jev, the effort of its message.
-	start = function(input, ctx)
-		local state = effort.state(ctx.state)
+	start = function(input, model, env)
+		local state = effort.state(model)
 		state.redecides = false
 		state.active = nil
 		-- What the last message chose is its own: this one says anew.
 		state.status = nil
 		state.plan = nil
-		state.first = ctx.run.id
+		state.first = env.run.id
 		state.effort_now = input.effort
 		state.task = text_of(input.input)
 		state.instructions = effort.instructions(text_of(input.instructions))
 		state.levels = effort.levels(input.efforts)
-		if ctx.jev == nil then
+		if not env.run.jev then
 			state.starting = input.effort and ("off · effort set to " .. input.effort) or "off · no TypeSafe key"
 			return nil
 		end
 		-- With Jev, every run leaves its context to the next message,
 		-- so a long conversation keeps an effort someone chose too.
-		state.active = ctx.run.id
+		state.active = env.run.id
 		if input.effort ~= nil then
 			state.starting = "off · effort set to " .. input.effort
 			return nil
@@ -164,14 +171,20 @@ return tau.plugin({
 		if #state.levels < 2 then
 			return nil
 		end
-		state.redecides = ctx.settings.redecide == true
-		local known, last = effort.last_effort(state, state.levels)
+		state.redecides = env.settings.redecide == true
 		local choice, why = ask(
-			ctx,
+			env,
 			state.levels,
 			effort.message_state(state.task, state.instructions, state.context),
 			state.redecides
 		)
+		-- The model as it is now, after Jev answered: another message may
+		-- have taken it over.
+		state = effort.state(model)
+		if state.active ~= env.run.id then
+			return nil
+		end
+		local known, last = effort.last_effort(state, state.levels)
 		if choice == nil then
 			-- Unsure or failed, the message goes on as the last one did.
 			state.effort_now = last
@@ -191,26 +204,36 @@ return tau.plugin({
 
 	-- With `redecide`, before each later request whose lease ended: Jev
 	-- again, on what the agent said and the results it is about to read.
-	before_request = function(request, ctx)
-		local state = effort.state(ctx.state)
-		if state.active ~= ctx.run.id then
+	before_request = function(request, model, env)
+		local state = effort.state(model)
+		if state.active ~= env.run.id then
 			return nil
 		end
 		state.effort_now = request.effort
-		if state.first == ctx.run.id then
+		if state.first == env.run.id then
 			state.first = nil
 			return nil
 		end
 		if not state.redecides then
 			return nil
 		end
-		local messages = ctx.transcript()
+		local messages = tau.await(cmd.transcript()) or {}
+		-- The model as it is now, after the transcript came.
+		state = effort.state(model)
+		if state.active ~= env.run.id or not state.redecides then
+			return nil
+		end
 		if not effort.lease_ended(state.lease, state.rewritten, messages) then
 			return nil
 		end
 		state.rewritten = nil
 		local asked = effort.step_state(state.task, state.instructions, request.effort, messages)
-		local choice, why = ask(ctx, state.levels, asked, true)
+		local choice, why = ask(env, state.levels, asked, true)
+		-- And again after Jev answered.
+		state = effort.state(model)
+		if state.active ~= env.run.id then
+			return nil
+		end
 		if choice == nil then
 			effort.record_error(state, "Jev could not score the step: " .. why, request.effort, request.turn)
 			return nil
@@ -229,24 +252,26 @@ return tau.plugin({
 		return nil
 	end,
 
-	rewritten = function(info, ctx)
-		local state = effort.state(ctx.state)
-		if state.active == ctx.run.id then
+	rewritten = function(_, model, env)
+		local state = effort.state(model)
+		if state.active == env.run.id then
 			state.rewritten = true
 		end
 	end,
 
 	-- What the message leaves the next one.
-	run_end = function(run, ctx)
-		local state = effort.state(ctx.state)
-		if state.active ~= ctx.run.id then
+	run_end = function(run, model, env)
+		local state = effort.state(model)
+		if state.active ~= env.run.id then
 			return nil
 		end
 		effort.record_context(state, text_of(state.task), text_of(run.text), state.effort_now)
 	end,
 
-	view = function(state, ctx)
-		state = effort.state(state)
+	-- Of a frozen copy: what `effort.state` would fill in is read as
+	-- empty, not written.
+	view = function(model)
+		local state = { choices = model.choices or {}, notes = model.notes or {}, status = model.status, starting = model.starting, plan = model.plan }
 		local notes = {}
 		for key, entry in pairs(state.notes) do
 			notes[key] = note(key, entry, state)
