@@ -183,6 +183,53 @@ t.case("only a rewrite that drops the conversation asks memory", function()
 	t.equal(run.state.log[#run.state.log].calls[1].details.id, "lanes-lose-their-continuation-on-drain")
 end)
 
+-- A rewrite that drops the conversation, whose memory request fails,
+-- still forgets what was given: the failure is logged, and the next
+-- message gives the notes again.
+t.case("notes are given again after a rewrite whose memory request failed", function()
+	local said = {
+		{ index = 1, role = "user", text = "why do lanes stall" },
+		{ index = 2, role = "assistant", text = "the lanes stall on drain" },
+	}
+	local run = run_with({
+		transcript = said,
+		infer = function()
+			error("the model is gone", 0)
+		end,
+	})
+	write(run, { type = "gotcha", title = "Retry after", description = "it can be a date", body = "retry-after can be an HTTP date" })
+	t.equal(run:start({ input = "fix the retry after parsing", context = {} }) ~= nil, true, "given")
+	t.equal(run:start({ input = "and the retry after header", context = {} }), nil, "given already")
+	run:rewritten({ plugin = "p", before = 2, after = 1, drops_conversation = true })
+	t.equal(run.state.log[#run.state.log].kind, "error")
+	local again = run:start({ input = "and the retry after header", context = {} })
+	t.equal(again ~= nil and contains(again.context[1], "retry-after"), true, "given again")
+end)
+
+-- One whose hook ran out of time kept nothing, so what was given still
+-- stands; the next run's first request sees, by the conversation's first
+-- message, that it was rewritten, and the message after gives the notes
+-- again. Its own messages are read from the start of the rewrite.
+t.case("a rewrite whose hook kept nothing is seen at the next request", function()
+	local said = {
+		{ index = 1, role = "user", text = "why do lanes stall" },
+		{ index = 2, role = "assistant", text = "the lanes stall on drain" },
+	}
+	local run = run_with({ transcript = said })
+	write(run, { type = "gotcha", title = "Retry after", description = "it can be a date", body = "retry-after can be an HTTP date" })
+	run:start({ input = "fix the retry after parsing", context = {} })
+	run:before_request({ model = "m", turn = 1, messages = 2, replies = 0 })
+	t.equal(run.state.given.notes, { "retry-after" })
+	-- The rewrite, whose hook kept nothing.
+	said[1] = { index = 1, role = "user", text = "Summary: the lanes stall on drain." }
+	said[2] = nil
+	t.equal(run:start({ input = "and the retry after header", context = {} }), nil, "this message is late")
+	run:before_request({ model = "m", turn = 1, messages = 1, replies = 0 })
+	t.equal(run.state.given, nil, "seen")
+	local again = run:start({ input = "and the retry after header", context = {} })
+	t.equal(again ~= nil and contains(again.context[1], "retry-after"), true, "given again")
+end)
+
 -- The pass after a run reads what the run added, from its first
 -- request's last message on; its notes are inferred; off in the
 -- settings, it asks for nothing.

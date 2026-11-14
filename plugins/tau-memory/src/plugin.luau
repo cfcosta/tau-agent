@@ -239,6 +239,16 @@ end
 -- Asks the model, with only the memory tools and the conversation as
 -- text, then carries out the writes it asks for, and keeps what it
 -- saved.
+-- Which conversation `messages` is, by its first message: a rewrite that
+-- drops the conversation puts its summary there. "" for none yet.
+local function head_of(messages)
+	local first = messages[1]
+	if first == nil then
+		return ""
+	end
+	return string.sub(json.encode(first), 1, 300)
+end
+
 local function distill(ctx, messages, prompt, by)
 	local with = writer(ctx)
 	ctx._memory_saved = {}
@@ -503,7 +513,18 @@ local plugin = tau.plugin({
 	-- inherited. The pass at its end reads only what the run added.
 	before_request = function(request, ctx)
 		if ctx.state.own_from == nil then
+			local head = head_of(ctx.transcript())
 			ctx.state.own_from = request.messages
+			ctx.state.own_head = head
+			-- What was given went with a rewrite of the conversation since,
+			-- even one whose hook ran out of time and kept nothing: its
+			-- first message says so. The next message gives them again.
+			local given = ctx.state.given
+			if given ~= nil and given.head ~= nil and given.head ~= head then
+				ctx.state.given = nil
+			elseif given ~= nil then
+				given.head = head
+			end
 		end
 		return nil
 	end,
@@ -545,7 +566,11 @@ local plugin = tau.plugin({
 		end
 		-- The notes given so far go with it: the next run gives them again.
 		ctx.state.given = nil
-		distill(ctx, ctx.transcript(), render.FLUSH_PROMPT, "agent")
+		-- A request that fails keeps what this hook set: logged, not raised.
+		local ok, why = pcall(distill, ctx, ctx.transcript(), render.FLUSH_PROMPT, "agent")
+		if not ok then
+			log(ctx, { kind = "error", message = tostring(why) })
+		end
 	end,
 
 	-- What a run recalled and saved, in its transcript, and its line in
@@ -686,7 +711,12 @@ local plugin = tau.plugin({
 		end
 		local messages = ctx.transcript()
 		local own = {}
-		for i = ctx.state.own_from or 1, #messages do
+		-- A rewrite since, even one whose hook failed, starts it over.
+		local from = ctx.state.own_from or 1
+		if ctx.state.own_head ~= nil and ctx.state.own_head ~= head_of(messages) then
+			from = 1
+		end
+		for i = from, #messages do
 			table.insert(own, messages[i])
 		end
 		distill(ctx, own, render.CONSOLIDATE_PROMPT, "inferred")
