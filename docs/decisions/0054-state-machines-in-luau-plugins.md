@@ -165,7 +165,8 @@ After every step it checks, for every machine and with nothing written:
   only names in `machine.effects` when the machine declares them;
 - stepping again from the same state with the same event gives the same
   answer (transitions are pure);
-- the state reads back the same from JSON (it persists and replicates).
+- the state reads back the same from JSON (it persists and replicates),
+  and each step starts from the state read back, as a hook's does.
 
 A plugin adds what is its own: `spec.model`, which starts a model and is
 told each event, as the Rust models are, and `spec.invariant(state,
@@ -238,6 +239,35 @@ the case to keep is written from those notes.
   tau-goal's Pause, pressed while its check asks Jev, is lost when the
   check ends.
 
+### The plugins, 2026-11-14
+
+- The ten bugs of the sweep are fixed, one commit each, each with a test
+  that fails on the code before. tau-github's sign-in is a machine, its
+  missing `failed` edge found again by its model in two events; the
+  memory import's ticks carry the import's generation and merge onto the
+  proposals as they are; tau-constitution keeps a call's gravest
+  verdict; tau-todo's undo brings back no ended run's claim, and a Beads
+  assignee claims nothing; tau-schedule's woken turn leaves out what woke
+  it; tau-reasoning's status is each message's; tau-memory's `given`
+  survives a rewrite whose hook failed; the import ends once when the
+  model cannot answer; tau-goal counts unchecked runs' cost and takes a
+  verdictless answer as a failed check.
+- The fake run's store gives and keeps copies, as the host's JSON does:
+  it handed out the table it kept, so a snapshot taken before a change
+  changed with it. Each hook also reads its state back from JSON, as on
+  the host, so a list comes back an array, whose metatable `table.clone`
+  refuses: tau-goal's port cloned its checks and failed on the host's
+  second check while its Luau tests passed.
+- `tau.machine` takes `tag`, the field that names a state (`state`
+  unless said), so data kept before keeps its shape: tau-goal's goal is a
+  machine by its `status`, active, paused, met or stopped, a failed
+  check's `error` an active goal's and `exhausted` a stopped one's.
+- `plugins/examples/ship-gate` is the worked machine the `tau-plugins`
+  skill teaches, with its model.
+- Still open: an action pressed while a hook of its plugin waits is
+  written over when the hook ends and stores its state (tau-goal's
+  Pause during a check), which is the host's rule, not a plugin's.
+
 ## Alternatives considered
 
 - **The idiom alone, no helper.** A tag and a table of functions in each
@@ -265,8 +295,9 @@ the case to keep is written from those notes.
 - A hook that steps a machine returns effects to carry out; plugins that
   wrote state from several hooks write it from one place.
 - A state folded from records is checked as it is folded.
-- `docs/reference/plugins.md` gains the pattern, and `tau-plugin new`
-  writes a machine in its example.
+- `docs/reference/plugins.md` gains the pattern, and a worked plugin
+  under `plugins/examples/` teaches it (`tau-plugin new`'s template is a
+  counter, with no lifecycle to make a machine of).
 
 ## Open questions
 

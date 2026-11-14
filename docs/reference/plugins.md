@@ -860,6 +860,28 @@ real agent loop with a scripted model; the `looping` module of
 tau-luau-plugins-host documents what a loop's spec holds and what its
 check gets.
 
+### Lifecycles as machines
+
+A Luau plugin keeps anything that goes through steps (a sign-in, an
+import, a goal, an approval) as one `tau.machine` (ADR 0054), not as
+flags beside each other. A state is a plain table naming its tag
+(`state`, or the field `tag` says) with exactly the fields its tag
+carries, kept in `ctx.state` or the store; `machine:step(state, event)`
+gives the next one and the effects the hook carries out, and an event
+the state has no arm for changes nothing. Work that waits carries the
+generation it began under, so what comes back to another is dropped.
+tau-github's sign-in and tau-goal's goal are machines;
+`plugins/examples/ship-gate` is the worked one the `tau-plugins` skill
+teaches.
+
+Two helpers of `tau.test` test them on hegel's engine:
+`t.machine_of(name, machine, spec)` fires every event from every state,
+checking each step's shape, the no-arm rule, purity and the JSON round
+trip, with the plugin's own model and invariant; `t.hooks(name, spec)`
+drives a plugin's hooks, actions and job ticks in any order, what they
+wait on paused until a rule answers it, sharing what the host shares (a
+store in turns, files at once, a run's state as `still_on` keeps it).
+
 ## The first four plugins
 
 Token estimates and overflow detection, which the loop uses for
