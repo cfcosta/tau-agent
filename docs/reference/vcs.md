@@ -868,15 +868,20 @@ the mark as its maker's last step; one taken away is renamed aside
 first, so no `.jj` is left without its mark half deleted. A `.jj` that
 has the mark is one a crash cut off: a project whose `main/.jj` has it
 is not a project, and is made again; a run's workspace with it is made
-again on its next add. A setup cut off by a crash leaves
-`.jj/tau-making` or `.jj/repo/tau/making` in the `.jj` it made
-(`local::unfinished`):
-inspecting the folder sees the Git repository it was, and the next
-setup takes that `.jj` away (with `refs/jj/`, the repository's config,
-and the main chat's directory when it holds a workspace of it) and
-starts again. In a jj repository of the person's a crash after the
-`Workspace` step leaves tau's workspace: the next setup names its own
-`tau-main-2`. The checks are in `tests/local_setup.rs`.
+again on its next add. A setup keeps a journal of what it did in the
+Git store, `.git/tau-setup.json`, written whole before each thing it
+notes is done: what the folder had (refs, reflogs, `HEAD`, the person's
+operation heads and workspace store), what its exports will make or
+move, and the `.jj` and tau folder it is about to make. A setup cut off
+by a crash leaves it, and `.jj/tau-making` or `.jj/repo/tau/making` in
+a `.jj` it made (`local::unfinished`): inspecting the folder sees the
+Git repository it was, and the next setup undoes the cut-off one from
+its journal, as a failed setup undoes itself, in a jj repository of the
+person's too, then starts again. One cut off after it ended well, while
+it took its marks off, is finished instead. Undo is safe to cut off and
+run again: the person's operation heads go back before tau's go, and
+what it writes back it writes whole. The checks are in
+`tests/local_setup.rs`.
 
 ## Local repositories in the host
 

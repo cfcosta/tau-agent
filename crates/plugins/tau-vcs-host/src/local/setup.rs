@@ -233,9 +233,24 @@ pub(crate) fn setup(
             reason: "the layout is not for this folder".to_owned(),
         });
     }
-    let cleared = unfinished(folder);
-    if cleared {
+    // What a setup a crash cut off left: finished, or taken away.
+    let mut cleared = false;
+    if let Some(left) = Journal::resume(layout, identity)? {
+        if left.finished {
+            left.take_marks_off()?;
+            left.forget()?;
+            if let Some(state) = State::read(folder)? {
+                return Ok(state.main_workspace);
+            }
+        } else {
+            left.undo()?;
+            left.forget()?;
+            cleared = true;
+        }
+    }
+    if unfinished(folder) {
         clear_unfinished(folder, layout, identity)?;
+        cleared = true;
     }
     let has_jj = folder.join(".jj").exists();
     if has_jj != (found.kind == Kind::Jj) && !(cleared && !has_jj) {
@@ -251,7 +266,7 @@ pub(crate) fn setup(
     let mut journal = Journal::begin(layout, identity, has_jj)?;
     match journal.run(found, progress) {
         Ok(name) => Ok(name),
-        Err(error) => match journal.undo() {
+        Err(error) => match journal.undo().and_then(|()| journal.forget()) {
             Ok(()) => Err(error),
             Err(undo) => Err(VcsError::SetupNotUndone {
                 error: Box::new(error),
@@ -261,10 +276,36 @@ pub(crate) fn setup(
     }
 }
 
-/// What a setup did, to take it away again ([`Journal::undo`]).
+/// Where a setup keeps its [`Record`] while it runs: in the Git store,
+/// which every setup has before it begins and keeps after it.
+const JOURNAL_FILE: &str = "tau-setup.json";
+
+/// A setup under way: what it did, kept on disk ahead of each thing it
+/// does, so the next setup takes away what a crash left
+/// ([`Journal::resume`]).
 struct Journal<'a> {
     layout: &'a Layout,
     identity: &'a Identity,
+    path: PathBuf,
+    record: Record,
+}
+
+impl std::ops::Deref for Journal<'_> {
+    type Target = Record;
+    fn deref(&self) -> &Record {
+        &self.record
+    }
+}
+
+impl std::ops::DerefMut for Journal<'_> {
+    fn deref_mut(&mut self) -> &mut Record {
+        &mut self.record
+    }
+}
+
+/// What a setup did, to take it away again ([`Journal::undo`]).
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Record {
     git_dir: PathBuf,
     /// Whether the folder had a jj repository of the person's.
     had_jj: bool,
@@ -297,8 +338,9 @@ struct Journal<'a> {
     op_heads_before: BTreeSet<String>,
     workspace_store_before: Option<Vec<u8>>,
     made_tau_dir: bool,
-    /// The operations the setup wrote, by id in hex.
-    ops: Vec<String>,
+    /// The setup ended well, and is taking its marks off: the next one
+    /// finishes that, and undoes nothing.
+    finished: bool,
     /// What the main chat's directory and the runs' directory were.
     main_dir_was: Was,
     runs_dir_was: Was,
@@ -310,7 +352,9 @@ struct Journal<'a> {
 }
 
 /// What a directory was before the setup.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize,
+)]
 enum Was {
     Missing,
     Empty,
@@ -331,9 +375,7 @@ impl<'a> Journal<'a> {
             return Err(VcsError::InTheWay(layout.main_dir.clone()));
         }
         let refs_before = refs(&git_dir)?;
-        let mut journal = Self {
-            layout,
-            identity,
+        let mut record = Record {
             logs_before: logs(&git_dir, &refs_before),
             refs_before,
             git_dirs_before: git_dirs(&git_dir),
@@ -348,7 +390,7 @@ impl<'a> Journal<'a> {
             op_heads_before: BTreeSet::new(),
             workspace_store_before: None,
             made_tau_dir: false,
-            ops: Vec::new(),
+            finished: false,
             main_dir_was,
             runs_dir_was: was(&layout.runs_dir),
             missing_above: missing_above(&[&layout.main_dir, &layout.runs_dir]),
@@ -366,11 +408,79 @@ impl<'a> Journal<'a> {
                 .unwrap_or_default(),
         };
         if had_jj {
-            journal.op_heads_before = op_heads(&repo_path);
-            journal.workspace_store_before =
+            record.op_heads_before = op_heads(&repo_path);
+            record.workspace_store_before =
                 std::fs::read(workspace_store_index(&repo_path)).ok();
         }
+        let journal = Self {
+            layout,
+            identity,
+            path: record.git_dir.join(JOURNAL_FILE),
+            record,
+        };
+        journal.save()?;
         Ok(journal)
+    }
+
+    /// The journal a setup left in `layout`'s Git store, cut off by a
+    /// crash, if one did.
+    fn resume(
+        layout: &'a Layout,
+        identity: &'a Identity,
+    ) -> Result<Option<Self>, VcsError> {
+        let path = layout.git_dir().join(JOURNAL_FILE);
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if gone(&error) => return Ok(None),
+            Err(error) => {
+                return Err(VcsError::LocalState {
+                    path,
+                    reason: error.to_string(),
+                });
+            }
+        };
+        let record = serde_json::from_slice(&bytes).map_err(|error| {
+            VcsError::LocalState {
+                path: path.clone(),
+                reason: error.to_string(),
+            }
+        })?;
+        Ok(Some(Self {
+            layout,
+            identity,
+            path,
+            record,
+        }))
+    }
+
+    /// Writes the journal down, whole or not at all, before what it
+    /// notes is done.
+    fn save(&self) -> Result<(), VcsError> {
+        let text =
+            serde_json::to_vec(&self.record).expect("a journal serializes");
+        write_whole(&self.path, &text)
+    }
+
+    /// Drops the journal: the setup it kept ended, or was taken away.
+    fn forget(&self) -> Result<(), VcsError> {
+        remove_file(&self.path)
+    }
+
+    /// Takes the marks off a setup that ended well ([`Record::finished`])
+    /// as its last step: the main chat's workspace, then the repository,
+    /// whole.
+    fn take_marks_off(&self) -> Result<(), VcsError> {
+        let folder = &self.layout.repo_root;
+        let main = &self.layout.main_dir;
+        for root in [main.as_path(), folder.as_path()] {
+            crate::workspace_init::made(root).map_err(|source| {
+                VcsError::Delete {
+                    path: root.join(".jj"),
+                    source,
+                }
+            })?;
+        }
+        remove_file(&tau_dir(folder).join(MAKING_FILE))
     }
 
     /// The setup's steps. Returns the main chat's workspace's name.
@@ -443,25 +553,10 @@ impl<'a> Journal<'a> {
             trunk,
         }
         .write(&folder)?;
-        // Last: the main chat's workspace, then the repository, whole.
-        let main = &self.layout.main_dir;
-        for root in [main.as_path(), folder.as_path()] {
-            crate::workspace_init::made(root).map_err(|source| {
-                VcsError::Delete {
-                    path: root.join(".jj"),
-                    source,
-                }
-            })?;
-        }
-        let making = tau_dir(&folder).join(MAKING_FILE);
-        if making.exists() {
-            std::fs::remove_file(&making).map_err(|source| {
-                VcsError::Delete {
-                    path: making,
-                    source,
-                }
-            })?;
-        }
+        self.finished = true;
+        self.save()?;
+        self.take_marks_off()?;
+        self.forget()?;
         Ok(name)
     }
 
@@ -504,16 +599,17 @@ impl<'a> Journal<'a> {
         &mut self,
         settings: &jj_lib::settings::UserSettings,
     ) -> Result<(First, crate::lock::RepoLock), VcsError> {
-        let folder = &self.layout.repo_root;
+        let folder = self.layout.repo_root.clone();
+        self.made_jj = true;
+        self.save()?;
         let (begun, repo) = crate::workspace_init::begin_repo(
             settings,
-            folder,
+            &folder,
             crate::workspace_init::GitStore::External(&self.git_dir),
         )
         .map_err(VcsError::MakeRepo)?;
-        self.made_jj = true;
         self.make_tau_dir(true)?;
-        crate::colocate::ignore_jj_dir(folder)?;
+        crate::colocate::ignore_jj_dir(&folder)?;
         let default = WorkspaceName::DEFAULT;
         begun.list(&repo, default).map_err(VcsError::MakeRepo)?;
         let lock = crate::lock::lock_repo(&self.layout.repo_path())?;
@@ -673,7 +769,7 @@ impl<'a> Journal<'a> {
             tx.repo_mut()
                 .check_out(workspace.clone(), &repo.store().root_commit()),
         )?;
-        self.note_exports(&tx);
+        self.note_exports(&tx)?;
         let repo = crate::colocate::commit_in(
             tx,
             format!("add workspace {name}"),
@@ -681,7 +777,6 @@ impl<'a> Journal<'a> {
             &workspace,
             &main_dir,
         )?;
-        self.ops.push(repo.op_id().hex());
         let mut made = begun
             .finish(&repo, workspace)
             .map_err(VcsError::AddWorkspace)?;
@@ -699,10 +794,8 @@ impl<'a> Journal<'a> {
         what: &str,
         git: &GitLock,
     ) -> Result<Arc<ReadonlyRepo>, VcsError> {
-        self.note_exports(&tx);
-        let repo = crate::colocate::commit(tx, what, git)?;
-        self.ops.push(repo.op_id().hex());
-        Ok(repo)
+        self.note_exports(&tx)?;
+        crate::colocate::commit(tx, what, git)
     }
 
     /// Puts Git's `HEAD` back as it was, once the refs are, and its
@@ -727,8 +820,8 @@ impl<'a> Journal<'a> {
 
     /// Notes the branches and tags `tx`'s export will make in Git: the
     /// bookmarks and tags it made that Git did not have before the setup,
-    /// and those Git had that it moves.
-    fn note_exports(&mut self, tx: &Transaction) {
+    /// and those Git had that it moves. Written down before the export.
+    fn note_exports(&mut self, tx: &Transaction) -> Result<(), VcsError> {
         let base = tx.base_repo().view();
         let view = tx.repo().view();
         let bookmarks = view.local_bookmarks().filter_map(|(name, target)| {
@@ -766,6 +859,7 @@ impl<'a> Journal<'a> {
             self.moved.retain(|(noted, _)| *noted != name);
             self.moved.push((name, id));
         }
+        self.save()
     }
 
     /// Makes `.jj/repo/tau`, with the mark of an unfinished setup in it
@@ -773,11 +867,12 @@ impl<'a> Journal<'a> {
     fn make_tau_dir(&mut self, making: bool) -> Result<(), VcsError> {
         let dir = tau_dir(&self.layout.repo_root);
         if !dir.exists() {
+            self.made_tau_dir = true;
+            self.save()?;
             std::fs::create_dir(&dir).map_err(|source| VcsError::Create {
                 path: dir.clone(),
                 source,
             })?;
-            self.made_tau_dir = true;
         }
         if making {
             let path = dir.join(MAKING_FILE);
@@ -820,9 +915,8 @@ impl<'a> Journal<'a> {
             return Ok(());
         }
         // The person's jj repository: its operation heads and workspace
-        // store as they were.
-        // Its heads before go back first, then the setup's go, so that a
-        // cut-off undo never leaves it with none.
+        // store as they were. Its heads before go back first, then the
+        // others go, so that a cut-off undo never leaves it with none.
         let heads = repo_path.join("op_heads").join("heads");
         for op in &self.op_heads_before {
             let path = heads.join(op);
@@ -831,7 +925,7 @@ impl<'a> Journal<'a> {
                     .map_err(|source| VcsError::Create { path, source })?;
             }
         }
-        for op in &self.ops {
+        for op in op_heads(&repo_path).difference(&self.op_heads_before) {
             remove_file(&heads.join(op))?;
         }
         let index = workspace_store_index(&repo_path);

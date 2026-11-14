@@ -965,6 +965,108 @@ fn a_setup_cut_off_inside_making_its_jj_is_cleared_by_the_next(tc: TestCase) {
     assert_eq!(git_view(&person, &folder), before);
 }
 
+/// What a setup cut off by a crash at `crash` leaves, then a setup
+/// stopped at its first step: it takes the crash away, as a failed
+/// setup takes itself away, from the journal the crashed one wrote
+/// ahead of each thing it did. Everything is then as it was (but for
+/// jj's content-addressed stores in a jj repository of the person's),
+/// and a setup again succeeds. `cut` changes the folder between the
+/// crash and the next setup, as a crash further in a step would leave
+/// it.
+fn crash_then_recover(
+    world: &World,
+    crash: Step,
+    jj: Option<&Path>,
+    cut: &dyn Fn(&Layout),
+) {
+    let base = tempfile::tempdir().unwrap();
+    let person = Person::new(&base.path().join("person"));
+    let folder = build(&person, base.path(), world, jj);
+    let first = found(&person, &folder);
+    let layout = layout(base.path(), &folder);
+    let before = everything(base.path());
+    let crashed =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            ProjectRepo::setup_local(
+                &first,
+                layout.clone(),
+                person.identity(),
+                &mut |step| {
+                    assert!(step != crash, "tau closed");
+                    ControlFlow::Continue(())
+                },
+            )
+        }));
+    if crashed.is_ok() {
+        // A jj repository of the person's is not snapshotted.
+        assert_eq!((crash, first.kind), (Step::Snapshot, Kind::Jj));
+        return;
+    }
+    cut(&layout);
+    let again = found(&person, &folder);
+    assert_eq!(again.kind, first.kind);
+    let stopped = ProjectRepo::setup_local(
+        &again,
+        layout.clone(),
+        person.identity(),
+        &mut |_| ControlFlow::Break(()),
+    );
+    assert!(
+        matches!(stopped, Err(VcsError::SetupStopped(Step::ImportRefs))),
+        "{stopped:?}"
+    );
+    let after = everything(base.path());
+    let stores = |path: &Path| {
+        first.kind == Kind::Jj
+            && ["op_store", "index", "store/extra"].iter().any(|store| {
+                path.starts_with(Path::new("repo/.jj/repo").join(store))
+            })
+    };
+    for (path, entry) in &before {
+        if !stores(path) {
+            assert_eq!(after.get(path), Some(entry), "{}", path.display());
+        }
+    }
+    for path in after.keys().filter(|path| !before.contains_key(*path)) {
+        assert!(stores(path), "{} was added", path.display());
+    }
+    let found = self::found(&person, &folder);
+    ProjectRepo::setup_local(&found, layout, person.identity(), &mut go_on)
+        .unwrap();
+}
+
+/// A setup cut off by a crash at any step, in a Git repository or a jj
+/// repository of the person's, with branches the person's
+/// `auto-track-bookmarks` makes follow a remote's, is taken away by the
+/// next setup whole: the refs its exports made or moved, Git's `HEAD`
+/// and its reflog, and the person's operation heads and workspace store.
+/// Recovery took away only the `.jj` tau made and `refs/jj/`, and none
+/// of a jj repository of the person's.
+#[hegel::test(
+    test_cases = 20,
+    suppress_health_check = [hegel::HealthCheck::TooSlow]
+)]
+fn a_crashed_setup_is_taken_away_by_the_next(tc: TestCase) {
+    let jj = jj_cli::matching_jj();
+    let world = world(&tc, jj.is_some() && tc.draw(gs::booleans()), true);
+    let crash = Step::ALL[index(&tc, Step::ALL.len())];
+    crash_then_recover(&world, crash, jj.as_deref(), &|_| {});
+}
+
+/// A crash in making the main chat's workspace, after its Git worktree
+/// was linked and before its `.jj` was made, is taken away by the next
+/// setup, where the half-made worktree stopped every setup after it.
+#[hegel::test(
+    test_cases = 5,
+    suppress_health_check = [hegel::HealthCheck::TooSlow]
+)]
+fn a_half_made_main_worktree_is_taken_away_by_the_next(tc: TestCase) {
+    let world = world(&tc, false, tc.draw(gs::booleans()));
+    crash_then_recover(&world, Step::Record, None, &|layout| {
+        std::fs::remove_dir_all(layout.main_dir.join(".jj")).unwrap();
+    });
+}
+
 /// Copies the folder `from` to `to`, files, folders and modes.
 fn copy(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).unwrap();
