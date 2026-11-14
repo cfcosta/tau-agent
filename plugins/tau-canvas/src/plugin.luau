@@ -10,6 +10,7 @@
 -- for once.
 local tau = require("tau")
 local ui = tau.ui
+local cmd = tau.cmd
 local canvas = require("canvas")
 
 -- How tall a document scrolls, at most, and an image is, in the pane;
@@ -49,10 +50,10 @@ end
 
 -- The revision `content` of item `id`, made by this call, on the run's
 -- canvas; `said` is what the model reads.
-local function revise(ctx, id, title, content, said)
-	local of = canvas.of(ctx.state)
-	canvas.revise(of, ctx.run.call, id, title, content)
-	ctx.state.canvas = of
+local function revise(model, env, id, title, content, said)
+	local of = canvas.of(model)
+	canvas.revise(of, env.run.call, id, title, content)
+	model.canvas = of
 	return said
 end
 
@@ -69,10 +70,14 @@ local function check_size(text)
 	end
 end
 
-local function show(args, ctx)
+local function show(args, model, env)
 	only(args, { path = true, title = true, caption = true, item = true })
 	local path, title = tostring(args.path), tostring(args.title)
-	local info = ctx.files.image(path)
+	-- The host's own words when it cannot read the file, for the model.
+	local read_ok, info = pcall(tau.await, cmd.files.image(path))
+	if not read_ok then
+		error(info, 0)
+	end
 	if info.size > canvas.MAX_IMAGE_BYTES then
 		error(
 			path .. " is " .. info.size .. " bytes; the canvas takes images of at most " .. canvas.MAX_IMAGE_BYTES .. " bytes.",
@@ -82,13 +87,18 @@ local function show(args, ctx)
 	if info.mime == nil then
 		error(path .. " is not a PNG, JPEG, GIF, WebP, BMP or SVG image.", 0)
 	end
-	local of = canvas.of(ctx.state)
 	if args.item ~= nil then
-		existing(of, args.item, "image")
+		existing(canvas.of(model), args.item, "image")
 	end
-	local ok, blob = pcall(ctx.blobs.put_file, path)
+	local ok, blob = pcall(tau.await, cmd.blobs.put_file(path))
 	if not ok then
 		error("The canvas could not keep it: " .. tostring(blob), 0)
+	end
+	-- The canvas as it is now: another call may have revised it while the
+	-- blob was kept, so the item is looked up again.
+	local of = canvas.of(model)
+	if args.item ~= nil then
+		existing(of, args.item, "image")
 	end
 	local image = { blob = blob, mime = info.mime, width = info.width, height = info.height, path = path }
 	local id = args.item or canvas.next_id(of)
@@ -108,14 +118,14 @@ local function show(args, ctx)
 			.. canvas.describe(image)
 			.. ")."
 	end
-	return revise(ctx, id, title, { type = "image", image = image, caption = args.caption or "" }, said)
+	return revise(model, env, id, title, { type = "image", image = image, caption = args.caption or "" }, said)
 end
 
-local function write(args, ctx)
+local function write(args, model, env)
 	only(args, { title = true, text = true, item = true })
 	local title, text = tostring(args.title), tostring(args.text)
 	check_size(text)
-	local of = canvas.of(ctx.state)
+	local of = canvas.of(model)
 	if args.item ~= nil then
 		existing(of, args.item, "document")
 	end
@@ -124,12 +134,12 @@ local function write(args, ctx)
 	local revision = item and #item.revisions + 1 or 1
 	local said = revision == 1 and ("Document " .. id .. ', "' .. title .. '", is on the canvas.')
 		or ("Document " .. id .. ', "' .. title .. '", is at revision ' .. revision .. ".")
-	return revise(ctx, id, title, { type = "document", text = text }, said)
+	return revise(model, env, id, title, { type = "document", text = text }, said)
 end
 
-local function edit(args, ctx)
+local function edit(args, model, env)
 	only(args, { item = true, edits = true, title = true })
-	local of = canvas.of(ctx.state)
+	local of = canvas.of(model)
 	local item = existing(of, args.item, "document")
 	local text, why = canvas.apply_edits(canvas.latest(item).content.text, args.edits or {})
 	if text == nil then
@@ -139,12 +149,12 @@ local function edit(args, ctx)
 	local title = args.title or item.title
 	local revision = #item.revisions + 1
 	local said = "Document " .. args.item .. ', "' .. title .. '", is at revision ' .. revision .. "."
-	return revise(ctx, args.item, title, { type = "document", text = text }, said)
+	return revise(model, env, args.item, title, { type = "document", text = text }, said)
 end
 
-local function read(args, ctx)
+local function read(args, model)
 	only(args, { item = true, revision = true })
-	local of = canvas.of(ctx.state)
+	local of = canvas.of(model)
 	local item = canvas.item(of, args.item)
 	if item == nil then
 		error("There is no item " .. args.item .. " on the canvas.", 0)
@@ -173,8 +183,8 @@ end
 
 -- The image `image` of the run's repository as a piece, `height` rems
 -- tall.
-local function picture(image, ctx, height)
-	return ui.image(image.blob, image.mime, ctx.run.repo or "", height)
+local function picture(image, env, height)
+	return ui.image(image.blob, image.mime, env.run.repo or "", height)
 end
 
 -- A button that shows the revision `revision` of `item`.
@@ -217,7 +227,7 @@ end
 
 -- The pane: a tab per item when there are several, the revision shown
 -- with a way through the others, and the image or the document itself.
-local function pane(of, pick, ctx)
+local function pane(of, pick, env)
 	local item, revision = canvas.shown(of, pick)
 	if item == nil then
 		return nil
@@ -231,7 +241,7 @@ local function pane(of, pick, ctx)
 	end
 	local content = item.revisions[revision].content
 	if content.type == "image" then
-		local parts = { picture(content.image, ctx, IMAGE_HEIGHT) }
+		local parts = { picture(content.image, env, IMAGE_HEIGHT) }
 		if content.caption ~= "" then
 			table.insert(parts, ui.text(content.caption))
 		end
@@ -248,7 +258,7 @@ end
 
 -- What a call's card shows of the revision it made: what it is, and a
 -- way to open it on the canvas.
-local function card(of, item, revision, ctx)
+local function card(of, item, revision, env)
 	local content = item.revisions[revision].content
 	local label
 	if content.type == "image" then
@@ -259,7 +269,7 @@ local function card(of, item, revision, ctx)
 	local open = ui.button("Open on the canvas", "open", { item = item.id, revision = revision, fresh = of.fresh })
 	local body
 	if content.type == "image" then
-		body = ui.stack({ picture(content.image, ctx, THUMBNAIL), open })
+		body = ui.stack({ picture(content.image, env, THUMBNAIL), open })
 	else
 		body = ui.stack({ ui.card(canvas.excerpt(content.text, EXCERPT_LINES)), open })
 	end
@@ -365,31 +375,31 @@ return tau.plugin({
 	-- A tree's button: show the revision its arguments pick, and with
 	-- `open`, open the pane too.
 	actions = {
-		pick = function(args, ctx)
-			ctx.state.pick = { item = args.item, revision = args.revision, fresh = args.fresh }
+		pick = function(args, model)
+			model.pick = { item = args.item, revision = args.revision, fresh = args.fresh }
 		end,
-		open = function(args, ctx)
-			ctx.state.pick = { item = args.item, revision = args.revision, fresh = args.fresh }
+		open = function(args, model)
+			model.pick = { item = args.item, revision = args.revision, fresh = args.fresh }
 			return tau.interface("pane")
 		end,
 	},
 
 	-- The pane, once the run has anything on its canvas; each call's card;
 	-- and how many items there are, on the status line.
-	view = function(state, ctx)
-		local of = canvas.of(state)
+	view = function(model, env)
+		local of = canvas.of(model)
 		if #of.items == 0 then
 			return {}
 		end
 		local calls = {}
 		for _, item in ipairs(of.items) do
 			for at, revision in ipairs(item.revisions) do
-				calls[revision.call] = card(of, item, at, ctx)
+				calls[revision.call] = card(of, item, at, env)
 			end
 		end
 		local count = #of.items
 		return {
-			pane = pane(of, state.pick, ctx),
+			pane = pane(of, model.pick, env),
 			calls = calls,
 			status = ui.status(count == 1 and "1 item on the canvas" or (count .. " items on the canvas")),
 		}
