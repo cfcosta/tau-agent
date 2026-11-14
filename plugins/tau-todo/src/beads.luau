@@ -65,7 +65,7 @@ local function line(issue)
 		{ "status", str(issue.status) },
 		{ "priority", tostring(issue.priority) },
 		{ "issue_type", str(issue.type) },
-		{ "assignee", issue.claim and str(issue.claim) },
+		{ "assignee", issue.assignee and str(issue.assignee) },
 		{ "created_at", str(time.iso(issue.created)) },
 		{ "updated_at", str(time.iso(issue.updated)) },
 		{ "closed_at", issue.closed and str(time.iso(issue.closed)) },
@@ -184,8 +184,10 @@ function beads.import(text)
 				if status == "blocked" and type(raw.notes) == "string" and raw.notes ~= "" then
 					issue.blocked = raw.notes
 				end
+				-- A person, not a tau run: kept as it is, it claims nothing
+				-- (a claim is a run's, while it goes on).
 				if raw.assignee and raw.assignee ~= "" then
-					issue.claim = raw.assignee
+					issue.assignee = tostring(raw.assignee)
 				end
 				if raw.closed_at then
 					issue.closed = when(raw.closed_at, "closed_at", id)

@@ -311,8 +311,9 @@ local function full(all)
 			if issue.status == "blocked" and draw(g.booleans()) then
 				issue.blocked = "the vendor"
 			end
+			-- A Beads assignee, which claims nothing: a claim is a run's.
 			if draw(g.booleans()) then
-				issue.claim = "r-claim"
+				issue.assignee = "alice"
 			end
 			issue.created += 1793000000
 			issue.updated += 1793000000
