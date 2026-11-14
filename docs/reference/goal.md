@@ -58,13 +58,15 @@ by it; the goal's own continuations are what limit it.
 
 ## State
 
-The goal is in the run's state (`ctx.state`), which a resumed run and
+The goal is in the run's model (`model.goal`), which a resumed run and
 a fork inherit: `goal` (`condition`, `max_continuations`, `budget`,
 `status`, `continuations`, `spent`, `checks`, `error`), the notes in the
 transcript, and how the messages it knows draw. The banner's buttons
 are its `act` action (`pause`, `edit`, `clear`, `keep_going`), and the
-`/goal` command its command: each changes the state, which the plugin
-reads again at its next check.
+`/goal` command its command: each changes the model. A check that waits
+on Jev reads the model again once Jev answers: a Pause, an edit or a
+Clear pressed meanwhile stands, and the answer, which was for a goal no
+longer active, is dropped.
 
 ## In tau-ui
 

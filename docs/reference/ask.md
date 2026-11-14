@@ -70,7 +70,7 @@ answers. It is a Luau plugin tau comes with (ADR 0050):
 
 ## State
 
-The run's `ctx.state.calls`, in the order they asked: each `{ call,
+The run's `model.calls`, in the order they asked: each `{ call,
 ask, draft, focus, reply?, closed? }`.
 
 - `draft`: the question in view (`tab`; one past the last is the

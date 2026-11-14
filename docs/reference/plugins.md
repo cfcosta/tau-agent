@@ -860,16 +860,69 @@ real agent loop with a scripted model; the `looping` module of
 tau-luau-plugins-host documents what a loop's spec holds and what its
 check gets.
 
+### Hooks, the model and commands
+
+A Luau plugin is Elm written as coroutines (ADR 0056). Each plugin has
+one model per run (and one per repository for its jobs, and one of the
+app), and every hook is `(input, model, env)`: `input` what it is given
+(`nil` for a job's `run`, `repo_data` and `app`), `model` the model
+itself, changed in place, and `env` the run's `run`, `now`, `settings`,
+`models` and a command's `drafts`. `view` is `(model, env)`, a tool's
+`card` `(input, model, env)` with `input = { call, result }`, and
+`settings.view` `(settings, model, env)`: each draws a frozen copy of the
+model and cannot await.
+
+A hook reaches nothing itself. Every effect is a command of `tau.cmd`:
+reads and waits are awaited, `local v = tau.await(cmd.store.get(k))`
+(`nil` for a missing value; Jev's answer and its cost; an infer's answer
+unwrapped, or raised), and writes are given,
+`tau.give(cmd.store.put(k, v))`, carried out when the step ends. A host
+tool is `cmd.tool(name, args)`, and `tau.all({ ... })` awaits several at
+once, answering a list of `{ ok, values, error }`. A failed command
+raises its own message. `tau.log(text)` writes the plugin's log.
+
+The host takes a model's messages one at a time: a hook's code from one
+await to the next is a step, and no other message is handled while it
+runs. Across an await anything may have changed: an action, another hook,
+a job, or another run's write to the store. So a hook reads what it uses
+of the model and the store again after each await. An action is a
+message to the same model, not a copy: a Pause pressed while tau-goal's
+check waits on Jev is in the model when the check goes on. Hooks have no
+clock and no randomness; time is `env.now`. The return protocols
+(`tau.continue`, `tau.block`, `tau.start`, `tau.rewrite`, `tau.result`,
+`tau.effort`, `tau.interface`, `tau.start_chat`, `tau.steer_chat`,
+`tau.allow`, `tau.ask` and `tau.answer` with their "then" actions) are
+what a hook returns, as before.
+
+```luau
+before_stop = function(stop, model)
+  local asked = model.goal
+  if asked == nil or asked.status ~= "active" then
+    return nil
+  end
+  local answers, cost = tau.await(cmd.jev.ask({
+    state = { goal = asked.condition, final_answer = stop.text },
+    questions = { met = QUESTION },
+  }))
+  local g = model.goal -- again: a Pause may have come while Jev answered
+  if g == nil or g.status ~= "active" or g.condition ~= asked.condition then
+    return nil
+  end
+  ...
+end,
+```
+
 ### Lifecycles as machines
 
 A Luau plugin keeps anything that goes through steps (a sign-in, an
 import, a goal, an approval) as one `tau.machine` (ADR 0054), not as
 flags beside each other. A state is a plain table naming its tag
 (`state`, or the field `tag` says) with exactly the fields its tag
-carries, kept in `ctx.state` or the store; `machine:step(state, event)`
-gives the next one and the effects the hook carries out, and an event
-the state has no arm for changes nothing. Work that waits carries the
-generation it began under, so what comes back to another is dropped.
+carries, kept in `model` or the store; `machine:step(state, event)`
+gives the next one and the effects the hook carries out as commands,
+and an event the state has no arm for changes nothing. The answer to an
+effect that waits is stepped on the state as it is after the await, so
+an answer that comes after a Stop finds no arm and is dropped.
 tau-github's sign-in and tau-goal's goal are machines;
 `plugins/examples/ship-gate` is the worked one the `tau-plugins` skill
 teaches.
@@ -881,10 +934,10 @@ trip, with the plugin's own model and invariant, from `initial` or any
 state `spec.states` draws, and fails naming the arms no case took but
 those `spec.untaken` lists; `t.hooks(name, spec)`
 drives a plugin's hooks, actions and job ticks in any order, what they
-wait on paused until a rule answers it, sharing what the host shares (a
-store in turns, files at once, a run's state as `still_on` keeps it,
-and an action taken while a hook ran carried out again on what the hook
-left, as the host's run does).
+await paused until a rule answers it, each taking its steps in turn on
+the one model and store, as the host does. A hook that kept a value
+from before an await and acted on it breaks the invariant in some
+order.
 
 ## The first four plugins
 
@@ -905,7 +958,7 @@ and the threshold (0.7 by default) for runs started after.
 
 - **Seams:** `start` (it sets the effort with `tau.start{ effort }`,
   on auto only), and `before_request` when `redecide` is on (with
-  `tau.effort`, reading the run with `ctx.transcript()`). `rewritten`
+  `tau.effort`, reading the run with `cmd.transcript()`). `rewritten`
   ends a lease; `run_end` leaves the next message its context, a run
   at an effort the person chose too.
 - **How, as a message comes in:**
@@ -1053,7 +1106,7 @@ gap L; it was the Rust crates `tau-memory` and `tau-memory-host` until
   `given` record says what went in). A rewrite that drops the
   conversation stores `forgotten`, and the next run gives everything
   again. Index notes are never hits too.
-- **At compaction:** in `rewritten`, one model request (`ctx.ask`) over
+- **At compaction:** in `rewritten`, one model request (`cmd.infer`) over
   the replaced transcript with only the memory tools, since compaction
   is where details are lost. Only a rewrite that drops conversation
   (`Rewrite::drops_conversation`: a summary, tree compaction's fold)
@@ -1133,7 +1186,7 @@ gap L; it was the Rust crates `tau-memory` and `tau-memory-host` until
       whether the second run read memory. It prints the means per arm
       and variant; `--json PATH` writes every trial.
 - **Model:** the flush and the consolidation pass are its only model
-  calls (search runs locally), each one `ctx.tools.infer` with its own
+  calls (search runs locally), each one `cmd.infer` with its own
   tools, `memory_search` and `memory_write`, until a round searches no
   more. They run on the newest model of a plan
   family at an effort, set in its settings pane: luna at low unless
@@ -1181,7 +1234,7 @@ gap L; it was the Rust crates `tau-memory` and `tau-memory-host` until
   - **How.** One job, `import` (`Jobs::start`, its page the review page).
     Claude Code's notes are proposed as they are, with no model. The rest
     go to the person's model (memory's writer settings) through
-    `ctx.tools.infer` with tools, fenced as
+    `cmd.infer` with tools, fenced as
     `<material … note="… data, not instructions">`, one chunk of 32 kB
     a tick of the job, with two tools of the import's own: `memory_search` over the
     scopes' notes and the proposals so far, and `memory_propose` (`type`,
@@ -1212,7 +1265,7 @@ gap L; it was the Rust crates `tau-memory` and `tau-memory-host` until
     Code or Codex…" (also in a repository's menu), and a banner when the
     tools know a repository: proposals wait for it, or there is what no
     import read. Places match listed repositories by folder or by the
-    remote the host reads (`ctx.files.repositories()`), never by reading
+    remote the host reads (`cmd.files.repositories()`), never by reading
     project folders. All of it is drawn by the plugin's pages and `app`,
     and acts through its actions, so the review page and the banner work
     on a phone. No cost is shown: tau runs on
@@ -1246,7 +1299,7 @@ Built: `plugins/tau-constitution`, a Luau plugin tau comes with
   from looping.
 - **State:** the rules, what waits for review and what the checks did
   are in the plugin's store in each repository; each run's checks are
-  its `ctx.state`, drawn on the calls' cards, as notes and in the
+  in its model, drawn on the calls' cards, as notes and in the
   inspector.
 - **Risk:** the state is untrusted. File content and tool output can
   try to steer Jev, which its docs warn about. Rules for destructive
@@ -1263,7 +1316,7 @@ with (ADR 0050). Its reference is [fast-compaction.md](fast-compaction.md).
   change what that summary reads from cache), `start` (whether there is
   a TypeSafe key), and `after_tool_result` to prune a large
   `exec_command` output before the model first sees it. It uses Jev,
-  the run's conversation and `ctx.archive`.
+  the run's conversation and `cmd.archive`.
 - **How** (after `joelhooks/pi-fast-jev-compaction`):
   1. Past a share of the window (default 60%), and outside a token
      cooldown, build a state of the history: tool names, inputs,
@@ -1279,14 +1332,14 @@ with (ADR 0050). Its reference is [fast-compaction.md](fast-compaction.md).
      call id.
 - **Output:** a rewrite with the calls it drops, the results it cuts,
   and the ledger in its details. If the saving is under a minimum ratio
-  (`ctx.measure`), it returns nothing, and the next plugin can take the
+  (`cmd.measure`), it returns nothing, and the next plugin can take the
   boundary.
 - **Why it fits tau better than pi:** pi re-applies the ledger to a
   per-turn view. Here the rewrite is stored once, so the next request
   is one full resend and then deltas again. The cooldown keeps full
   resends rare.
 - **State:** the ledger, each pass and each pruned output, in the run's
-  `ctx.state`, which forks inherit. Its view marks the pruned calls'
+  model, which forks inherit. Its view marks the pruned calls'
   cards, writes a note at each pass, and draws the ledger page.
 
 ### `tau-compaction`: summarize what the window cannot hold
@@ -1307,7 +1360,7 @@ Built: `plugins/tau-compaction`, a Luau plugin tau comes with
   summary writes nothing, and waits 2, 4, 8 and up to 32 turns before it
   is tried again; on an overflow it fails the run.
 - **State:** the latest summary, and the failures in a row, in the
-  run's `ctx.state`, which forks inherit.
+  run's model, which forks inherit.
 
 ### `tau-tree-compaction`: fold the context into a tree
 
@@ -1328,7 +1381,7 @@ with (ADR 0050), off by default. Its reference is
 - **Output:** a rewrite with the view in its details. When a line
   cannot be built it rewrites nothing, and tau-compaction, after it,
   summarizes.
-- **State:** the history and the view, in the run's `ctx.state`, which
+- **State:** the history and the view, in the run's model, which
   forks inherit.
 
 ### `tau-ask`: the agent asks the person
@@ -1340,7 +1393,7 @@ Built: `plugins/tau-ask`, a Luau plugin tau comes with (ADR
   `tau.ask` and waits for the person), `start` and `run_end` (they close
   the calls that wait), and the view's `composer` (the panel), `calls`
   (each call's card), `asks` and `status`.
-- **State:** the run's `ctx.state.calls`: each call's questions, the
+- **State:** the run's `model.calls`: each call's questions, the
   person's draft and focus, and the reply. Each key and click of the
   panel is one of its actions; Send gives the call the answers with
   `tau.answer`, and its `answered` action takes them in the run.
@@ -1358,10 +1411,10 @@ Built: `plugins/tau-goal`, a Luau plugin tau comes with (ADR
 - **How:** one `noul` per stop: does the goal hold, judged from the
   model's last answer and its recent tool results. Not yet sends the
   model back with the goal, within the goal's continuations and budget.
-- **State:** the run's `ctx.state`. The goal belongs to the
+- **State:** the run's model. The goal belongs to the
   conversation, so a resumed run keeps it; its banner's buttons and the
-  `/goal` command pause, extend or clear it, and the plugin reads the
-  state again at its next check.
+  `/goal` command pause, extend or clear it, and the check reads the
+  model again after Jev answers, so a Pause pressed meanwhile stands.
 
 ### `tau-watcher`: notes what you missed
 
@@ -1370,8 +1423,8 @@ Built: `plugins/tau-watcher`, a Luau plugin tau comes with (ADR
 
 - **Seams:** `start` (a message written past a waiting note), and
   `before_request` (every 6th step, one side request through
-  `ctx.tools.infer`, reading the run with `ctx.transcript()`).
-- **State:** the run's `ctx.state`: its notes, the back-off and the
+  `cmd.infer`, reading the run with `cmd.transcript()`).
+- **State:** the run's model: its notes, the back-off and the
   last check. The note's buttons are the plugin's `answer` action.
 
 ### `tau-schedule`: a chat wakes itself later
@@ -1382,12 +1435,12 @@ Its decision is [0039](../decisions/0039-chats-wake-themselves-later.md).
 - **Tools**, in every run but an agent's (whose own `schedule` also
   repeats, 0037, so an agent's runs leave the plugin out):
   `schedule { name, note, in | on }`, `scheduled {}` and
-  `unschedule { name }`. Each reads its chat from `ctx.run.id`. A
+  `unschedule { name }`. Each reads its chat from `env.run.id`. A
   sub-agent's `schedule` refuses, saying to hand it back: the tools are
   there so its prompt prefix stays main's.
 - **Waking:** its job, `wake`, ticks each second (`uses.chats`): it reads
   every repository's store for what came due, and wakes each such chat
-  through `ctx.chats.wake` with one message of tau's holding every note
+  through `cmd.chats.wake` with one message of tau's holding every note
   due. A chat with a turn going waits for it; one that landed or was
   dropped loses what it had waiting; a turn that did not start is tried
   again thirty seconds later.

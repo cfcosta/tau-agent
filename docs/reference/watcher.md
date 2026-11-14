@@ -14,7 +14,7 @@ pane has:
 
 - **Note what I missed**: the switch. Each check is a request.
 - **Model**: `chat`, the chat's own (default), or a family from
-  `ctx.models`, the plan's: its newest model reads the run. A family the
+  `env.models`, the plan's: its newest model reads the run. A family the
   plan lacks falls back on the chat's model.
 
 It runs in a repository's main chat and in chats, never in sub-agents.
@@ -39,10 +39,10 @@ person last answered one (`n`). For `n` of 0 to 2 no due check is
 skipped; from 3, `2^(n-3)` are, at most 16. A run that starts while the
 last note is unanswered records the message as written past it.
 
-The request is `ctx.tools.infer`, with the family the person picked as
+The request is `cmd.infer`, awaited, with the family the person picked as
 its `model`: outside the run's conversation, charged to the run. Its
 task carries the instructions (`watch.INSTRUCTIONS`), then the
-conversation, read with `ctx.transcript()` (tool results cut to 2,000
+conversation, read with `cmd.transcript()` (tool results cut to 2,000
 characters), the last 50 note lines, and the lines marked "knew this".
 Any failure of the request is counted as `dropped`.
 
@@ -69,7 +69,7 @@ plugin's log keeps. The plugin counts it `dropped` and shows nothing.
 
 ## State
 
-The run's state (`ctx.state`) keeps it, as `watch.state` reads it:
+The run's model keeps it, as `watch.state` reads it:
 
 | Field        | What it is                                                                        |
 | ------------ | --------------------------------------------------------------------------------- |

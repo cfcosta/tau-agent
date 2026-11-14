@@ -86,8 +86,8 @@ run, so history shows it again:
     0.5/0.9, 0.3/0.8, 0.2/0.6) or steps of 0.05, and **Try it**: Jev
     is asked about the repository's latest calls and answers the rule
     reads, with the same question and state a check uses, one request
-    each, and nothing runs again. The page's actions have the host's Jev
-    (`ctx.jev`).
+    each, and nothing runs again. The page's actions await the host's Jev
+    (`cmd.jev`).
   - **Review:** flagged calls and answers, with the rule and the score
     against its thresholds; Looks fine takes one off the queue, and Open
     in run opens its run (`tau.open_run`). Next to it, what the rules
@@ -100,7 +100,7 @@ run, so history shows it again:
     can fix them, so the banner offers to remove them, once confirmed, to
     start again.
   - Without a TypeSafe key the page says so and links to tau-jev's key
-    page; it knows from `ctx.run.jev`.
+    page; it knows from `env.run.jev`.
 - Checks need a TypeSafe key, added in tau-jev's section of the Models
   screen and kept by tau-jev in tau's config directory (`typesafe-key`),
   readable only by the user. Without one, runs are not checked and the
