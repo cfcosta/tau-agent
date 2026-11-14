@@ -269,6 +269,14 @@ for the scopes the server names.
   grants file: when that id changed, because of a sign-in or sign-out
   here or in another process, it connects again. So `needs-auth` ends
   on the next use after someone signs in anywhere.
+- A sign-in or sign-out here restarts the connection. One that comes
+  while a connect is under way, begun under the grant before, has that
+  connect connect again once it ends, dropping what it brought; so a
+  connect turned down for having no grant is not the last word.
+- What a connection does (settled, connecting, closed) is kept under its
+  lock with its session, and its status is published under the same
+  lock: a closed connection stays closed, whatever a connect under way
+  brings or a call asks.
 
 ### Signing in
 
@@ -933,7 +941,10 @@ From the design above, as first written:
   paused clock and over streamable HTTP (rmcp's server under hyper, on a
   loopback port), on both protocols: tau connects, the server drops,
   restarts (over HTTP forgetting its sessions, then answering 404 or the
-  TypeScript SDK's 400), tau starts the session again, the server
+  TypeScript SDK's 400), tau starts the session again, also while a
+  connect is under way (it connects again), tau closes the connection,
+  sometimes while a connect is under way (it stays closed, a call
+  dials nothing, and it is then opened anew), the server
   changes its tools and resources, calls run side by side with progress,
   and resources are watched, unwatched and watched again at once. After
   each step: a waiter that sees `Connected` reads the new tool list

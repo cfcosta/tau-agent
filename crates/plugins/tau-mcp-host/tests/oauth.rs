@@ -215,6 +215,8 @@ struct Books {
     next: usize,
     /// Every code, token and verifier that went by: none may be logged.
     secrets: Vec<String>,
+    /// The next MCP request waits for this before it is answered.
+    hold: Option<Arc<tokio::sync::Notify>>,
 }
 
 /// The authorization server and the MCP server, on one port.
@@ -440,6 +442,9 @@ impl Fake {
     }
 
     async fn mcp(&self, request: Request) -> Response {
+        if let Some(gate) = self.books(|books| books.hold.take()) {
+            gate.notified().await;
+        }
         let scopes = self.books(|books| {
             books.mcp_requests += 1;
             request
@@ -772,6 +777,43 @@ async fn a_401_waits_for_a_sign_in_that_then_connects() {
     let result = echo(&connection).await.unwrap();
     assert_eq!(result["structuredContent"]["echo"], "hi");
     assert_eq!(connection.status().state, State::Connected);
+}
+
+/// A sign-in while a connect is under way connects again under it: the
+/// connect that began before it is not the connection's last word, even
+/// when the server turns it down for having no grant.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sign_in_during_a_connect_connects_again() {
+    let fake = Fake::start().await;
+    let gate = Arc::new(tokio::sync::Notify::new());
+    fake.books(|b| b.hold = Some(gate.clone()));
+    let dir = tempfile::tempdir().unwrap();
+    let connection = Connection::new(
+        server(&fake, None),
+        Origin::User,
+        environment(dir.path()),
+    );
+    connection.connect();
+    while fake.books(|b| b.mcp_requests) == 0
+        && fake.books(|b| b.hold.is_some())
+    {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(connection.status().state, State::Connecting);
+    sign_in(&connection).await;
+    // As the host does after a sign-in.
+    connection.restart();
+    // The first connect goes on, and the server turns it down.
+    gate.notify_one();
+    let mut watch = connection.watch();
+    let connected = tokio::time::timeout(Duration::from_secs(10), async {
+        while connection.status().state != State::Connected {
+            watch.changed().await.unwrap();
+        }
+    })
+    .await;
+    assert!(connected.is_ok(), "{:?}", connection.status());
+    assert_eq!(connection.auth_need(), None);
 }
 
 #[tokio::test(flavor = "multi_thread")]

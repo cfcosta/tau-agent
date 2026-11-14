@@ -374,7 +374,23 @@ struct Inner {
     instructions: Option<String>,
     /// The protocol version of the last session.
     protocol: Option<String>,
-    connecting: bool,
+    phase: Phase,
+}
+
+/// What the connection does, kept under its lock with the session; its
+/// status is published under the same lock, so the two always agree.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    /// No connect under way: it holds a session, or the status says why
+    /// it holds none.
+    #[default]
+    Settled,
+    /// A connect is under way. `again`: a restart came meanwhile (a
+    /// sign-in or a sign-out), so what it brings is dropped and it
+    /// connects again.
+    Connecting { again: bool },
+    /// Closed for good: nothing connects it again.
+    Closed,
 }
 
 /// What a connect lists: tools always, resources, templates and prompts
@@ -385,6 +401,13 @@ struct Lists {
     templates: Vec<TemplateInfo>,
     prompts: Vec<PromptInfo>,
 }
+
+/// What a connect brings: its session, what it listed and the session's
+/// events; or why it failed, and what sign-in the server asked for.
+type Opened = Result<
+    (Arc<Session>, Lists, mpsc::UnboundedReceiver<SessionEvent>),
+    (String, Option<AuthNeed>),
+>;
 
 /// A read-only request: reading a resource or getting a prompt.
 enum ReadOnly<'a> {
@@ -478,17 +501,20 @@ impl Connection {
         origin: Origin,
         environment: Environment,
     ) -> Arc<Self> {
-        let state = if config.enabled {
-            State::Disconnected
+        let (state, phase) = if config.enabled {
+            (State::Disconnected, Phase::Settled)
         } else {
-            State::Closed
+            (State::Closed, Phase::Closed)
         };
         Arc::new(Self {
             config,
             origin,
             environment,
             status: watch::channel(Status { state, error: None }).0,
-            inner: Mutex::default(),
+            inner: Mutex::new(Inner {
+                phase,
+                ..Inner::default()
+            }),
             generation: AtomicU64::new(0),
             started: AtomicBool::new(false),
             auth: Mutex::default(),
@@ -554,17 +580,29 @@ impl Connection {
     }
 
     /// Drops the session, if any, and connects again: after a sign-in
-    /// or a sign-out.
+    /// or a sign-out. A connect under way began under the grant before,
+    /// so it connects again once it ends.
     pub fn restart(self: &Arc<Self>) {
-        let session =
-            self.inner.lock().expect("connection lock").session.take();
-        if let Some(session) = session {
+        let mut inner = self.inner.lock().expect("connection lock");
+        if let Some(session) = inner.session.take() {
             tokio::spawn(async move { session.close().await });
         }
-        if self.status().state == State::Connected {
-            self.set_status(State::Disconnected, None);
+        match &mut inner.phase {
+            Phase::Closed => return,
+            Phase::Connecting { again } => {
+                *again = true;
+                return;
+            }
+            Phase::Settled => {}
         }
-        self.connect();
+        if self.status().state == State::Connected {
+            self.set_status(&inner, State::Disconnected, None);
+        }
+        if self.begin_connect(&mut inner) {
+            drop(inner);
+            let this = self.clone();
+            tokio::spawn(async move { this.run_connect().await });
+        }
     }
 
     pub fn name(&self) -> &str {
@@ -588,7 +626,12 @@ impl Connection {
         self.status.borrow().clone()
     }
 
-    fn set_status(&self, state: State, error: Option<String>) {
+    /// Publishes the status. It takes the connection's state, so it is
+    /// only published under its lock; a closed connection stays closed.
+    fn set_status(&self, inner: &Inner, state: State, error: Option<String>) {
+        if inner.phase == Phase::Closed && state != State::Closed {
+            return;
+        }
         self.status.send_replace(Status { state, error });
         self.revision.send_modify(|revision| *revision += 1);
     }
@@ -689,42 +732,69 @@ impl Connection {
     /// Starts connecting in the background, unless the connection is
     /// connected, connecting, or closed.
     pub fn connect(self: &Arc<Self>) {
-        {
-            let mut inner = self.inner.lock().expect("connection lock");
-            let live = inner.session.as_ref().is_some_and(|s| !s.is_closed());
-            if live || inner.connecting || self.status().state == State::Closed
-            {
-                return;
-            }
-            inner.connecting = true;
-            self.started.store(true, Ordering::SeqCst);
-            self.set_status(State::Connecting, None);
-            let seen = self
-                .oauth()
-                .and_then(|(store, key)| store.fingerprint(&key));
-            *self.auth.lock().expect("auth lock") = (None, seen);
+        let mut inner = self.inner.lock().expect("connection lock");
+        if self.begin_connect(&mut inner) {
+            drop(inner);
+            let this = self.clone();
+            tokio::spawn(async move { this.run_connect().await });
         }
-        let this = self.clone();
-        tokio::spawn(async move { this.run_connect().await });
     }
 
+    /// Marks a connect under way, unless the connection is connected,
+    /// connecting, or closed. Whether one began; the caller runs it.
+    fn begin_connect(&self, inner: &mut Inner) -> bool {
+        let live = inner.session.as_ref().is_some_and(|s| !s.is_closed());
+        if live || inner.phase != Phase::Settled {
+            return false;
+        }
+        inner.phase = Phase::Connecting { again: false };
+        self.started.store(true, Ordering::SeqCst);
+        self.set_status(inner, State::Connecting, None);
+        let seen = self
+            .oauth()
+            .and_then(|(store, key)| store.fingerprint(&key));
+        *self.auth.lock().expect("auth lock") = (None, seen);
+        true
+    }
+
+    /// Runs the connect [`Self::begin_connect`] marked, and the ones a
+    /// restart asks for meanwhile.
     async fn run_connect(self: Arc<Self>) {
-        let outcome = tokio::time::timeout(CONNECT_TIMEOUT, self.open())
-            .await
-            .unwrap_or_else(|_| {
-                Err((
-                    format!("no answer in {} s", CONNECT_TIMEOUT.as_secs()),
-                    None,
-                ))
-            });
+        loop {
+            let outcome = tokio::time::timeout(CONNECT_TIMEOUT, self.open())
+                .await
+                .unwrap_or_else(|_| {
+                    Err((
+                        format!("no answer in {} s", CONNECT_TIMEOUT.as_secs()),
+                        None,
+                    ))
+                });
+            if !self.land(outcome) {
+                return;
+            }
+        }
+    }
+
+    /// Takes what a connect brought, under the lock. True when a restart
+    /// came meanwhile: what it brought is dropped, and another connect
+    /// is marked for the caller to run.
+    fn land(self: &Arc<Self>, outcome: Opened) -> bool {
         let mut inner = self.inner.lock().expect("connection lock");
-        inner.connecting = false;
-        if self.status().state == State::Closed {
+        let again = match inner.phase {
+            Phase::Connecting { again } => again,
+            Phase::Settled | Phase::Closed => false,
+        };
+        if inner.phase == Phase::Closed || again {
             if let Ok((session, ..)) = outcome {
                 tokio::spawn(async move { session.close().await });
             }
-            return;
+            if !again {
+                return false;
+            }
+            inner.phase = Phase::Settled;
+            return self.begin_connect(&mut inner);
         }
+        inner.phase = Phase::Settled;
         match outcome {
             Ok((session, lists, events)) => {
                 inner.instructions = session.instructions().map(str::to_owned);
@@ -735,40 +805,34 @@ impl Connection {
                 inner.templates = lists.templates;
                 inner.prompts = lists.prompts;
                 inner.session = Some(session.clone());
-                drop(inner);
                 // The generation first: whoever sees `Connected` (a run
                 // waiting in `ready`) must not read the tools cached for
                 // the generation before.
                 self.changed();
-                self.set_status(State::Connected, None);
+                self.set_status(&inner, State::Connected, None);
+                drop(inner);
                 tokio::spawn(watch_session(
-                    Arc::downgrade(&self),
+                    Arc::downgrade(self),
                     session,
                     events,
                 ));
             }
             Err((error, None)) => {
-                drop(inner);
-                self.set_status(State::Failed, Some(error));
+                self.set_status(&inner, State::Failed, Some(error));
             }
             Err((_, Some(need))) => {
-                drop(inner);
                 let message = need.message();
                 self.auth.lock().expect("auth lock").0 = Some(need);
-                self.set_status(State::NeedsAuth, Some(message));
+                self.set_status(&inner, State::NeedsAuth, Some(message));
             }
         }
+        false
     }
 
     /// Connects, retrying an HTTP server's transient errors, and lists
     /// the tools, and the resources, templates and prompts it offers.
     /// A server that asks for a sign-in fails with why.
-    async fn open(
-        &self,
-    ) -> Result<
-        (Arc<Session>, Lists, mpsc::UnboundedReceiver<SessionEvent>),
-        (String, Option<AuthNeed>),
-    > {
+    async fn open(&self) -> Opened {
         let endpoint = self
             .environment
             .endpoint(&self.config)
@@ -1187,9 +1251,9 @@ impl Connection {
             .is_some_and(|current| Arc::ptr_eq(current, session))
         {
             inner.session = None;
-            drop(inner);
             if self.status().state == State::Connected {
                 self.set_status(
+                    &inner,
                     State::Disconnected,
                     Some("the server closed the connection".into()),
                 );
@@ -1202,7 +1266,8 @@ impl Connection {
         self.watched.lock().expect("watch lock").clear();
         let session = {
             let mut inner = self.inner.lock().expect("connection lock");
-            self.set_status(State::Closed, None);
+            inner.phase = Phase::Closed;
+            self.set_status(&inner, State::Closed, None);
             inner.session.take()
         };
         if let Some(session) = session {

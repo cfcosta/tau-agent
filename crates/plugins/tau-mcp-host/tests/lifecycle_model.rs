@@ -189,6 +189,15 @@ impl Waiter {
     }
 }
 
+/// A plugin with the one server `config`; it starts connecting.
+fn plugin(config: ServerConfig) -> McpPlugin {
+    McpPlugin::builder()
+        .env(Arc::new(|_| None))
+        .home(None)
+        .server(config)
+        .build()
+}
+
 /// One live watch, and the resource it watches.
 struct Held {
     uri: &'static str,
@@ -201,6 +210,8 @@ struct Machine {
     /// The server over streamable HTTP, when the case runs it there;
     /// else over a duplex stream.
     http: Option<Arc<HttpServer>>,
+    /// The server's entry, to open the plugin again after it closed.
+    config: ServerConfig,
     plugin: McpPlugin,
     connection: Arc<Connection>,
     /// What the connection's watchers see.
@@ -221,6 +232,8 @@ struct Machine {
     ended: Vec<ResourceWatch>,
     /// How many times `slow` ran, as the calls made it.
     slow_calls: usize,
+    /// How many dials one connect makes, over a duplex stream.
+    connect_dials: usize,
 }
 
 impl Machine {
@@ -263,11 +276,7 @@ impl Machine {
         }
         let plugin = {
             let _entered = runtime.enter();
-            McpPlugin::builder()
-                .env(Arc::new(|_| None))
-                .home(None)
-                .server(config)
-                .build()
+            plugin(config.clone())
         };
         let connection = plugin.connections()[0].clone();
         let revisions = connection.watch();
@@ -276,6 +285,7 @@ impl Machine {
             runtime,
             fixture,
             http,
+            config,
             plugin,
             connection,
             revisions,
@@ -287,6 +297,7 @@ impl Machine {
             held: Vec::new(),
             ended: Vec::new(),
             slow_calls: 0,
+            connect_dials: 0,
         };
         // The builder started the first connect: the waiter reads from
         // before it, an empty list.
@@ -294,6 +305,7 @@ impl Machine {
         machine.gate(true);
         machine.quiet();
         machine.connected(waiter);
+        machine.connect_dials = machine.fixture.dials();
         machine
     }
 
@@ -522,6 +534,88 @@ impl Machine {
         self.fixture.end_stale();
         self.quiet();
         self.lost();
+        self.connected(waiter);
+    }
+
+    /// tau starts the session again while a connect is under way, as a
+    /// sign-in in the middle of one does: that connect, begun under the
+    /// grant before, is dropped, and it connects again.
+    #[rule]
+    fn tau_restarts_during_a_connect(&mut self, tc: TestCase) {
+        if self.live {
+            tc.reject();
+        }
+        let dials = self.fixture.dials();
+        self.gate(false);
+        let waiter = Waiter::start(&self.plugin);
+        {
+            let _entered = self.runtime.enter();
+            self.connection.connect();
+            self.connection.restart();
+        }
+        self.gate(true);
+        self.quiet();
+        self.connected(waiter);
+        if self.http.is_none() {
+            assert_eq!(
+                self.fixture.dials(),
+                dials + 2 * self.connect_dials,
+                "connected again"
+            );
+        }
+    }
+
+    /// The plugin closes the connection, as when its server is turned
+    /// off, sometimes while a connect is under way: it stays closed,
+    /// whatever that connect brings and whatever a call asks, and its
+    /// watches end. The server is then turned on again.
+    #[rule]
+    fn tau_closes_the_connection(&mut self, tc: TestCase) {
+        let during = !self.live && tc.draw(gs::booleans());
+        if during {
+            self.gate(false);
+            let _entered = self.runtime.enter();
+            self.connection.connect();
+        }
+        let connection = self.connection.clone();
+        self.block_on(async move { connection.shutdown().await });
+        self.gate(true);
+        self.quiet();
+        let dials = self.fixture.dials();
+        let connection = self.connection.clone();
+        let called = self.block_on(async move {
+            connection
+                .call(
+                    "slow",
+                    json!({"steps": 0, "ms": 0}),
+                    &|_| {},
+                    &CancellationToken::new(),
+                )
+                .await
+        });
+        assert!(called.is_err(), "a closed connection called: {called:?}");
+        self.quiet();
+        assert_eq!(self.connection.status().state, State::Closed);
+        assert_eq!(self.fixture.dials(), dials, "a closed connection dialed");
+        self.lost();
+
+        // On again: a new connection, which connects.
+        self.gate(false);
+        let reopened = {
+            let _entered = self.runtime.enter();
+            plugin(self.config.clone())
+        };
+        let closed = std::mem::replace(&mut self.plugin, reopened);
+        {
+            let _entered = self.runtime.enter();
+            drop(closed);
+        }
+        self.connection = self.plugin.connections()[0].clone();
+        self.revisions = self.connection.watch();
+        self.before = shown(&self.connection);
+        let waiter = Waiter::start(&self.plugin);
+        self.gate(true);
+        self.quiet();
         self.connected(waiter);
     }
 
