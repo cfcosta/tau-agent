@@ -377,24 +377,25 @@ fn only_of(source: &str, tests: &str) -> TestResult {
 /// A check that waits on Jev, as tau-goal's does, and a Pause.
 const CHECKING: &str = r#"
 local tau = require("tau")
+local cmd = tau.cmd
 return tau.plugin({
   uses = { jev = true },
   actions = {
-    pause = function(args, ctx) ctx.state.paused = true end,
+    pause = function(_, model) model.paused = true end,
   },
-  before_stop = function(stop, ctx)
-    ctx.state.checks = (ctx.state.checks or 0) + 1
-    ctx.jev.ask({ questions = {} })
+  before_stop = function(_, model)
+    model.checks = (model.checks or 0) + 1
+    tau.await(cmd.jev.ask({ questions = {} }))
     return nil
   end,
 })
 "#;
 
-/// A Pause pressed while a check waits on Jev is kept, as on the host:
-/// the check's state, changed, is the run's, and the Pause is carried out
-/// again on it. Every order `t.hooks` tries keeps it.
+/// A Pause pressed while a check waits on Jev is taken at once, on the
+/// one model, as on the host (ADR 0056): every order `t.hooks` tries
+/// keeps it.
 #[test]
-fn an_action_under_a_waiting_hook_is_carried_out_again() {
+fn an_action_while_a_hook_awaits_is_kept() {
     let result = only_of(
         CHECKING,
         r#"
@@ -405,10 +406,10 @@ t.hooks("a pause is kept", {
     stop = function(run) run:before_stop({ text = "done" }) end,
     pause = function(run, _, world) run:action("pause") world.paused = true end,
   },
-  -- A check whose Jev fails raises, and keeps nothing.
+  -- A check whose Jev fails raises.
   may_fail = function(hook) return hook == "stop" end,
   invariant = function(world)
-    if world.paused and #world.under_way == 0 then
+    if world.paused then
       t.equal(world.run.state.paused, true, "the pause is kept")
     end
   end,
@@ -418,25 +419,33 @@ t.hooks("a pause is kept", {
     assert!(result.passed, "{:?}", result.error);
 }
 
-/// Two hooks that read a count from the store, wait, and write it back
-/// never interleave: a plugin's store is taken in turns, so `t.hooks`
-/// finds no race the host cannot have.
-#[test]
-fn hooks_on_a_store_take_turns() {
-    let result = only_of(
+/// A count read from the store, then a wait, then the count written: two
+/// checks, `n` read by both before either writes.
+fn counting(read_again: bool) -> String {
+    let after_wait = if read_again {
+        "n = tau.await(cmd.store.get(\"n\")) or 0"
+    } else {
+        ""
+    };
+    format!(
         r#"
 local tau = require("tau")
-return tau.plugin({
-  uses = { jev = true, store = true },
-  before_stop = function(stop, ctx)
-    local n = ctx.store.get("n") or 0
-    ctx.jev.ask({ questions = {} })
-    ctx.store.put("n", n + 1)
+local cmd = tau.cmd
+return tau.plugin({{
+  uses = {{ jev = true, store = true }},
+  before_stop = function()
+    local n = tau.await(cmd.store.get("n")) or 0
+    tau.await(cmd.jev.ask({{ questions = {{}} }}))
+    {after_wait}
+    tau.give(cmd.store.put("n", n + 1))
     return nil
   end,
-})
-"#,
-        r#"
+}})
+"#
+    )
+}
+
+const EVERY_CHECK_COUNTS: &str = r#"
 local t = require("tau").test
 t.hooks("every check counts", {
   run = { jev = { ask = function() return {}, 0 end } },
@@ -451,9 +460,23 @@ t.hooks("every check counts", {
     t.equal(world.run.stores.test.n or 0, world.done or 0, "every check that ended counts")
   end,
 })
-"#,
+"#;
+
+/// A hook that keeps what it read from the store across an await, and
+/// writes from it, loses a count when another check runs meanwhile: the
+/// store is taken a step at a time (ADR 0056), and `t.hooks` finds the
+/// order. Read again after the await, every check counts.
+#[test]
+fn a_read_kept_across_an_await_is_found() {
+    let stale = only_of(&counting(false), EVERY_CHECK_COUNTS);
+    assert!(!stale.passed);
+    assert!(
+        error(&stale).contains("every check that ended counts"),
+        "{}",
+        error(&stale)
     );
-    assert!(result.passed, "{}", error(&result));
+    let fresh = only_of(&counting(true), EVERY_CHECK_COUNTS);
+    assert!(fresh.passed, "{}", error(&fresh));
 }
 
 /// A wait that fails raises in the hook that waited: that fails the test

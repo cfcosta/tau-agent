@@ -28,9 +28,9 @@ function tau.plugin(spec)
 		spec.actions = setmetatable(spec.actions or {}, {
 			__index = function(_, key)
 				if type(key) == "string" and string.sub(key, 1, 1) == "/" then
-					return function(args, ctx)
-						ctx.drafts = args.drafts or {}
-						return listed.run(string.sub(key, 2), args.text or "", ctx)
+					return function(args, model, env)
+						env.drafts = args.drafts or {}
+						return listed.run(string.sub(key, 2), args.text or "", model, env)
 					end
 				end
 				return nil
@@ -43,10 +43,10 @@ function tau.plugin(spec)
 			error("command `" .. tostring(name) .. "` needs a `run`", 2)
 		end
 		spec.actions = spec.actions or {}
-		spec.actions["/" .. name] = function(args, ctx)
+		spec.actions["/" .. name] = function(args, model, env)
 			-- What the popover's inputs say, by id.
-			ctx.drafts = args.drafts or {}
-			return command.run(args.text or "", ctx)
+			env.drafts = args.drafts or {}
+			return command.run(args.text or "", model, env)
 		end
 	end
 	-- What `infer{ tools }` calls the plugin's own tools from.

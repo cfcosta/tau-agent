@@ -251,6 +251,23 @@ function test.run(spec)
 			return fake
 		end
 	end
+	-- Jev, as `spec.jev` answers it: `{ fn, request }`, answered by the
+	-- function `fn`, with the answer and its cost.
+	fakes.jev = function(args)
+		local f = spec.jev and spec.jev[args.fn]
+		if f == nil then
+			error("Jev is not available in this run", 0)
+		end
+		return f(args.request)
+	end
+	-- A host tool, as `spec.tools` answers it.
+	fakes.tool = function(args)
+		local f = fakes[args.name]
+		if f == nil or args.name == "tool" or args.name == "jev" then
+			error("this test's run gives no tool " .. tostring(args.name), 0)
+		end
+		return f(args.args)
+	end
 	-- The store, kept in the fake run: `spec.store` to start from.
 	local kept = spec.store or {}
 	local offset = spec.offset or 0
@@ -612,10 +629,6 @@ function test.run(spec)
 		secrets = secrets,
 		notices = notices,
 		logs = {},
-		-- Actions whose state was dropped: it changed under them.
-		dropped = 0,
-		-- Actions whose state was taken, in order, as `{ name, args }`.
-		acted = {},
 		data = {
 			-- `live` and `jev`, as an action sees them: `spec.live`, and
 			-- whether there is `spec.jev`.
@@ -640,77 +653,106 @@ function test.run(spec)
 			models = spec.models or array({}),
 		},
 	}
-	-- `hook` with a ctx of the run's: `context.run` in place of the
-	-- run's own `ctx.run`, the state in `run[context.slot]` ("state", or
-	-- "job_state" for a job), and job reaches when `context.job`. Nothing
-	-- of the run is swapped while it runs, so hooks under way at once
-	-- (`t.hooks`) each keep their own. `context.action` names an action,
-	-- carried out with `context.args`: one whose state is taken while a
-	-- hook runs is carried out again on what that hook leaves.
-	local function call_in(context, hook, ...)
-		local slot = context.slot or "state"
-		local data = table.clone(run.data)
-		if context.run ~= nil then
-			data.run = context.run
-		end
-		-- Its own copy, as on the host: what it leaves is the run's when it
-		-- ends well and changed the state, over an action that came
-		-- meanwhile; an action's is the run's only while the state is the
-		-- one it began on (`still_on`), and is dropped otherwise.
-		-- It reads the state back from JSON, as the host's does, so a list
-		-- it kept comes back an array, whose metatable `table.clone`
-		-- refuses.
-		local started = deep_copy(run[slot])
-		data.state = if started == nil then nil else json.decode(json.encode(started))
-		local was_job = in_job
-		in_job = context.job == true
-		local ctx = tau._ctx(data, fakes)
-		if spec.jev then
-			ctx.jev = spec.jev
-		end
-		local before = deep_copy(stores)
-		local seen = #run.acted
-		local ok, answer = pcall(hook, ..., ctx)
-		in_job = was_job
-		if not ok then
-			for name, store in pairs(stores) do
-				for key in pairs(store) do
-					store[key] = nil
-				end
-				for key, value in pairs(before[name] or {}) do
-					store[key] = value
-				end
+	-- The command `c` carried out on the fakes, as the host carries it
+	-- out: `{ ok, values }`, or `{ ok = false, error }`.
+	local function execute(c)
+		local op, args = c.op, c.args or {}
+		if op == "all" then
+			local answers = array({})
+			for _, each in ipairs(args) do
+				table.insert(answers, execute(each))
 			end
-			error(answer, 0)
+			return { ok = true, values = { answers } }
 		end
-		local meanwhile = {}
-		if context.action then
-			if same(run[slot], started) then
-				if not same(ctx.state, started) then
-					table.insert(run.acted, { name = context.action, args = deep_copy(context.args) })
-				end
-				run[slot] = ctx.state
-			else
-				run.dropped += 1
-			end
-		elseif not same(ctx.state, started) then
-			-- The actions taken while it ran, carried out again on what it
-			-- left, as the host's run does.
-			if slot == "state" then
-				table.move(run.acted, seen + 1, #run.acted, 1, meanwhile)
-			end
-			run[slot] = ctx.state
+		local f = fakes[op]
+		if f == nil then
+			return { ok = false, error = "this test's run gives no " .. op }
 		end
-		for _, line in ipairs(ctx._logs) do
+		local results = table.pack(pcall(f, args))
+		if not results[1] then
+			return { ok = false, error = tostring(results[2]) }
+		end
+		local values = {}
+		for i = 2, results.n do
+			local value = results[i]
+			if value == nil then
+				value = json.null
+			end
+			values[i - 1] = value
+		end
+		return { ok = true, values = values }
+	end
+	-- One actor a model: the run's, and a job's.
+	local actors = {}
+	local function actor_of(slot)
+		local found = actors[slot]
+		-- A test may set the model whole: the actor takes it.
+		if found == nil or rawget(run, slot) ~= found.model then
+			found = tau._actor(plugin, run[slot] or {})
+			actors[slot] = found
+			run[slot] = found.model
+		end
+		return found
+	end
+	local next_id = 0
+	-- What a step did, done: its given commands carried out, its log kept.
+	local function after(step)
+		for _, given in ipairs(step.given) do
+			local answer = execute(given)
+			if not answer.ok then
+				error(answer.error, 0)
+			end
+		end
+		for _, line in ipairs(step.logs) do
 			table.insert(run.logs, line)
 		end
-		for _, acted in ipairs(meanwhile) do
-			call_in({ action = acted.name, args = acted.args }, plugin.actions[acted.name], deep_copy(acted.args))
-		end
-		return answer
 	end
-	local function call(hook, ...)
-		return call_in({}, hook, ...)
+	-- `hook(input, model, env)` as the host calls it (ADR 0056): a step,
+	-- and while it awaits, the command carried out on the fakes and its
+	-- answer taken in the next, to its end. `context.run` is `env.run`
+	-- in place of the run's own, `context.slot` the model ("state", or
+	-- "job_state" for a job), `context.job` gives a job's reaches, and
+	-- `context.drafts` an action's drafts.
+	local function call_in(context, hook, input)
+		local slot = context.slot or "state"
+		local actor = actor_of(slot)
+		local env = {
+			run = context.run or run.data.run,
+			now = run.data.now,
+			settings = run.data.settings,
+			models = run.data.models,
+			drafts = context.drafts,
+		}
+		next_id += 1
+		local id = "h" .. next_id
+		local was_job = in_job
+		in_job = context.job == true
+		local step = actor.deliver({ kind = "call", id = id, hook = hook, input = input, env = env })
+		after(step)
+		while step.waits[id] ~= nil do
+			local answer = execute(step.waits[id])
+			answer.kind, answer.id = "answer", id
+			step = actor.deliver(answer)
+			after(step)
+		end
+		in_job = was_job
+		local ended = step.ended[id]
+		if ended.error ~= nil then
+			error(ended.error, 0)
+		end
+		if ended.value == json.null then
+			return nil
+		end
+		return ended.value
+	end
+	local function call(hook, input)
+		return call_in({}, hook, input)
+	end
+	-- A drawing of the model: `view(model, env)`, or `hook(input, model,
+	-- env)`, from a frozen copy.
+	local function draw(hook, input)
+		local env = { run = run.data.run, now = run.data.now, settings = run.data.settings, models = run.data.models }
+		return actor_of("state").draw_with(hook, input, env)
 	end
 	-- Whether a job's reaches are on: `t.hooks` keeps it for each hook it
 	-- has under way.
@@ -762,36 +804,29 @@ function test.run(spec)
 	function run:notify(notice)
 		return call(need(plugin.notify, "notify"), notice)
 	end
-	-- `f(ctx)` with the ctx a hook outside any run gets: for a test of a
-	-- module the plugin's hooks call.
+	-- `f(model, env)` as a hook outside any run: for a test of a module
+	-- the plugin's hooks call, which may await.
 	function run:call(f)
-		return call_in({ run = {} }, function(_, ctx)
-			return f(ctx)
+		return call_in({ run = {} }, function(_, model, env)
+			return f(model, env)
 		end, nil)
 	end
 	function run:job(name)
 		local job = need((plugin.jobs or {})[name], "job " .. name)
 		-- A job is outside any run, with a state of its own: `run.job_state`.
-		return call_in({ run = {}, slot = "job_state", job = true }, function(_, ctx)
-			return job.run(ctx)
-		end, nil)
+		return call_in({ run = {}, slot = "job_state", job = true }, job.run, nil)
 	end
 	function run:view()
-		local view = need(plugin.view, "view")
-		return call(function(_, ctx)
-			return view(ctx.state, ctx)
-		end, nil)
+		return draw(need(plugin.view, "view"), nil)
 	end
 	-- The settings page, of `settings` or the run's.
 	function run:settings_view(settings)
 		local page = need(plugin.settings and plugin.settings.view, "settings.view")
-		return call(function(input, ctx)
-			return page(input, ctx)
-		end, settings or run.data.settings)
+		return draw(page, settings or run.data.settings)
 	end
 	function run:action(name, args)
 		args = args or {}
-		return call_in({ action = name, args = args }, need((plugin.actions or {})[name], "action " .. name), args)
+		return call_in({ drafts = args.drafts }, need((plugin.actions or {})[name], "action " .. name), args)
 	end
 	-- `call` is the call's id, `ctx.run.call`: "call_1" when not given.
 	function run:tool(name, args, call_id)
@@ -818,16 +853,12 @@ function test.run(spec)
 		return call(page, given)
 	end
 	function run:repo_data()
-		return call(function(_, ctx)
-			return need(plugin.repo_data, "repo_data")(ctx)
-		end, nil)
+		return call(need(plugin.repo_data, "repo_data"), nil)
 	end
 	-- What it keeps of the app, the page it draws of it, and the commands
 	-- it lists of it (ADR 0050, gap K).
 	function run:app()
-		return call(function(_, ctx)
-			return need(plugin.app, "app")(ctx)
-		end, nil)
+		return call(need(plugin.app, "app"), nil)
 	end
 	function run:app_page(app)
 		return call(need(plugin.page, "page"), app)
@@ -863,9 +894,7 @@ function test.run(spec)
 	function run:card(name, c, result)
 		local tool = need((plugin.tools or {})[name], "tool " .. name)
 		local card = need(tool.card, "card for " .. name)
-		return call(function(input, ctx)
-			return card(input.call, input.result, ctx)
-		end, { call = c, result = result })
+		return draw(card, { call = c, result = result })
 	end
 	return run
 end
@@ -1401,16 +1430,14 @@ end
 -- What it waits on pauses it: each function of `spec.run`'s `jev`,
 -- `tools`, `http` and `infer`, called from a hook, waits until the rule
 -- `answer` calls it, with `draw` after its arguments, or `fail` fails
--- it. So ways in can be under way at once, as on the host, sharing what
--- the host shares: a plugin's store is taken in turns (no way in starts
--- while another holds it), files and a run's state are shared at once.
+-- it. So ways in can be under way at once, as on the host (ADR 0056):
+-- each takes its steps in turn, and between two of one's steps, while it
+-- awaits, any other may take its own, with the one model and the store.
 -- A hook that raises fails the test, unless `spec.may_fail(hook, why)`.
 -- `spec.invariant(world)` holds after each step: `world.run` (the fake
 -- run, its stores, files and state), `world.under_way` (the ways in
 -- waiting, each `{ hook, kind }`) and `world.failed`.
 function test.hooks(name, spec, opts)
-	local plugin = test.load()
-	local stored = plugin.uses and plugin.uses.store
 	local function waiting(kind, answer)
 		return function(...)
 			if not coroutine.isyieldable() then
@@ -1465,7 +1492,6 @@ function test.hooks(name, spec, opts)
 		rules[hook] = {
 			weight = entry.weight or 1,
 			run = function(world, draw)
-				test.assume(not (stored and #world.under_way > 0))
 				local way = {
 					hook = hook,
 					in_job = false,

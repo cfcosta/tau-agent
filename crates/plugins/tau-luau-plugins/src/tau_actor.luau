@@ -184,6 +184,21 @@ function cmd.infer(request)
 	return command("infer", request)
 end
 
+-- An answer's values, JSON's null as nil: a key the store does not have
+-- reads as nil.
+local function unpack_values(values)
+	values = values or {}
+	local out = {}
+	local n = 0
+	for i, value in pairs(values) do
+		if type(i) == "number" then
+			n = math.max(n, i)
+			out[i] = if value == json.null then nil else value
+		end
+	end
+	return table.unpack(out, 1, n)
+end
+
 -- What awaiting needs to know of the step it runs in.
 local current = nil
 
@@ -206,7 +221,7 @@ function tau.await(c)
 	if answer.ok == false then
 		error(answer.error, 2)
 	end
-	return table.unpack(answer.values or {})
+	return unpack_values(answer.values)
 end
 
 -- Every command's answer, in order, as `{ ok, values, error }` each: they
@@ -278,7 +293,7 @@ function tau._infer_with_tools(args)
 		if answer.ok == false then
 			error(answer.error, 2)
 		end
-		local turn_answer = answer.values[1]
+		local turn_answer = unpack_values(answer.values)
 		text = turn_answer.text or ""
 		local asked = turn_answer.calls or {}
 		if #asked == 0 then
@@ -393,7 +408,8 @@ function tau._actor(plugin, model)
 			if actor.under_way[msg.id] ~= nil then
 				error("hook " .. tostring(msg.id) .. " is under way already")
 			end
-			local hook = hook_at(plugin, msg.path)
+			-- The harness gives the hook itself; the host, its path.
+			local hook = msg.hook or hook_at(plugin, msg.path or {})
 			if type(hook) ~= "function" then
 				return {
 					model = actor.model,
@@ -432,7 +448,11 @@ function tau._actor(plugin, model)
 	-- What `view` (or another drawing at `path`) draws from a frozen copy
 	-- of the model: drawing waits on nothing.
 	function actor.draw(path, input, env)
-		local hook = hook_at(plugin, path)
+		return actor.draw_with(hook_at(plugin, path), input, env)
+	end
+	-- `draw`, of the function `hook`: `view(model, env)`, or with an
+	-- input, `hook(input, model, env)`.
+	function actor.draw_with(hook, input, env)
 		if type(hook) ~= "function" then
 			return json.null
 		end
@@ -446,7 +466,10 @@ function tau._actor(plugin, model)
 			end
 			return value
 		end
-		return hook(input == nil and freeze(frozen) or input, freeze(frozen), env or {})
+		if input == nil then
+			return hook(freeze(frozen), env or {})
+		end
+		return hook(input, freeze(frozen), env or {})
 	end
 	return actor
 end
