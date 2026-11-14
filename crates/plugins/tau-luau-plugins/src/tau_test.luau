@@ -268,15 +268,17 @@ function test.run(spec)
 	stores.test = kept
 	local woken = {}
 	if plugin.uses and plugin.uses.store then
+		-- Values go in and come out as copies, as the host's JSON does: a
+		-- table read and then changed is not what the store keeps.
 		fakes.store_get = function(args)
 			local value = kept[args.key]
 			if value == nil then
 				return json.null
 			end
-			return value
+			return deep_copy(value)
 		end
 		fakes.store_put = function(args)
-			kept[args.key] = args.value
+			kept[args.key] = deep_copy(args.value)
 		end
 		fakes.store_delete = function(args)
 			kept[args.key] = nil
@@ -291,7 +293,7 @@ function test.run(spec)
 			table.sort(keys)
 			local found = array({})
 			for _, key in ipairs(keys) do
-				table.insert(found, { key = key, value = kept[key] })
+				table.insert(found, { key = key, value = deep_copy(kept[key]) })
 			end
 			return found
 		end
