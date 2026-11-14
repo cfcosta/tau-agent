@@ -928,6 +928,52 @@ pub fn last_states<'a>(
     last
 }
 
+/// A plugin's journal still open where `records` end (ADR 0056): the
+/// model when no hook awaited, the version that took it, and the
+/// messages taken since, in order.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Journal {
+    pub model: Value,
+    pub digest: String,
+    pub messages: Vec<Value>,
+}
+
+/// Each plugin's journal still open where `records` end, oldest first: a
+/// hook of it was under way when its run stopped.
+pub fn open_journals<'a>(
+    records: impl IntoIterator<Item = &'a Value>,
+) -> std::collections::HashMap<String, Journal> {
+    let mut open = std::collections::HashMap::new();
+    for record in records {
+        match serde_json::from_value::<Record>(record.clone()) {
+            Ok(Record::Checkpoint {
+                plugin,
+                model,
+                digest,
+            }) => {
+                open.insert(
+                    plugin,
+                    Journal {
+                        model,
+                        digest,
+                        messages: Vec::new(),
+                    },
+                );
+            }
+            Ok(Record::Taken { plugin, message }) => {
+                if let Some(journal) = open.get_mut(&plugin) {
+                    journal.messages.push(message);
+                }
+            }
+            Ok(Record::Quiet { plugin }) => {
+                open.remove(&plugin);
+            }
+            _ => {}
+        }
+    }
+    open
+}
+
 /// A Luau plugin's settings page as the host drew it, for the settings
 /// it shows.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -954,6 +1000,19 @@ pub struct LuauSettings {
 pub enum Record {
     /// A plugin's state for the run, whole, after a hook changed it.
     State { plugin: String, state: Value },
+    /// The journal of a plugin's mailbox opens (ADR 0056): a hook of it
+    /// awaits, and `model` is the model when none did, which the version
+    /// `digest` names. What it takes from here is kept, so a restart can
+    /// take it again to where it was.
+    Checkpoint {
+        plugin: String,
+        model: Value,
+        digest: String,
+    },
+    /// A message the mailbox took while its journal is open.
+    Taken { plugin: String, message: Value },
+    /// No hook of it awaits any more: the journal closes.
+    Quiet { plugin: String },
     /// What its `view` drew from that state.
     View { plugin: String, view: Value },
     /// Lines it wrote with `ctx.log`.

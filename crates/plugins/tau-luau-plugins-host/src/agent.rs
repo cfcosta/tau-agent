@@ -182,6 +182,9 @@ struct RunState {
     /// Each plugin's model as the run inherits it, for its mailbox to
     /// start from.
     models: HashMap<String, Value>,
+    /// Each plugin's journal the run inherits open: a hook of it was under
+    /// way when the run stopped, and its mailbox takes it again.
+    journals: HashMap<String, tau_luau_plugins::Journal>,
     /// Each plugin's mailbox (ADR 0056), with the digest of the version
     /// its actor runs.
     mailboxes: HashMap<String, (String, Arc<Mailbox>)>,
@@ -705,13 +708,48 @@ impl Inner {
                 .cloned()
                 .unwrap_or_else(|| json!({})),
         };
+        // A journal left open is taken again by the version that kept it;
+        // another starts from the run's last model, and closes it.
+        let journal = state.journals.remove(&name);
+        let (replay, model) = match journal {
+            Some(journal) if journal.digest == active.loaded.digest => {
+                let model = journal.model.clone();
+                (Some(journal), model)
+            }
+            Some(_) => {
+                ctx.publish(&Record::Quiet {
+                    plugin: name.clone(),
+                })
+                .await;
+                (None, model)
+            }
+            None => (None, model),
+        };
         let actor = Actor::new(&active.loaded.modules, "plugin", &model)?;
         let keep = Arc::new(RunKeep {
             ctx: ctx.clone(),
             plugin: name.clone(),
             failures: state.failures.clone(),
+            digest: active.loaded.digest.clone(),
+            journal: std::sync::Mutex::new(JournalKept {
+                quiet: model.clone(),
+                open: replay.is_some(),
+                pending: Vec::new(),
+            }),
         });
-        let mut mailbox = Mailbox::new(actor, keep);
+        let mut mailbox = match &replay {
+            Some(journal) => {
+                let messages: Vec<crate::actor::Message> = journal
+                    .messages
+                    .iter()
+                    .filter_map(|message| {
+                        serde_json::from_value(message.clone()).ok()
+                    })
+                    .collect();
+                Mailbox::replayed(actor, &messages, keep, RESUME_LIMIT)?
+            }
+            None => Mailbox::new(actor, keep),
+        };
         if active.loaded.declaration.hooks.view {
             let context = self.context(&ctx.run, state, active);
             mailbox = mailbox.drawing(
@@ -722,6 +760,30 @@ impl Inner {
         let mailbox = Arc::new(mailbox);
         if let Some(dispatch) = &self.dispatch {
             dispatch.registry.hold_live(&ctx.run.0, &name, &mailbox);
+        }
+        // The hooks the journal had under way go on, each awaiting what
+        // it awaited: what answers them now, they take.
+        if replay.is_some() {
+            let mut context = self.context(&ctx.run, state, active);
+            context.store = self.store_of(active).await;
+            for id in mailbox.waiting().await?.into_keys() {
+                let executor = crate::runtime::Executor::new(
+                    &active.loaded,
+                    &context,
+                    self.reach_with_files(active, ctx),
+                );
+                let mailbox = mailbox.clone();
+                tokio::spawn(async move {
+                    mailbox
+                        .resume(
+                            &id,
+                            &executor,
+                            RESUME_LIMIT,
+                            &tokio_util::sync::CancellationToken::new(),
+                        )
+                        .await
+                });
+            }
         }
         state
             .mailboxes
@@ -815,10 +877,75 @@ struct RunKeep {
     /// The run's count of failed hooks: a view that fails counts, and a
     /// plugin that is off is not drawn.
     failures: Failures,
+    /// The version its actor runs, which its journal names.
+    digest: String,
+    journal: std::sync::Mutex<JournalKept>,
 }
+
+/// What a run keeps of a mailbox's journal: the model when no hook last
+/// awaited, whether its journal is open in the run's records, and the
+/// messages taken since it was last quiet, kept only once a hook awaits.
+struct JournalKept {
+    quiet: Value,
+    open: bool,
+    pending: Vec<crate::actor::Message>,
+}
+
+/// How long a step of a hook taken again from its journal may run.
+const RESUME_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
 
 #[async_trait]
 impl Keep for RunKeep {
+    async fn taken(&self, message: &crate::actor::Message) {
+        self.journal
+            .lock()
+            .expect("not poisoned")
+            .pending
+            .push(message.clone());
+    }
+
+    async fn busy(&self) {
+        let (opens, taken) = {
+            let mut journal = self.journal.lock().expect("not poisoned");
+            let opens = (!journal.open).then(|| journal.quiet.clone());
+            journal.open = true;
+            (opens, std::mem::take(&mut journal.pending))
+        };
+        if let Some(model) = opens {
+            self.ctx
+                .publish(&Record::Checkpoint {
+                    plugin: self.plugin.clone(),
+                    model,
+                    digest: self.digest.clone(),
+                })
+                .await;
+        }
+        for message in taken {
+            self.ctx
+                .publish(&Record::Taken {
+                    plugin: self.plugin.clone(),
+                    message: serde_json::to_value(&message).unwrap_or_default(),
+                })
+                .await;
+        }
+    }
+
+    async fn quiet(&self, model: &Value) {
+        let closes = {
+            let mut journal = self.journal.lock().expect("not poisoned");
+            journal.quiet = model.clone();
+            journal.pending.clear();
+            std::mem::replace(&mut journal.open, false)
+        };
+        if closes {
+            self.ctx
+                .publish(&Record::Quiet {
+                    plugin: self.plugin.clone(),
+                })
+                .await;
+        }
+    }
+
     async fn stepped(
         &self,
         step: &crate::actor::Step,
@@ -1233,6 +1360,7 @@ fn inherit(plan: &RunPlan, state: &mut RunState) {
     for (plugin, kept) in tau_luau_plugins::last_states(plan.records()) {
         state.models.insert(plugin, kept);
     }
+    state.journals = tau_luau_plugins::open_journals(plan.records());
 }
 
 /// The plugins' part in one run.

@@ -237,6 +237,11 @@ impl Fold for State {
                     ask.outcome = outcome;
                 }
             }
+            // The mailbox's journal is the run's to take again after a
+            // restart; an interface shows the state.
+            Record::Checkpoint { .. }
+            | Record::Taken { .. }
+            | Record::Quiet { .. } => {}
         }
     }
 }

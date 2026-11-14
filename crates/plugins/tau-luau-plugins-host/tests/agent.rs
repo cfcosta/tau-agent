@@ -1960,3 +1960,160 @@ fn an_archive_needs_its_use() {
     });
     assert!(failed);
 }
+
+/// A plugin whose action awaits Jev before it notes the answer, and
+/// whose `start` notes that it started, for its mailbox to be made.
+const NOTER: &str = r#"
+local tau = require("tau")
+return tau.plugin { uses = { jev = true },
+  start = function(_, model) model.started = true end,
+  actions = {
+    note = function(_, model)
+      local answer = tau.await(tau.cmd.jev.noul({ question = "Is it done?" }))
+      model.noted = answer.probability
+    end,
+  },
+}
+"#;
+
+/// A run that stopped with a hook awaiting Jev keeps it in its journal
+/// (ADR 0056): the model when none awaited, and the message the hook
+/// began on. Resumed, the run's mailbox takes the journal again, the
+/// hook awaits Jev once more, and with its answer ends as it would have.
+#[test]
+fn a_hook_under_way_when_its_run_stopped_goes_on_when_it_resumes() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("first"))
+        .turn(|t| t.text("again"));
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
+    let noter = active("noter", NOTER);
+    let digest = noter.loaded.digest.clone();
+    let jev = tau_jev::fake::FakeJev::nouls(|_| 0.75);
+    let plugins = || {
+        LuauPlugins::new(
+            vec![active("noter", NOTER)],
+            json!({ "kind": "main", "repo": "r", "model": "m" }),
+            Some(std::sync::Arc::new(jev.clone())),
+        )
+    };
+    let agent = Agent::new(llm.clone()).plugin(plugins());
+    let outcome = block_on_io(agent.run("first", &store)).unwrap();
+    // What a run that stopped as `note` awaited Jev left: its journal
+    // open, from the model as `start` left it.
+    let started = json!({ "started": true });
+    let journal = [
+        json!(Record::Checkpoint {
+            plugin: "noter".into(),
+            model: started.clone(),
+            digest,
+        }),
+        json!(Record::Taken {
+            plugin: "noter".into(),
+            message: json!({
+                "kind": "call",
+                "id": "h9",
+                "path": ["actions", "note"],
+                "input": {},
+                "env": {},
+            }),
+        }),
+    ];
+    for record in journal {
+        block_on_io(store.append_turn(
+            &outcome.run.0,
+            &[tau_store::Entry::Plugin {
+                plugin: NAME.into(),
+                body: record.to_string(),
+            }],
+            tau_store::TurnUsage::default(),
+        ))
+        .unwrap();
+    }
+    let agent = Agent::new(llm.clone()).plugin(plugins());
+    block_on_io(agent.resume(&outcome.run).run("again", &store)).unwrap();
+    // The hook goes on beside the run: its answer comes when Jev's does.
+    let noted = (0..200).find_map(|_| {
+        let noted =
+            records(&store, &outcome.run)
+                .iter()
+                .rev()
+                .find_map(|record| match record {
+                    Record::State { plugin, state } if plugin == "noter" => {
+                        state.get("noted").cloned()
+                    }
+                    _ => None,
+                });
+        if noted.is_none() {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        noted
+    });
+    assert_eq!(noted, Some(json!(0.75)));
+    // And the journal closes.
+    assert!(matches!(
+        records(&store, &outcome.run)
+            .iter()
+            .rev()
+            .find(|record| matches!(
+                record,
+                Record::Quiet { .. } | Record::Checkpoint { .. }
+            )),
+        Some(Record::Quiet { .. })
+    ));
+}
+
+/// A check that awaits Jev as the run would stop.
+const CHECKER: &str = r#"
+local tau = require("tau")
+return tau.plugin { uses = { jev = true },
+  before_stop = function(_, model)
+    local answer = tau.await(tau.cmd.jev.noul({ question = "Is it done?" }))
+    model.checked = answer.probability
+  end,
+}
+"#;
+
+/// A plugin whose hook awaits nothing.
+const STILL: &str = r#"
+local tau = require("tau")
+return tau.plugin { start = function(_, model) model.started = true end }
+"#;
+
+/// A run keeps a mailbox's journal only while a hook of it awaits (ADR
+/// 0056): the model before, each message taken meanwhile, and that it
+/// closed; a run whose hooks await nothing keeps none.
+#[test]
+fn a_run_keeps_a_journal_only_while_a_hook_awaits() {
+    let llm = ScriptedModel::new().turn(|t| t.text("done"));
+    let store = block_on_io(tau_store_sqlite::memory()).unwrap();
+    let jev = tau_jev::fake::FakeJev::nouls(|_| 0.5);
+    let plugins = LuauPlugins::new(
+        vec![active("checker", CHECKER), active("still", STILL)],
+        json!({ "kind": "main", "repo": "r", "model": "m" }),
+        Some(std::sync::Arc::new(jev)),
+    );
+    let agent = Agent::new(llm).plugin(plugins);
+    let outcome = block_on_io(agent.run("check", &store)).unwrap();
+    let kinds: Vec<(String, &'static str)> = records(&store, &outcome.run)
+        .into_iter()
+        .filter_map(|record| match record {
+            Record::Checkpoint { plugin, .. } => Some((plugin, "checkpoint")),
+            Record::Taken { plugin, message } => Some((
+                plugin,
+                if message["kind"] == "call" {
+                    "call"
+                } else {
+                    "answer"
+                },
+            )),
+            Record::Quiet { plugin } => Some((plugin, "quiet")),
+            _ => None,
+        })
+        .collect();
+    let checker = |kind: &'static str| ("checker".to_owned(), kind);
+    assert_eq!(
+        kinds,
+        [checker("checkpoint"), checker("call"), checker("quiet")],
+        "the call that awaited, and the close once its answer ended it"
+    );
+}

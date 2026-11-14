@@ -48,6 +48,9 @@ pub trait Keep: Send + Sync {
     }
     /// The model, with no hook under way: what a restart starts from.
     async fn quiet(&self, _model: &Value) {}
+    /// A step ended with a hook under way: what it took is a restart's to
+    /// take again.
+    async fn busy(&self) {}
     /// The commands a step gave could not be carried out.
     async fn not_given(&self, _why: &str) {}
 }
@@ -232,6 +235,8 @@ impl Mailbox {
         self.keep.stepped(&step, drawn, place.as_deref()).await;
         if actor.waiting()?.is_empty() {
             self.keep.quiet(&step.model).await;
+        } else {
+            self.keep.busy().await;
         }
         Ok(step)
     }

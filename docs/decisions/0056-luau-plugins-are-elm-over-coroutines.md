@@ -297,13 +297,23 @@ holds half of it:
 
 Not yet built, each to come on this:
 
-- The journal is not kept with a run's records, so a restart does not
-  bring back a hook under way yet; replay has nothing to read.
 - `tau.start_chat`, `tau.steer_chat`, `tau.allow` and `tau.ask` are still
   answers with a "then" action, not commands awaited where they are asked.
 - The harness has no `run:hook` with pending commands, no replay as a
   property and no log fixtures; `t.run` runs a hook to its end against
   the fakes, and `t.hooks` pauses on them.
+
+## As built: the journal kept with a run, 2026-11-14
+
+A run keeps a mailbox's journal in its records only while a hook of it
+awaits: `Record::Checkpoint` (the model when none awaited, and the
+version's digest) as a step leaves one under way, `Record::Taken` for
+each message taken from the last quiet model on, and `Record::Quiet` once
+none awaits. A model that never awaits keeps no more than its states.
+A run that inherits a journal still open, as when it stopped with a hook
+awaiting, takes it again by the same version: the hooks come back under
+way, each carried on from what it awaited, beside the run. Another
+version starts from the run's last state, and closes the journal.
 
 ## As built: actions on a run not going on, 2026-11-14
 
