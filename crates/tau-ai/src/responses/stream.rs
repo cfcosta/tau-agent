@@ -169,13 +169,23 @@ use crate::{
 pub struct StreamProcessor {
     model: String,
     timestamp: Timestamp,
-    started: bool,
-    finished: bool,
-    has_tool_call: bool,
+    phase: Phase,
     next_index: usize,
     response_id: Option<String>,
     error_code: Option<String>,
     slots: HashMap<u64, Slot>,
+}
+
+/// Where the response is: `Start` goes out with the first known frame,
+/// and nothing goes out after the terminal event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    Waiting,
+    /// `tool_call`: a function call was opened, so a `stop` is `ToolUse`.
+    Streaming {
+        tool_call: bool,
+    },
+    Finished,
 }
 
 /// The state of one still-open `output_index`, keyed by that index (not
@@ -235,9 +245,7 @@ impl StreamProcessor {
         Self {
             model,
             timestamp,
-            started: false,
-            finished: false,
-            has_tool_call: false,
+            phase: Phase::Waiting,
             next_index: 0,
             response_id: None,
             error_code: None,
@@ -249,7 +257,7 @@ impl StreamProcessor {
     /// order. A no-op once a terminal event has already been produced.
     pub fn push(&mut self, frame: &Value) -> Vec<AssistantEvent> {
         let mut events = Vec::new();
-        if self.finished {
+        if self.phase == Phase::Finished {
             return events;
         }
         let Some(frame_type) = frame.get("type").and_then(Value::as_str) else {
@@ -307,11 +315,11 @@ impl StreamProcessor {
     /// situation (`openai-codex-responses.ts:1414`).
     pub fn close(&mut self) -> Vec<AssistantEvent> {
         let mut events = Vec::new();
-        if self.finished {
+        if self.phase == Phase::Finished {
             return events;
         }
         self.ensure_start(&mut events);
-        self.finished = true;
+        self.phase = Phase::Finished;
         // Nothing but `Start` went out: the turn can be sent again.
         let class = classify(&Failure::Transport {
             before_first_event: self.next_index == 0,
@@ -328,7 +336,7 @@ impl StreamProcessor {
 
     /// Whether a terminal event has been produced.
     pub fn is_finished(&self) -> bool {
-        self.finished
+        self.phase == Phase::Finished
     }
 
     /// The response id, once known. Reliable after a successful
@@ -349,10 +357,10 @@ impl StreamProcessor {
     }
 
     fn ensure_start(&mut self, events: &mut Vec<AssistantEvent>) {
-        if self.started {
+        if self.phase != Phase::Waiting {
             return;
         }
-        self.started = true;
+        self.phase = Phase::Streaming { tool_call: false };
         events.push(AssistantEvent::Start {
             model: self.model.clone(),
             response_id: self.response_id.clone(),
@@ -418,7 +426,7 @@ impl StreamProcessor {
                     id: id.clone(),
                     name: name.clone(),
                 });
-                self.has_tool_call = true;
+                self.phase = Phase::Streaming { tool_call: true };
                 let initial_args = item
                     .get("arguments")
                     .and_then(Value::as_str)
@@ -695,11 +703,11 @@ impl StreamProcessor {
                 "Unexpected response status: {other}"
             )),
         };
-        self.finished = true;
+        let tool_call = self.phase == Phase::Streaming { tool_call: true };
+        self.phase = Phase::Finished;
         match outcome {
             TerminalOutcome::Done(reason) => {
-                let reason = if reason == DoneReason::Stop && self.has_tool_call
-                {
+                let reason = if reason == DoneReason::Stop && tool_call {
                     DoneReason::ToolUse
                 } else {
                     reason
@@ -755,7 +763,7 @@ impl StreamProcessor {
         } else {
             "Unknown error (no error details in response)".to_owned()
         };
-        self.finished = true;
+        self.phase = Phase::Finished;
         let class = classify(&Failure::Api {
             code: self.error_code.as_deref(),
             kind: error.and_then(|e| e.get("type")).and_then(Value::as_str),
@@ -789,7 +797,7 @@ impl StreamProcessor {
             .or_else(|| frame.get("detail").and_then(Value::as_str))
             .unwrap_or("");
         let code_text = code.unwrap_or("unknown");
-        self.finished = true;
+        self.phase = Phase::Finished;
         let class = classify(&Failure::Api {
             code,
             kind: field("type"),
