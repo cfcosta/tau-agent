@@ -167,6 +167,27 @@ local function duration_of(text)
 	return number * ({ s = 1, m = 60, h = 3600, d = 86400 })[unit]
 end
 
+-- `commit` on the table `store`, as the host's store does it: every
+-- write, only while every expected key holds its value.
+local function commit_on(store, args)
+	for key, value in pairs(args.expect or {}) do
+		local now = store[key]
+		if now == nil then
+			now = json.null
+		end
+		if not same(now, value) then
+			return false
+		end
+	end
+	for key, value in pairs(args.put or {}) do
+		store[key] = json.decode(json.encode(value))
+	end
+	for _, key in ipairs(args.delete or {}) do
+		store[key] = nil
+	end
+	return true
+end
+
 local function deep_copy(value)
 	if type(value) ~= "table" then
 		return value
@@ -291,6 +312,9 @@ function test.run(spec)
 		end
 		fakes.store_delete = function(args)
 			kept[args.key] = nil
+		end
+		fakes.store_commit = function(args)
+			return commit_on(kept, args)
 		end
 		fakes.store_list = function(args)
 			local keys = {}
@@ -576,6 +600,9 @@ function test.run(spec)
 		end)
 		fakes.repo_store_delete = job_only(function(args)
 			store(args)[args.key] = nil
+		end)
+		fakes.repo_store_commit = job_only(function(args)
+			return commit_on(store(args), args)
 		end)
 		fakes.repo_store_list = job_only(function(args)
 			local from, keys = store(args), {}

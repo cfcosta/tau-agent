@@ -2269,6 +2269,31 @@ async fn store_op(
                     .collect(),
             )
         }
+        // Writes that go in together, only while every key it expects
+        // still holds what it expects (ADR 0056): what a hook read, then
+        // awaited, then decided on, is still so, or nothing is written.
+        // A key it expects null is one the store does not have.
+        "commit" => {
+            let expected =
+                call.args["expect"].as_object().cloned().unwrap_or_default();
+            for (key, value) in &expected {
+                let now = session.get(key).await?.unwrap_or(Value::Null);
+                if now != *value {
+                    return Ok(Value::Bool(false));
+                }
+            }
+            for (key, value) in
+                call.args["put"].as_object().into_iter().flatten()
+            {
+                session.put(key, value.clone());
+            }
+            for key in call.args["delete"].as_array().into_iter().flatten() {
+                if let Some(key) = key.as_str() {
+                    session.delete(key);
+                }
+            }
+            Value::Bool(true)
+        }
         other => return Err(format!("the store has no `{other}`")),
     };
     Ok(value)

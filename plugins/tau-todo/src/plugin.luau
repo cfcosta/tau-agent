@@ -128,29 +128,56 @@ local STORE = {
 	end,
 }
 
+-- How many times a hook tries again when another run changed the issues
+-- while it read and decided.
+local TRIES = 8
+
 -- `f` as a hook whose writes go in together as it ends, or none of them
--- when it fails.
+-- when it fails: one commit, while `rev` is what it read first (ADR
+-- 0056). Every change bumps `rev`, so a commit that finds it moved finds
+-- another run's change since this one read, and writes nothing: the hook
+-- runs again, on the model as it was and the store as it is now.
 local function atomic(f)
 	return function(input, model, env)
 		local thread = coroutine.running()
 		if pending[thread] ~= nil then
 			return f(input, model, env)
 		end
-		-- `rev`, read first: a change reads the issues, then writes
-		-- them and bumps `rev` with no await between, so what it read
-		-- and what it writes are as near as they may be.
-		local rev = tau.await(cmd.store.get("rev"))
-		pending[thread] = { values = {}, order = {}, read = { rev = if rev == nil then false else rev } }
-		local results = table.pack(pcall(f, input, model, env))
-		local w = pending[thread]
-		pending[thread] = nil
-		if not results[1] then
-			error(results[2], 0)
+		local before = json.encode(model)
+		for _ = 1, TRIES do
+			local rev = tau.await(cmd.store.get("rev"))
+			pending[thread] = { values = {}, order = {}, read = { rev = if rev == nil then false else rev } }
+			local results = table.pack(pcall(f, input, model, env))
+			local w = pending[thread]
+			pending[thread] = nil
+			if not results[1] then
+				error(results[2], 0)
+			end
+			if #w.order == 0 then
+				return table.unpack(results, 2, results.n)
+			end
+			local put, delete = {}, array({})
+			for _, key in ipairs(w.order) do
+				local value = w.values[key]
+				if value == DELETED then
+					table.insert(delete, key)
+				else
+					put[key] = value
+				end
+			end
+			local expect = { rev = if rev == nil then json.null else rev }
+			if tau.await(cmd.store.commit({ expect = expect, put = put, delete = delete })) then
+				return table.unpack(results, 2, results.n)
+			end
+			-- Another run's change came first: the model as it was, in
+			-- place, and again.
+			local was = json.decode(before)
+			table.clear(model)
+			for key, value in pairs(was) do
+				model[key] = value
+			end
 		end
-		for _, key in ipairs(w.order) do
-			give(key, w.values[key])
-		end
-		return table.unpack(results, 2, results.n)
+		error("the issues kept changing under this call; try it again", 0)
 	end
 end
 

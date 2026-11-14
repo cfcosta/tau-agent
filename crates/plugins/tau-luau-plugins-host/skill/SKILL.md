@@ -335,32 +335,32 @@ why it failed. One that fails does not raise.
 
 `env` holds:
 
-| Field          | What it is                                                                                                                                                                                         |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Field          | What it is                                                                                                                                                                                  |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `env.run`      | `{ id, kind = "main" or "chat" or "sub_agent", repo, model, turn }`; in a tool's `call`, `call` too; in an action, `{ id, live, jev }`: whether the run is going on, and a Jev key is saved |
-| `env.now`      | `{ unix, iso, weekday, local, offset, ms }`; `weekday` is `"Monday"` and so on, `local` the host's time as `YYYY-MM-DD HH:MM`, `offset` its seconds from UTC, `ms` milliseconds since 1970         |
-| `env.settings` | what the person set, over `settings.default`; per repository when one keeps its own copy                                                                                                           |
-| `env.models`   | the plan's models, newest of each family: `{ id, family, efforts }`                                                                                                                                |
-| `env.drafts`   | in a command's `run`: what its popover's inputs say, by input id                                                                                                                                   |
+| `env.now`      | `{ unix, iso, weekday, local, offset, ms }`; `weekday` is `"Monday"` and so on, `local` the host's time as `YYYY-MM-DD HH:MM`, `offset` its seconds from UTC, `ms` milliseconds since 1970  |
+| `env.settings` | what the person set, over `settings.default`; per repository when one keeps its own copy                                                                                                    |
+| `env.models`   | the plan's models, newest of each family: `{ id, family, efforts }`                                                                                                                         |
+| `env.drafts`   | in a command's `run`: what its popover's inputs say, by input id                                                                                                                            |
 
 The commands, in `tau.cmd`:
 
-| Command                                                                     | What it does                                                                                                                                                                                        |
-| --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cmd.tool(name, args)`                                                      | in a tool's `call`: one of the tools `uses.tools` names, as `cmd.tool("read", { path = "a" })`; awaited, it gives the tool's answer                                                                |
-| `cmd.infer(request)`                                                        | with `uses.infer`: the person's model (below); awaited                                                                                                                                              |
-| `cmd.jev.ask`, `noul`, `choice`, `score`                                    | with `uses.jev`: Jev, in a tool's `call` and every run hook but `on_event`, booked to the run; awaited, it gives the answer and what it cost: `local answers, cost = tau.await(cmd.jev.ask(req))` |
-| `cmd.http.request(request)`                                                 | with `uses.network`: an HTTP request (below); awaited                                                                                                                                               |
-| `cmd.store.get(key)`, `list(prefix)`; `put(key, value)`, `delete(key)`      | with `uses.store`: the plugin's store in the repository the hook works in (below); reads awaited, writes given                                                                                     |
-| `cmd.transcript()`                                                          | with `uses.transcript`, in `before_request`, `after_tool_result` and `rewrite_context`: the run's conversation, whole (below); in `rewritten`, what the rewrite replaced; in `run_end`, the run's conversation as it ended; awaited |
-| `cmd.measure(rewrite)`                                                      | in `rewrite_context`: the bytes of JSON before and after `rewrite` (above); awaited                                                                                                                 |
-| `cmd.archive.path(kind)`; `cmd.archive.write(path, text)`                   | with `uses.archive`: a new file's path in tau's archive of the repository, awaited; and writing it, once, for its owner alone, given                                                               |
-| `cmd.files.*`                                                               | with `uses.files`: `read`, `list`, `image`, `frontmatter`, `roots`, `remote`, `repositories`, `repository`, awaited; `write`, `remove`, `rename`, `mkdir`, given (below)                            |
-| `cmd.blobs.put_file(path)`                                                  | with `uses.files`: keeps a file's bytes in the run's repository, for `ui.image` (below); awaited                                                                                                    |
-| `cmd.time["local"](at)`, `cmd.time.parse(text)`, `cmd.time.duration(text)`  | the host's local time: writes `at` (seconds since 1970) as `YYYY-MM-DD HH:MM`, reads one back, and reads `90m`, `2h` or `3d`; `nil` when they are none; awaited                                     |
-| `cmd.secrets.has(name)`; `cmd.secrets.forget(name)`                         | whether a secret is set, awaited; emptying it, given (below)                                                                                                                                        |
-| `cmd.notice{ title, body }`                                                 | in `notify`: a notice on the desktop, whose click opens its chat; given                                                                                                                             |
-| `cmd.repos()`, `cmd.stores(repo)`, `cmd.chats.wake(run, text)`              | in a job, with `uses.chats`: the repositories the plugin keeps a store in, each one's store, and waking a chat (below); awaited, but for a store's writes                                          |
+| Command                                                                    | What it does                                                                                                                                                                                                                        |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cmd.tool(name, args)`                                                     | in a tool's `call`: one of the tools `uses.tools` names, as `cmd.tool("read", { path = "a" })`; awaited, it gives the tool's answer                                                                                                 |
+| `cmd.infer(request)`                                                       | with `uses.infer`: the person's model (below); awaited                                                                                                                                                                              |
+| `cmd.jev.ask`, `noul`, `choice`, `score`                                   | with `uses.jev`: Jev, in a tool's `call` and every run hook but `on_event`, booked to the run; awaited, it gives the answer and what it cost: `local answers, cost = tau.await(cmd.jev.ask(req))`                                   |
+| `cmd.http.request(request)`                                                | with `uses.network`: an HTTP request (below); awaited                                                                                                                                                                               |
+| `cmd.store.get(key)`, `list(prefix)`; `put(key, value)`, `delete(key)`     | with `uses.store`: the plugin's store in the repository the hook works in (below); reads awaited, writes given                                                                                                                      |
+| `cmd.transcript()`                                                         | with `uses.transcript`, in `before_request`, `after_tool_result` and `rewrite_context`: the run's conversation, whole (below); in `rewritten`, what the rewrite replaced; in `run_end`, the run's conversation as it ended; awaited |
+| `cmd.measure(rewrite)`                                                     | in `rewrite_context`: the bytes of JSON before and after `rewrite` (above); awaited                                                                                                                                                 |
+| `cmd.archive.path(kind)`; `cmd.archive.write(path, text)`                  | with `uses.archive`: a new file's path in tau's archive of the repository, awaited; and writing it, once, for its owner alone, given                                                                                                |
+| `cmd.files.*`                                                              | with `uses.files`: `read`, `list`, `image`, `frontmatter`, `roots`, `remote`, `repositories`, `repository`, awaited; `write`, `remove`, `rename`, `mkdir`, given (below)                                                            |
+| `cmd.blobs.put_file(path)`                                                 | with `uses.files`: keeps a file's bytes in the run's repository, for `ui.image` (below); awaited                                                                                                                                    |
+| `cmd.time["local"](at)`, `cmd.time.parse(text)`, `cmd.time.duration(text)` | the host's local time: writes `at` (seconds since 1970) as `YYYY-MM-DD HH:MM`, reads one back, and reads `90m`, `2h` or `3d`; `nil` when they are none; awaited                                                                     |
+| `cmd.secrets.has(name)`; `cmd.secrets.forget(name)`                        | whether a secret is set, awaited; emptying it, given (below)                                                                                                                                                                        |
+| `cmd.notice{ title, body }`                                                | in `notify`: a notice on the desktop, whose click opens its chat; given                                                                                                                                                             |
+| `cmd.repos()`, `cmd.stores(repo)`, `cmd.chats.wake(run, text)`             | in a job, with `uses.chats`: the repositories the plugin keeps a store in, each one's store, and waking a chat (below); awaited, but for a store's writes                                                                           |
 
 `tau.log(text)` writes a line on the plugin's page, never for the model.
 It needs no `give`.
@@ -943,6 +943,7 @@ local function step(model, event)
   end
 end
 ```
+
 - `machine:is(state, name)`, `machine:handles(state, event)`,
   `machine:shape(state)`, `machine:tags()` and `machine:events()` read it.
 
@@ -1097,6 +1098,7 @@ effects)` holds after each. A failure notes its events as a `t.case`
     end,
   })
   ```
+
 - A property runs 100 cases unless it says (1000 at most), for 30 s at
   most, and gives the same result each time for the same files. Its
   cases share one VM: keep what a case changes inside it, not in the

@@ -239,3 +239,80 @@ fn a_plugins_repositories_are_read_back_from_its_files() {
     want.sort();
     assert_eq!(block_on_io(again.repos_of("todo")), want);
 }
+
+/// A plugin whose action commits `put` while `rev` is `expect`.
+const COMMITS: &str = r#"
+local tau = require("tau")
+return tau.plugin({
+  uses = { store = true },
+  actions = {
+    commit = function(args)
+      return tau.await(tau.cmd.store.commit({
+        -- A table holds no nil: none is `json.null`.
+        expect = { rev = if args.expect == nil then json.null else args.expect },
+        put = { rev = args.rev, note = args.note },
+        delete = { "gone" },
+      }))
+    end,
+  },
+})
+"#;
+
+/// A commit goes in whole while what it expects still holds, and else
+/// writes nothing and says so (ADR 0056): a key it expects nil is one the
+/// store does not have.
+#[test]
+fn a_commit_writes_only_while_what_it_expects_holds() {
+    block_on_io(async {
+        let files = Files {
+            source: COMMITS.into(),
+            ..Files::named("commits")
+        };
+        let loaded = load("commits", files).await.unwrap();
+        let kv = Arc::new(Kv::memory(Fuse::never()).await.unwrap());
+        let context = Context {
+            store: Some(StoreRef(kv.clone())),
+            ..Context::default()
+        };
+        let commit = |args: Value| {
+            let (loaded, context) = (loaded.clone(), context.clone());
+            async move {
+                let outcome = loaded
+                    .call(
+                        &Hook::Action("commit".into()),
+                        args,
+                        &context,
+                        Arc::new(NoReach),
+                        CancellationToken::new(),
+                    )
+                    .await;
+                assert_eq!(outcome.error, None);
+                outcome.value
+            }
+        };
+        let mut session = kv.session().await;
+        session.put("gone", json!(true));
+        session.commit().await.unwrap();
+        // No `rev` yet: one that expects none goes in.
+        assert_eq!(
+            commit(json!({ "rev": 1, "note": "first" })).await,
+            json!(true)
+        );
+        assert_eq!(
+            json!(kv.everything().await.unwrap()),
+            json!({ "rev": 1, "note": "first" })
+        );
+        // One that read before it, expecting none, writes nothing.
+        assert_eq!(
+            commit(json!({ "rev": 1, "note": "late" })).await,
+            json!(false)
+        );
+        assert_eq!(kv.everything().await.unwrap()["note"], json!("first"));
+        // One that read it goes in.
+        assert_eq!(
+            commit(json!({ "expect": 1, "rev": 2, "note": "second" })).await,
+            json!(true)
+        );
+        assert_eq!(kv.everything().await.unwrap()["rev"], json!(2));
+    });
+}

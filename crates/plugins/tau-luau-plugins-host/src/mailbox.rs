@@ -98,6 +98,7 @@ impl Mailbox {
     /// Runs the hook at `path` with `input` and `env` to its end: each of
     /// its steps may run for `limit`, and what it awaits is carried out by
     /// `executor`. A cancel delivers itself to the hook where it awaits.
+    #[allow(clippy::too_many_arguments, reason = "one hook of one model")]
     pub async fn call(
         &self,
         path: Vec<String>,

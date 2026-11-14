@@ -270,6 +270,19 @@ holds half of it:
   `catch_up` and the action replay.
 - No plugin keeps the old API; there are no users to migrate.
 
+## As built: a store's changes go in whole, 2026-11-14
+
+A hook holds its store a step at a time, so two runs of one repository
+can each read, await and write, and one write the other over: two
+issues of tau-todo made at once took one id, and two claims of one
+issue both won. The person chose a commit with expectations:
+`cmd.store.commit({ expect, put, delete })` writes all of it in one
+turn with the store, only while each key of `expect` still holds its
+value (`json.null` for a key the store does not have), and answers true;
+else it writes nothing and answers false, and the hook reads again and
+tries again. tau-todo keeps a hook's writes until it ends and commits
+them while its `rev` is what it read first; every change bumps `rev`.
+
 ## Settled at review, 2026-11-14
 
 - **Limits.** A hook's limit counts only its own steps, so its code stays

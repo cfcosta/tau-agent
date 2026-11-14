@@ -16,6 +16,24 @@ local function command(op, args)
 	return { op = op, args = args or {} }
 end
 
+-- What `commit` sends: what it expects, by key; what
+-- it puts, by key; and the keys it deletes.
+local function commit_args(spec)
+	local expect = {}
+	for key, value in pairs(spec.expect or {}) do
+		expect[tostring(key)] = value
+	end
+	local put = {}
+	for key, value in pairs(spec.put or {}) do
+		put[tostring(key)] = value
+	end
+	local delete = array({})
+	for _, key in ipairs(spec.delete or {}) do
+		table.insert(delete, tostring(key))
+	end
+	return { expect = expect, put = put, delete = delete }
+end
+
 cmd.store = {
 	get = function(key)
 		return command("store_get", { key = tostring(key) })
@@ -28,6 +46,14 @@ cmd.store = {
 	end,
 	delete = function(key)
 		return command("store_delete", { key = tostring(key) })
+	end,
+	-- Writes that go in together, only while each key of `expect` still
+	-- holds its value (`json.null`: the store has no such key, as a
+	-- table holds no nil):
+	-- answers true, or false and writes nothing. A hook that read, awaited
+	-- and decided reads again and tries again on false.
+	commit = function(spec)
+		return command("store_commit", commit_args(spec))
 	end,
 }
 
@@ -46,6 +72,11 @@ function cmd.stores(repo)
 		end,
 		delete = function(key)
 			return command("repo_store_delete", { repo = repo, key = tostring(key) })
+		end,
+		commit = function(spec)
+			local args = commit_args(spec)
+			args.repo = repo
+			return command("repo_store_commit", args)
 		end,
 	}
 end
