@@ -47,6 +47,7 @@ pub use engine::{
     Request,
     YIELD_EVERY,
     error_text,
+    install_pure_globals,
     run,
 };
 pub use half::CodemodeHost;

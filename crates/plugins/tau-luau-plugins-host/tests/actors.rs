@@ -188,3 +188,117 @@ end)
 "#
     ));
 }
+
+mod host {
+    //! The host's actor: the same steps, in a VM of its own that reaches
+    //! nothing, has no clock, and fails a step past its limit.
+
+    use std::time::Duration;
+
+    use serde_json::{Value, json};
+    use tau_luau_plugins_host::{
+        actor::{Actor, Ended, Message},
+        runtime::Files,
+    };
+
+    fn actor(source: &str) -> Actor {
+        let files = Files {
+            source: source.into(),
+            ..Files::named("actors")
+        };
+        Actor::new(&files.modules().unwrap(), "plugin", &json!({})).unwrap()
+    }
+
+    fn call(id: &str, path: &[&str]) -> Message {
+        Message::Call {
+            id: id.into(),
+            path: path.iter().map(|key| (*key).to_owned()).collect(),
+            input: json!({}),
+            env: json!({ "at": 1 }),
+        }
+    }
+
+    const LIMIT: Duration = Duration::from_secs(2);
+
+    /// A hook awaits Jev in one step and ends in the next with its
+    /// answer; a Pause between them is what it goes on with.
+    #[test]
+    fn a_hook_awaits_and_goes_on_with_the_model_as_it_is() {
+        let actor = actor(super::PLUGIN);
+        let step = actor.deliver(&call("h1", &["before_stop"]), LIMIT).unwrap();
+        assert_eq!(step.waits["h1"].op, "jev");
+        assert_eq!(step.logs, ["checking at 1"]);
+        assert!(step.changed);
+        actor
+            .deliver(&call("a1", &["actions", "pause"]), LIMIT)
+            .unwrap();
+        let step = actor
+            .deliver(
+                &Message::Answer {
+                    id: "h1".into(),
+                    ok: true,
+                    values: vec![json!({ "met": 0.9 }), json!(0)],
+                    error: None,
+                },
+                LIMIT,
+            )
+            .unwrap();
+        assert_eq!(
+            step.ended["h1"],
+            Ended::Value {
+                value: json!("paused")
+            }
+        );
+        assert_eq!(
+            actor.model().unwrap(),
+            json!({ "checks": 1, "paused": true })
+        );
+        assert!(actor.waiting().unwrap().is_empty());
+        assert_eq!(
+            actor
+                .draw(&["view".to_owned()], None, &Value::Null, LIMIT)
+                .unwrap(),
+            json!({ "status": { "text": "1" } })
+        );
+    }
+
+    /// A step has no clock nor randomness, and one that runs past its
+    /// limit fails, keeping nothing.
+    #[test]
+    fn a_step_is_deterministic_and_bounded() {
+        let actor = actor(
+            r#"
+local tau = require("tau")
+return tau.plugin({
+  actions = {
+    clock = function() return os.time() end,
+    dice = function() return math.random() end,
+    spin = function(_, model) model.spun = true while true do end end,
+  },
+})
+"#,
+        );
+        for name in ["clock", "dice"] {
+            let step = actor
+                .deliver(&call(name, &["actions", name]), LIMIT)
+                .unwrap();
+            assert!(
+                matches!(&step.ended[name], Ended::Error { .. }),
+                "{name}: {:?}",
+                step.ended
+            );
+        }
+        let step = actor
+            .deliver(
+                &call("spin", &["actions", "spin"]),
+                Duration::from_millis(50),
+            )
+            .unwrap();
+        let Ended::Error { error } = &step.ended["spin"] else {
+            panic!("{:?}", step.ended);
+        };
+        assert!(error.contains("it ran past its 50 ms"), "{error}");
+        assert!(!step.changed);
+        assert_eq!(actor.model().unwrap(), json!({}));
+    }
+}

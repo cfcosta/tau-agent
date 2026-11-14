@@ -743,62 +743,7 @@ fn install(lua: &Lua, state: &Arc<State>) -> mlua::Result<()> {
         )?,
     )?;
 
-    // JSON shapes.
-    let array_meta = lua.array_metatable();
-    array_meta.set_readonly(true);
-    let json = lua.create_table()?;
-    json.set("null", lua.null())?;
-    json.set(
-        "encode",
-        lifted(
-            lua.create_function(
-                |lua, value: LuaValue| match crate::json::encode(lua, &value) {
-                    Ok(text) => {
-                        Ok(ok([LuaValue::String(lua.create_string(text)?)]))
-                    }
-                    Err(error) => fail(lua, format!("json.encode(): {error}")),
-                },
-            )?,
-            AT_CALLER,
-        )?,
-    )?;
-    json.set(
-        "decode",
-        lifted(
-            lua.create_function(|lua, text: LuaValue| {
-                let LuaValue::String(text) = text else {
-                    return fail(
-                        lua,
-                        "json.decode(): the text must be a string",
-                    );
-                };
-                match crate::json::decode(&text.as_bytes()) {
-                    Ok(value) => Ok(ok([to_lua(lua, &value)?])),
-                    Err(error) => fail(lua, format!("json.decode(): {error}")),
-                }
-            })?,
-            AT_CALLER,
-        )?,
-    )?;
-    globals.set("json", json)?;
-    globals.set(
-        "array",
-        lifted(
-            lua.create_function(|lua, value: LuaValue| match value {
-                LuaValue::Nil => {
-                    let table = lua.create_table()?;
-                    table.set_metatable(Some(lua.array_metatable()))?;
-                    Ok(ok([LuaValue::Table(table)]))
-                }
-                LuaValue::Table(table) => {
-                    table.set_metatable(Some(lua.array_metatable()))?;
-                    Ok(ok([LuaValue::Table(table)]))
-                }
-                _ => fail(lua, "array() takes a table"),
-            })?,
-            AT_CALLER,
-        )?,
-    )?;
+    install_pure(lua, &lifted)?;
 
     // Output.
     let s = Arc::clone(state);
@@ -1136,6 +1081,82 @@ fn install(lua: &Lua, state: &Arc<State>) -> mlua::Result<()> {
         globals.set("jev", table)?;
     }
     Ok(())
+}
+
+/// The globals that reach nothing: `json` and `array`. A plugin's actor
+/// (ADR 0056), whose VM reaches nothing but through commands, has these
+/// alone.
+pub fn install_pure(
+    lua: &Lua,
+    lifted: &dyn Fn(Function, u32) -> mlua::Result<Function>,
+) -> mlua::Result<()> {
+    let globals = lua.globals();
+    let array_meta = lua.array_metatable();
+    array_meta.set_readonly(true);
+    let json = lua.create_table()?;
+    json.set("null", lua.null())?;
+    json.set(
+        "encode",
+        lifted(
+            lua.create_function(
+                |lua, value: LuaValue| match crate::json::encode(lua, &value) {
+                    Ok(text) => {
+                        Ok(ok([LuaValue::String(lua.create_string(text)?)]))
+                    }
+                    Err(error) => fail(lua, format!("json.encode(): {error}")),
+                },
+            )?,
+            AT_CALLER,
+        )?,
+    )?;
+    json.set(
+        "decode",
+        lifted(
+            lua.create_function(|lua, text: LuaValue| {
+                let LuaValue::String(text) = text else {
+                    return fail(
+                        lua,
+                        "json.decode(): the text must be a string",
+                    );
+                };
+                match crate::json::decode(&text.as_bytes()) {
+                    Ok(value) => Ok(ok([to_lua(lua, &value)?])),
+                    Err(error) => fail(lua, format!("json.decode(): {error}")),
+                }
+            })?,
+            AT_CALLER,
+        )?,
+    )?;
+    globals.set("json", json)?;
+    globals.set(
+        "array",
+        lifted(
+            lua.create_function(|lua, value: LuaValue| match value {
+                LuaValue::Nil => {
+                    let table = lua.create_table()?;
+                    table.set_metatable(Some(lua.array_metatable()))?;
+                    Ok(ok([LuaValue::Table(table)]))
+                }
+                LuaValue::Table(table) => {
+                    table.set_metatable(Some(lua.array_metatable()))?;
+                    Ok(ok([LuaValue::Table(table)]))
+                }
+                _ => fail(lua, "array() takes a table"),
+            })?,
+            AT_CALLER,
+        )?,
+    )?;
+
+    Ok(())
+}
+
+/// [`install_pure`] on a VM of its own, with the engine's error lifting.
+pub fn install_pure_globals(lua: &Lua) -> mlua::Result<()> {
+    let lift: Function = lua.load(PRELUDE).set_name("=prelude").eval()?;
+    let lifted = |f: Function, level: u32| -> mlua::Result<Function> {
+        lift.call((f, level))
+    };
+    install_pure(lua, &lifted)
 }
 
 fn entry_table(lua: &Lua, tool: &ToolEntry) -> mlua::Result<Table> {

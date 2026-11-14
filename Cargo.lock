@@ -9164,6 +9164,7 @@ dependencies = [
  "hegeltest",
  "hegeltest-c",
  "image",
+ "mlua",
  "notify-rust",
  "saphyr",
  "serde",

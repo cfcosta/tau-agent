@@ -133,13 +133,14 @@ cmd.http = {
 	end,
 }
 
--- Jev's question kinds, as the `jev` global takes them: `ask` answers
--- with `(answers, cost)`.
-cmd.jev = {
-	ask = function(request)
-		return command("jev", request)
-	end,
-}
+-- Jev, as the `jev` global took it: `ask`, `noul`, `choice` and `score`
+-- answer with `(answer, cost)`.
+cmd.jev = {}
+for _, name in ipairs({ "ask", "noul", "choice", "score" }) do
+	cmd.jev[name] = function(request)
+		return command("jev", { fn = name, request = request })
+	end
+end
 
 function cmd.transcript()
 	return command("transcript")

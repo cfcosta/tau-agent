@@ -9,6 +9,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+# A plugin's actor keeps its own VM (ADR 0056).
+mlua.workspace = true
 anyhow.workspace = true
 # The engine Luau property tests run on (ADR 0049).
 hegeltest-c.workspace = true

@@ -8,6 +8,7 @@
 //! - `agent`: the active plugins, as one agent plugin of a run.
 //! - `registry`: the repository's plugins, as the host keeps them.
 
+pub mod actor;
 pub mod agent;
 pub mod archive;
 pub mod built_in;
