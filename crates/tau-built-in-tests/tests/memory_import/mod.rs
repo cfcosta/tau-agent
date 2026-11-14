@@ -18,14 +18,15 @@ use tokio_util::sync::CancellationToken;
 const ENTRY: &str = r#"
 local tau = require("tau")
 local read = require("import_read")
+local host = require("host")
 
 return tau.plugin({
 	uses = { files = { { "/", write = true } } },
 	tools = {
 		remote = {
 			description = "the remote of a folder's repository, as the import reads it",
-			call = function(args, ctx)
-				return { url = read.remote(ctx.files, args.folder) }
+			call = function(args, model, env)
+				return { url = read.remote(host.files, args.folder) }
 			end,
 		},
 	},

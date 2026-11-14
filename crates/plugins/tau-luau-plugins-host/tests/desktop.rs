@@ -1,4 +1,4 @@
-//! The notify slot's `ctx.desktop.notice` (ADR 0050): it shows a notice
+//! The notify slot's `cmd.notice` (ADR 0050): it shows a notice
 //! and hands it what opens the notice's chat, once; no other reach has it.
 
 #![allow(
@@ -24,12 +24,12 @@ const NOTIFIER: &str = r#"
 local tau = require("tau")
 return tau.plugin({
   fills = { "tau.notify" },
-  notify = function(notice, ctx)
-    if ctx.desktop == nil then
+  notify = function(notice, model, env)
+    -- Only the slot's reach carries a notice out.
+    if not pcall(tau.await, tau.cmd.notice({ title = notice.title, body = notice.body })) then
       error("no desktop", 0)
     end
-    ctx.desktop.notice({ title = notice.title, body = notice.body })
-    ctx.desktop.notice({ title = "again" })
+    tau.give(tau.cmd.notice({ title = "again" }))
   end,
 })
 "#;
@@ -84,7 +84,7 @@ fn a_notice_shows_and_opens_its_chat_once() {
     });
 }
 
-/// Without the slot's reach there is no `ctx.desktop`.
+/// Without the slot's reach a notice is refused.
 #[test]
 fn only_the_notify_slot_reaches_the_desktop() {
     block_on_io(async {

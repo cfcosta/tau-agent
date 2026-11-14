@@ -402,8 +402,8 @@ fn a_folder_has_its_repositorys_remote() {
 const PLUGIN: &str = r#"
 local tau = require("tau")
 
-local function root(ctx)
-	return ctx.files.roots()["data/scribe"]
+local function root()
+	return tau.await(tau.cmd.files.roots())["data/scribe"]
 end
 
 return tau.plugin({
@@ -412,16 +412,16 @@ return tau.plugin({
 		note_search = {
 			description = "Finds notes.",
 			parameters = { type = "object", properties = { query = { type = "string" } } },
-			call = function(args, ctx)
-				ctx.state.searched = (ctx.state.searched or 0) + 1
+			call = function(args, model, env)
+				model.searched = (model.searched or 0) + 1
 				return "nothing about " .. tostring(args.query)
 			end,
 		},
 		note_write = {
 			description = "Writes a note.",
 			parameters = { type = "object", properties = { text = { type = "string" } } },
-			call = function(args, ctx)
-				ctx.files.write(root(ctx) .. "/notes/" .. args.name .. ".md", args.text)
+			call = function(args, model, env)
+				tau.give(tau.cmd.files.write(root() .. "/notes/" .. args.name .. ".md", args.text))
 				return tau.result("written " .. args.name)
 			end,
 		},
@@ -432,21 +432,21 @@ return tau.plugin({
 			end,
 		},
 	},
-	turn_end = function(turn, ctx)
+	turn_end = function(turn, model, env)
 		if turn.commit then
-			ctx.files.write(root(ctx) .. "/commits/" .. turn.turn .. ".json", json.encode(turn.commit))
+			tau.give(tau.cmd.files.write(root() .. "/commits/" .. turn.turn .. ".json", json.encode(turn.commit)))
 		end
 	end,
-	run_end = function(_, ctx)
-		local ok, refused = pcall(ctx.tools.infer, { task = "x", tools = { "exec_command" } })
-		ctx.state.refused = not ok and tostring(refused) or nil
-		local answer = ctx.tools.infer({
+	run_end = function(_, model, env)
+		local ok, refused = pcall(tau.await, tau.cmd.infer({ task = "x", tools = { "exec_command" } }))
+		model.refused = not ok and tostring(refused) or nil
+		local kept, text, calls = pcall(tau.await, tau.cmd.infer({
 			task = "Keep what matters.",
 			instructions = "You keep notes.",
 			tools = { "note_search", "note_write", "note_fail" },
 			wait_for = { "note_search" },
-		})
-		ctx.state.answer = answer
+		}))
+		model.answer = { ok = kept, value = text, calls = calls }
 	end,
 })
 "#;
@@ -460,7 +460,7 @@ fn package() -> runtime::Files {
 }
 
 /// `infer{ tools }` offers the plugin's own tools and none other, calls
-/// each the model asks for with the hook's `ctx`, gives back what each
+/// each the model asks for in the awaiting hook, gives back what each
 /// answered, and stops at a round that waits for none; `turn_end` hears
 /// the turn's commit.
 #[tokio::test(flavor = "multi_thread")]

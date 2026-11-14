@@ -40,46 +40,47 @@ return tau.plugin {
   tools = {
     deploy_window = {
       description = "Whether now is a safe time to deploy.",
-      call = function(args, ctx)
-        return { ok = not days.blocked(ctx) }
+      call = function(args, model, env)
+        return { ok = not days.blocked(env) }
       end,
-      card = function(call, result, ctx)
+      card = function(input, model, env)
+        local result = input.result
         return ui.badge(result.ok and "safe" or "wait", result.ok and "good" or "warn")
       end,
     },
     run_it = {
       description = "Runs a command.",
       parameters = { type = "object", properties = { cmd = { type = "string" } } },
-      call = function(args, ctx)
-        return ctx.tools.exec_command({ cmd = args.cmd })
+      call = function(args, model, env)
+        return tau.await(tau.cmd.tool("exec_command", { cmd = args.cmd }))
       end,
     },
     sneak = {
       description = "Reads a file it may not.",
-      call = function(args, ctx)
-        return ctx.tools.read({ path = "secret" })
+      call = function(args, model, env)
+        return tau.await(tau.cmd.tool("read", { path = "secret" }))
       end,
     },
   },
-  before_tool = function(call, ctx)
-    if call.name == "exec_command" and call.args.cmd:find("deploy") and days.blocked(ctx) then
-      return tau.block("No deploys on " .. ctx.now.weekday .. ".")
+  before_tool = function(call, model, env)
+    if call.name == "exec_command" and call.args.cmd:find("deploy") and days.blocked(env) then
+      return tau.block("No deploys on " .. env.now.weekday .. ".")
     end
   end,
-  before_stop = function(stop, ctx)
+  before_stop = function(stop, model, env)
     if not stop.text:find("tests") then
       return tau.continue("Say which tests you ran.")
     end
   end,
-  turn_end = function(turn, ctx)
-    ctx.state.turns = (ctx.state.turns or 0) + 1
-    ctx.log("turn " .. turn.turn)
+  turn_end = function(turn, model, env)
+    model.turns = (model.turns or 0) + 1
+    tau.log("turn " .. turn.turn)
   end,
-  view = function(state, ctx)
-    return { status = ui.status("on", tostring(state.turns or 0) .. " turns") }
+  view = function(model, env)
+    return { status = ui.status("on", tostring(model.turns or 0) .. " turns") }
   end,
   actions = {
-    reset = function(args, ctx) ctx.state.turns = 0 end,
+    reset = function(args, model, env) model.turns = 0 end,
   },
 }
 "#;
@@ -87,8 +88,8 @@ return tau.plugin {
 const DAYS: &str = r#"
 local tau = require("tau")
 return {
-  blocked = function(ctx)
-    return tau.contains(ctx.settings.days, ctx.now.weekday)
+  blocked = function(env)
+    return tau.contains(env.settings.days, env.now.weekday)
   end,
 }
 "#;
@@ -355,8 +356,8 @@ async fn a_tool_reaches_only_what_it_uses() {
         .error
         .as_deref()
         .unwrap_or_else(|| panic!("{sneaked:?}"));
-    // `ctx.tools.read` is nil: the plugin never sees the tool.
-    assert!(error.ends_with("attempt to call a nil value"), "{error}");
+    // `read` is not in its `uses`: the command is refused.
+    assert!(error.contains("does not use `read`"), "{error}");
     assert_eq!(*shell.0.lock().unwrap(), ["exec_command"]);
 }
 
@@ -370,14 +371,14 @@ local tau = require("tau")
 return tau.plugin { tools = {
     slow = {
       description = "Never draws its card.",
-      call = function(args, ctx) return 1 end,
-      card = function(call, result, ctx)
+      call = function(args, model, env) return 1 end,
+      card = function(input, model, env)
         while true do end
       end,
     },
   },
-  turn_end = function(turn, ctx)
-    ctx.state.seen = true
+  turn_end = function(turn, model, env)
+    model.seen = true
     error("no luck")
   end,
 }
@@ -557,7 +558,7 @@ local tau = require("tau")
 local ui = tau.ui
 
 return tau.plugin {
-  view = function(state, ctx)
+  view = function(model, env)
     return { page = ui.stack {
       "plain",
       ui.text("text"), ui.rich("**rich**"), ui.mono("mono"),
@@ -619,7 +620,7 @@ local tau = require("tau")
 return tau.plugin { tools = {
     echo = {
       description = "Gives its arguments back.",
-      call = function(args, ctx) return args end,
+      call = function(args, model, env) return args end,
     },
   },
 }
@@ -658,11 +659,11 @@ return tau.plugin { uses = { network = { "127.0.0.1" }, secrets = { "token" } },
   tools = {
     ping = {
       description = "Pings the server.",
-      call = function(args, ctx)
-        local answer = http.request({
+      call = function(args, model, env)
+        local answer = tau.await(tau.cmd.http.request({
           url = args.url,
-          headers = { authorization = "Bearer " .. http.secret(args.secret) },
-        })
+          headers = { authorization = tau.secret(args.secret, "Bearer ") },
+        }))
         return answer.body
       end,
     },
@@ -757,9 +758,9 @@ return tau.plugin { commands = {
       args = "<version>",
       icon = "rocket",
       popover = { jev = tau.ui.input("channel", { submit = "tau.submit" }) },
-      run = function(text, ctx)
-        ctx.state.shipped = text
-        ctx.state.channel = ctx.drafts.channel
+      run = function(text, model, env)
+        model.shipped = text
+        model.channel = env.drafts.channel
       end,
     },
   },
@@ -852,9 +853,9 @@ async fn an_action_asks_jev_when_its_plugin_uses_it() {
 local tau = require("tau")
 return tau.plugin { uses = { jev = USES },
   actions = {
-    try = function(args, ctx)
-      if ctx.jev == nil then return "no jev" end
-      local answer = ctx.jev.noul({ state = { x = 1 }, question = "Is it?" })
+    try = function(args, model, env)
+      local ok, answer = pcall(tau.await, tau.cmd.jev.noul({ state = { x = 1 }, question = "Is it?" }))
+      if not ok then return "no jev" end
       return answer.probability
     end,
   },

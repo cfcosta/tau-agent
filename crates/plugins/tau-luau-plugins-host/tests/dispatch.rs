@@ -30,7 +30,7 @@ return tau.plugin { uses = { store = true },
   tools = {
     hand_off = {
       description = "Asks the person to start a chat on an issue.",
-      call = function(args, ctx)
+      call = function(args, model, env)
         return tau.allow {
           title = "Start a chat on " .. args.issue,
           text = "In a new chat.",
@@ -41,15 +41,15 @@ return tau.plugin { uses = { store = true },
     },
   },
   actions = {
-    dispatch = function(args, ctx)
+    dispatch = function(args, model, env)
       return tau.start_chat { text = "Work on " .. args.issue, ["then"] = "claimed", args = { issue = args.issue } }
     end,
-    claimed = function(args, ctx)
+    claimed = function(args, model, env)
       if args.error then return "not started: " .. args.error end
-      ctx.store.put("claim/" .. args.issue, args.run)
+      tau.give(tau.cmd.store.put("claim/" .. args.issue, args.run))
       return "started " .. args.run .. " in " .. args.repo
     end,
-    nudge = function(args, ctx)
+    nudge = function(args, model, env)
       return tau.steer_chat { run = args.run, text = "Go on with " .. args.issue }
     end,
   },

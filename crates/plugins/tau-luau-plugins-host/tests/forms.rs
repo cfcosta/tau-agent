@@ -28,8 +28,8 @@ return tau.plugin { tools = {
     quiz = {
       description = "Asks the person which.",
       model_only = true,
-      call = function(args, ctx)
-        ctx.state.call = ctx.run.call
+      call = function(args, model, env)
+        model.call = env.run.call
         return tau.ask {
           questions = { {
             question = "Which?", header = "Pick", other = true,
@@ -41,25 +41,25 @@ return tau.plugin { tools = {
     },
     bad = {
       description = "Asks nothing.",
-      call = function(args, ctx)
+      call = function(args, model, env)
         return tau.ask { questions = array({}) }
       end,
     },
   },
   actions = {
-    pick = function(args, ctx)
-      return tau.answer { call = ctx.state.call, answers = { { picked = { args.label } } } }
+    pick = function(args, model, env)
+      return tau.answer { call = model.call, answers = { { picked = { args.label } } } }
     end,
-    decline = function(args, ctx)
-      return tau.answer { call = ctx.state.call, declined = true }
+    decline = function(args, model, env)
+      return tau.answer { call = model.call, declined = true }
     end,
-    answered = function(args, ctx)
-      ctx.state.reply = args
+    answered = function(args, model, env)
+      model.reply = args
       if args.declined then return "declined" end
       return "picked " .. args.answers[1].picked[1] .. " for " .. args.call
     end,
   },
-  view = function(state, ctx)
+  view = function(state, env)
     if state.call and not state.reply then
       return { composer = ui.text("Which?") }
     end

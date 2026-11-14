@@ -209,8 +209,8 @@ fn act(
 
 /// A run waits on its questions while two devices work the panel: the
 /// phone picks the first answer, the computer, from what the phone left,
-/// the checklist's and sends; the phone's Send, from its own state,
-/// finds the call answered. The model reads the computer's answers, and
+/// the checklist's and sends; the phone's late Decline takes nothing
+/// back. The model reads the computer's answers, and
 /// the run's state keeps them.
 #[test]
 fn a_waiting_run_is_answered_from_whichever_device_first() {
@@ -242,10 +242,14 @@ fn a_waiting_run_is_answered_from_whichever_device_first() {
     let (error, _) =
         act(&host, &run, "key", json!({ "key": "enter" }), &computer);
     assert_eq!(error, None, "the computer's answers take the call");
+    // The phone's Decline goes to the run's one model (ADR 0056), not to
+    // the state the phone had: the call there is answered, so it does
+    // nothing, or, the answers given but not yet taken in, it finds the
+    // call answered already. Either way the computer's answers stay.
     let (late, _) = act(&host, &run, "decline", json!({}), &phone);
     assert!(
         late.as_deref()
-            .is_some_and(|why| why.contains("answered already")),
+            .is_none_or(|why| why.contains("answered already")),
         "{late:?}"
     );
 

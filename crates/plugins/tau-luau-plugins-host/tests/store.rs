@@ -147,17 +147,22 @@ const COUNTER: &str = r#"
 local tau = require("tau")
 return tau.plugin { uses = { store = true },
   actions = {
-    bump = function(args, ctx)
-      local n = ctx.store.get("n") or 0
-      ctx.store.put("n", n + 1)
+    bump = function(args, model, env)
+      tau.give(tau.cmd.store.put("a" .. args.i, args.i))
+      tau.give(tau.cmd.store.put("b" .. args.i, args.i))
       if args.fail then error("it fails after writing") end
+      -- What the step gave is committed before the next await reads.
+      local a = tau.await(tau.cmd.store.get("a" .. args.i))
+      local b = tau.await(tau.cmd.store.get("b" .. args.i))
+      return { a, b }
     end,
   },
 }
 "#;
 
-/// Hooks that read and then write the store take turns: as many bumps at
-/// once as there are count them all. A hook that fails writes nothing.
+/// Steps take turns with the store (ADR 0056): as many bumps at once as
+/// there are each commit what their step gave whole, and the await after
+/// it reads it back. A step that fails writes nothing of what it gave.
 #[test]
 fn hooks_take_turns_with_the_store_and_a_failing_one_writes_nothing() {
     block_on_io(async {
@@ -172,35 +177,41 @@ fn hooks_take_turns_with_the_store_and_a_failing_one_writes_nothing() {
             store: Some(StoreRef(kv.clone())),
             ..Context::default()
         };
-        let bumps = (0..20).map(|_| {
+        let bumps = (0..20).map(|i| {
             let (loaded, context) = (loaded.clone(), context.clone());
             tokio::spawn(async move {
-                loaded
+                let outcome = loaded
                     .call(
                         &Hook::Action("bump".into()),
-                        json!({}),
+                        json!({ "i": i }),
                         &context,
                         Arc::new(NoReach),
                         CancellationToken::new(),
                     )
-                    .await
+                    .await;
+                (i, outcome)
             })
         });
         for bump in futures_util::future::join_all(bumps).await {
-            assert_eq!(bump.unwrap().error, None);
+            let (i, outcome) = bump.unwrap();
+            assert_eq!(outcome.error, None);
+            assert_eq!(outcome.value, json!([i, i]));
         }
-        assert_eq!(kv.everything().await.unwrap()["n"], json!(20));
+        let everything = kv.everything().await.unwrap();
+        assert_eq!(everything.len(), 40, "{everything:?}");
         let failed = loaded
             .call(
                 &Hook::Action("bump".into()),
-                json!({ "fail": true }),
+                json!({ "i": 99, "fail": true }),
                 &context,
                 Arc::new(NoReach),
                 CancellationToken::new(),
             )
             .await;
         assert!(failed.error.is_some());
-        assert_eq!(kv.everything().await.unwrap()["n"], json!(20));
+        let everything = kv.everything().await.unwrap();
+        assert_eq!(everything.len(), 40, "{everything:?}");
+        assert!(!everything.contains_key("a99"));
     });
 }
 

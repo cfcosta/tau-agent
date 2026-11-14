@@ -32,7 +32,7 @@ const BLOCKING: &str = r#"
 local tau = require("tau")
 return tau.plugin {
   tools = { hello = { description = "Hello.", call = function() return "hi" end } },
-  before_tool = function(call, ctx)
+  before_tool = function(call, model, env)
     if call.name == "exec_command" then return tau.block("no") end
   end,
 }
@@ -225,7 +225,7 @@ return tau.plugin { tools = { hello = { description = "Hello.", call = function(
   settings = {
     schema = { type = "object", properties = { loud = { type = "boolean" } } },
     default = { loud = false },
-    view = function(settings, ctx)
+    view = function(settings, env)
       return ui.stack { ui.text(settings.loud and "loud" or "quiet"), ui.toggle("loud", "Shout") }
     end,
   },
@@ -376,15 +376,15 @@ return tau.plugin { tools = { hello = { description = "Hello.", call = function(
     schema = { type = "object", properties = { step = { type = "integer" } } },
     default = { step = 1 },
   },
-  view = function(state, ctx)
+  view = function(state, env)
     return { status = ui.status(tostring(state.n or 0)) }
   end,
   actions = {
-    add = function(args, ctx)
-      ctx.state.n = (ctx.state.n or 0) + ctx.settings.step * (args.times or 1)
-      ctx.log("added")
+    add = function(args, model, env)
+      model.n = (model.n or 0) + env.settings.step * (args.times or 1)
+      tau.log("added")
     end,
-    broken = function(args, ctx) error("no luck") end,
+    broken = function(args, model, env) error("no luck") end,
   },
 }
 "#;
@@ -438,7 +438,7 @@ const TITLES: &str = r#"
 local tau = require("tau")
 return tau.plugin {
   fills = { "tau.title", "tau.compaction" },
-  title = function(run, ctx)
+  title = function(run, model, env)
     return "Asked: " .. run.task
   end,
   compaction = { rewriters = { "tau-tree-compaction" } },
@@ -532,8 +532,8 @@ local tau = require("tau")
 return tau.plugin {{
   uses = {{ network = {{ "127.0.0.1" }} }},
   fills = {{ "tau.notify" }},
-  notify = function(notice, ctx)
-    http.request({{ method = "POST", url = "http://127.0.0.1:{port}/", body = notice.title .. ": " .. notice.body }})
+  notify = function(notice, model, env)
+    tau.await(tau.cmd.http.request({{ method = "POST", url = "http://127.0.0.1:{port}/", body = notice.title .. ": " .. notice.body }}))
   end,
 }}
 "#
@@ -577,12 +577,12 @@ return tau.plugin { uses = { secrets = { "forge-token" } },
     id = "home",
     host = "git.home.lan",
     token = "forge-token",
-    account = function(input, ctx) return "cainã" end,
-    repos = function(input, ctx)
+    account = function(input, model, env) return "cainã" end,
+    repos = function(input, model, env)
       return { { name = "me/tau", description = "the agent", branch = "trunk" } }
     end,
-    can_push = function(input, ctx) return input.repo == "me/tau" end,
-    checks = function(input, ctx) return "passed" end,
+    can_push = function(input, model, env) return input.repo == "me/tau" end,
+    checks = function(input, model, env) return "passed" end,
   },
 }
 "#;
@@ -683,9 +683,9 @@ const ASKS_THE_MODEL: &str = r#"
 local tau = require("tau")
 return tau.plugin { uses = { infer = true },
   fills = { "tau.title" },
-  title = function(run, ctx)
-    local answer = tools.infer({ task = "A title for this task", context = run.task })
-    if answer.ok then return answer.value end
+  title = function(run, model, env)
+    local ok, answer = pcall(tau.await, tau.cmd.infer({ task = "A title for this task", context = run.task }))
+    if ok then return answer end
   end,
 }
 "#;
@@ -730,13 +730,13 @@ return tau.plugin { jobs = {
     count = {
       every = 3600,
       label = "Counts",
-      run = function(ctx) ctx.state.n = (ctx.state.n or 0) + 1 end,
+      run = function(_, model, env) model.n = (model.n or 0) + 1 end,
     },
   },
 }
 "#;
 
-/// A plugin's job is due once its time came, keeps what its `ctx.state`
+/// A plugin's job is due once its time came, keeps what its model
 /// left from run to run, and once run waits for its next time. A new job
 /// waits for the person's Allow, as any new reach does.
 #[test]
@@ -821,16 +821,16 @@ const STEPS: &str = r#"
 local tau = require("tau")
 return tau.plugin { uses = { store = true },
   actions = {
-    begin = function(_, ctx) ctx.store.put("going", { n = 0 }) end,
+    begin = function(_, model, env) tau.give(tau.cmd.store.put("going", { n = 0 })) end,
   },
   jobs = {
     step = {
       every = 1,
-      run = function(ctx)
-        local going = ctx.store.get("going")
+      run = function(_, model, env)
+        local going = tau.await(tau.cmd.store.get("going"))
         if going then
           going.n += 1
-          ctx.store.put("going", going)
+          tau.give(tau.cmd.store.put("going", going))
         end
       end,
     },
@@ -975,21 +975,21 @@ local ui = tau.ui
 return tau.plugin { uses = { store = true },
   repo_nav = { label = "List", page = "list" },
   pages = {
-    list = function(params, ctx)
+    list = function(params, model, env)
       local rows = {}
-      for _, item in ipairs(ctx.store.list("item/")) do
+      for _, item in ipairs(tau.await(tau.cmd.store.list("item/"))) do
         table.insert(rows, ui.button(item.value, "drop", { key = item.key }))
       end
-      table.insert(rows, ctx.run.jev and "keyed" or "no key")
+      table.insert(rows, env.run.jev and "keyed" or "no key")
       return ui.stack(rows)
     end,
   },
-  repo_data = function(ctx)
-    return { nav = { detail = tostring(#ctx.store.list("item/")) .. " items" } }
+  repo_data = function(_, model, env)
+    return { nav = { detail = tostring(#tau.await(tau.cmd.store.list("item/"))) .. " items" } }
   end,
   actions = {
-    add = function(args, ctx) ctx.store.put("item/" .. args.text, args.text) end,
-    drop = function(args, ctx) ctx.store.delete(args.key) end,
+    add = function(args, model, env) tau.give(tau.cmd.store.put("item/" .. args.text, args.text)) end,
+    drop = function(args, model, env) tau.give(tau.cmd.store.delete(args.key)) end,
   },
 }
 "#;
@@ -1068,13 +1068,13 @@ const CLAIMS: &str = r#"
 local tau = require("tau")
 return tau.plugin { uses = { store = true },
   actions = {
-    claim = function(args, ctx) ctx.store.put("claim/" .. args.issue, args.run) end,
+    claim = function(args, model, env) tau.give(tau.cmd.store.put("claim/" .. args.issue, args.run)) end,
   },
-  recover = function(input, ctx)
+  recover = function(input, model, env)
     local dead = {}
     for _, run in ipairs(input.runs) do dead[run] = true end
-    for _, claim in ipairs(ctx.store.list("claim/")) do
-      if dead[claim.value] then ctx.store.delete(claim.key) end
+    for _, claim in ipairs(tau.await(tau.cmd.store.list("claim/"))) do
+      if dead[claim.value] then tau.give(tau.cmd.store.delete(claim.key)) end
     end
   end,
 }
@@ -1128,27 +1128,27 @@ return tau.plugin { uses = { files = { "repository/greet" } },
   drafts = { "search" },
   nav = { label = "Greet", page = "notes" },
   pages = {
-    notes = function(params, ctx)
+    notes = function(params, model, env)
       local names = {}
-      for _, repo in ipairs(ctx.files.repositories()) do
+      for _, repo in ipairs(tau.await(tau.cmd.files.repositories())) do
         table.insert(names, repo.name .. "=" .. (repo.normalized ~= json.null and repo.normalized or "none"))
       end
       return ui.stack({
         ui.text("repo " .. tostring(params.repo)),
         ui.text("search " .. tostring((params.drafts or {}).search)),
         ui.text("listed " .. table.concat(names, ",")),
-        ui.text("here " .. tostring(ctx.files.roots()["repository/greet"])),
+        ui.text("here " .. tostring(tau.await(tau.cmd.files.roots())["repository/greet"])),
         ui.link("Open", "notes", { params = { note = "a" } }),
         ui.switch("Tick", nil, true, "tick", { id = 1 }),
       })
     end,
   },
-  app = function(ctx) return { n = 1 } end,
-  setup = function(app, ctx)
+  app = function(_, model, env) return { n = 1 } end,
+  setup = function(app, model, env)
     return { step = "s", title = "S", heading = "h", detail = "d",
-      body = ui.text(#(ctx.run.picked or {}) .. " picked") }
+      body = ui.text(#(env.run.picked or {}) .. " picked") }
   end,
-  actions = { tick = function(args, ctx) end },
+  actions = { tick = function(args, model, env) end },
 }
 "#;
 

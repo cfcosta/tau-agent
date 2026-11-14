@@ -144,7 +144,8 @@ pub async fn replay(
                     ),
                 });
                 let context = |state: &Value| Context {
-                    run: json!({ "id": "replay", "kind": "main", "model": model }),
+                    // Jev is there, as the host says of a run with a key.
+                    run: json!({ "id": "replay", "kind": "main", "model": model, "jev": true }),
                     now: json!({}),
                     settings: settings.clone(),
                     state: state.clone(),
