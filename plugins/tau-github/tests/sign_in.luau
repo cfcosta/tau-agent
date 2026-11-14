@@ -171,6 +171,28 @@ t.case("a refused token says why and is forgotten", function()
 	t.equal(r:app().sign_in, { state = "failed", error = "GitHub did not accept the token." })
 end)
 
+-- The person types another token after one was refused: it is checked
+-- at the next tick, where the failure stood and no token was checked again.
+t.case("a token typed after a refused one is checked", function()
+	local http, asked = fake({
+		["GET /user"] = function(_, n)
+			if n == 1 then
+				return { status = 401, json = { message = "Bad credentials" } }
+			end
+			return USER
+		end,
+	})
+	local r = run({ http = http, secrets = { github = true } })
+	r:job("sign_in")
+	t.equal(r:app().sign_in.state, "failed")
+	-- Typed in the form: the secret is set past the plugin.
+	r.secrets.github = true
+	t.equal(r:app().sign_in, { state = "checking" })
+	r:job("sign_in")
+	t.equal(#asked, 2)
+	t.equal(r:app().sign_in, { state = "signed_in", user = "octo" })
+end)
+
 t.case("the step comes before the repositories and starts a sign-in", function()
 	local r = run({ http = fake({}) })
 	local step = r:setup(r:app())
