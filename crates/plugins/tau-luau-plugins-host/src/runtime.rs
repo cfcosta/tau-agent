@@ -1966,6 +1966,52 @@ impl PluginHost {
     }
 }
 
+impl PluginHost {
+    /// The command `op` with `args` (ADR 0056): the values it answers
+    /// with. Jev answers with two, its answer and what it cost; every
+    /// other op is a host call, answering with one.
+    async fn command(
+        &self,
+        op: &str,
+        args: &Value,
+    ) -> Result<Vec<Value>, String> {
+        if op == "jev" {
+            return self.jev_command(args).await;
+        }
+        let call = ToolCall {
+            id: format!("plugin:{op}"),
+            name: op.to_owned(),
+            args: args.clone(),
+        };
+        let reply = self.call_tool(call).await?;
+        match reply.error {
+            Some(error) => Err(error),
+            None => Ok(vec![reply.value]),
+        }
+    }
+
+    /// `jev` with `{ fn, request }`, `fn` one of `ask`, `noul`, `choice`
+    /// and `score`: the request shaped as the function asks, the usage
+    /// charged, and the answer shaped back, with its cost.
+    async fn jev_command(&self, args: &Value) -> Result<Vec<Value>, String> {
+        let function = args["fn"].as_str().unwrap_or("ask");
+        let Some(client) = self.reach.jev().filter(|_| self.jev) else {
+            return Err("Jev is not available in this run".into());
+        };
+        let (request, shape) =
+            tau_codemode_host::jev::request(function, &args["request"])?;
+        let response = client
+            .ask(&request)
+            .await
+            .map_err(|error| error.to_string())?;
+        let usage = response.usage();
+        self.reach.charge(&usage);
+        let answer = tau_codemode_host::jev::answer(&shape, &response)
+            .map_err(|error| error.to_string())?;
+        Ok(vec![answer, json!(usage.cost.total)])
+    }
+}
+
 #[async_trait]
 impl Host for PluginHost {
     fn tools(&self) -> Vec<ToolEntry> {
@@ -2449,33 +2495,5 @@ async fn execute(
     host: &Arc<PluginHost>,
     command: &crate::actor::Command,
 ) -> Result<Vec<Value>, String> {
-    if command.op == "jev" {
-        let function = command.args["fn"].as_str().unwrap_or("ask");
-        let Some(client) = host.reach.jev().filter(|_| host.jev) else {
-            return Err("Jev is not available in this run".into());
-        };
-        let (request, shape) = tau_codemode_host::jev::request(
-            function,
-            &command.args["request"],
-        )?;
-        let response = client
-            .ask(&request)
-            .await
-            .map_err(|error| error.to_string())?;
-        let usage = response.usage();
-        host.reach.charge(&usage);
-        let value = tau_codemode_host::jev::answer(&shape, &response)
-            .map_err(|error| error.to_string())?;
-        return Ok(vec![value, json!(usage.cost.total)]);
-    }
-    let call = ToolCall {
-        id: format!("plugin:{}", command.op),
-        name: command.op.clone(),
-        args: command.args.clone(),
-    };
-    let reply = host.call_tool(call).await?;
-    match reply.error {
-        Some(error) => Err(error),
-        None => Ok(vec![reply.value]),
-    }
+    host.command(&command.op, &command.args).await
 }
