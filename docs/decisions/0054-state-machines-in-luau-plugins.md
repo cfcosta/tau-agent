@@ -235,9 +235,8 @@ the case to keep is written from those notes.
   edge of tau-github's sign-in (three events, its case noted), an impure
   transition, store hooks taking turns (they lose a write without turns),
   a failed wait, and a Pause pressed while a check waits on Jev, which the
-  check's state then overwrites. That last is what the host does today:
-  tau-goal's Pause, pressed while its check asks Jev, is lost when the
-  check ends.
+  check's state then overwrote, as the host's did then (see below: the
+  run now carries such an action out again).
 
 ### The plugins, 2026-11-14
 
@@ -264,9 +263,16 @@ the case to keep is written from those notes.
   check's `error` an active goal's and `exhausted` a stopped one's.
 - `plugins/examples/ship-gate` is the worked machine the `tau-plugins`
   skill teaches, with its model.
-- Still open: an action pressed while a hook of its plugin waits is
-  written over when the hook ends and stores its state (tau-goal's
-  Pause during a check), which is the host's rule, not a plugin's.
+- An action pressed while a hook of its plugin waits is carried out
+  again on what the hook leaves. An action's record (`Record::Acted`)
+  names the action and its args; when a run's hook ends with a changed
+  state, the run finds the actions an interface stored meanwhile on the
+  state the hook began on, which readers took, and carries each out again
+  on the hook's state, as an interface does on a live run. The fake run
+  does the same, so `t.hooks` keeps a Pause pressed under a check in every
+  order. An action that reaches Jev, its store or the network does that
+  again too, until actions are pure. tau-goal's Pause during a check is
+  kept, which a tau-ui test holds.
 
 ## Alternatives considered
 

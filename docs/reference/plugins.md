@@ -880,7 +880,9 @@ checking each step's shape, the no-arm rule, purity and the JSON round
 trip, with the plugin's own model and invariant; `t.hooks(name, spec)`
 drives a plugin's hooks, actions and job ticks in any order, what they
 wait on paused until a rule answers it, sharing what the host shares (a
-store in turns, files at once, a run's state as `still_on` keeps it).
+store in turns, files at once, a run's state as `still_on` keeps it,
+and an action taken while a hook ran carried out again on what the hook
+left, as the host's run does).
 
 ## The first four plugins
 
