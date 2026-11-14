@@ -218,3 +218,51 @@ fn dropping_the_handle_closes_the_socket() {
     sim.run().unwrap();
     assert!(*server_saw_close.borrow());
 }
+
+/// A frame queued while the connection opens is not sent if the handle
+/// is dropped before it opens: the driver closed the connection, so a
+/// request it carried was cancelled or moved to another connection.
+#[test]
+fn frames_queued_before_a_dropped_handle_are_never_sent() {
+    let mut sim = turmoil::Builder::new().build();
+    let received: Rc<RefCell<Vec<String>>> = Rc::default();
+    {
+        let received = received.clone();
+        sim.host("server", move || {
+            let received = received.clone();
+            async move {
+                let listener =
+                    turmoil::net::TcpListener::bind(("0.0.0.0", 80)).await?;
+                let (stream, _) = listener.accept().await?;
+                let mut socket =
+                    tokio_tungstenite::accept_async(stream).await?;
+                while let Some(message) = socket.next().await {
+                    match message {
+                        Ok(Message::Text(text)) => {
+                            received.borrow_mut().push(text.to_string())
+                        }
+                        Ok(Message::Close(_)) | Err(_) => break,
+                        Ok(_) => {}
+                    }
+                }
+                Ok(())
+            }
+        });
+        sim.client("client", async move {
+            let (tx, mut rx) = mpsc::unbounded_channel();
+            let handle = connection::spawn(5, Arc::new(SimConnector), tx);
+            assert!(handle.send(json!({"type": "response.create"})));
+            drop(handle);
+            while let Some(event) = rx.recv().await {
+                if matches!(event, ConnectionEvent::Closed { .. }) {
+                    break;
+                }
+            }
+            // Give the server simulated time to read whatever was sent.
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            Ok(())
+        });
+    }
+    sim.run().unwrap();
+    assert_eq!(*received.borrow(), Vec::<String>::new());
+}

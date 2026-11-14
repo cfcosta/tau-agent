@@ -93,7 +93,8 @@ pub struct ConnectionHandle {
 
 impl ConnectionHandle {
     /// Queues a frame. Frames queued before the connection opens are sent
-    /// once it does. Returns false if the connection is already gone.
+    /// once it does, if the handle still lives. Returns false if the
+    /// connection is already gone.
     pub fn send(&self, frame: impl Into<Outgoing>) -> bool {
         self.outgoing.send(frame.into()).is_ok()
     }
@@ -136,12 +137,24 @@ async fn run<C: Connector>(
         }
         Err(_) => return None,
     };
+    // A handle dropped while the connection opened closed it: what it
+    // queued was cancelled, or went to another connection.
+    if frames.is_closed() {
+        let _ = socket.close(None).await;
+        return None;
+    }
     if events.send(ConnectionEvent::Opened { connection }).is_err() {
         return None;
     }
     loop {
         tokio::select! {
             outgoing = frames.recv() => match outgoing {
+                // Frames still queued when the handle was dropped are not
+                // sent.
+                Some(_) if frames.is_closed() => {
+                    let _ = socket.close(None).await;
+                    return None;
+                }
                 Some(frame) => {
                     if socket.send(Message::text(frame.into_text())).await.is_err() {
                         return None;
