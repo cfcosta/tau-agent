@@ -507,6 +507,25 @@ t.case("a proposal kept while the model reads stays kept", function()
 	t.equal(titles(w:imports().pending), {}, "nothing kept comes back")
 end)
 
+-- A model that cannot answer ends the import with why, once: it was left
+-- going, and the job failed on the same chunk every second, each failure
+-- said to the person. What it read stays read.
+t.case("an import the model cannot answer ends once, with why", function()
+	local w = world(function()
+		return { error = "the model is down" }
+	end)
+	local shop = w:folder("shop")
+	local projects = HOME .. "/.claude/projects/" .. read.encode(shop)
+	w.files[projects .. "/c1.jsonl"] = claude_chat(shop, { "remember repository: Y." })
+	w:list("shop", nil, shop)
+	local why = w:import()
+	t.equal(why ~= nil and string.find(why, "the model is down", 1, true) ~= nil, true, tostring(why))
+	t.equal(w:checkpoint().running, nil, "it is not going")
+	local asked = #w.requests
+	t.equal(w:settle(), nil, "nothing fails again")
+	t.equal(#w.requests, asked)
+end)
+
 t.case("signed out, only the saved notes are proposed", function()
 	local w = world()
 	w.signed_in = false

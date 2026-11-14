@@ -1279,6 +1279,17 @@ local function keep_going(env, tick)
 	return true
 end
 
+-- Ends the import going on, with `why`, said once: what it read stays
+-- read, so importing again carries on. It is not left going, where the
+-- job failed on the same chunk every second.
+local function give_up(env, checkpoint, why)
+	checkpoint.running = nil
+	checkpoint.reading = nil
+	save_checkpoint(env, checkpoint)
+	remove(env, "todo.json")
+	error(why, 0)
+end
+
 -- The chunk `n` of the item being read.
 local function part_name(n)
 	return "reading/" .. tostring(n) .. ".txt"
@@ -1323,8 +1334,10 @@ local function read_with_model(env, todo, tick)
 			return "stale"
 		end
 		if not answer.ok then
-			keep_going(env, tick)
-			error("the import stopped: " .. tostring(answer.error), 0)
+			if keep_going(env, tick) then
+				give_up(env, tick.checkpoint, "the import stopped: " .. tostring(answer.error))
+			end
+			return "stale"
 		end
 		pcall(env.files.remove, read.join(env.dir, part_name(reading.part)))
 		reading.part += 1
@@ -1390,7 +1403,7 @@ function import.tick(env)
 		error("tau reads Codex's memories and the chats with your model: sign in, then import again from Memory", 0)
 	end
 	if env.writer == nil then
-		error("the plan offers no model to write notes with", 0)
+		give_up(env, checkpoint, "the plan offers no model to write notes with")
 	end
 	local item = todo.items[1]
 	local read_all = read_with_model(env, todo, tick)
