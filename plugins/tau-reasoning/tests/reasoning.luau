@@ -61,6 +61,18 @@ t.case("a confident score sets the effort", function()
 	t.equal(r.state.notes.n0.text, "picked **high** reasoning for this message")
 end)
 
+-- The status and plan are a message's: the next message, with an effort
+-- the person set, shows that, not the effort the last one chose.
+t.case("a message's choice does not stay on the next message", function()
+	local r = run({ jev = jev({ 0.1, 0.1, 0.8 }, 0.9) })
+	r:start(starting({}))
+	t.equal(r:view().status.text, "chose high")
+	r:start(starting({ effort = "low" }))
+	local view = r:view()
+	t.equal(view.status.text, "off · effort set to low")
+	t.equal(view.plan, nil)
+end)
+
 t.case("an unsure score keeps the default", function()
 	local r = run({ jev = jev({ 0.2, 0.3, 0.5 }, 0.4) })
 	t.equal(r:start(starting({})), nil)

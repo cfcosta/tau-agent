@@ -139,6 +139,9 @@ return tau.plugin({
 		local state = effort.state(ctx.state)
 		state.redecides = false
 		state.active = nil
+		-- What the last message chose is its own: this one says anew.
+		state.status = nil
+		state.plan = nil
 		state.first = ctx.run.id
 		state.effort_now = input.effort
 		state.task = text_of(input.input)
