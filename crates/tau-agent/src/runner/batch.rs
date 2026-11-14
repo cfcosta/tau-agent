@@ -143,7 +143,7 @@ impl Runner {
             }
         }
 
-        let (mut queue, mut groups) = schedule(ready);
+        let mut groups = schedule(ready);
         let (updates_tx, mut updates_rx) = mpsc::unbounded_channel();
         let (requests_tx, mut requests_rx) = mpsc::unbounded_channel();
         let mut batch = Batch {
@@ -155,9 +155,7 @@ impl Runner {
             parents: HashMap::new(),
         };
         let mut skipped = Vec::new();
-        if let Some(size) = groups.pop_front() {
-            self.launch(&mut queue, &mut batch, &mut skipped, size);
-        }
+        self.launch(&mut groups, &mut batch, &mut skipped);
         while !batch.pending.is_empty() {
             tokio::select! {
                 Some((call_id, partial)) = updates_rx.recv() => {
@@ -180,11 +178,7 @@ impl Runner {
                         outcomes[index] = Some((output, is_error));
                     }
                     // A group done, the next one starts.
-                    if batch.pending.is_empty()
-                        && let Some(size) = groups.pop_front()
-                    {
-                        self.launch(&mut queue, &mut batch, &mut skipped, size);
-                    }
+                    self.launch(&mut groups, &mut batch, &mut skipped);
                 }
             }
         }
@@ -466,32 +460,31 @@ impl Runner {
         }
     }
 
-    /// Starts up to `count` queued calls. Once the run is cancelled,
-    /// queued calls are skipped instead of started.
+    /// Starts the next group of calls once nothing runs. Once the run is
+    /// cancelled, calls are skipped instead of started, so groups are
+    /// taken until one starts a call or none is left.
     pub(super) fn launch(
         &self,
-        queue: &mut VecDeque<Ready>,
+        groups: &mut VecDeque<Vec<Ready>>,
         batch: &mut Batch,
         skipped: &mut Vec<(usize, ToolCall)>,
-        count: usize,
     ) {
-        let mut started = 0;
-        while started < count {
-            let Some((index, tool, call)) = queue.pop_front() else {
-                return;
-            };
-            if self.cancel.is_cancelled() {
-                skipped.push((index, call));
-                continue;
+        while batch.pending.is_empty()
+            && let Some(group) = groups.pop_front()
+        {
+            for (index, tool, call) in group {
+                if self.cancel.is_cancelled() {
+                    skipped.push((index, call));
+                    continue;
+                }
+                self.start_call(
+                    batch,
+                    tool,
+                    call,
+                    self.cancel.clone(),
+                    Origin::Batch(index),
+                );
             }
-            self.start_call(
-                batch,
-                tool,
-                call,
-                self.cancel.clone(),
-                Origin::Batch(index),
-            );
-            started += 1;
         }
     }
 

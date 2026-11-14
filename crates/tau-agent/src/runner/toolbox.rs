@@ -146,21 +146,18 @@ impl Toolbox {
 /// A call ready to run: its index in the batch, its tool, and the call.
 pub(super) type Ready = (usize, LoopTool, ToolCall);
 
-/// A batch's ready calls, in the order they start, and the sizes of the
-/// groups they start in: each group starts once the one before is done.
-/// A sequential tool makes every call a group of its own; otherwise each
-/// grouped tool's calls form a group, and the calls to all other tools
-/// another, ordered by their first calls.
-pub(super) fn schedule(
-    ready: Vec<Ready>,
-) -> (VecDeque<Ready>, VecDeque<usize>) {
+/// A batch's ready calls in the groups they start in, in order: each
+/// group starts once the one before is done. A sequential tool makes
+/// every call a group of its own; otherwise each grouped tool's calls
+/// form a group, and the calls to all other tools another, ordered by
+/// their first calls.
+pub(super) fn schedule(ready: Vec<Ready>) -> VecDeque<Vec<Ready>> {
     let modes: Vec<ExecutionMode> = ready
         .iter()
         .map(|(_, tool, _)| tool.tool.execution_mode())
         .collect();
     if modes.contains(&ExecutionMode::Sequential) {
-        let sizes = vec![1; ready.len()].into();
-        return (ready.into(), sizes);
+        return ready.into_iter().map(|call| vec![call]).collect();
     }
     // Groups by key: a grouped tool's name, or `None` for the rest.
     let mut groups: Vec<(Option<String>, Vec<Ready>)> = Vec::new();
@@ -172,7 +169,5 @@ pub(super) fn schedule(
             None => groups.push((key, vec![call])),
         }
     }
-    let sizes = groups.iter().map(|(_, calls)| calls.len()).collect();
-    let queue = groups.into_iter().flat_map(|(_, calls)| calls).collect();
-    (queue, sizes)
+    groups.into_iter().map(|(_, calls)| calls).collect()
 }

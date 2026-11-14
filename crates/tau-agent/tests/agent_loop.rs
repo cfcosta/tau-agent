@@ -1154,34 +1154,37 @@ fn settings_reach_the_model() {
     });
 }
 
+/// A tool that says it started, then waits for the run's cancel.
+struct Waiter(Arc<tokio::sync::Notify>, Value);
+
+#[async_trait]
+impl AgentTool for Waiter {
+    fn name(&self) -> &str {
+        "wait"
+    }
+    fn description(&self) -> &str {
+        "Waits for cancellation."
+    }
+    fn parameters(&self) -> &Value {
+        &self.1
+    }
+    async fn call(
+        &self,
+        _: Value,
+        ctx: ToolCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        self.0.notify_one();
+        ctx.cancel.cancelled().await;
+        return Err("cancelled while waiting".into());
+    }
+}
+
 /// Cancelling a run mid-batch ends it as cancelled; the running tool sees
 /// the token and every call still gets a result. The cancel waits for the
 /// tool to start rather than for virtual time, which store writes can
 /// move.
 #[test]
 fn cancel_mid_batch() {
-    struct Waiter(Arc<tokio::sync::Notify>, Value);
-    #[async_trait]
-    impl AgentTool for Waiter {
-        fn name(&self) -> &str {
-            "wait"
-        }
-        fn description(&self) -> &str {
-            "Waits for cancellation."
-        }
-        fn parameters(&self) -> &Value {
-            &self.1
-        }
-        async fn call(
-            &self,
-            _: Value,
-            ctx: ToolCtx,
-        ) -> Result<ToolOutput, ToolError> {
-            self.0.notify_one();
-            ctx.cancel.cancelled().await;
-            return Err("cancelled while waiting".into());
-        }
-    }
     let llm = ScriptedModel::new()
         .turn(|t| {
             t.tool_call("wait", json!({}))
@@ -1216,6 +1219,52 @@ fn cancel_mid_batch() {
         assert_eq!(llm.requests().len(), 1);
         let record = store.run(&id.0).await.unwrap().unwrap();
         assert_eq!(record.status, tau_store::Status::Cancelled);
+    });
+}
+
+/// A cancel while a batch's first group runs skips every later group:
+/// none of their calls starts, and each ends as cancelled.
+#[test]
+fn a_cancel_skips_the_groups_still_to_start() {
+    let llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call("wait", json!({}))
+                .tool_call("g", json!({"ms": 1}))
+                .tool_call("h", json!({"ms": 1}))
+                .tool_call("g", json!({"ms": 1}))
+        })
+        .turn(|t| t.text("never"));
+    block_on(async {
+        let store = tau_store_sqlite::memory().await.unwrap();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let started = Arc::new(tokio::sync::Notify::new());
+        let run = Agent::new(llm.clone())
+            .tool(Waiter(started.clone(), json!({"type": "object"})))
+            .tool(Probe::new("g", ExecutionMode::Grouped, log.clone()))
+            .tool(Probe::new("h", ExecutionMode::Grouped, log.clone()))
+            .start("go", &store);
+        let id = run.id();
+        started.notified().await;
+        run.cancel();
+        let outcome = run.outcome().await.unwrap();
+        assert_eq!(outcome.stop, StopReason::Cancelled);
+        assert!(log.lock().unwrap().is_empty(), "a later group started");
+        let transcript = stored(&store, &id.0).await;
+        assert_results_follow_calls(&transcript);
+        let skipped: Vec<_> = transcript[3..6]
+            .iter()
+            .map(|message| match message {
+                Message::ToolResult(result) => (
+                    result.is_error,
+                    serde_json::to_string(&result.content).unwrap(),
+                ),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        for (is_error, content) in skipped {
+            assert!(is_error);
+            assert!(content.contains(CANCELLED), "{content}");
+        }
     });
 }
 
