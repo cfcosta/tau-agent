@@ -242,6 +242,7 @@ fn a_job_resumes_reports_reads_live_repositories_and_stops() {
             fraction: 0.5,
             line: "from 3: ".into(),
             page: None,
+            stopping: false,
         }]
     );
 

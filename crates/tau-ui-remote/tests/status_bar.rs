@@ -78,6 +78,7 @@ fn job(name: &str, page: Option<Link>) -> JobInfo {
         fraction: 0.4,
         line: "Reading ~/.codex/sessions".into(),
         page,
+        stopping: false,
     }
 }
 
@@ -180,6 +181,27 @@ fn several_jobs_collapse_to_a_count(cx: &mut TestAppContext) {
     assert!(cx.debug_bounds("status-job-worker-a").is_some());
     assert!(cx.debug_bounds("status-job-worker-b").is_none());
     assert!(cx.debug_bounds("status-job-worker-c").is_none());
+}
+
+/// A cancelled job shows as stopping, in place of what it said last,
+/// until it ends.
+#[gpui::test]
+fn a_cancelled_job_shows_as_stopping(cx: &mut TestAppContext) {
+    let (_, mut cx) = open(vec![job("import", None)], "", cx);
+    assert!(
+        cx.debug_bounds("status-job-worker-import-stopping")
+            .is_none()
+    );
+
+    let stopping = JobInfo {
+        stopping: true,
+        ..job("import", None)
+    };
+    let (_, mut cx) = open(vec![stopping], "", &mut cx);
+    assert!(
+        cx.debug_bounds("status-job-worker-import-stopping")
+            .is_some()
+    );
 }
 
 /// What a plugin adds to the bar from its data shows; with nothing to

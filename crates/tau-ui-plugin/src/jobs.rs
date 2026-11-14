@@ -46,6 +46,9 @@ pub struct JobInfo {
     /// `None` opens the plugin's own page, if it has one.
     #[serde(default)]
     pub page: Option<Link>,
+    /// It was cancelled and has until [`GRACE`] to stop.
+    #[serde(default)]
+    pub stopping: bool,
 }
 
 /// The repositories the host lists now. Clones share it.
@@ -277,6 +280,7 @@ impl Jobs {
                         fraction: 0.,
                         line: String::new(),
                         page: None,
+                        stopping: false,
                     },
                     cancel: cancel.clone(),
                 },
@@ -313,16 +317,21 @@ impl Jobs {
         Ok(())
     }
 
-    /// Asks `plugin`'s job `name` to stop; false when none is going.
+    /// Asks `plugin`'s job `name` to stop; false when none is going. It
+    /// is listed as stopping until it ends.
     pub fn cancel(&self, plugin: &str, name: &str) -> bool {
-        let running = self.0.running.lock().expect("not poisoned");
-        match running.get(&(plugin.to_owned(), name.to_owned())) {
-            Some(job) => {
-                job.cancel.cancel();
-                true
-            }
-            None => false,
+        {
+            let mut running = self.0.running.lock().expect("not poisoned");
+            let Some(job) =
+                running.get_mut(&(plugin.to_owned(), name.to_owned()))
+            else {
+                return false;
+            };
+            job.cancel.cancel();
+            job.info.stopping = true;
         }
+        self.refresh_now();
+        true
     }
 
     /// Whether `plugin`'s job `name` is going.
@@ -487,6 +496,7 @@ mod tests {
                 fraction: 1.,
                 line: "read 4 of 4".into(),
                 page: Some(Link::to("p", "review").param("repo", "tau")),
+                stopping: false,
             }]
         );
         assert!(jobs.is_running("p", "import"));
@@ -579,9 +589,12 @@ mod tests {
         runtime.block_on(async {
             tokio::time::sleep(Duration::from_millis(1)).await
         });
-        let names: Vec<String> =
-            jobs.running().into_iter().map(|job| job.name).collect();
-        assert_eq!(names, ["deaf"]);
+        let listed: Vec<(String, bool)> = jobs
+            .running()
+            .into_iter()
+            .map(|job| (job.name, job.stopping))
+            .collect();
+        assert_eq!(listed, [("deaf".to_owned(), true)], "listed as stopping");
         runtime.block_on(async { tokio::time::sleep(GRACE).await });
         assert!(jobs.running().is_empty());
     }

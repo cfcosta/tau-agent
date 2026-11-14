@@ -1351,6 +1351,7 @@ fn job_item(
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
     let id = format!("status-job-{}-{}", job.plugin, job.name);
+    let stopping = format!("{id}-stopping");
     let route = ws.job_route(job);
     let item = div()
         .id(SharedString::from(id.clone()))
@@ -1372,7 +1373,14 @@ fn job_item(
             t.accent,
             t.border,
         )))
-        .when(!job.line.is_empty(), |item| {
+        .when(job.stopping, |item| {
+            item.child(
+                div()
+                    .debug_selector(move || stopping.clone())
+                    .child("stopping…"),
+            )
+        })
+        .when(!job.stopping && !job.line.is_empty(), |item| {
             item.child(div().min_w(rems(0.)).truncate().child(job.line.clone()))
         });
     match route {
