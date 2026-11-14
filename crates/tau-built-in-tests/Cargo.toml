@@ -12,6 +12,13 @@ autotests = false
 name = "built_in"
 path = "tests/main.rs"
 
+# A test a built-in package, listed when asked: libtest's harness names
+# its tests as written, so this binary has its own `main`.
+[[test]]
+name = "packages"
+path = "tests/packages.rs"
+harness = false
+
 [dev-dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
