@@ -37,10 +37,17 @@ pub struct Feed<C> {
     seq: u64,
     /// The last messages, oldest first.
     buffer: VecDeque<(u64, Value)>,
-    /// The connections, and whether each takes new messages: it has had
-    /// its replay or snapshot.
-    conns: HashMap<C, bool>,
+    conns: HashMap<C, Phone>,
     keep: usize,
+}
+
+/// Where a connection is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phone {
+    /// It waits for its snapshot, which holds the messages until then.
+    Waiting,
+    /// It had its replay or snapshot: it takes new messages.
+    Taking,
 }
 
 impl<C: Copy + Eq + Hash> Feed<C> {
@@ -75,7 +82,7 @@ impl<C: Copy + Eq + Hash> Feed<C> {
         let to = self
             .conns
             .iter()
-            .filter(|(_, live)| **live)
+            .filter(|(_, phone)| **phone == Phone::Taking)
             .map(|(conn, _)| *conn)
             .collect();
         (
@@ -93,7 +100,7 @@ impl<C: Copy + Eq + Hash> Feed<C> {
         let to = self
             .conns
             .iter()
-            .filter(|(_, live)| **live)
+            .filter(|(_, phone)| **phone == Phone::Taking)
             .map(|(conn, _)| *conn)
             .collect();
         (Down::Transient { body }, to)
@@ -102,7 +109,12 @@ impl<C: Copy + Eq + Hash> Feed<C> {
     /// `conn` joins, having had every message up to `last`, if any.
     pub fn join(&mut self, conn: C, last: Option<u64>) -> Joined {
         let missed = last.and_then(|last| self.missed(last));
-        self.conns.insert(conn, missed.is_some());
+        let phone = if missed.is_some() {
+            Phone::Taking
+        } else {
+            Phone::Waiting
+        };
+        self.conns.insert(conn, phone);
         missed.map_or(Joined::NeedSnapshot, Joined::Replay)
     }
 
@@ -110,8 +122,7 @@ impl<C: Copy + Eq + Hash> Feed<C> {
     /// message; `conn` takes new messages from now on. None if `conn`
     /// left.
     pub fn snapshot(&mut self, conn: C, bodies: Vec<Value>) -> Option<Down> {
-        let live = self.conns.get_mut(&conn)?;
-        *live = true;
+        *self.conns.get_mut(&conn)? = Phone::Taking;
         Some(Down::Snapshot {
             seq: self.seq,
             bodies,
