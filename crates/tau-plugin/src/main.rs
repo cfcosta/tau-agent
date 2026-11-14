@@ -17,7 +17,9 @@
 //!   `--filter <text>` keeps the tests with `text` in their file or name;
 //!   `--bless` writes the fixtures the tests make into `fixtures/`, and
 //!   removes those none makes; `--watch` runs them again each time a
-//!   package changes.
+//!   package changes. Packages and their tests run at once, on every
+//!   core or `--jobs <n>`, the longest first by what each took the last
+//!   time, which it keeps in tau's cache folder.
 //!
 //! With no folder, either takes the folder it is run in when that holds a
 //! `tau.toml`, else every plugin tau comes with. `--json` prints what it
@@ -55,6 +57,7 @@ options:
   --verbose         test: every test, also under packages that pass
   --bless           test: write the fixtures the tests make
   --watch           test: run again each time a package changes
+  --jobs <n>        test: run n tests at once, else one a core
   --in <dir>        new: the folder to write it in, else the one it is run in
   --built-in        new: one of tau's own, in the checkout's plugins/
 
@@ -72,6 +75,7 @@ struct Asked {
     built_in: bool,
     within: Option<PathBuf>,
     filter: Option<String>,
+    jobs: Option<usize>,
 }
 
 fn parse(args: &[String]) -> Result<Asked, String> {
@@ -87,6 +91,7 @@ fn parse(args: &[String]) -> Result<Asked, String> {
         built_in: false,
         within: None,
         filter: None,
+        jobs: None,
     };
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -103,6 +108,14 @@ fn parse(args: &[String]) -> Result<Asked, String> {
             "--filter" => {
                 asked.filter =
                     Some(args.next().ok_or("--filter takes a text")?.clone());
+            }
+            "--jobs" => {
+                let jobs = args
+                    .next()
+                    .and_then(|n| n.parse::<usize>().ok())
+                    .filter(|n| *n > 0)
+                    .ok_or("--jobs takes a number of tests, at least 1")?;
+                asked.jobs = Some(jobs);
             }
             flag if flag.starts_with('-') => {
                 return Err(format!("{flag} is not an option"));
@@ -126,6 +139,10 @@ fn main() -> ExitCode {
     if !matches!(asked.command.as_str(), "new" | "install" | "check" | "test") {
         return asked_wrongly(&format!("{} is not a command", asked.command));
     }
+    if let Some(jobs) = asked.jobs {
+        tau_luau_plugins_host::pool::set_jobs(jobs);
+    }
+    tau_luau_plugins_host::pool::set_timings(timings::read());
     let here = std::env::current_dir().unwrap_or_default();
     let runtime = match built_in::runtime() {
         Ok(runtime) => runtime,
@@ -365,35 +382,60 @@ async fn test(asked: &Asked, packages: Vec<Package>) -> bool {
             asked.filter.clone(),
         )
     });
-    for Package { folder, files } in packages {
-        let name = files.manifest.name.clone();
-        let cancel = CancellationToken::new();
-        let progress = tree
-            .as_ref()
-            .map(|tree| tree.begin(&name))
-            .unwrap_or_default();
-        match packages::test(files, &folder, fixtures, cancel, &progress).await
-        {
-            Ok(results) => {
-                let results: Vec<_> = results
-                    .into_iter()
-                    .filter(|test| kept(asked, test))
-                    .collect();
-                all &= results.iter().all(|test| test.passed);
-                if let Some(tree) = &tree {
-                    tree.end(Ok(&results));
+    // Every package at once: their tests share the pool, the longest of
+    // all of them first.
+    let outcomes = futures_util::future::join_all(packages.into_iter().map(
+        |Package { folder, files }| {
+            let tree = tree.as_ref();
+            async move {
+                let name = files.manifest.name.clone();
+                let progress =
+                    tree.map(|tree| tree.begin(&name)).unwrap_or_default();
+                let tested = packages::test(
+                    files,
+                    &folder,
+                    fixtures,
+                    CancellationToken::new(),
+                    &progress,
+                )
+                .await;
+                let outcome = match tested {
+                    Ok(results) => Ok(results
+                        .into_iter()
+                        .filter(|test| kept(asked, test))
+                        .collect::<Vec<_>>()),
+                    Err(error) => Err(error),
+                };
+                if let Some(tree) = tree {
+                    tree.end(&name, outcome.as_deref().map_err(String::as_str));
                 }
+                (name, outcome)
+            }
+        },
+    ))
+    .await;
+    let mut took = Vec::new();
+    for (name, outcome) in outcomes {
+        match outcome {
+            Ok(results) => {
+                all &= results.iter().all(|test| test.passed);
+                took.extend(results.iter().filter_map(|test| {
+                    Some((
+                        tau_luau_plugins_host::pool::key(
+                            &name, &test.file, &test.name,
+                        ),
+                        test.millis?,
+                    ))
+                }));
                 found.push(json!({ "name": name, "tests": results }));
             }
             Err(error) => {
                 all = false;
-                if let Some(tree) = &tree {
-                    tree.end(Err(&error));
-                }
                 found.push(json!({ "name": name, "error": error }));
             }
         }
     }
+    timings::keep(took);
     match tree {
         Some(tree) => tree.finish(),
         None => println!("{}", json!(found)),
@@ -406,4 +448,44 @@ fn kept(asked: &Asked, test: &tau_luau_plugins::TestResult) -> bool {
     asked.filter.as_deref().is_none_or(|filter| {
         test.file.contains(filter) || test.name.contains(filter)
     })
+}
+
+/// What each test took the last time, kept in tau's cache folder for the
+/// longest to start first on the next run.
+mod timings {
+    use std::{collections::HashMap, path::PathBuf};
+
+    fn path() -> Option<PathBuf> {
+        let cache = std::env::var_os("XDG_CACHE_HOME")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME")
+                    .map(|home| PathBuf::from(home).join(".cache"))
+            })?;
+        Some(cache.join("tau").join("plugin-test-times.json"))
+    }
+
+    /// What was kept, or nothing.
+    pub fn read() -> HashMap<String, u64> {
+        path()
+            .and_then(|path| std::fs::read(path).ok())
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default()
+    }
+
+    /// Keeps `took` over what was kept. A cache: when it cannot be
+    /// written, the next run orders its tests by what they ask for.
+    pub fn keep(took: Vec<(String, u64)>) {
+        let Some(path) = path() else {
+            return;
+        };
+        let mut kept = read();
+        kept.extend(took);
+        if let (Some(dir), Ok(text)) =
+            (path.parent(), serde_json::to_vec(&kept))
+        {
+            let _ = std::fs::create_dir_all(dir);
+            let _ = std::fs::write(path, text);
+        }
+    }
 }

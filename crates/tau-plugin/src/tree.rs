@@ -65,7 +65,7 @@ impl Tree {
             look,
             filter,
             began: Instant::now(),
-            block: None,
+            blocks: Vec::new(),
             drawn: 0,
             frame: 0,
             failures: Vec::new(),
@@ -95,25 +95,26 @@ impl Tree {
     }
 
     /// Begins the package `name`: where its tests' progress goes.
+    /// Packages go on at once, each drawn apart.
     pub fn begin(&self, name: &str) -> Progress {
         let mut state = self.state.lock().expect("not poisoned");
-        state.block = Some(Block {
+        state.blocks.push(Block {
             name: name.to_owned(),
             began: Instant::now(),
             tests: Vec::new(),
-            running: None,
+            running: Vec::new(),
         });
         drop(state);
-        let state = self.state.clone();
+        let (state, name) = (self.state.clone(), name.to_owned());
         Progress::to(move |step| {
-            state.lock().expect("not poisoned").step(step);
+            state.lock().expect("not poisoned").step(&name, step);
         })
     }
 
-    /// Ends the package going on: what its tests came to, the ones the
+    /// Ends the package `name`: what its tests came to, the ones the
     /// filter keeps, or why it did not load.
-    pub fn end(&self, outcome: Result<&[TestResult], &str>) {
-        self.state.lock().expect("not poisoned").end(outcome);
+    pub fn end(&self, name: &str, outcome: Result<&[TestResult], &str>) {
+        self.state.lock().expect("not poisoned").end(name, outcome);
     }
 
     /// Tells every failure again, and the summary.
@@ -157,8 +158,8 @@ struct State {
     look: Look,
     filter: Option<String>,
     began: Instant,
-    /// The package going on.
-    block: Option<Block>,
+    /// The packages going on, in the order they began.
+    blocks: Vec<Block>,
     /// The lines drawn in place, which the next drawing replaces.
     drawn: usize,
     frame: usize,
@@ -177,10 +178,10 @@ struct Block {
     name: String,
     began: Instant,
     tests: Vec<TestResult>,
-    running: Option<Running>,
+    running: Vec<Running>,
 }
 
-/// The test going on.
+/// A test going on.
 struct Running {
     file: String,
     name: String,
@@ -205,12 +206,14 @@ impl State {
         })
     }
 
-    fn step(&mut self, step: Step<'_>) {
+    fn step(&mut self, package: &str, step: Step<'_>) {
         let kept = match step {
             Step::Ended(test) => self.kept(test),
             _ => true,
         };
-        let Some(block) = &mut self.block else {
+        let Some(block) =
+            self.blocks.iter_mut().find(|block| block.name == package)
+        else {
             return;
         };
         match step {
@@ -220,7 +223,7 @@ impl State {
                 kind,
                 cases,
             } => {
-                block.running = Some(Running {
+                block.running.push(Running {
                     file: file.to_owned(),
                     name: name.to_owned(),
                     kind,
@@ -230,21 +233,34 @@ impl State {
                     began: Instant::now(),
                 });
             }
-            Step::Case { ran, failed_at } => {
-                if let Some(running) = &mut block.running {
+            Step::Case {
+                file,
+                name,
+                ran,
+                failed_at,
+            } => {
+                if let Some(running) =
+                    block.running.iter_mut().find(|running| {
+                        running.file == file && running.name == name
+                    })
+                {
                     running.ran = ran;
                     running.failed_at = failed_at;
                 }
             }
             Step::Ended(test) => {
-                // A file's cases end one by one; it runs until its last.
-                let file_going_on = block
-                    .running
-                    .as_ref()
-                    .is_some_and(|running| running.kind == TestKind::Case);
-                if !(file_going_on && test.kind == TestKind::Case) {
-                    block.running = None;
-                }
+                // A property or loop ends as itself; a file's cases, run
+                // together, end when the first of them is told.
+                block.running.retain(|running| match test.kind {
+                    TestKind::Property | TestKind::Machine | TestKind::Loop => {
+                        !(running.file == test.file
+                            && running.name == test.name)
+                    }
+                    _ => {
+                        !(running.file == test.file
+                            && running.kind == TestKind::Case)
+                    }
+                });
                 if kept {
                     block.tests.push(test.clone());
                 }
@@ -254,10 +270,12 @@ impl State {
         // often than a terminal can show.
     }
 
-    fn end(&mut self, outcome: Result<&[TestResult], &str>) {
-        let Some(block) = self.block.take() else {
+    fn end(&mut self, name: &str, outcome: Result<&[TestResult], &str>) {
+        let Some(at) = self.blocks.iter().position(|block| block.name == name)
+        else {
             return;
         };
+        let block = self.blocks.remove(at);
         let took = block.began.elapsed();
         let lines = match outcome {
             Ok(tests) => {
@@ -343,56 +361,42 @@ impl State {
         lines
     }
 
-    /// Draws the package going on in place of what was drawn before.
+    /// Draws the packages going on, each with its tests going on, in place
+    /// of what was drawn before.
     fn redraw(&mut self) {
-        if !self.look.live {
+        if !self.look.live || self.blocks.is_empty() {
             return;
         }
-        let Some(block) = &self.block else {
-            return;
-        };
         let (width, rows) = terminal_size();
         let spinner = SPINNER[self.frame % SPINNER.len()].to_string();
-        let mut lines = vec![
-            Line::new()
-                .add(YELLOW, &format!(" {spinner} "))
-                .add(BOLD, &block.name)
-                .add(DIM, &format!("  {} done  ", block.tests.len()))
-                .add(DIM, &duration(block.began.elapsed())),
-        ];
-        let names = block
-            .tests
-            .iter()
-            .map(|test| label(&test.file, &test.name))
-            .chain(
-                block
-                    .running
-                    .iter()
-                    .map(|running| label(&running.file, &running.name)),
-            );
+        let names = self.blocks.iter().flat_map(|block| {
+            block
+                .running
+                .iter()
+                .map(|running| label(&running.file, &running.name))
+        });
         let column = name_column(names).min(width.saturating_sub(34));
-        let mut children: Vec<Line> = block
-            .tests
-            .iter()
-            .enumerate()
-            .map(|(at, test)| {
-                let last =
-                    block.running.is_none() && at + 1 == block.tests.len();
-                done_line(test, last, column)
-            })
-            .collect();
-        if let Some(running) = &block.running {
-            children.push(running_line(running, &spinner, column));
+        let mut lines = Vec::new();
+        for block in &self.blocks {
+            lines.push(
+                Line::new()
+                    .add(YELLOW, &format!(" {spinner} "))
+                    .add(BOLD, &block.name)
+                    .add(DIM, &format!("  {} done  ", block.tests.len()))
+                    .add(DIM, &duration(block.began.elapsed())),
+            );
+            for running in &block.running {
+                lines.push(running_line(running, &spinner, column));
+            }
         }
-        // What does not fit the screen is cut from the top, or the
+        // What does not fit the screen is cut from the bottom, or the
         // cursor could not climb back over it.
         let room = rows.saturating_sub(3).max(3);
-        if children.len() > room {
-            let cut = children.len() - (room - 1);
-            children.drain(..cut);
+        if lines.len() > room {
+            let cut = lines.len() - (room - 1);
+            lines.truncate(room - 1);
             lines.push(Line::new().add(DIM, &format!("   ⋮  {cut} more")));
         }
-        lines.extend(children);
         let mut out = self.clear();
         for line in &lines {
             out.push_str(&line.paint(self.look.color, width.saturating_sub(1)));

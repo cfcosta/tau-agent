@@ -9337,6 +9337,7 @@ dependencies = [
 name = "tau-plugin"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "rustix",
  "serde_json",
  "tau-luau-plugins",

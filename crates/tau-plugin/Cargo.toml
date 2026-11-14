@@ -9,6 +9,8 @@ publish.workspace = true
 autotests = false
 
 [dependencies]
+# Packages tested at once.
+futures-util.workspace = true
 rustix.workspace = true
 serde_json.workspace = true
 tau-luau-plugins.workspace = true
