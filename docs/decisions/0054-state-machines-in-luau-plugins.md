@@ -1,6 +1,6 @@
 # 0054: State machines in Luau plugins
 
-- Status: proposed.
+- Status: accepted.
 - Date: 2026-11-14
 
 ## Context
