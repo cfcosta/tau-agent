@@ -945,3 +945,187 @@ fn failure_frames_are_classified_like_retry_classify(tc: TestCase) {
     let expected = retry::classify(&Failure::Api { code, kind, status });
     assert_eq!(*class, expected, "{frame}");
 }
+
+/// A processor fed frames in any order, against what its events must
+/// say: the frames a server sends, unknown ones among them, in orders
+/// a well-behaved server never sends (deltas before their item, a
+/// second terminal, frames after it, a close at any point).
+struct Phases {
+    processor: StreamProcessor,
+    accumulator: Accumulator,
+    events: Vec<AssistantEvent>,
+    /// The terminal event, once one went out.
+    ended: Option<AssistantEvent>,
+    /// Whether a function call was opened.
+    called: bool,
+    /// The output indices with an item open: a second item is not
+    /// opened while one is, as the processor allows (two open slots are
+    /// `output_index_identifies_independent_slots`) and the event grammar
+    /// does not.
+    open: std::collections::BTreeMap<u64, serde_json::Value>,
+}
+
+/// One frame of the drawn vocabulary, at an output index below 3.
+fn phase_frame(tc: &TestCase) -> serde_json::Value {
+    let index = tc.draw(gs::integers::<u64>().max_value(2));
+    match tc.draw(gs::integers::<u8>().max_value(9)) {
+        0 => json!({ "type": "codex.response.metadata", "x": 1 }),
+        1 => {
+            json!({ "type": "response.created", "response": { "id": "resp_1" } })
+        }
+        2 => json!({
+            "type": "response.output_item.added",
+            "output_index": index,
+            "item": { "type": "message", "id": format!("msg_{index}"), "content": [] },
+        }),
+        3 => json!({
+            "type": "response.output_item.added",
+            "output_index": index,
+            "item": {
+                "type": "function_call", "id": format!("fc_{index}"),
+                "call_id": format!("call_{index}"), "name": "f", "arguments": "",
+            },
+        }),
+        4 => {
+            json!({ "type": "response.output_text.delta", "output_index": index, "delta": "a" })
+        }
+        5 => json!({
+            "type": "response.function_call_arguments.delta",
+            "output_index": index, "delta": "{}",
+        }),
+        6 => json!({
+            "type": "response.output_item.done",
+            "output_index": index,
+            "item": { "type": "message", "id": format!("msg_{index}"),
+                      "content": [{ "type": "output_text", "text": "a" }] },
+        }),
+        7 => json!({
+            "type": "response.completed",
+            "response": { "id": "resp_1", "status": tc.draw(gs::sampled_from(vec![
+                "completed", "incomplete", "weird",
+            ])) },
+        }),
+        8 => {
+            json!({ "type": "response.failed", "response": { "error": { "code": "server_error", "message": "x" } } })
+        }
+        _ => {
+            json!({ "type": "error", "error": { "code": "rate_limit_exceeded", "message": "x" } })
+        }
+    }
+}
+
+impl Phases {
+    fn take(&mut self, events: Vec<AssistantEvent>) {
+        for event in events {
+            assert!(self.ended.is_none(), "{event:?} after the terminal event");
+            if matches!(event, AssistantEvent::ToolCallStart { .. }) {
+                self.called = true;
+            }
+            self.accumulator
+                .push(event.clone())
+                .unwrap_or_else(|error| {
+                    panic!("{event:?} broke the grammar: {error:?}")
+                });
+            if matches!(
+                event,
+                AssistantEvent::Done { .. } | AssistantEvent::Error { .. }
+            ) {
+                self.ended = Some(event.clone());
+            }
+            self.events.push(event);
+        }
+    }
+}
+
+#[hegel::state_machine]
+impl Phases {
+    #[rule(weight = 8)]
+    fn frame(&mut self, tc: TestCase) {
+        let mut frame = phase_frame(&tc);
+        let index = frame["output_index"].as_u64();
+        let other_open = self.open.keys().any(|open| Some(*open) != index);
+        match frame["type"].as_str() {
+            Some("response.output_item.added") => {
+                if other_open {
+                    tc.reject();
+                }
+                self.open.insert(index.unwrap(), frame["item"].clone());
+            }
+            Some("response.output_item.done") => {
+                if other_open {
+                    tc.reject();
+                }
+                // An item closes as the item it opened as.
+                if let Some(item) = self.open.remove(&index.unwrap()) {
+                    frame["item"] = item;
+                }
+            }
+            _ => {}
+        }
+        let known = frame["type"] != "codex.response.metadata";
+        let before = self.events.len();
+        let events = self.processor.push(&frame);
+        if !known || self.ended.is_some() {
+            assert!(events.is_empty(), "{frame} gave {events:?}");
+        }
+        self.take(events);
+        if known && before == 0 && self.ended.is_none() {
+            assert!(
+                !self.events.is_empty(),
+                "{frame} did not start the stream"
+            );
+        }
+    }
+
+    #[rule]
+    fn close(&mut self, _tc: TestCase) {
+        let events = self.processor.close();
+        let ended = self.ended.is_some();
+        self.take(events);
+        if !ended {
+            assert!(
+                matches!(self.ended, Some(AssistantEvent::Error { .. })),
+                "a close ends with an error"
+            );
+        }
+    }
+
+    #[invariant]
+    fn the_events_tell_the_phase(&mut self, _tc: TestCase) {
+        let starts = self
+            .events
+            .iter()
+            .filter(|event| matches!(event, AssistantEvent::Start { .. }))
+            .count();
+        assert!(starts <= 1, "{starts} starts");
+        if let Some(first) = self.events.first() {
+            assert!(
+                matches!(first, AssistantEvent::Start { .. }),
+                "{first:?} first"
+            );
+        }
+        assert_eq!(self.processor.is_finished(), self.ended.is_some());
+        if let Some(AssistantEvent::Done { reason, .. }) = &self.ended {
+            assert_eq!(
+                *reason == DoneReason::ToolUse,
+                self.called,
+                "a stop is ToolUse exactly when a call was opened"
+            );
+        }
+    }
+}
+
+/// The phase as a state machine: see [`Phases`].
+#[hegel::test(test_cases = 300)]
+fn the_stream_phase_follows_any_frames(tc: TestCase) {
+    hegel::stateful::machine(Phases {
+        processor: StreamProcessor::new("gpt-5.5".to_owned(), 0),
+        accumulator: Accumulator::new(),
+        events: Vec::new(),
+        ended: None,
+        called: false,
+        open: Default::default(),
+    })
+    .steps(20)
+    .run(tc);
+}

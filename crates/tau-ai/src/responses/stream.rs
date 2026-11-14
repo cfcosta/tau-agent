@@ -142,8 +142,11 @@
 //!   only matters for malformed server data, since OpenAI always sends
 //!   both.
 
+mod phase;
+
 use std::collections::HashMap;
 
+use phase::{Phase, Step};
 use serde_json::{Map, Value};
 
 use crate::{
@@ -174,18 +177,6 @@ pub struct StreamProcessor {
     response_id: Option<String>,
     error_code: Option<String>,
     slots: HashMap<u64, Slot>,
-}
-
-/// Where the response is: `Start` goes out with the first known frame,
-/// and nothing goes out after the terminal event.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Phase {
-    Waiting,
-    /// `tool_call`: a function call was opened, so a `stop` is `ToolUse`.
-    Streaming {
-        tool_call: bool,
-    },
-    Finished,
 }
 
 /// The state of one still-open `output_index`, keyed by that index (not
@@ -245,7 +236,7 @@ impl StreamProcessor {
         Self {
             model,
             timestamp,
-            phase: Phase::Waiting,
+            phase: Phase::default(),
             next_index: 0,
             response_id: None,
             error_code: None,
@@ -257,7 +248,7 @@ impl StreamProcessor {
     /// order. A no-op once a terminal event has already been produced.
     pub fn push(&mut self, frame: &Value) -> Vec<AssistantEvent> {
         let mut events = Vec::new();
-        if self.phase == Phase::Finished {
+        if self.phase.is_finished() {
             return events;
         }
         let Some(frame_type) = frame.get("type").and_then(Value::as_str) else {
@@ -275,7 +266,7 @@ impl StreamProcessor {
         {
             self.response_id = Some(id.to_owned());
         }
-        self.ensure_start(&mut events);
+        self.step(Step::Frame, &mut events);
         match frame_type {
             "response.output_item.added" => {
                 self.handle_output_item_added(frame, &mut events)
@@ -315,11 +306,10 @@ impl StreamProcessor {
     /// situation (`openai-codex-responses.ts:1414`).
     pub fn close(&mut self) -> Vec<AssistantEvent> {
         let mut events = Vec::new();
-        if self.phase == Phase::Finished {
+        if self.phase.is_finished() {
             return events;
         }
-        self.ensure_start(&mut events);
-        self.phase = Phase::Finished;
+        self.step(Step::Terminal, &mut events);
         // Nothing but `Start` went out: the turn can be sent again.
         let class = classify(&Failure::Transport {
             before_first_event: self.next_index == 0,
@@ -336,7 +326,7 @@ impl StreamProcessor {
 
     /// Whether a terminal event has been produced.
     pub fn is_finished(&self) -> bool {
-        self.phase == Phase::Finished
+        self.phase.is_finished()
     }
 
     /// The response id, once known. Reliable after a successful
@@ -356,11 +346,12 @@ impl StreamProcessor {
         self.error_code.as_deref()
     }
 
-    fn ensure_start(&mut self, events: &mut Vec<AssistantEvent>) {
-        if self.phase != Phase::Waiting {
+    /// Takes `step`, and sends `Start` first when the stream starts
+    /// with it.
+    fn step(&mut self, step: Step, events: &mut Vec<AssistantEvent>) {
+        if !self.phase.take(step) {
             return;
         }
-        self.phase = Phase::Streaming { tool_call: false };
         events.push(AssistantEvent::Start {
             model: self.model.clone(),
             response_id: self.response_id.clone(),
@@ -426,7 +417,7 @@ impl StreamProcessor {
                     id: id.clone(),
                     name: name.clone(),
                 });
-                self.phase = Phase::Streaming { tool_call: true };
+                self.step(Step::ToolCall, events);
                 let initial_args = item
                     .get("arguments")
                     .and_then(Value::as_str)
@@ -703,8 +694,8 @@ impl StreamProcessor {
                 "Unexpected response status: {other}"
             )),
         };
-        let tool_call = self.phase == Phase::Streaming { tool_call: true };
-        self.phase = Phase::Finished;
+        let tool_call = self.phase.tool_call();
+        self.step(Step::Terminal, events);
         match outcome {
             TerminalOutcome::Done(reason) => {
                 let reason = if reason == DoneReason::Stop && tool_call {
@@ -763,7 +754,7 @@ impl StreamProcessor {
         } else {
             "Unknown error (no error details in response)".to_owned()
         };
-        self.phase = Phase::Finished;
+        self.step(Step::Terminal, events);
         let class = classify(&Failure::Api {
             code: self.error_code.as_deref(),
             kind: error.and_then(|e| e.get("type")).and_then(Value::as_str),
@@ -797,7 +788,7 @@ impl StreamProcessor {
             .or_else(|| frame.get("detail").and_then(Value::as_str))
             .unwrap_or("");
         let code_text = code.unwrap_or("unknown");
-        self.phase = Phase::Finished;
+        self.step(Step::Terminal, events);
         let class = classify(&Failure::Api {
             code,
             kind: field("type"),
