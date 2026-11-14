@@ -1,0 +1,39 @@
+[package]
+name = "heiko-phone"
+description = "heiko's interface on an Android phone, through gpui-pre-mobile: a remote for the heiko on a computer."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# The library Android's NativeActivity loads. On any other target it
+# only reads pairing codes, so the workspace still builds and tests on
+# the desktop.
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Reads the pairing code from the viewfinder's frames.
+rqrr = { version = "0.11.0", default-features = false }
+heiko-remote.workspace = true
+
+[dev-dependencies]
+hegeltest.workspace = true
+qrcode.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+# The same spec as heiko-ui-remote's.
+gpui = { package = "gpui-pre", version = "=0.3.7" }
+# Its crates.io release is on gpui-pre 0.3.4; `main` is on 0.3.7. The
+# device packages (camera, location…) are left out.
+gpui_mobile = { package = "gpui-pre-mobile", git = "https://github.com/longbridge/gpui-mobile", rev = "9075e3aa3eea812127f2c60ed66f0cd5798ff245", default-features = false }
+android-activity = { version = "0.6", features = ["native-activity"] }
+android_logger = "0.15"
+log = "0.4"
+heiko-ui-remote.workspace = true
+# When what waits on the person notifies: an agent's notes, questions
+# and spent day.
+heiko-ui-plugin.workspace = true
+# gpui-pre-mobile's version, to call heiko's own Java.
+jni = "0.22"

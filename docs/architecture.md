@@ -3,95 +3,95 @@
 ## Crates
 
 ```
-tau-agent/
+heiko-agent/
 ├── crates/
-│   ├── tau/          # the desktop app: tau-ui with every plugin's host half,
+│   ├── heiko/          # the desktop app: heiko-ui with every plugin's host half,
 │   │                 # the Luau ones included (ADR 0030)
-│   ├── tau-ai/       # types, events, Responses conversion, WebSocket pool, retry, cost
-│   ├── tau-agent/    # Agent, Run, loop, AgentTool + Plugin, typed results,
+│   ├── heiko-ai/       # types, events, Responses conversion, WebSocket pool, retry, cost
+│   ├── heiko-agent/    # Agent, Run, loop, AgentTool + Plugin, typed results,
 │   │                 # limits, sub-agents, forks, context estimate
-│   ├── tau-clock/    # the host's clock and local days: agents' schedules,
+│   ├── heiko-clock/    # the host's clock and local days: agents' schedules,
 │   │                 # Luau plugins' local time (ADR 0037, 0050)
-│   ├── tau-store/    # runs, messages, fork transcripts: the types and the
+│   ├── heiko-store/    # runs, messages, fork transcripts: the types and the
 │   │                 # Backend a Store is, with no database driver
-│   ├── tau-store-sqlite/ # the Backend on SQLite via sqlx, with migrations
-│   ├── tau-testing/  # ScriptedModel, recorded-stream replay
-│   ├── tau-ui-kit/   # the design language: theme tokens, icons, fonts, components,
+│   ├── heiko-store-sqlite/ # the Backend on SQLite via sqlx, with migrations
+│   ├── heiko-testing/  # ScriptedModel, recorded-stream replay
+│   ├── heiko-ui-kit/   # the design language: theme tokens, icons, fonts, components,
 │   │                 # text field, marked-up text (ADR 0017)
-│   ├── tau-ui-plugin/ # UiPlugin, HostHalf, its Fold, the registry, extension
+│   ├── heiko-ui-plugin/ # UiPlugin, HostHalf, its Fold, the registry, extension
 │   │                 # points (ADR 0017, 0030)
-│   ├── tau-ui-remote/ # the interface: workspace, screens, plugins' views, and the
+│   ├── heiko-ui-remote/ # the interface: workspace, screens, plugins' views, and the
 │   │                 # phone's remote that drives it from a computer (ADR 0013)
-│   ├── tau-ui/       # the computer's side: the host that runs agents, the
+│   ├── heiko-ui/       # the computer's side: the host that runs agents, the
 │   │                 # phone server, onboarding's sign-ins, the demo
-│   ├── tau-phone/    # tau-ui-remote on Android
-│   ├── tau-terminal/ # libghostty-vt terminal, PTY command runner,
-│   │                 # plain text, styled snapshots, GPUI TerminalView; no tau deps
+│   ├── heiko-phone/    # heiko-ui-remote on Android
+│   ├── heiko-terminal/ # libghostty-vt terminal, PTY command runner,
+│   │                 # plain text, styled snapshots, GPUI TerminalView; no heiko deps
 │   └── plugins/                # each plugin's interface half, and its
-│       │                         # host half: `tau-<plugin>-host` when heavy
+│       │                         # host half: `heiko-<plugin>-host` when heavy
 │       │                         # (ADR 0030)
-│       ├── tau-ask/              # the agent asks the person; the panel in the
+│       ├── heiko-ask/              # the agent asks the person; the panel in the
 │       │                         # composer's place (ADR 0019; Luau)
-│       ├── tau-chatgpt/          # the person's ChatGPT plan, filling
-│       │                         # `tau.provider`
-│       ├── tau-codemode/         # Luau scripts that call tools and Jev
-│       ├── tau-compaction/       # summarizing compaction (Luau)
-│       ├── tau-compaction-chain/ # pruning, the tree and the summary in
-│       │                         # turn, filling `tau.compaction` (Luau)
-│       ├── tau-constitution/     # a repository's rules, checked with Jev (Luau)
-│       ├── tau-direnv/           # agent commands in the repository's
+│       ├── heiko-chatgpt/          # the person's ChatGPT plan, filling
+│       │                         # `heiko.provider`
+│       ├── heiko-codemode/         # Luau scripts that call tools and Jev
+│       ├── heiko-compaction/       # summarizing compaction (Luau)
+│       ├── heiko-compaction-chain/ # pruning, the tree and the summary in
+│       │                         # turn, filling `heiko.compaction` (Luau)
+│       ├── heiko-constitution/     # a repository's rules, checked with Jev (Luau)
+│       ├── heiko-direnv/           # agent commands in the repository's
 │       │                         # direnv environment (ADR 0025)
-│       ├── tau-fast-compaction/  # Jev-driven pruning of tool history (Luau)
-│       ├── tau-goal/             # keeps a chat going until its /goal holds (Luau)
-│       ├── tau-jev/              # TypeSafe's Jev client, and the plugin that
+│       ├── heiko-fast-compaction/  # Jev-driven pruning of tool history (Luau)
+│       ├── heiko-goal/             # keeps a chat going until its /goal holds (Luau)
+│       ├── heiko-jev/              # TypeSafe's Jev client, and the plugin that
 │       │                         # keeps its key and gives it to plugins
-│       ├── tau-luau-plugins/     # plugins written in Luau, run in codemode's
+│       ├── heiko-luau-plugins/     # plugins written in Luau, run in codemode's
 │       │                         # sandbox (ADR 0027)
-│       ├── tau-mcp/              # MCP servers' tools (rmcp), the Servers page
-│       ├── tau-memory/           # linked notes each repository's runs keep (Luau)
-│       ├── tau-notify/           # desktop notices while tau is in the
-│       │                         # background, filling `tau.notify` (Luau)
-│       ├── tau-reasoning/        # picks a run's reasoning effort on auto (Luau)
-│       ├── tau-sqlite/           # the store in SQLite, filling `tau.store`
-│       ├── tau-titles/           # a run's title from the person's model,
-│       │                         # filling `tau.title` (Luau)
-│       ├── tau-tools/            # read, exec_command, write_stdin, edit, ...
-│       ├── tau-tree-compaction/  # compaction into a tree of summaries the
+│       ├── heiko-mcp/              # MCP servers' tools (rmcp), the Servers page
+│       ├── heiko-memory/           # linked notes each repository's runs keep (Luau)
+│       ├── heiko-notify/           # desktop notices while heiko is in the
+│       │                         # background, filling `heiko.notify` (Luau)
+│       ├── heiko-reasoning/        # picks a run's reasoning effort on auto (Luau)
+│       ├── heiko-sqlite/           # the store in SQLite, filling `heiko.store`
+│       ├── heiko-titles/           # a run's title from the person's model,
+│       │                         # filling `heiko.title` (Luau)
+│       ├── heiko-tools/            # read, exec_command, write_stdin, edit, ...
+│       ├── heiko-tree-compaction/  # compaction into a tree of summaries the
 │       │                         # agent zooms into, after OptChat (Luau)
-│       ├── tau-vcs/              # version control on jj-lib, and landing runs
-│       └── tau-watcher/          # notes what you likely missed, every 6th step (Luau)
+│       ├── heiko-vcs/              # version control on jj-lib, and landing runs
+│       └── heiko-watcher/          # notes what you likely missed, every 6th step (Luau)
 │                                 # (ADR 0032)
 └── docs/
 ```
 
 Dependency direction:
 
-- `tau-agent` depends on `tau-ai` and `tau-store`, which has no
+- `heiko-agent` depends on `heiko-ai` and `heiko-store`, which has no
   database driver: the agent loop and the plugins build while
-  `tau-store-sqlite` compiles SQLite. Whoever opens a store depends
-  on `tau-store-sqlite`: the tau-sqlite plugin, which fills `tau.store`
+  `heiko-store-sqlite` compiles SQLite. Whoever opens a store depends
+  on `heiko-store-sqlite`: the heiko-sqlite plugin, which fills `heiko.store`
   for the host, the evaluations and tests.
-- `tau-testing` depends on `tau-ai`.
-- `tau-ui-kit` depends on GPUI and `tau-terminal` (the theme's terminal
-  palette), and on no other tau crate.
-- `tau-terminal` depends on no tau crate. `tau-tools-host` uses it to
-  run commands under a pseudo-terminal, and `tau-tools` to draw their
-  cards, the latter only with its `terminal` feature, which `tau-ui`
+- `heiko-testing` depends on `heiko-ai`.
+- `heiko-ui-kit` depends on GPUI and `heiko-terminal` (the theme's terminal
+  palette), and on no other heiko crate.
+- `heiko-terminal` depends on no heiko crate. `heiko-tools-host` uses it to
+  run commands under a pseudo-terminal, and `heiko-tools` to draw their
+  cards, the latter only with its `terminal` feature, which `heiko-ui`
   turns on ([0010](decisions/0010-terminal-rendering.md),
   [0038](decisions/0038-commands-run-in-the-background.md)).
-- `tau-ui-remote` draws runs and starts none: it depends on the
+- `heiko-ui-remote` draws runs and starts none: it depends on the
   plugins' crates, not on their host halves, and lists the plugins
-  without them. `tau-ui` brings the host halves (the `tau-*-host`
+  without them. `heiko-ui` brings the host halves (the `heiko-*-host`
   crates, and the `host` feature of the plugins that keep theirs),
-  gives each plugin its own, and drives it; `tau-phone` depends on
-  `tau-ui-remote` alone ([0030](decisions/0030-host-halves-are-crates.md)).
-- `tau`, the app, is `tau-ui` with the Luau plugins' host halves
-  (tau-codemode's and tau-luau-plugins'), which only it links: `tau-ui`
+  gives each plugin its own, and drives it; `heiko-phone` depends on
+  `heiko-ui-remote` alone ([0030](decisions/0030-host-halves-are-crates.md)).
+- `heiko`, the app, is `heiko-ui` with the Luau plugins' host halves
+  (heiko-codemode's and heiko-luau-plugins'), which only it links: `heiko-ui`
   builds while Luau's C++ does.
-- Plugins, under `crates/plugins/`, depend on `tau-agent` (and
-  `tau-ai` for message types). Core crates never depend on a plugin
+- Plugins, under `crates/plugins/`, depend on `heiko-agent` (and
+  `heiko-ai` for message types). Core crates never depend on a plugin
   ([0006](decisions/0006-plugin-crates.md)). Each plugin brings its own
-  UI through `tau-ui-plugin`, and has no headless form
+  UI through `heiko-ui-plugin`, and has no headless form
   ([0017](decisions/0017-plugins-bring-their-ui.md)). Its agent half
   publishes records of one enum, and its state folds them (`Fold`), live
   and from history alike.
@@ -122,7 +122,7 @@ Agent::start(input, &store)
   ([0012](decisions/0012-chatgpt-sign-in-only.md)), and owns a pool of
   WebSocket connections.
   - Each run gets a lane on a connection of its own, with one response
-    in flight. tau sends no `stream_id`, which the plan route may not
+    in flight. heiko sends no `stream_id`, which the plan route may not
     take. Requests on a lane are FIFO; different lanes run concurrently.
   - The prompt cache lives on the connection, so a lane takes one that
     already serves its conversation, or for a fork's first request its
@@ -145,7 +145,7 @@ Agent::start(input, &store)
   - Only provider streams are dropped inside `select!`.
 - **Plugins and event subscribers are awaited in order.** A slow
   subscriber applies backpressure to its run and to no other run.
-- **MCP servers belong to the host, not to a run.** tau-mcp keeps one
+- **MCP servers belong to the host, not to a run.** heiko-mcp keeps one
   plugin per repository on the host, whose connections every run in the
   repository shares; they close when the host goes
   ([mcp.md](reference/mcp.md)).
@@ -156,7 +156,7 @@ Agent::start(input, &store)
 
 ## I/O boundary
 
-The protocol logic in `tau-ai` does no I/O. It is written as plain state
+The protocol logic in `heiko-ai` does no I/O. It is written as plain state
 machines that take events and return actions:
 
 - **`ws::proto`** holds the lane and pool state: the delta rule, the
@@ -201,17 +201,17 @@ the request stays identical. So:
 
 ## Mapping from pi
 
-| pi (TypeScript)                                    | tau-agent (Rust)                                                   |
+| pi (TypeScript)                                    | heiko-agent (Rust)                                                   |
 | -------------------------------------------------- | ------------------------------------------------------------------ |
-| `pi-ai` `AssistantMessageEvent` + shared `partial` | `tau_ai::event::AssistantEvent` (owned deltas) + `Accumulator`     |
-| `openai-responses-shared.ts`                       | `tau_ai::responses`                                                |
-| `openai-codex-responses.ts` WebSocket cache        | `tau_ai::ws` (plan endpoint, one lane per connection)              |
-| `pi-agent-core` `Agent` / `agentLoop`              | `tau_agent::agent::Agent` / `Run`                                  |
+| `pi-ai` `AssistantMessageEvent` + shared `partial` | `heiko_ai::event::AssistantEvent` (owned deltas) + `Accumulator`     |
+| `openai-responses-shared.ts`                       | `heiko_ai::responses`                                                |
+| `openai-codex-responses.ts` WebSocket cache        | `heiko_ai::ws` (plan endpoint, one lane per connection)              |
+| `pi-agent-core` `Agent` / `agentLoop`              | `heiko_agent::agent::Agent` / `Run`                                  |
 | `AgentTool.execute(id, params, signal, onUpdate)`  | `AgentTool::call(args, ToolCtx { cancel, updates })`               |
 | `beforeToolCall` / `afterToolCall` / listeners     | `PluginRun` (`before_tool` / `after_tool_result` / `on_event`)     |
 | steering queue                                     | `Run::steer`                                                       |
 | follow-up queue                                    | not ported (start another run)                                     |
 | JSONL session tree                                 | `runs` + `messages` tables; forks via `parent_run_id` / `fork_seq` |
-| compaction (`coding-agent/src/core/compaction`)    | `tau-compaction` (a plugin)                                        |
-| faux provider                                      | `tau_testing::scripted::ScriptedModel`                             |
-| built-in tools                                     | `tau-tools-host`                                                   |
+| compaction (`coding-agent/src/core/compaction`)    | `heiko-compaction` (a plugin)                                        |
+| faux provider                                      | `heiko_testing::scripted::ScriptedModel`                             |
+| built-in tools                                     | `heiko-tools-host`                                                   |

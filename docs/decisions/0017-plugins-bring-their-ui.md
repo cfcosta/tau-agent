@@ -4,12 +4,12 @@
   [0007](0007-gpui-interface.md): a plugin crate exports its UI along
   with its agent plugin, and cannot be used without it.
   [0001](0001-library-not-product.md) and [0005](0005-plugins.md) still
-  hold for `tau-agent`.
+  hold for `heiko-agent`.
 - Date: 2026-10-01
 
 ## Context
 
-Each plugin's interface lives in `tau-ui`, spread over seven places:
+Each plugin's interface lives in `heiko-ui`, spread over seven places:
 
 - **Wiring:** `host.rs` builds each plugin for a run, from the saved
   settings and the TypeSafe key.
@@ -32,7 +32,7 @@ gaps between what they do and what the interface shows. Most were of
 two kinds:
 
 - **Live and stored runs drifted apart.** A plugin reported something
-  but did not record it, or tau-ui folded it live and dropped it from
+  but did not record it, or heiko-ui folded it live and dropped it from
   history. Errors, ledgers and goal notes went missing when a run was
   opened again.
 - **The interface lagged behind the plugin.** Settings the plugin took
@@ -40,10 +40,10 @@ two kinds:
   missing from the catalog. Values only the demo filled in.
 
 Both come from keeping a plugin's interface away from the plugin.
-Adding a plugin, or changing what one reports, means editing tau-ui in
+Adding a plugin, or changing what one reports, means editing heiko-ui in
 several places that nothing ties together.
 
-The phone ([0013](0013-phones-connect-to-a-running-tau.md)) adds one
+The phone ([0013](0013-phones-connect-to-a-running-heiko.md)) adds one
 constraint. It gets `RunView`s and `RunEvent`s over the wire and draws
 them with the same gpui code, but it has no store, no Jev and no
 agents.
@@ -54,22 +54,22 @@ agents.
 
 A plugin crate in `crates/plugins` exports one value: a `UiPlugin`,
 which holds the agent plugin, the plugin's view of a run, and its
-screens. There is no headless form. The `tau_agent::plugin::Plugin`
+screens. There is no headless form. The `heiko_agent::plugin::Plugin`
 it builds is an implementation detail: it is not public, and nothing
 but the `UiPlugin` builds it.
 
-This covers every plugin crate: `tau-tools`, `tau-vcs`,
-`tau-compaction`, `tau-fast-compaction`, `tau-reasoning`, `tau-memory`,
-`tau-constitution` and `tau-goal`. `tau-jev` is a library that plugins
+This covers every plugin crate: `heiko-tools`, `heiko-vcs`,
+`heiko-compaction`, `heiko-fast-compaction`, `heiko-reasoning`, `heiko-memory`,
+`heiko-constitution` and `heiko-goal`. `heiko-jev` is a library that plugins
 use, not a plugin, and stays as it is.
 
-`tau-agent` does not change. Its `Plugin` trait has no UI, and no core
-crate depends on gpui or on a plugin. A program that uses `tau-agent`
+`heiko-agent` does not change. Its `Plugin` trait has no UI, and no core
+crate depends on gpui or on a plugin. A program that uses `heiko-agent`
 alone writes its own plugins.
 
 ### The interface
 
-A new crate, `tau-ui-plugin`, defines the interface that `tau-ui` and
+A new crate, `heiko-ui-plugin`, defines the interface that `heiko-ui` and
 every plugin crate share:
 
 ```rust
@@ -123,7 +123,7 @@ pub trait UiPlugin: 'static {
 - **`ui`** returns the plugin's manifest: everything it adds to the
   interface, and where.
 
-`tau-ui` holds a `Registry` of erased `UiPlugin`s, built in `main.rs`.
+`heiko-ui` holds a `Registry` of erased `UiPlugin`s, built in `main.rs`.
 The registry converts each plugin's state and repository data between
 JSON and their types, and gathers the manifests. The host builds a
 run's plugins only through the registry, so a plugin reaches a run only
@@ -137,20 +137,20 @@ not the commands. A point has a name and the context each contribution
 gets:
 
 ```rust
-pub struct Point<Cx, Out = AnyElement> { /* a name, such as "tau.sidebar.repo" */ }
+pub struct Point<Cx, Out = AnyElement> { /* a name, such as "heiko.sidebar.repo" */ }
 
-pub const SIDEBAR_REPO: Point<RepoNavCx, NavEntry> = Point::new("tau.sidebar.repo");
-pub const CARD_BADGE: Point<CardCx> = Point::new("tau.run.card.badge");
+pub const SIDEBAR_REPO: Point<RepoNavCx, NavEntry> = Point::new("heiko.sidebar.repo");
+pub const CARD_BADGE: Point<CardCx> = Point::new("heiko.run.card.badge");
 ```
 
-- **Whoever owns a surface declares its points.** `tau-ui` declares its
+- **Whoever owns a surface declares its points.** `heiko-ui` declares its
   own: the sidebar's main nav and each repository's rows, the phone's
   tabs and Runs list, search, the transcript anchors, a tool card's
   badge, body and tabs, the run banner, the inspector, the status line,
   the plan, the context meter, the title bar's actions, the composer's
   commands, the Models screen's sections. A plugin can declare points
-  on its own pages, such as `tau-constitution.rule.sections`, and other
-  plugins contribute to them like they do to `tau-ui`'s.
+  on its own pages, such as `heiko-constitution.rule.sections`, and other
+  plugins contribute to them like they do to `heiko-ui`'s.
 - **A contribution** is the plugin's content for one point: a nav entry,
   an element, a command. It carries an `order` and a `when`, a test on
   its context (for example, only for runs that have a goal), so the
@@ -169,7 +169,7 @@ pub const CARD_BADGE: Point<CardCx> = Point::new("tau.run.card.badge");
 it contributes, in one place:
 
 ```rust
-// tau-constitution
+// heiko-constitution
 Manifest::new()
     .page(Page::new("rules", RulesPage::new).param("repo"))
     .page(Page::new("rule", RulesPage::focused).params(["repo", "rule"]))
@@ -183,7 +183,7 @@ Manifest::new()
     .contribute(TRANSCRIPT, verdict_note)
     .contribute(INSPECTOR, run_checks)
 
-// tau-memory
+// heiko-memory
 Manifest::new()
     .page(Page::new("notes", NotesPage::new).param("repo"))
     .page(Page::new("note", NotePage::new).params(["repo", "note"]))
@@ -195,20 +195,20 @@ Manifest::new()
     .contribute(TRANSCRIPT, suggested_note)
 ```
 
-- **A nav entry** is shown wherever its point is drawn. `tau-ui` draws
+- **A nav entry** is shown wherever its point is drawn. `heiko-ui` draws
   the sidebar, the phone's tabs and Runs list, and search from the same
   entries, so a plugin is never listed in one place and missing from
   another.
 - **A page** is a gpui view the plugin owns (an `Entity` shown as an
   `AnyView`), named within the plugin and opened with parameters. It
   keeps its own UI state: the rule draft, the open tab and the reset
-  confirmation leave `Workspace` for `RulesPage`. `tau-ui` makes a page
+  confirmation leave `Workspace` for `RulesPage`. `heiko-ui` makes a page
   the first time it is opened with those parameters and keeps it while
   the window is open, so a tab or a draft survives going back and
   forth. A page supplies its title, for the title bar and history.
 - **A link** names a page and its parameters:
   `Link::page("rule").param("repo", r).param("rule", "R2")`, from the
-  plugin's own name, or `Link::to("tau-memory", "note")` across
+  plugin's own name, or `Link::to("heiko-memory", "note")` across
   plugins. Every route a plugin adds is `Route::Plugin { plugin, page,
 params }`. It replaces `Route::Memory`, `Route::Constitution`,
   `Route::Plan` and `Route::Ledger`; back, history and the title bar
@@ -221,7 +221,7 @@ params }`. It replaces `Route::Memory`, `Route::Constitution`,
 - **Commands** are contributions too: a slash command such as `/goal`,
   or a search action, at the composer's and search's points.
 
-`tau-ui` keeps the frames, and fills them from the manifests: the
+`heiko-ui` keeps the frames, and fills them from the manifests: the
 sidebar, the tab bar, search, the router, the title bar, the
 transcript's layout, the card's shell, and the cost lines, which come
 from `PluginCharged`.
@@ -244,7 +244,7 @@ failure.
 
 ### Live and stored runs are one fold
 
-`tau-agent` gets `PluginCtx::publish(body)`, which reports a body and
+`heiko-agent` gets `PluginCtx::publish(body)`, which reports a body and
 records it with the run in one call. Plugins use it for everything an
 interface shows. `UiPlugin::apply` folds only published bodies:
 
@@ -258,18 +258,18 @@ a `context` entry's details to the plugin that wrote it.
 
 ### Crates
 
-- `tau-ui-kit`: theme tokens, components, icons and markdown, moved out
-  of `tau-ui`. It keeps the rule that screens never set their own sizes
+- `heiko-ui-kit`: theme tokens, components, icons and markdown, moved out
+  of `heiko-ui`. It keeps the rule that screens never set their own sizes
   or colors (`tests/design.rs`), and plugins follow it too.
-- `tau-ui-plugin`: the interface above, `Anchors`, `Point`,
+- `heiko-ui-plugin`: the interface above, `Anchors`, `Point`,
   `Manifest`, `Page`, `NavEntry`, `Link`, `RunCtx`, `RepoCtx`, `HostCx`,
-  `PageCx`, `ViewCx`, the points `tau-ui` declares, and the shared
-  types (`PluginInfo`, `PluginStatus`, `PlanField`). It depends on `tau-agent`,
-  `tau-store`, gpui and `tau-ui-kit`.
-- Each plugin crate depends on `tau-ui-plugin`. Its UI is part of the
+  `PageCx`, `ViewCx`, the points `heiko-ui` declares, and the shared
+  types (`PluginInfo`, `PluginStatus`, `PlanField`). It depends on `heiko-agent`,
+  `heiko-store`, gpui and `heiko-ui-kit`.
+- Each plugin crate depends on `heiko-ui-plugin`. Its UI is part of the
   crate, not behind a feature.
-- `tau-ui` depends on the plugin crates and wires them into its
-  registry. No plugin depends on `tau-ui`.
+- `heiko-ui` depends on the plugin crates and wires them into its
+  registry. No plugin depends on `heiko-ui`.
 
 ## Consequences
 
@@ -289,7 +289,7 @@ a `context` entry's details to the plugin that wrote it.
   runs. If that gets slow, that code can be left out of the Android
   build with `cfg`; whether to is left open.
 - Code that drives a plugin without the interface changes. The
-  `output-pruning` eval and `tau-reasoning`'s `replay` example go
+  `output-pruning` eval and `heiko-reasoning`'s `replay` example go
   through the `UiPlugin`. A plugin's own tests can still reach its
   internals.
 - Arbitrary gpui in shared places gives up a single look. The kit and
@@ -305,16 +305,16 @@ a `context` entry's details to the plugin that wrote it.
 
 1. Add `PluginCtx::publish`, and make every plugin use it for what it
    reports.
-2. Move the theme and components into `tau-ui-kit`, and create
-   `tau-ui-plugin` with the registry.
-3. Move `tau-reasoning` first. It is the smallest plugin that uses
+2. Move the theme and components into `heiko-ui-kit`, and create
+   `heiko-ui-plugin` with the registry.
+3. Move `heiko-reasoning` first. It is the smallest plugin that uses
    most kinds of point: a transcript note with its own body, a plan
    field, a status line, a Models section and a page.
-4. Then `tau-goal`, `tau-fast-compaction`, `tau-constitution` and
-   `tau-memory`. The last two bring the sidebar's repository rows and
+4. Then `heiko-goal`, `heiko-fast-compaction`, `heiko-constitution` and
+   `heiko-memory`. The last two bring the sidebar's repository rows and
    pages that keep their own state.
-5. Then the plugins that draw tool cards: `tau-tools`, `tau-vcs` and
-   `tau-compaction`.
+5. Then the plugins that draw tool cards: `heiko-tools`, `heiko-vcs` and
+   `heiko-compaction`.
 
 ## As built
 
@@ -351,7 +351,7 @@ the sketch above in these places:
   (what a context rewrite dropped), `cut` (a result a plugin cut), and
   `rewrite`, which names one of the plugin's context rewrites so it
   draws it at the `REWRITE` point. History starts at a run's last
-  context rewrite; tau-ui folds its stored details as
+  context rewrite; heiko-ui folds its stored details as
   `{ "rewrite": details }` (`Fold::rewritten`) once the transcript
   after it is in place.
 - **Where history places a body.** A run's messages are stored when
@@ -360,10 +360,10 @@ the sketch above in these places:
   (`placed(&record, place)`): with
   its turn (no key), before the turn's messages (`now`), or after the
   message the run started on (`message`).
-- **Tool cards.** tau-ui keeps a card's frame and what the call sent
+- **Tool cards.** heiko-ui keeps a card's frame and what the call sent
   and returned (`CallData`: arguments, updates, result). The tool's
   own plugin draws the rest at the `CARD` point (`CardView`: its head,
-  label, edge, body, and whether it folds). tau-tools and tau-vcs draw
+  label, edge, body, and whether it folds). heiko-tools and heiko-vcs draw
   only cards: the host still builds their tools with each run's
   workspace, where they act, which keeps the order of the vcs and
   workspace hooks around jj as it was. Their `agent_plugins` return
@@ -373,11 +373,11 @@ the sketch above in these places:
   plugin hears each turn's commit in the run's workspace (memory marks
   notes stale with it). `HostCx` also reaches the plugins' saved
   settings, which a host half reads and saves when an action changes
-  them (tau-mcp's approvals), and tau's config directory.
+  them (heiko-mcp's approvals), and heiko's config directory.
 - **Commands.** A manifest's own slash commands are fixed
   (`SlashCommand`, `/goal`); `Manifest::listed_commands` adds commands a
   plugin lists from its data and the composer's repository's, which
-  come and go with it (tau-mcp's prompts).
+  come and go with it (heiko-mcp's prompts).
 - **Actions.** A plugin's UI asks through a `Handle`: `act` (its host
   half, answered through `reply`, which gets the UI's context to ask
   for more), `record` (fold and store a change
@@ -389,10 +389,10 @@ the sketch above in these places:
   as `PluginValue`: its own type once read, JSON only on the wire and
   in snapshots. `ViewCx` reads repository data through `repo(name)`
   and `repos()`.
-- **Names.** Every plugin has one name, prefixed with `tau-`, for its
-  `UiPlugin`, its agent plugins and its records: `tau-codemode`,
-  `tau-compaction`, `tau-fast-compaction`, `tau-tools`, `tau-vcs`.
-- **What stays in tau-ui.** The Plan screen, generic plugin notes for
+- **Names.** Every plugin has one name, prefixed with `heiko-`, for its
+  `UiPlugin`, its agent plugins and its records: `heiko-codemode`,
+  `heiko-compaction`, `heiko-fast-compaction`, `heiko-tools`, `heiko-vcs`.
+- **What stays in heiko-ui.** The Plan screen, generic plugin notes for
   `Continued` and `PluginError` from plugins without a UI, and the
-  landing cards of ADR 0009, which draw changes with tau-vcs's pieces.
+  landing cards of ADR 0009, which draw changes with heiko-vcs's pieces.
   The demo's note suggestions, which no plugin produced, are gone.

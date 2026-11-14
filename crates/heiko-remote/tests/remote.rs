@@ -1,0 +1,316 @@
+//! A host and phones in one process, over real TLS and WebSockets on
+//! the loopback.
+
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0028)"
+)]
+
+use std::time::Duration;
+
+use serde_json::{Value, json};
+use heiko_remote::{
+    Address,
+    ClientError,
+    Down,
+    Fingerprint,
+    Refusal,
+    Server,
+    ServerConfig,
+    ServerEvent,
+    ServerHandle,
+    SystemClock,
+    client,
+    outbox::Outbox,
+    server::REPLAY,
+};
+use tokio::sync::mpsc::UnboundedReceiver;
+
+struct Host {
+    handle: ServerHandle,
+    events: UnboundedReceiver<ServerEvent>,
+    address: Address,
+    _dir: tempfile::TempDir,
+}
+
+async fn host() -> Host {
+    let dir = tempfile::tempdir().unwrap();
+    let (handle, events) = Server::start(ServerConfig {
+        listen: "127.0.0.1:0".parse().unwrap(),
+        dir: dir.path().to_owned(),
+        host: "desk".into(),
+        clock: std::sync::Arc::new(SystemClock),
+    })
+    .await
+    .unwrap();
+    let address = Address {
+        host: "127.0.0.1".into(),
+        port: handle.local_addr().port(),
+    };
+    Host {
+        handle,
+        events,
+        address,
+        _dir: dir,
+    }
+}
+
+impl Host {
+    /// The next event that is not a change to the list of phones, nor a
+    /// phone leaving.
+    async fn event(&mut self) -> ServerEvent {
+        loop {
+            let event = self.any_event().await;
+            if !matches!(
+                event,
+                ServerEvent::DevicesChanged(_) | ServerEvent::Left { .. }
+            ) {
+                return event;
+            }
+        }
+    }
+
+    async fn any_event(&mut self) -> ServerEvent {
+        tokio::time::timeout(Duration::from_secs(5), self.events.recv())
+            .await
+            .expect("an event in time")
+            .expect("the server runs")
+    }
+
+    /// The next phone that left.
+    async fn left(&mut self) -> String {
+        loop {
+            if let ServerEvent::Left { device } = self.any_event().await {
+                return device;
+            }
+        }
+    }
+
+    async fn pair(&mut self) -> (client::Connection, client::Credentials) {
+        let code = self.handle.pairing_code(self.address.clone());
+        let paired = client::pair(
+            &self.address,
+            code.fingerprint,
+            &code.secret,
+            "Pixel",
+        )
+        .await
+        .unwrap();
+        // A new phone needs everything.
+        let ServerEvent::NeedSnapshot { conn, device } = self.event().await
+        else {
+            panic!("no snapshot asked for");
+        };
+        assert_eq!(device.name, "Pixel");
+        self.handle.snapshot(conn, vec![json!("everything")]);
+        paired
+    }
+}
+
+async fn recv(connection: &mut client::Connection) -> Down {
+    connection.recv().await.unwrap().expect("a message")
+}
+
+fn body(down: Down) -> Value {
+    match down {
+        Down::Message { body, .. } => body,
+        other => panic!("{other:?}, not a message"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_phone_pairs_and_messages_go_both_ways() {
+    let mut host = host().await;
+    let (mut phone, credentials) = host.pair().await;
+    assert_eq!(credentials.host, "desk");
+    assert_eq!(credentials.fingerprint, host.handle.fingerprint());
+    assert_eq!(host.handle.paired().len(), 1);
+    let Down::Snapshot { seq, bodies } = recv(&mut phone).await else {
+        panic!("no snapshot");
+    };
+    assert_eq!(bodies, [json!("everything")]);
+    host.handle.broadcast(json!({"run": 1}));
+    let message = recv(&mut phone).await;
+    assert_eq!(message.seq(), Some(seq + 1));
+    assert_eq!(body(message), json!({"run": 1}));
+    let mut outbox = Outbox::new(0);
+    phone
+        .sender()
+        .send(outbox.push(json!({"steer": "go"})))
+        .unwrap();
+    let ServerEvent::Up { device, body, .. } = host.event().await else {
+        panic!("nothing came up");
+    };
+    assert_eq!(device.id, credentials.device);
+    assert_eq!(body, json!({"steer": "go"}));
+    assert_eq!(recv(&mut phone).await, Down::Ack { up: 1 });
+}
+
+/// A request the phone sends again, its answer lost with a connection,
+/// is answered again and taken once; the
+/// next is taken.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_request_sent_again_is_taken_once() {
+    let mut host = host().await;
+    let (mut phone, credentials) = host.pair().await;
+    let last = recv(&mut phone).await.seq().unwrap();
+    let mut outbox = Outbox::new(0);
+    let first = outbox.push(json!("first"));
+    phone.sender().send(first.clone()).unwrap();
+    assert!(matches!(host.event().await, ServerEvent::Up { .. }));
+    assert_eq!(recv(&mut phone).await, Down::Ack { up: 1 });
+    // Its answer was lost: the phone sends it again on a new connection.
+    drop(phone);
+    let mut phone = client::resume(&credentials, Some(last)).await.unwrap();
+    phone.sender().send(first).unwrap();
+    assert_eq!(recv(&mut phone).await, Down::Ack { up: 1 });
+    phone.sender().send(outbox.push(json!("second"))).unwrap();
+    let ServerEvent::Up { body, .. } = host.event().await else {
+        panic!("nothing came up");
+    };
+    assert_eq!(body, json!("second"), "the first was not taken again");
+    assert_eq!(recv(&mut phone).await, Down::Ack { up: 2 });
+}
+
+/// A transient message reaches the phone connected now, takes no
+/// number, and is not replayed to a phone that comes back; that phone
+/// resumes, gets what it missed in order, and what follows after.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_transient_message_reaches_who_is_there_and_is_not_kept() {
+    let mut host = host().await;
+    let (mut phone, credentials) = host.pair().await;
+    let last = recv(&mut phone).await.seq().unwrap();
+    host.handle.broadcast_transient(json!({"image": "bytes"}));
+    let transient = recv(&mut phone).await;
+    assert_eq!(
+        transient,
+        Down::Transient {
+            body: json!({"image": "bytes"})
+        }
+    );
+    assert_eq!(transient.seq(), None);
+    drop(phone);
+    host.handle.broadcast_transient(json!("missed"));
+    host.handle.broadcast(json!(1));
+    host.handle.broadcast(json!(2));
+    let mut phone = client::resume(&credentials, Some(last)).await.unwrap();
+    assert!(phone.resumed());
+    let first = recv(&mut phone).await;
+    assert_eq!(first.seq(), Some(last + 1), "the transients took no number");
+    assert_eq!(body(first), json!(1));
+    let second = recv(&mut phone).await;
+    assert_eq!(second.seq(), Some(last + 2));
+    assert_eq!(body(second), json!(2));
+    // New messages follow.
+    host.handle.broadcast(json!(3));
+    assert_eq!(body(recv(&mut phone).await), json!(3));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_phone_away_too_long_gets_a_snapshot() {
+    let mut host = host().await;
+    let (mut phone, credentials) = host.pair().await;
+    let last = recv(&mut phone).await.seq().unwrap();
+    drop(phone);
+    for n in 0..=REPLAY {
+        host.handle.broadcast(json!(n));
+    }
+    let mut phone = client::resume(&credentials, Some(last)).await.unwrap();
+    assert!(!phone.resumed());
+    let ServerEvent::NeedSnapshot { conn, .. } = host.event().await else {
+        panic!("no snapshot asked for");
+    };
+    host.handle.snapshot(conn, vec![json!("again")]);
+    let Down::Snapshot { seq, bodies } = recv(&mut phone).await else {
+        panic!("no snapshot");
+    };
+    assert_eq!(seq, last + REPLAY as u64 + 1);
+    assert_eq!(bodies, [json!("again")]);
+}
+
+/// A phone whose connection closes has left, and says which; the app
+/// drops what it kept for it (ADR 0046). A revoked one has left too.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_phone_that_goes_has_left() {
+    let mut host = host().await;
+    let (mut phone, credentials) = host.pair().await;
+    recv(&mut phone).await;
+    drop(phone);
+    assert_eq!(host.left().await, credentials.device);
+    let mut phone = client::resume(&credentials, None).await.unwrap();
+    let ServerEvent::NeedSnapshot { conn, .. } = host.event().await else {
+        panic!("no snapshot asked for");
+    };
+    host.handle.snapshot(conn, vec![json!("again")]);
+    recv(&mut phone).await;
+    assert!(host.handle.revoke(&credentials.device).await.unwrap());
+    assert_eq!(host.left().await, credentials.device);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_revoked_phone_is_cut_off() {
+    let mut host = host().await;
+    let (mut phone, credentials) = host.pair().await;
+    recv(&mut phone).await;
+    assert!(host.handle.revoke(&credentials.device).await.unwrap());
+    assert!(matches!(phone.recv().await, Ok(None) | Err(_)));
+    let refused = client::resume(&credentials, None).await;
+    assert!(matches!(
+        refused,
+        Err(ClientError::Refused(Refusal::UnknownToken))
+    ));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn another_certificate_is_caught() {
+    let host = host().await;
+    assert_eq!(
+        client::probe(&host.address).await.unwrap(),
+        host.handle.fingerprint()
+    );
+    let code = host.handle.pairing_code(host.address.clone());
+    let other = Fingerprint([7; 32]);
+    let caught =
+        client::pair(&host.address, other, &code.secret, "Pixel").await;
+    let Err(ClientError::CertificateMismatch { found }) = caught else {
+        panic!("not caught: {:?}", caught.err());
+    };
+    assert_eq!(found, host.handle.fingerprint());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nothing_listening_is_unreachable() {
+    let host = host().await;
+    let address = host.address.clone();
+    host.handle.stop();
+    drop(host);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let error = client::probe(&address).await.unwrap_err();
+    assert!(error.is_unreachable(), "{error}");
+}
+
+/// A request that comes while the computer revokes its phone is not
+/// answered unless taken: the phone keeps what was not taken, rather
+/// than lose it. The model found it (`network_model.rs`): the request
+/// came while the computer saved the phone's revoking.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_request_from_a_phone_being_revoked_is_not_answered_untaken() {
+    let mut host = host().await;
+    let (mut phone, credentials) = host.pair().await;
+    recv(&mut phone).await;
+    let mut outbox = Outbox::new(0);
+    phone.sender().send(outbox.push(json!("late"))).unwrap();
+    assert!(host.handle.revoke(&credentials.device).await.unwrap());
+    let mut taken = false;
+    while let Ok(Some(event)) =
+        tokio::time::timeout(Duration::from_millis(200), host.events.recv())
+            .await
+    {
+        taken |= matches!(event, ServerEvent::Up { .. });
+    }
+    while let Ok(Some(down)) = phone.recv().await {
+        if let Down::Ack { up } = down {
+            assert!(taken, "request {up} answered, and never taken");
+        }
+    }
+}

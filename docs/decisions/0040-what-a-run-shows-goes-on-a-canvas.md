@@ -1,7 +1,7 @@
 # 0040: What a run shows the person goes on a canvas beside it
 
-- Status: accepted. Built: `tau-canvas` (`plugins/tau-canvas`, Luau since ADR 0050)
-  and the `PANE` point in `tau-ui-plugin`, which `tau-ui-remote` draws
+- Status: accepted. Built: `heiko-canvas` (`plugins/heiko-canvas`, Luau since ADR 0050)
+  and the `PANE` point in `heiko-ui-plugin`, which `heiko-ui-remote` draws
   beside a run's transcript. Reference: [canvas.md](../reference/canvas.md).
 - Date: 2026-10-13
 
@@ -39,9 +39,9 @@ a wide pane for the run. `PaneView` is the pane's title, its body, and
   drawn for the first time with something there keeps it closed, so
   opening an old run does not cover its transcript.
 
-tau-ui declares the point; it knows nothing of what a canvas is.
+heiko-ui declares the point; it knows nothing of what a canvas is.
 
-### A plugin, `tau-canvas`, with four tools
+### A plugin, `heiko-canvas`, with four tools
 
 - `canvas_show { path, title, caption?, item? }` shows an image file:
   PNG, JPEG, GIF, WebP, BMP or SVG, detected from its bytes, at most
@@ -67,7 +67,7 @@ run goes on with the canvas it inherits.
 
 A document's text is in its record. An image's bytes are not: the tool
 copies the file into an artifact store of the plugin's own
-(`tau-artifacts`, in the repository's directory under `canvas/`), and
+(`heiko-artifacts`, in the repository's directory under `canvas/`), and
 the record holds a reference with the type and size. The image still
 shows once its file changes or goes, and a record stays small enough
 to travel in every run's state to each phone.

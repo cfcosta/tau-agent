@@ -9,9 +9,9 @@
   [0026](0026-sub-agents-run-detached.md),
   [0027](0027-luau-plugins.md), [0031](0031-the-main-chat-orchestrates.md)
   and [0035](0035-idle-chats-compact-before-their-cache-lapses.md).
-  Amends [0015](0015-a-main-chat-per-repository.md): tau keeps one
+  Amends [0015](0015-a-main-chat-per-repository.md): heiko keeps one
   local repository per agent, beside the plugins repository. Amends
-  0018: tau-mcp subscribes to resources, and an agent's own servers
+  0018: heiko-mcp subscribes to resources, and an agent's own servers
   connect without the person's approval. Amends
   [0036](0036-the-plugins-repository-is-in-the-sidebar.md): the
   sidebar gains an Agents section of its own.
@@ -19,13 +19,13 @@
 
 ## Context
 
-Every run in tau starts from a person's message and ends when its turn
+Every run in heiko starts from a person's message and ends when its turn
 does. Some work has no message to start it: a pull request that opens,
 a build that fails, a feed that changes, a time of day. The person
 wants something that keeps going on its own, reacts to those events,
 remembers what it did, and gets better at its job by changing itself.
 
-tau has most of the parts. A repository's main chat is one
+heiko has most of the parts. A repository's main chat is one
 conversation that goes on across runs (0015) and compacts as it grows
 (0035). Codemode runs Luau that calls tools, keeps modules as tools
 and stores large data outside the prompt (0018). Luau plugins showed
@@ -35,9 +35,9 @@ queue (0026, 0031).
 
 What is missing:
 
-- **Nothing wakes a conversation.** tau has no scheduler (0001), no
+- **Nothing wakes a conversation.** heiko has no scheduler (0001), no
   way to reach a conversation from outside a run, no network in
-  codemode, and tau-mcp does not subscribe to resources (0018 left
+  codemode, and heiko-mcp does not subscribe to resources (0018 left
   `resources/subscribe` for later).
 - **Nothing keeps it to itself.** A main chat's `bash` runs as the
   person, with their files and keys. An agent that acts unattended
@@ -50,7 +50,7 @@ What is missing:
 ### The model is the agent
 
 - An agent is a local jj repository under
-  `$XDG_DATA_HOME/tau/agents/<name>`. Its **main chat is the agent**:
+  `$XDG_DATA_HOME/heiko/agents/<name>`. Its **main chat is the agent**:
   one conversation that never ends. Compaction keeps it going, idle
   compaction included (0035).
 - **Its instructions are its repository's `AGENTS.md`** (0020). It
@@ -63,7 +63,7 @@ What is missing:
   not decide for it.
 - **Its own repository only.** Its tools, its `bash` and its
   sub-agents never reach the person's repositories.
-- **Memory** is three things: tau-memory's notes, scoped to its
+- **Memory** is three things: heiko-memory's notes, scoped to its
   repository (`Scopes::repo`, with the person's `Scopes::user` notes
   as for any run); the conversation itself; and the JSON state its
   triggers keep (cursors, seen keys), stored as records of the agent.
@@ -80,7 +80,7 @@ What is missing:
   (30 s by default, per agent) so a burst arrives as one message.
   Events that come while a turn runs wait for the next turn and arrive
   together.
-- The message is tau's, not the person's, and reads:
+- The message is heiko's, not the person's, and reads:
 
   ```text
   [events · 3 · 14:27:03–14:27:31]
@@ -89,7 +89,7 @@ What is missing:
   - builds · stream · build:2318 · 14:27:20
     {"number":2318,"state":"failed","commit":"7c7845bd"}
   - pr-triage · message · msg:9f2c · 14:27:31
-    "#412 touches tau-store; you own that."
+    "#412 touches heiko-store; you own that."
   ```
 
   Each event is its trigger's name, its kind, its id, when it came, and
@@ -102,7 +102,7 @@ What is missing:
   person reads, stay under 4000.
 
 - **At least once.** An event leaves the queue when the turn it is in
-  has started and its message is stored. tau closed in between delivers
+  has started and its message is stored. heiko closed in between delivers
   it again. Ids let the model, and the trigger's dedupe, see a repeat.
 
 ### `agent.luau` declares what wakes it
@@ -111,25 +111,25 @@ What is missing:
 loads it in a fresh codemode VM each time trunk moves.
 
 ```luau
-local tau = require("tau")
+local heiko = require("heiko")
 
-return tau.agent {
+return heiko.agent {
   name = "pr-triage",
 
   triggers = {
     -- New open pull requests, from the GitHub MCP server.
     pull_requests = {
       poll = { tool = "mcp__github__list_pull_requests",
-               args = { owner = "cfcosta", repo = "tau-agent", state = "open" } },
+               args = { owner = "cfcosta", repo = "heiko-agent", state = "open" } },
       every = "10m",
       key = function(pr) return pr.number end,
     },
 
-    -- An HTTP endpoint, polled, with a key from tau's secret store.
+    -- An HTTP endpoint, polled, with a key from heiko's secret store.
     releases = {
       poll = { http = {
-        url = "https://api.github.com/repos/cfcosta/tau-agent/releases",
-        headers = { authorization = tau.secret("github") },
+        url = "https://api.github.com/repos/cfcosta/heiko-agent/releases",
+        headers = { authorization = heiko.secret("github") },
       } },
       every = "1h",
       key = function(release) return release.id end,
@@ -137,8 +137,8 @@ return tau.agent {
 
     -- A stream it keeps open. `parse` frames; it does not judge.
     builds = {
-      stream = { sse = "https://ci.example.com/v1/pipelines/tau/events",
-                 headers = { authorization = tau.secret("ci") } },
+      stream = { sse = "https://ci.example.com/v1/pipelines/heiko/events",
+                 headers = { authorization = heiko.secret("ci") } },
       parse = function(frame, state)
         if frame.event == "ping" then return nil end
         local build = json.decode(frame.data)
@@ -147,7 +147,7 @@ return tau.agent {
     },
 
     -- A server's resource, through MCP's resources/subscribe.
-    ci_status = { mcp = { server = "ci", uri = "ci://tau-agent/main" } },
+    ci_status = { mcp = { server = "ci", uri = "ci://heiko-agent/main" } },
 
     evening = { at = "18:00", days = { "Mon", "Tue", "Wed", "Thu", "Fri" } },
     triage = { command = "pr-triage", hint = "<number>" },
@@ -182,9 +182,9 @@ return tau.agent {
   server-sent `retry:` asked, and send `Last-Event-ID` when the server
   gave one. Lines may end in `\n`, `\r\n` or `\r`. The host holds the
   connection; Luau never does. A busy stream writes its agent's kept
-  state at most once a second: tau closed in between loses that second,
+  state at most once a second: heiko closed in between loses that second,
   which the server sends again from the id last written.
-- **MCP subscriptions** are new to tau-mcp: it subscribes while an
+- **MCP subscriptions** are new to heiko-mcp: it subscribes while an
   active agent names the resource and the server can
   (`resources.subscribe`), on 2026-07-28 through a
   `subscriptions/listen` of the resource's own, before through
@@ -197,15 +197,15 @@ return tau.agent {
   when its connection changes (it connects again, or what it offers
   changes), and at the latest after the longest wait.
 - **Commands** reach every composer through `Manifest::listed_commands`,
-  as tau-mcp's prompts do. Sending one starts no run where it was
+  as heiko-mcp's prompts do. Sending one starts no run where it was
   typed: the composer says "sent to pr-triage" and the event goes to
   the agent.
 - **Tests** are Luau files under `tests/`, run on every reload in fresh
   VMs with fake frames, results and clock:
 
   ```luau
-  local tau = require("tau")
-  local t = tau.test
+  local heiko = require("heiko")
+  local t = heiko.test
 
   t.case("a ping is not an event", function()
     local agent = t.agent {}
@@ -243,14 +243,14 @@ return tau.agent {
   (codemode's repository modules). In an agent's repository they
   publish without the person's approval, which codemode's promotion
   asks for elsewhere.
-- **Its MCP servers** are its repository's `.tau/mcp.json`. They
+- **Its MCP servers** are its repository's `.heiko/mcp.json`. They
   connect without the person's approval, which 0018 asks for in other
   repositories, and their stdio servers start inside its sandbox
   (0025's launcher, below).
 
 ### The one hard limit: a daily spend cap
 
-- The cap is the person's, set on the agent's page and kept in tau's
+- The cap is the person's, set on the agent's page and kept in heiko's
   data, outside the repository. The agent cannot raise it. It starts at
   one dollar a day.
 - Everything the agent does counts: its turns, its compactions, its
@@ -266,14 +266,14 @@ return tau.agent {
   agents' host half gives its repositories: `bwrap` (bubblewrap) with
   the run's workspace read-write, `/nix`, `/etc` and the system's other
   read-only paths, a private `/tmp`, a home of the agent's own (kept
-  under tau's data, so what it installs or caches stays), and the
+  under heiko's data, so what it installs or caches stays), and the
   network. The person's home, other repositories, `/run/user` and
-  tau's own data are not there, nor tau's environment variables but
+  heiko's own data are not there, nor heiko's environment variables but
   the few a command needs (`PATH`, locale, terminal, certificates).
   Reference: [environment.md](../reference/environment.md).
 - It is 0025's extension point, used for a wall rather than an
   environment: the launcher adds words before the program, as
-  tau-direnv's does. An agent's repository takes tau-agents' launcher
+  heiko-direnv's does. An agent's repository takes heiko-agents' launcher
   alone, so nothing of another plugin's (direnv's `.envrc`) runs
   outside it. Without `bwrap` on `PATH`, an agent's runs have no `bash`,
   and its page says so; it never falls back to running unsandboxed.
@@ -286,17 +286,17 @@ return tau.agent {
 - In an agent's runs, codemode has
   `http.request { method, url, headers, body, timeout }`, which returns
   `{ status, headers, body, json, artifact, truncated }`. It calls
-  `http`, a nested tool of the coding tools that tau-ui adds to an
+  `http`, a nested tool of the coding tools that heiko-ui adds to an
   agent's runs only, so a request goes through the loop like any call.
   A body over 64 KiB comes back as an artifact reference (0018, M4).
   Other runs do not get `http`. An agent's polls do not run it in
   Luau: the host makes the request its trigger declares
-  (`tau_tools_host::http::fetch`).
+  (`heiko_tools_host::http::fetch`).
 - **Secrets by name.** Each agent has its own store,
-  `~/.config/tau/secrets/<agent>.json` (mode 0600, like
+  `~/.config/heiko/secrets/<agent>.json` (mode 0600, like
   `mcp-auth.json`), filled from the agent's page: its requests reach
   its own keys and no other agent's. `http.secret("github")` in a script and
-  `tau.secret("github")` in `agent.luau` are a marker,
+  `heiko.secret("github")` in `agent.luau` are a marker,
   `{ ["$secret"] = "github" }`, that only a request's headers and body
   accept; `"Bearer " .. http.secret("github")` puts text before the
   value. The host puts the real value in as the request leaves, and
@@ -327,23 +327,23 @@ return tau.agent {
   until they dismiss it (the latest 20). `ask { question, choices? }`
   leaves a question, kept until they answer it, with its choices as
   buttons or an answer field when it offers none. It does not hold the
-  turn open as tau-ask's does (0019): the answer comes back as an event
+  turn open as heiko-ask's does (0019): the answer comes back as an event
   of its own, kind `answer` from the trigger `ask`, with the question
-  and the answer. tau-ask is left out of an agent's runs, so `ask` is
-  always tau-agents'. `pending_asks` lists what of that still waits
+  and the answer. heiko-ask is left out of an agent's runs, so `ask` is
+  always heiko-agents'. `pending_asks` lists what of that still waits
   for the person, and asking the same question while it waits only
   says so, so an agent does not ask twice. These tools, and
   `agent_send`, are in an agent's runs and no other.
 - Both, and the spend cap, reach the person three ways: a "needs you"
   pill on its sidebar row and an item on the Agents page; a desktop
-  notification (`tau-ui`'s `notify`, a new kind beside `Asks`); and the
-  paired phone, which shows it as an Android notification. tau-remote
+  notification (`heiko-ui`'s `notify`, a new kind beside `Asks`); and the
+  paired phone, which shows it as an Android notification. heiko-remote
   has no push service, so the phone hears while it is connected; a push
   for when its app is closed is new work, left for later. The desktop
-  and the phone decide when the same way (`tau_agents::alert::Watch`):
+  and the phone decide when the same way (`heiko_agents::alert::Watch`):
   once for each note or question, once each time an agent reaches its
   cap, and, for what an agent has waiting when they first see it (left
-  while tau was closed, or before the phone connected), once, in one
+  while heiko was closed, or before the phone connected), once, in one
   alert for the agent.
 
 ### It schedules itself
@@ -365,7 +365,7 @@ have three more tools:
   does not schedule twice. A name cannot be one of its triggers'.
 - `scheduled` lists what is still to come, with the host's local time
   now; `unschedule { name }` cancels one.
-- They are kept in tau's state beside its queue, not in its
+- They are kept in heiko's state beside its queue, not in its
   repository: they are not versions, and a version that fails does not
   touch them.
 - A minute ahead is the soonest, a year the furthest, and it may have
@@ -374,18 +374,18 @@ have three more tools:
 - The person sees them on its page, under what wakes it, with their
   notes, and may cancel any (`Act::Unschedule`). The agent learns of
   that from `scheduled`, not from an event.
-- One that came due while tau was closed fires once on start, as a
+- One that came due while heiko was closed fires once on start, as a
   declared schedule does.
-- Other chats schedule once only, through tau-schedule
+- Other chats schedule once only, through heiko-schedule
   ([0039](0039-chats-wake-themselves-later.md)); repeating is an
   agent's alone. An agent's runs take this `schedule` in place of
-  tau-schedule's.
+  heiko-schedule's.
 
 ### Creating one, and where it shows
 
 - **`/agent <purpose>`** from any composer makes its repository and
   sends the person's words as its first message, with the built-in
-  `tau-agents` skill (as `tau-plugins` is in 0027): the triggers, `http`,
+  `heiko-agents` skill (as `heiko-plugins` is in 0027): the triggers, `http`,
   secrets, tests, and that it writes its own `AGENTS.md` and
   `agent.luau`.
 - **New agent** on the Agents page is a short form: name, purpose,
@@ -401,12 +401,12 @@ have three more tools:
   its memory, its state, its versions of `agent.luau` with their
   tests, and its secrets by name.
 
-### Agents run while tau runs
+### Agents run while heiko runs
 
-There is no daemon yet (0013 left `tau-host` for later). On start,
+There is no daemon yet (0013 left `heiko-host` for later). On start,
 each agent catches up from what it stored:
 
-- a schedule that came due while tau was closed fires once, with the
+- a schedule that came due while heiko was closed fires once, with the
   first missed time as `due`, however many it missed, whether
   `agent.luau` declares it or the agent scheduled it itself;
 - every poll runs at once;
@@ -424,10 +424,10 @@ each agent catches up from what it stored:
 2. The `bwrap` launcher and `bash`, `http` and secrets, poll triggers.
 3. Stream triggers, `notify` and `ask` with desktop and phone
    notifications, `agent_send` and the message trigger.
-4. MCP resource subscriptions in tau-mcp, and the mcp trigger.
+4. MCP resource subscriptions in heiko-mcp, and the mcp trigger.
 
 Incoming webhooks need a URL the internet can reach, and come later. So
-does a headless daemon, with 0013's `tau-host`; nothing here changes
+does a headless daemon, with 0013's `heiko-host`; nothing here changes
 for it.
 
 ## Alternatives considered
@@ -460,7 +460,7 @@ for it.
 
 ## Consequences
 
-- tau owns one more repository per agent, each with its conversation,
+- heiko owns one more repository per agent, each with its conversation,
   workspaces and memory. None pushes anywhere unless the person adds a
   remote.
 - An agent costs a turn per coalesced batch of events. A small model,
@@ -471,10 +471,10 @@ for it.
   conversation, and the cap and the sandbox are what hold.
 - Secrets are a new store, and codemode a new surface (`http`). Both
   are open to agents' runs only.
-- `bash` for agents needs `bwrap`. tau's Nix package gains it as a
+- `bash` for agents needs `bwrap`. heiko's Nix package gains it as a
   runtime dependency; other installs need it on `PATH`.
-- A closed tau misses stream frames that the server does not replay
+- A closed heiko misses stream frames that the server does not replay
   and MCP notifications; catching up reads the current state instead.
-- The Luau interface now has two entries, `tau.plugin` and `tau.agent`,
-  sharing `tau`, `tau.test` and codemode. Changes to those are checked
+- The Luau interface now has two entries, `heiko.plugin` and `heiko.agent`,
+  sharing `heiko`, `heiko.test` and codemode. Changes to those are checked
   against both.

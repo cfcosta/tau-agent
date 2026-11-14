@@ -4,7 +4,7 @@
 # equivalent to the unmutated code, so no test can ever kill them
 # without a change to the code that would make it worse, not better.
 # Each entry names the function and the reasoning; see
-# `crates/tau-agent/src/validation.rs` for the code.
+# `crates/heiko-agent/src/validation.rs` for the code.
 
 exclude_re = [
   # is_integer_number: `number.is_i64() || number.is_u64()` short-cuts
@@ -46,16 +46,16 @@ exclude_re = [
 
   # AgentTool::execution_mode: the default method returns
   # `ExecutionMode::Parallel`, which is also `ExecutionMode::default()`
-  # (`crates/tau-agent/src/tool.rs`), so the mutant returns the same value.
+  # (`crates/heiko-agent/src/tool.rs`), so the mutant returns the same value.
   'replace AgentTool::execution_mode -> ExecutionMode with Default::default\(\)',
 
-  # tau_tools_host::lock::lock: `retain(|_, weak| weak.strong_count() > 0)`
+  # heiko_tools_host::lock::lock: `retain(|_, weak| weak.strong_count() > 0)`
   # only forgets locks nobody holds, to keep the table small. `>= 0`
   # keeps every entry, dead ones included: the same locks are handed
   # out, the table just grows. No behaviour but memory changes.
   'replace > with >= in lock',
 
-  # tau_tools_host::read::read_text: `kept.len() < keep_lines && kept_bytes
+  # heiko_tools_host::read::read_text: `kept.len() < keep_lines && kept_bytes
   # <= keep_bytes` only bounds how much of the file is held in memory.
   # It keeps one line or byte past what truncation can show, so keeping
   # more (`<=`, or a byte count that never grows) changes no output:
@@ -64,19 +64,19 @@ exclude_re = [
   'replace \+= with \*= in read_text',
   'replace \+ with \* in read_text',
 
-  # tau_tools_host::find::effective_pattern: whether a pattern that already
+  # heiko_tools_host::find::effective_pattern: whether a pattern that already
   # starts with `/` or `**/` gets a `**/` prefix anyway. For `**/x` the
   # prefix gives `**/**/x`, which globset matches exactly as `**/x`; a
   # pattern starting with `/` never matches a relative path, prefixed or
   # not. So `||` and `&&` there give the same matches.
   'replace \|\| with && in effective_pattern',
 
-  # tau_tools_host::image::fit: `w > max` against `w >= max`. At exactly
+  # heiko_tools_host::image::fit: `w > max` against `w >= max`. At exactly
   # 2000 the scaling branch computes `h * 2000 / 2000 = h` and sets the
   # side to 2000, which it already is: the same size either way.
   'replace > with >= in fit',
 
-  # tau_tools_host::edit::apply_replacements_preserving_unchanged_lines:
+  # heiko_tools_host::edit::apply_replacements_preserving_unchanged_lines:
   # whether replacements whose line ranges touch without overlapping
   # (`start_line < last.end_line` against `<=`) share a group. A group
   # rewrites exactly its lines, so two adjacent groups and one merged

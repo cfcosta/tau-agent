@@ -1,0 +1,33 @@
+[package]
+autotests = false
+name = "heiko-mcp"
+description = "heiko-mcp's interface half: the Servers page, MCP tools' cards, and what they read."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# The servers heiko-ui's demo shows.
+demo = []
+
+[dependencies]
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+heiko-ui-kit.workspace = true
+heiko-ui-plugin.workspace = true
+tokio = { workspace = true, features = ["process", "io-util"] }
+url = "2.5.8"
+
+[dev-dependencies]
+heiko-ui-plugin = { workspace = true, features = ["testing"] }
+hegeltest.workspace = true
+regex.workspace = true
+tempfile.workspace = true
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

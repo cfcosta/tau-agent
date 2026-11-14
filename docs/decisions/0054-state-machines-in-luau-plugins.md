@@ -5,7 +5,7 @@
 
 ## Context
 
-tau's Rust core keeps its lifecycles as explicit machines: fourteen on
+heiko's Rust core keeps its lifecycles as explicit machines: fourteen on
 statig, each tested by a hegel state-machine model that sends inputs in
 orders the real caller never would. The sweeps that led there found the
 same kind of bug every time: a state that is done in one place and not in
@@ -13,20 +13,20 @@ another, or an edge nobody wrote.
 
 A sweep of the Luau plugins on 2026-11-14 found ten more of that kind:
 
-- tau-github keeps a failed sign-in as `sign_in = { state = "failed" }`,
+- heiko-github keeps a failed sign-in as `sign_in = { state = "failed" }`,
   and its job checks a typed token only when there is no `sign_in`: a
   corrected token is never checked. There is no edge from `failed`.
-- tau-memory's import tick reads its checkpoint and proposals, waits on
+- heiko-memory's import tick reads its checkpoint and proposals, waits on
   the model, then writes its old copies back over what Stop, Keep and
   Drop did meanwhile.
-- tau-constitution keeps a call's last verdict, so a block followed by a
+- heiko-constitution keeps a call's last verdict, so a block followed by a
   flag shows the refused call as flagged.
-- tau-todo's Undo restores a whole issue, claim included, after the
+- heiko-todo's Undo restores a whole issue, claim included, after the
   claiming run ended; its Beads import sets a claim whatever the status.
-- tau-schedule lists wake-ups that just fired from a copy of the store.
-- tau-reasoning, tau-memory and tau-goal keep fields past the state they
+- heiko-schedule lists wake-ups that just fired from a copy of the store.
+- heiko-reasoning, heiko-memory and heiko-goal keep fields past the state they
   belong to (a status from an earlier message, `given`, cost a skipped
-  check never counted), and tau-memory's import retries a failing chunk
+  check never counted), and heiko-memory's import retries a failing chunk
   every second.
 
 A plugin's state is data (ADR 0045): `ctx.state` and the plugin's store
@@ -35,21 +35,21 @@ hook that fails keeps none of what it wrote. So the half-written state of
 a crash is not the problem. The problems are edges no one wrote, fields
 that outlive their state, and copies that go stale.
 
-Some plugins already keep a clean tag: tau-github's `sign_in.state`,
-tau-goal's `status`, tau-todo's `issues.move` checked against its moves,
-tau-constitution's records folded by kind. Each wrote its own guards,
+Some plugins already keep a clean tag: heiko-github's `sign_in.state`,
+heiko-goal's `status`, heiko-todo's `issues.move` checked against its moves,
+heiko-constitution's records folded by kind. Each wrote its own guards,
 and the bugs sit where code went around them.
 
 ## Decision
 
 ### A machine is data and a transition table
 
-`tau.machine(spec)` makes a machine. It holds no state: a state is a
+`heiko.machine(spec)` makes a machine. It holds no state: a state is a
 plain table the plugin keeps where it keeps state now, so it persists and
 replicates as before.
 
 ```lua
-local sign_in = tau.machine({
+local sign_in = heiko.machine({
 	-- Every state, and the fields it carries.
 	states = {
 		signed_out = {},
@@ -110,7 +110,7 @@ another one. This is how the phone's session news and direnv's loads
 solved the same problem in Rust:
 
 ```lua
-local import = tau.machine({
+local import = heiko.machine({
 	states = { idle = {}, running = { "gen", "reading" }, stopped = {} },
 	initial = { state = "idle" },
 	on = {
@@ -134,17 +134,17 @@ nothing.
 ### One copy
 
 What a machine decides lives in one place, the store or `ctx.state`, and
-a view reads it from there. A copy kept for a hook (tau-schedule's
+a view reads it from there. A copy kept for a hook (heiko-schedule's
 `waiting`) is read again from the store, not kept.
 
 ### Where it lives
 
-`tau.machine` is in `tau.luau`, the module every hook loads, in plain
-Luau with no host function. A package needs nothing new in `tau.toml`.
+`heiko.machine` is in `heiko.luau`, the module every hook loads, in plain
+Luau with no host function. A package needs nothing new in `heiko.toml`.
 
 ### Testing
 
-Two helpers in `tau.test`, both on `t.machine` (ADR 0049) and so on
+Two helpers in `heiko.test`, both on `t.machine` (ADR 0049) and so on
 hegel's engine: one tests a machine alone, the other a plugin through its
 hooks.
 
@@ -211,10 +211,10 @@ the case to keep is written from those notes.
 
 ## As built
 
-- `tau.machine` is in `tau.luau`: `step`, `shape`, `is`, `handles`,
+- `heiko.machine` is in `heiko.luau`: `step`, `shape`, `is`, `handles`,
   `tags` and `events`. A field marked `name?` may be absent. Effects are
   checked against `effects` when the machine declares them.
-- `t.machine_of` and `t.hooks` are in `tau_test.luau`, on `t.machine`.
+- `t.machine_of` and `t.hooks` are in `heiko_test.luau`, on `t.machine`.
   `t.hooks` splits a wait with a coroutine: the functions of `spec.run`'s
   `jev`, `tools`, `http` and `infer` yield when a hook calls them, and the
   rules `answer` (the function called with `draw` after its arguments)
@@ -232,7 +232,7 @@ the case to keep is written from those notes.
   hook that fails now keeps none of what it wrote to its state, as on the
   host; before, its writes stood.
 - `tests/machines.rs` holds them: a stray field, the missing `failed`
-  edge of tau-github's sign-in (three events, its case noted), an impure
+  edge of heiko-github's sign-in (three events, its case noted), an impure
   transition, store hooks taking turns (they lose a write without turns),
   a failed wait, and a Pause pressed while a check waits on Jev, which the
   check's state then overwrote, as the host's did then (see below: the
@@ -241,27 +241,27 @@ the case to keep is written from those notes.
 ### The plugins, 2026-11-14
 
 - The ten bugs of the sweep are fixed, one commit each, each with a test
-  that fails on the code before. tau-github's sign-in is a machine, its
+  that fails on the code before. heiko-github's sign-in is a machine, its
   missing `failed` edge found again by its model in two events; the
   memory import's ticks carry the import's generation and merge onto the
-  proposals as they are; tau-constitution keeps a call's gravest
-  verdict; tau-todo's undo brings back no ended run's claim, and a Beads
-  assignee claims nothing; tau-schedule's woken turn leaves out what woke
-  it; tau-reasoning's status is each message's; tau-memory's `given`
+  proposals as they are; heiko-constitution keeps a call's gravest
+  verdict; heiko-todo's undo brings back no ended run's claim, and a Beads
+  assignee claims nothing; heiko-schedule's woken turn leaves out what woke
+  it; heiko-reasoning's status is each message's; heiko-memory's `given`
   survives a rewrite whose hook failed; the import ends once when the
-  model cannot answer; tau-goal counts unchecked runs' cost and takes a
+  model cannot answer; heiko-goal counts unchecked runs' cost and takes a
   verdictless answer as a failed check.
 - The fake run's store gives and keeps copies, as the host's JSON does:
   it handed out the table it kept, so a snapshot taken before a change
   changed with it. Each hook also reads its state back from JSON, as on
   the host, so a list comes back an array, whose metatable `table.clone`
-  refuses: tau-goal's port cloned its checks and failed on the host's
+  refuses: heiko-goal's port cloned its checks and failed on the host's
   second check while its Luau tests passed.
-- `tau.machine` takes `tag`, the field that names a state (`state`
-  unless said), so data kept before keeps its shape: tau-goal's goal is a
+- `heiko.machine` takes `tag`, the field that names a state (`state`
+  unless said), so data kept before keeps its shape: heiko-goal's goal is a
   machine by its `status`, active, paused, met or stopped, a failed
   check's `error` an active goal's and `exhausted` a stopped one's.
-- `plugins/examples/ship-gate` is the worked machine the `tau-plugins`
+- `plugins/examples/ship-gate` is the worked machine the `heiko-plugins`
   skill teaches, with its model.
 - An action pressed while a hook of its plugin waits is carried out
   again on what the hook leaves. An action's record (`Record::Acted`)
@@ -271,8 +271,8 @@ the case to keep is written from those notes.
   on the hook's state, as an interface does on a live run. The fake run
   does the same, so `t.hooks` keeps a Pause pressed under a check in every
   order. An action that reaches Jev, its store or the network does that
-  again too, until actions are pure. tau-goal's Pause during a check is
-  kept, which a tau-ui test holds.
+  again too, until actions are pure. heiko-goal's Pause during a check is
+  kept, which a heiko-ui test holds.
 
 ### Start states and arm coverage, 2026-11-14
 
@@ -285,7 +285,7 @@ the case to keep is written from those notes.
   naming those none took. The user chose failing over a passing report:
   a gap a report shows goes unnoticed, and seeds are fixed per source,
   so it is not flaky. `spec.untaken` lists the arms that may stay so, as
-  `"event from state"`. tau-github's sign-in, tau-goal's goal and
+  `"event from state"`. heiko-github's sign-in, heiko-goal's goal and
   ship-gate's gate took every arm already.
 
 ## Alternatives considered
@@ -307,20 +307,20 @@ the case to keep is written from those notes.
 ## Consequences
 
 - The plugins with the bugs above move their lifecycles onto
-  `tau.machine`, one commit each: tau-github's sign-in, tau-memory's
-  import, tau-constitution's verdicts, tau-todo's claims, tau-schedule's
-  wake-ups, tau-reasoning's status, tau-memory's `given`, tau-goal's goal.
+  `heiko.machine`, one commit each: heiko-github's sign-in, heiko-memory's
+  import, heiko-constitution's verdicts, heiko-todo's claims, heiko-schedule's
+  wake-ups, heiko-reasoning's status, heiko-memory's `given`, heiko-goal's goal.
   Each bug gets a failing model first and a plain test for what the model
   finds.
 - A hook that steps a machine returns effects to carry out; plugins that
   wrote state from several hooks write it from one place.
 - A state folded from records is checked as it is folded.
 - `docs/reference/plugins.md` gains the pattern, and a worked plugin
-  under `plugins/examples/` teaches it (`tau-plugin new`'s template is a
+  under `plugins/examples/` teaches it (`heiko-plugin new`'s template is a
   counter, with no lifecycle to make a machine of).
 
 ## Open questions
 
 - **Effects across hooks.** Whether effects stay a plugin's own names,
-  carried out by its hook, or some become host effects (`tau.start`,
-  `tau.continue`, a store write) that `step`'s caller hands back as is.
+  carried out by its hook, or some become host effects (`heiko.start`,
+  `heiko.continue`, a store write) that `step`'s caller hands back as is.

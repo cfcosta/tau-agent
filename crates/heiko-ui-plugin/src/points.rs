@@ -1,0 +1,501 @@
+//! The extension points `heiko-ui` declares, and the context each gives
+//! its contributions. A plugin contributes to them in its manifest.
+
+use serde::{Deserialize, Serialize};
+use heiko_ui_kit::theme::Tone;
+
+use crate::{
+    host::RepoId,
+    manifest::{Point, PointCx},
+    tree::Node,
+    view::{
+        NavEntry,
+        PlanField,
+        PluginStatus,
+        RepoKind,
+        RowNote,
+        RunInfo,
+        Waiting,
+    },
+    wire::AtKey,
+};
+
+/// No context: the app as a whole.
+#[derive(Debug, Clone, Default)]
+pub struct AtApp;
+
+impl PointCx for AtApp {
+    fn wire(&self) -> Option<AtKey> {
+        Some(AtKey::App)
+    }
+}
+
+/// A repository.
+#[derive(Debug, Clone)]
+pub struct AtRepo {
+    pub repo: String,
+}
+
+impl PointCx for AtRepo {
+    fn key(&self) -> String {
+        self.repo.clone()
+    }
+
+    fn wire(&self) -> Option<AtKey> {
+        Some(AtKey::Repo {
+            repo: self.repo.clone(),
+        })
+    }
+}
+
+/// First-run setup, as far as the person has come: the repositories
+/// picked so far.
+#[derive(Debug, Clone, Default)]
+pub struct AtSetup {
+    pub repos: Vec<SetupRepo>,
+}
+
+impl PointCx for AtSetup {}
+
+/// A repository picked in first-run setup, as setup knows it so far.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetupRepo {
+    /// Its name where it was picked: `owner/name` on GitHub.
+    pub name: String,
+    /// heiko's id for it, once heiko lists it: its clone is made.
+    pub id: Option<RepoId>,
+    /// Where it comes from: GitHub's URL for a clone from there.
+    pub remote: Option<String>,
+    /// The person's folder for a repository worked on in place (ADR
+    /// 0043); `None` for a clone heiko keeps.
+    pub folder: Option<std::path::PathBuf>,
+    pub clone: SetupClone,
+}
+
+/// How a picked repository's clone stands.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SetupClone {
+    /// Picked, not cloning yet.
+    Picked,
+    /// How far it is, from 0 to 1.
+    Cloning(f32),
+    Ready,
+    Failed(String),
+}
+
+/// Where a plugin's step sits in first-run setup ([`SETUP`]): first,
+/// or around the Repositories step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SetupAt {
+    /// First: connecting heiko to a model, which what follows runs on
+    /// (the provider's sign-in, ADR 0045).
+    Model,
+    /// Before the person picks repositories: a sign-in the list of
+    /// repositories comes from.
+    BeforeRepositories,
+    /// Once the repositories are picked, before Ready.
+    #[default]
+    AfterRepositories,
+}
+
+/// A plugin's step in first-run setup ([`SETUP`]).
+pub struct SetupView {
+    /// The plugin's name for the step, its own among its steps:
+    /// `memories`.
+    pub step: &'static str,
+    /// Where it sits among setup's steps.
+    pub at: SetupAt,
+    /// What the step bar calls it: `Memories`.
+    pub title: String,
+    /// The screen's headline, and the sentence under it.
+    pub heading: String,
+    pub detail: String,
+    /// Under the headline: what the person chooses. It ends the step
+    /// with [`crate::Handle::setup_done`]; heiko draws a way to skip it,
+    /// unless it is `required`.
+    pub body: Node,
+    /// Whether setup cannot go on without it: the model's step.
+    pub required: bool,
+    /// How heiko's link to the service the step connects stands, for the
+    /// handshake drawn above it; none draws it plain.
+    pub link: Option<SetupLink>,
+}
+
+/// How heiko's link to a service stands in a setup step ([`SetupView`]):
+/// what the handshake above it shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetupLink {
+    pub state: LinkState,
+    /// What the line between heiko and the service says, above it and
+    /// below: `plan usage`, `connected`.
+    pub above: Option<String>,
+    pub below: Option<String>,
+}
+
+/// The link's state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkState {
+    /// Not connected yet.
+    Idle,
+    /// Waiting on the person elsewhere, such as in the browser.
+    Waiting,
+    Connected,
+    /// Connected, but the service holds back what heiko needs.
+    Declined,
+    /// The service refuses this account outright.
+    Blocked,
+    /// The last attempt failed.
+    Failed,
+}
+
+/// A run.
+#[derive(Debug, Clone)]
+pub struct AtRun {
+    pub run: RunInfo,
+}
+
+impl PointCx for AtRun {
+    fn run(&self) -> Option<&RunInfo> {
+        Some(&self.run)
+    }
+
+    fn key(&self) -> String {
+        self.run.id.0.to_string()
+    }
+
+    fn wire(&self) -> Option<AtKey> {
+        Some(AtKey::Run {
+            run: self.run.id.clone(),
+        })
+    }
+}
+
+/// A message the person sent, in a run's transcript.
+#[derive(Debug, Clone)]
+pub struct AtMessage {
+    pub run: RunInfo,
+    pub text: String,
+    /// Its place among the transcript's items, for element ids.
+    pub index: usize,
+}
+
+impl PointCx for AtMessage {
+    fn run(&self) -> Option<&RunInfo> {
+        Some(&self.run)
+    }
+
+    fn key(&self) -> String {
+        format!("{}-{}", self.run.id.0, self.index)
+    }
+
+    fn wire(&self) -> Option<AtKey> {
+        Some(AtKey::Message {
+            run: self.run.id.clone(),
+            index: self.index,
+        })
+    }
+}
+
+/// One of the plugin's anchors in a run's transcript.
+#[derive(Debug, Clone)]
+pub struct AtAnchor {
+    pub run: RunInfo,
+    pub key: String,
+    /// The anchor's place among the transcript's items, for element ids.
+    pub index: usize,
+}
+
+impl PointCx for AtAnchor {
+    fn run(&self) -> Option<&RunInfo> {
+        Some(&self.run)
+    }
+
+    fn key(&self) -> String {
+        format!("{}-{}", self.run.id.0, self.key)
+    }
+
+    fn wire(&self) -> Option<AtKey> {
+        Some(AtKey::Anchor {
+            run: self.run.id.clone(),
+            key: self.key.clone(),
+            index: self.index,
+        })
+    }
+}
+
+/// One of the plugin's context rewrites in a run's transcript.
+#[derive(Debug, Clone)]
+pub struct AtRewrite {
+    pub run: RunInfo,
+    /// What the plugin named it ([`crate::RunCx::rewrite`]).
+    pub key: String,
+    /// The context's tokens before and after it, when the run saw it.
+    pub tokens: Option<(u64, u64)>,
+    /// Its place among the transcript's items, for element ids.
+    pub index: usize,
+}
+
+impl PointCx for AtRewrite {
+    fn run(&self) -> Option<&RunInfo> {
+        Some(&self.run)
+    }
+
+    fn key(&self) -> String {
+        format!("{}-{}", self.run.id.0, self.key)
+    }
+
+    fn wire(&self) -> Option<AtKey> {
+        Some(AtKey::Rewrite {
+            run: self.run.id.clone(),
+            key: self.key.clone(),
+            index: self.index,
+        })
+    }
+}
+
+/// Changes as they sit on a run's stack, newest first: a landing's
+/// preview, and the card a landing leaves in the parent's chat.
+#[derive(Debug, Clone)]
+pub struct AtChanges {
+    /// The run whose chat shows them: the child's, in its landing's
+    /// preview; the parent's, on the card a landing leaves.
+    pub run: RunInfo,
+    pub changes: Vec<crate::vcs::ChangeInfo>,
+}
+
+impl PointCx for AtChanges {
+    fn run(&self) -> Option<&RunInfo> {
+        Some(&self.run)
+    }
+
+    fn key(&self) -> String {
+        let newest = self
+            .changes
+            .first()
+            .map_or("", |change| change.commit_id.as_str());
+        format!("{}-{newest}", self.run.id.0)
+    }
+
+    fn wire(&self) -> Option<AtKey> {
+        Some(AtKey::Changes {
+            run: self.run.id.clone(),
+            changes: self.changes.clone(),
+        })
+    }
+}
+
+/// A tool call's card, with the anchors the plugin attached to it.
+#[derive(Debug, Clone)]
+pub struct AtCard {
+    pub run: RunInfo,
+    pub call_id: String,
+    pub tool: String,
+    /// The plugin's anchors on the card, in the order they came.
+    pub keys: Vec<String>,
+    /// What the call sent and returned. Shared: a card's points share it.
+    pub data: std::sync::Arc<crate::CallData>,
+    /// The argument worth reading at a glance.
+    pub summary: String,
+    /// What a plugin cut from its result, when one did.
+    pub cut: Option<crate::OutputCut>,
+}
+
+/// How a tool's own plugin draws its card, in heiko-ui's frame.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CardView {
+    /// In place of the summary of its arguments.
+    pub head: Option<Node>,
+    /// The result's line at the header's end: `+12 −3`, `3 matches`.
+    pub label: Option<String>,
+    /// The call failed, as its result tells, though the tool returned.
+    pub failed: Option<String>,
+    /// The card's edge, when its result wants attention.
+    pub edge: Option<Tone>,
+    /// A small drawing of the result, before the fold's chevron.
+    pub shape: Option<Node>,
+    /// Under the header.
+    pub body: Option<Node>,
+    /// Whether the body folds, closed until its header is clicked.
+    pub folds: bool,
+    /// Whether the body sits inset under the header and says itself what
+    /// was cut from the result (a terminal's screen).
+    pub inset: bool,
+}
+
+/// What a plugin shows in a run's pane ([`PANE`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PaneView {
+    /// What the pane's bar, and the button that opens it, call it.
+    pub title: String,
+    /// Grows each time the plugin has something new to show: the
+    /// interface opens the pane when it grew since the run was last
+    /// drawn.
+    pub fresh: u64,
+    pub body: Node,
+}
+
+impl PointCx for AtCard {
+    fn run(&self) -> Option<&RunInfo> {
+        Some(&self.run)
+    }
+
+    fn key(&self) -> String {
+        format!("{}-{}", self.run.id.0, self.call_id)
+    }
+
+    fn wire(&self) -> Option<AtKey> {
+        Some(AtKey::Card {
+            run: self.run.id.clone(),
+            call: self.call_id.clone(),
+        })
+    }
+}
+
+/// An item in a run's transcript, at a plugin's anchor.
+pub const TRANSCRIPT: Point<AtAnchor> = Point::new("heiko.run.transcript");
+/// One of the plugin's context rewrites, drawn whole.
+pub const REWRITE: Point<AtRewrite> = Point::new("heiko.run.rewrite");
+/// Under the inspector's context meter.
+pub const CONTEXT: Point<AtRun> = Point::new("heiko.run.context");
+/// A tool call's card, drawn by the plugin whose tool it is: the first
+/// to answer draws it.
+pub const CARD: Point<AtCard, CardView> = Point::new("heiko.run.card");
+/// Beside a tool card's title.
+pub const CARD_BADGE: Point<AtCard> = Point::new("heiko.run.card.badge");
+/// Under a tool card's body.
+pub const CARD_BODY: Point<AtCard> = Point::new("heiko.run.card.body");
+/// What a tool card says of its run, for the compare screen's branch:
+/// the stat's name, its value, and a `Danger` tone when it failed. The
+/// newest card with one says it: a test run's counts, from a command's
+/// output.
+pub const CARD_STAT: Point<AtCard, PluginStatus> =
+    Point::new("heiko.run.card.stat");
+/// Changes a landing brings, drawn by the VCS slot's plugin: the first
+/// contribution draws them.
+pub const CHANGES: Point<AtChanges> = Point::new("heiko.run.changes");
+/// A kind of repository the plugin makes, with a section of the sidebar
+/// and of the phone's list for them.
+pub const REPO_KIND: Point<AtApp, RepoKind> = Point::new("heiko.sidebar.kind");
+/// At the end of a repository's row in its kind's section: where it
+/// stands, as an agent's `working` or when it wakes.
+pub const KIND_ROW_END: Point<AtRepo> = Point::new("heiko.sidebar.kind.end");
+/// Under a repository's row in its kind's section while the row is
+/// open, and under its name on the phone: its last word.
+pub const KIND_ROW_LINE: Point<AtRepo> = Point::new("heiko.sidebar.kind.line");
+/// What waits on the person among the plugin's things: each new one is
+/// a notice while they are away, on the computer and on the phone.
+pub const WAITING: Point<AtApp, Waiting> = Point::new("heiko.app.waiting");
+/// Above a run's transcript.
+pub const RUN_BANNER: Point<AtRun> = Point::new("heiko.run.banner");
+/// A section of the run inspector.
+pub const INSPECTOR: Point<AtRun> = Point::new("heiko.run.inspector");
+/// The plugin's line in the run's plugin list.
+pub const STATUS: Point<AtRun, PluginStatus> = Point::new("heiko.run.status");
+/// A field of the run's plan.
+pub const PLAN: Point<AtRun, PlanField> = Point::new("heiko.run.plan");
+/// Where on the context meter the plugin steps in, as a share of the
+/// window.
+pub const CONTEXT_TRIGGER: Point<AtRun, f32> =
+    Point::new("heiko.run.context.trigger");
+/// A line and small print on a run's row in the sidebar: a goal's.
+pub const RUN_ROW: Point<AtRun, RowNote> = Point::new("heiko.sidebar.run.row");
+/// What a live run waits on the person to answer, while it waits: a
+/// question heiko-ask holds the run for. The first contribution says it.
+/// The run's row says the run asks, and a notification shows the
+/// question while heiko's window is not focused.
+pub const ASKS: Point<AtRun, String> = Point::new("heiko.run.asks");
+/// A message the person sent, or heiko did, drawn by the plugin that reads
+/// it as its own (a `/goal`, an agent's events); the first contribution
+/// draws it.
+pub const USER_MESSAGE: Point<AtMessage> = Point::new("heiko.run.user_message");
+/// The sidebar's own entries, above the repositories.
+pub const SIDEBAR: Point<AtApp, NavEntry> = Point::new("heiko.sidebar");
+/// Entries of the sidebar's Everywhere, after History: Phones.
+pub const EVERYWHERE: Point<AtApp, NavEntry> =
+    Point::new("heiko.sidebar.everywhere");
+/// Entries under each repository in the sidebar and the phone's Runs
+/// list.
+pub const SIDEBAR_REPO: Point<AtRepo, NavEntry> =
+    Point::new("heiko.sidebar.repo");
+/// A section of the Models screen.
+pub const MODELS: Point<AtApp> = Point::new("heiko.models.section");
+/// Hits search offers besides the navigation's entries.
+pub const SEARCH: Point<AtApp, NavEntry> = Point::new("heiko.search");
+/// A step on a run's Plan screen: what the plugin's `start` decided.
+pub const PLAN_STEPS: Point<AtRun> = Point::new("heiko.run.plan.steps");
+/// What the model picker says auto does, under its efforts.
+pub const PICKER_AUTO: Point<AtApp, String> = Point::new("heiko.picker.auto");
+/// In the composer's place under a run's transcript, while a plugin
+/// needs the person's input there more than a message: a question the
+/// run waits on. The first contribution draws in its place; the
+/// composer comes back once none does.
+pub const COMPOSER: Point<AtRun> = Point::new("heiko.run.composer");
+/// A line between a run's transcript and its composer, which stays: a
+/// note the person may act on while it is new (heiko-watcher's). Every
+/// contribution is drawn, in order.
+pub const COMPOSER_BAND: Point<AtRun> = Point::new("heiko.run.composer.band");
+/// Entries in a repository's menu in the sidebar, after heiko's own: a
+/// setting the plugin keeps per repository.
+pub const REPO_MENU: Point<AtRepo> = Point::new("heiko.sidebar.repo.menu");
+/// Buttons in a repository page's header, before its New run: what the
+/// plugin does for the whole repository. Every contribution is drawn, in
+/// order.
+pub const REPO_ACTIONS: Point<AtRepo> = Point::new("heiko.repo.actions");
+
+/// An item in the status bar under the desktop, after heiko's own news and
+/// the jobs going on: what the plugin has to say that is not a job,
+/// drawn from its data. Every contribution is drawn, in order; the bar
+/// shows while any is. A phone has no status bar.
+pub const ACTIVITY: Point<AtApp> = Point::new("heiko.status.activity");
+/// A step of first-run setup, before Repositories or between them and
+/// Ready as its [`SetupView::at`] says, in the registry's order: the
+/// step bar counts it. A contribution that gives
+/// none for the setup at hand is not a step, and the bar does not count
+/// it. Setup is on the desktop only.
+pub const SETUP: Point<AtSetup, SetupView> = Point::new("heiko.setup.step");
+
+/// A wide pane beside a run's transcript, for what the run made for the
+/// person to look at: a canvas. The first contribution draws it, in the
+/// inspector's place on a desktop and over the run on a phone, while the
+/// person keeps it open. A plugin opens it with
+/// [`crate::Handle::open_pane`].
+pub const PANE: Point<AtRun, PaneView> = Point::new("heiko.run.pane");
+
+/// Every point `heiko-ui` declares.
+pub const ALL: [&str; 34] = [
+    CARD.name,
+    CARD_STAT.name,
+    CHANGES.name,
+    REPO_KIND.name,
+    KIND_ROW_END.name,
+    KIND_ROW_LINE.name,
+    WAITING.name,
+    TRANSCRIPT.name,
+    REWRITE.name,
+    CONTEXT.name,
+    CARD_BADGE.name,
+    CARD_BODY.name,
+    RUN_BANNER.name,
+    INSPECTOR.name,
+    STATUS.name,
+    PLAN.name,
+    CONTEXT_TRIGGER.name,
+    RUN_ROW.name,
+    ASKS.name,
+    USER_MESSAGE.name,
+    SIDEBAR.name,
+    EVERYWHERE.name,
+    SIDEBAR_REPO.name,
+    MODELS.name,
+    SEARCH.name,
+    PLAN_STEPS.name,
+    PICKER_AUTO.name,
+    COMPOSER.name,
+    COMPOSER_BAND.name,
+    REPO_MENU.name,
+    REPO_ACTIONS.name,
+    ACTIVITY.name,
+    SETUP.name,
+    PANE.name,
+];

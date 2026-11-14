@@ -6,13 +6,13 @@
   [0026](0026-sub-agents-run-detached.md): a sub-agent spawned with
   `land: false` is reported, not landed.
 - Amended by [0043](0043-local-repositories-in-place.md): a run's
-  head is the Git ref `refs/tau/runs/<run>`, not the bookmark
-  `tau/<run>`, so kept work stays under that ref.
+  head is the Git ref `refs/heiko/runs/<run>`, not the bookmark
+  `heiko/<run>`, so kept work stays under that ref.
 - Date: 2026-10-17
 
 ## Context
 
-tau ships skills that fan work out to sub-agents for judgment, not
+heiko ships skills that fan work out to sub-agents for judgment, not
 only for throughput: `arena` races candidate designs and has a judge
 pick one, `interrogate` sends reviewers with different lenses over a
 commit stack, `playbook-eval` compares prompt variants, `reflect` runs
@@ -37,9 +37,9 @@ Two things in `spawn` worked against them:
   It costs a fresh prompt: nothing of the caller's cache is reused.
 - `land` (default true): with `false`, a sub-agent that finished ends
   as `Ending::Kept`. Its workspace closes, its commits stay under its
-  head, the ref `refs/tau/runs/<run>`, beside the caller's, and the
+  head, the ref `refs/heiko/runs/<run>`, beside the caller's, and the
   ending lists its own changes. The host queues it as one that only
-  reports, records it as dropped, and tau's report turn names its
+  reports, records it as dropped, and heiko's report turn names its
   changes. The caller reads them with `vcs_show` and takes files from
   one with `vcs_restore {paths, from}`. A sub-agent that commits
   nothing, as a reviewer, ends kept with no changes.
@@ -60,4 +60,4 @@ The operation log keeps it.
   `reflect`, `how`, `why`, `verification-skill`, and the principles
   that point at them) say when to use each argument.
 - Kept work does not survive a restart. A caller that wants a
-  candidate after tau restarts must have taken its files first.
+  candidate after heiko restarts must have taken its files first.

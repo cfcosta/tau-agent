@@ -31,7 +31,7 @@ Use Luau, not Lua 5.4:
   - `client` (adds only tokio-stream)
   - `transport-child-process`: `TokioChildProcess`, built on `process-wrap` 10 and tokio/process. Use `which-command` to resolve the command on PATH.
   - `transport-streamable-http-client-reqwest`: `StreamableHttpClientTransport`. It pulls `sse-stream`, `http`, `bytes`, and reqwest 0.13.2 with `json` and `stream`.
-  - `reqwest-tls-no-provider` (reqwest `rustls-no-provider`). This **matches tau's workspace reqwest 0.13.5 with `rustls-no-provider`**, so no second TLS stack is added. Do not use plain `reqwest`: it turns on reqwest `rustls` with its default provider.
+  - `reqwest-tls-no-provider` (reqwest `rustls-no-provider`). This **matches heiko's workspace reqwest 0.13.5 with `rustls-no-provider`**, so no second TLS stack is added. Do not use plain `reqwest`: it turns on reqwest `rustls` with its default provider.
   - `auth` (OAuth2 for remote servers; pulls `oauth2` 5 and `url`). Avoid `auth-client-credentials-jwt`: it pulls `jsonwebtoken` with `aws_lc_rs`, which needs a heavier native build.
   - Also available: `elicitation`, `transport-streamable-http-client-unix-socket` (hyper).
 - Always-on dependencies are light: serde, serde_json, thiserror, tokio (sync, macros, rt, time), futures, indexmap, tracing, tokio-util, pin-project-lite, chrono (no default features).
@@ -44,7 +44,7 @@ Use Luau, not Lua 5.4:
 - Cancellation and timeouts:
   - `peer.send_cancellable_request(req, PeerRequestOptions { timeout, meta, reset_timeout_on_progress, max_total_timeout })` returns a `RequestHandle`.
   - `handle.await_response()` and `handle.cancel(reason)` send `notifications/cancelled`.
-  - Plain `call_tool` has no time limit. Use the handle form and connect it to tau's `ToolCtx::cancel` token.
+  - Plain `call_tool` has no time limit. Use the handle form and connect it to heiko's `ToolCtx::cancel` token.
   - Cancellation is best effort: the server can still finish the side effect.
   - There is a known server-side issue (#857), but it does not affect us as a client.
 - Possible concern: the API changes often across major versions (several majors in about 18 months). Keep the plugin behind a thin adapter.
@@ -80,13 +80,13 @@ async fn stdio() -> anyhow::Result<()> {
 
 async fn http() -> anyhow::Result<()> {
     let transport = StreamableHttpClientTransport::from_uri("https://example/mcp");
-    let client = ClientConfig::new(ClientCapabilities::default(), Implementation::new("tau", "0.1.0"))
+    let client = ClientConfig::new(ClientCapabilities::default(), Implementation::new("heiko", "0.1.0"))
         .serve_with_lifecycle(transport, ClientLifecycleMode::Auto {
             preferred_versions: vec![ProtocolVersion::V_2026_07_28],
             legacy_version: Some(ProtocolVersion::V_2025_11_25),
         })
         .await?;
-    // Cancellable call, connected to tau's ToolCtx::cancel:
+    // Cancellable call, connected to heiko's ToolCtx::cancel:
     // let h = client.peer().send_cancellable_request(ClientRequest::CallToolRequest(..), PeerRequestOptions { timeout: Some(d), ..Default::default() }).await?;
     // tokio::select! { r = h.await_response() => .., _ = ctx.cancel.cancelled() => h.cancel(None).await? }
     // (Exact request-wrapping: check docs.rs/rmcp/3.5.0 Peer::send_cancellable_request; RequestHandle::cancel consumes the handle,
@@ -100,12 +100,12 @@ async fn http() -> anyhow::Result<()> {
 
 - `rust-mcp-sdk` 2.0.0 (MIT, 2026-08-27, about 110k recent downloads). Built on `rust-mcp-schema`. Smaller user base, and it is not the reference SDK.
 - `tower-mcp` 0.23.2 (MIT OR Apache-2.0, 2026-09-29, about 20k recent downloads). Built on Tower and still pre-1.0.
-- Neither is a better fit. rmcp is the official SDK, is the first to support new spec versions (2026-07-28), and its reqwest/rustls feature set matches tau's.
+- Neither is a better fit. rmcp is the official SDK, is the first to support new spec versions (2026-07-28), and its reqwest/rustls feature set matches heiko's.
 
 ## 2. Lua embedding: mlua 0.12.1
 
 - Repo: https://github.com/mlua-rs/mlua. Docs: https://docs.rs/mlua/0.12.1. MIT. Changelog: https://github.com/mlua-rs/mlua/blob/main/CHANGELOG.md
-- 0.12 requires **Rust 2024 edition** (tau is on 2024). The module layout changed: `mlua::{chunk, function, thread, luau, ...}`, and the root re-exports less.
+- 0.12 requires **Rust 2024 edition** (heiko is on 2024). The module layout changed: `mlua::{chunk, function, thread, luau, ...}`, and the root re-exports less.
 - Backends: `lua55` (5.5.1), `lua54`, `lua53`, `lua52`, `lua51`, `luajit`, `luajit52`, `luau`, `luau-jit` (Luau native codegen), `luau-vector4`.
 - Dependencies are small: bstr, either, num-traits, rustc-hash, parking_lot, libc, and futures-util with `async`. Optional: serde, erased-serde, serde-value.
 
@@ -127,7 +127,7 @@ async fn http() -> anyhow::Result<()> {
   - `lua.create_async_function(|lua, args: A| async move { ... Ok(r) })`. The signature is `F: Fn(Lua, A) -> FR`, `FR: Future<Output = Result<R>>`.
   - Inside Lua the call looks synchronous. mlua runs the chunk in a coroutine and yields to the executor while the Rust future is pending.
   - Drive a script with `chunk.eval_async::<T>().await` / `exec_async()`, or `lua.create_thread(f)?.into_async::<R>(args)?`. `AsyncThread` is both a Future and a Stream.
-- **`send` is required for tau.** `AgentTool::call` is `#[async_trait]` with Send futures (crates/tau-agent/src/tool.rs:180), and runs run under `tokio::spawn` (agent.rs:459). With `send`, `Lua: Send + Sync`, callbacks and userdata must be `Send`, and async futures must be Send (`MaybeSend`). Without `send`, the Lua VM would need its own thread with a current-thread runtime and a `LocalSet`, plus a channel bridge. That is more code and gains nothing here.
+- **`send` is required for heiko.** `AgentTool::call` is `#[async_trait]` with Send futures (crates/heiko-agent/src/tool.rs:180), and runs run under `tokio::spawn` (agent.rs:459). With `send`, `Lua: Send + Sync`, callbacks and userdata must be `Send`, and async futures must be Send (`MaybeSend`). Without `send`, the Lua VM would need its own thread with a current-thread runtime and a `LocalSet`, plus a channel bridge. That is more code and gains nothing here.
 - Running tool calls in parallel from Lua: the host provides `parallel{ f1, f2, ... }` (or `parallel(list)`) as an async function. It:
   1. turns each Lua function into `lua.create_thread(f)?.into_async::<Value>(())?`,
   2. awaits them with `futures_util::future::try_join_all` (or `join_all` to collect per-item errors),
@@ -210,7 +210,7 @@ function github.search_issues(args: { query: string, state: ("open" | "closed")?
 
 Derive the return type from `output_schema` when the server sends one, and use `any` when it does not. Keep the existing `jsonschema` crate (workspace 0.58.2) to check arguments in Rust before sending. Luau ignores annotations at run time, so the signatures serve only as prompt text.
 
-## 4. tau repo constraints
+## 4. heiko repo constraints
 
 - **Licenses** (deny.toml allow-list): Apache-2.0, BSD-2/3, CDLA-Permissive-2.0, ISC, MIT, MIT-0, MPL-2.0, Unicode-3.0, Zlib.
   - rmcp (Apache-2.0), mlua, mlua-sys, luau0-src, and lua-src (MIT) all pass.
@@ -222,11 +222,11 @@ Derive the return type from `output_schema` when the server sends one, and use `
   - mlua+luau compiles C++ from `luau0-src` through the `cc` crate.
   - The default dev shell is `pkgs.mkShell`, a stdenv with gcc and g++. So plain `cargo build` in `nix develop` works with no flake change and no pkg-config entry. This follows the dev-shell rule (plain cargo must work).
   - Do **not** pick the system-Lua (`pkg-config`) route.
-  - Android shell (`mkShellNoCC` + cargo-ndk): cc-rs uses the NDK's clang++, which builds Luau. Checked once the plugin ended up in the phone build (through tau-ui): it builds, and `luau0-src` links `c++_shared` on Android, so the shell sets `CARGO_NDK_LINK_LIBCXX_SHARED` and cargo-ndk copies `libc++_shared.so` into jniLibs for the APK.
-  - The `buildRustPackage` for tau-ui uses stdenv, which has a C++ compiler, so the Nix package build is fine too.
+  - Android shell (`mkShellNoCC` + cargo-ndk): cc-rs uses the NDK's clang++, which builds Luau. Checked once the plugin ended up in the phone build (through heiko-ui): it builds, and `luau0-src` links `c++_shared` on Android, so the shell sets `CARGO_NDK_LINK_LIBCXX_SHARED` and cargo-ndk copies `libc++_shared.so` into jniLibs for the APK.
+  - The `buildRustPackage` for heiko-ui uses stdenv, which has a C++ compiler, so the Nix package build is fine too.
 - **tokio**: the workspace enables `macros, rt, sync, time`. rmcp's child-process transport adds `process` and `io-util`, which is fine for a plugin crate.
-- **Send**: tau's tools need Send futures, so use mlua's `send` feature (see above).
-- Per decision 0017 ("plugins bring their UI"), the plugin crate (crates/plugins/tau-mcp or codemode) has to ship its own UI pieces. That does not affect the library choice.
+- **Send**: heiko's tools need Send futures, so use mlua's `send` feature (see above).
+- Per decision 0017 ("plugins bring their UI"), the plugin crate (crates/plugins/heiko-mcp or codemode) has to ship its own UI pieces. That does not affect the library choice.
 
 ## Sources
 
@@ -239,4 +239,4 @@ Derive the return type from `output_schema` when the server sends one, and use `
 - https://luau.org/sandbox
 - https://crates.io/crates/luau0-src, https://crates.io/crates/piccolo, https://crates.io/crates/rhai
 - https://github.com/joris-gallot/schematype, https://docs.rs/typify, https://github.com/mitsuhiko/pi-codemode-mcp, https://gofastmcp.com/v3/servers/transforms/code-mode
-- tau: Cargo.toml, deny.toml, flake.nix, crates/tau-agent/src/tool.rs
+- heiko: Cargo.toml, deny.toml, flake.nix, crates/heiko-agent/src/tool.rs

@@ -1,8 +1,8 @@
-# tau-ask
+# heiko-ask
 
 The agent asks the person one to four questions and waits for the
-answers. It is a Luau plugin tau comes with (ADR 0050):
-`plugins/tau-ask`, its code in `src/plugin.luau`,
+answers. It is a Luau plugin heiko comes with (ADR 0050):
+`plugins/heiko-ask`, its code in `src/plugin.luau`,
 `src/ask.luau` and `src/panel.luau`. Decision:
 [0019](../decisions/0019-ask-the-person.md).
 
@@ -54,7 +54,7 @@ answers. It is a Luau plugin tau comes with (ADR 0050):
   declined to answer…". The answers as JSON (`{ call, answers }` or
   `{ call, declined }`) are in the result's `structured`.
 
-- **Waiting:** the call answers `tau.ask` with the questions, each
+- **Waiting:** the call answers `heiko.ask` with the questions, each
   taking the person's own answer, and holds until the person answers
   or declines, or the run is cancelled (an error: "The run was
   cancelled before the person answered."). The host checks the answers
@@ -66,7 +66,7 @@ answers. It is a Luau plugin tau comes with (ADR 0050):
   prompt cache (ADR 0022), but nobody watches them: a call fails with
   "A sub-agent has no one to ask: decide yourself, and say in your
   answer what you assumed and why." An agent's runs do not have it:
-  they ask through tau-agents' own `ask` (ADR 0037).
+  they ask through heiko-agents' own `ask` (ADR 0037).
 
 ## State
 
@@ -130,7 +130,7 @@ the computer started.
 - **Elsewhere:** while a call waits, the view's `asks` is its first
   question, and its status says how many questions wait. The run's row
   in the sidebar and on a phone says "Asks you a question", and a
-  desktop notification shows the question while tau's window is not
+  desktop notification shows the question while heiko's window is not
   focused ([attention.md](attention.md)).
 
 ## Code
@@ -143,6 +143,6 @@ the computer started.
 - `src/plugin.luau`: the tool, the actions, `start`, `run_end` and the
   view.
 - `tests/`: the cases and properties, and `fixtures.luau`, which makes
-  the demo's fixtures; `tau-plugin test plugins/tau-ask` runs them as
-  tau loads the plugin, and checks the fixtures it makes are those in
+  the demo's fixtures; `heiko-plugin test plugins/heiko-ask` runs them as
+  heiko loads the plugin, and checks the fixtures it makes are those in
   `fixtures/`.

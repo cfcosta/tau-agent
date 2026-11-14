@@ -1,10 +1,10 @@
 -- A tool with a card: counts a file's words, through the run's `read`.
-local tau = require("tau")
+local heiko = require("heiko")
 local words = require("words")
-local ui = tau.ui
-local cmd = tau.cmd
+local ui = heiko.ui
+local cmd = heiko.cmd
 
-return tau.plugin {
+return heiko.plugin {
 	-- The tools its own tools call. A new one here waits for an Allow.
 	uses = { tools = { "read" } },
 	tools = {
@@ -16,9 +16,9 @@ return tau.plugin {
 				required = { "path" },
 			},
 			call = function(args, model)
-				-- A host tool is a command: `tau.await` gives its answer. The
+				-- A host tool is a command: `heiko.await` gives its answer. The
 				-- model may change while it waits, so the count is read after.
-				local text = tau.await(cmd.tool("read", { path = args.path }))
+				local text = heiko.await(cmd.tool("read", { path = args.path }))
 				local n = words.count(text)
 				model.counted = (model.counted or 0) + 1
 				return { path = args.path, words = n }

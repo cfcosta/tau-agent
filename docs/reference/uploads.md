@@ -27,7 +27,7 @@ decision is [ADR 0041](../decisions/0041-the-person-sends-images.md).
 | `resume`    | `impl Into<Prompt>` | The same, as the resumed run's input                   |
 | `steer`     | `impl Into<Prompt>` | `RunControl::steer(prompt)`, read after the tool batch |
 
-In tau-agent the first user message is `Blocks`: the plan's context,
+In heiko-agent the first user message is `Blocks`: the plan's context,
 the input, then each image. A steered message is its text, then its
 images. Without images, both stay `Text`.
 
@@ -72,5 +72,5 @@ phones replay when they come back.
 
 ## Demo
 
-`tau --demo --open uploads` shows the demo run steered with a message
+`heiko --demo --open uploads` shows the demo run steered with a message
 and a picture, and another image attached in the composer.

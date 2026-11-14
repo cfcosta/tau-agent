@@ -4,7 +4,7 @@
 - Date: 2026-09-28
 - Checked against: `jj-lib` 0.45.1 (released 2026-09-03)
 
-This note studies how the tau app could own its repositories and do all
+This note studies how the heiko app could own its repositories and do all
 version control through `jj-lib`, the library behind Jujutsu. The goal
 is that code and chats are both versioned, that every turn is a point
 you can check out, fork from and compare, and that the model reaches
@@ -18,13 +18,13 @@ source and need a spike before a decision.
 
 - **Recommended shape.** One jj repository per project, with an
   internal (non-colocated) Git store, under
-  `$XDG_DATA_HOME/tau/repos/<name>`. One jj workspace per run.
+  `$XDG_DATA_HOME/heiko/repos/<name>`. One jj workspace per run.
 - **Every turn is a snapshot.** At each turn end the plugin snapshots
   the run's working copy. The snapshot's commit id is the code state of
   that turn. The model decides where change boundaries go, with a
   `vcs_commit` tool, so the history pushed to GitHub stays readable.
 - **SQLite stays the source of truth for runs.** Transcripts, costs,
-  forks and checkpoints stay in `tau-store`. The link from a turn to a
+  forks and checkpoints stay in `heiko-store`. The link from a turn to a
   commit is a plugin record (`kind = 'plugin'`), which already follows
   the fork chain and the fork cutoff.
 - **Chats go into jj as a second, unpushed lineage** in the same repo,
@@ -52,7 +52,7 @@ source and need a spike before a decision.
 The tree was measured with `cargo tree -e normal` on a fresh crate that
 depends only on `jj-lib = "0.45.1"`. Licenses in that tree are
 permissive (MIT, Apache-2.0, BSD, Zlib, Unlicense), plus one MPL-2.0
-crate. `deny.toml` will need that MPL-2.0 entry checked. tau-agent does
+crate. `deny.toml` will need that MPL-2.0 entry checked. heiko-agent does
 not have `gix` or `prost` in its lock file yet, so all of it is new
 weight, but `rayon` 1.12 is already there.
 
@@ -61,7 +61,7 @@ weight, but `rayon` 1.12 is already there.
 - jj is pre-1.0. Every monthly release may break the library API, and
   the CLI is the only consumer the project tests against.
 - The upstream issue on panics in the library (#5685) is still the
-  reference: a panic in jj-lib is a crash of the host. The tau process
+  reference: a panic in jj-lib is a crash of the host. The heiko process
   runs agents and the UI, so jj calls should run where a panic can be
   caught (`catch_unwind` around a blocking task) **(unverified that
   jj-lib state stays usable after a caught panic; assume it does not
@@ -76,8 +76,8 @@ weight, but `rayon` 1.12 is already there.
 ## Where things live
 
 ```
-$XDG_DATA_HOME/tau/
-  tau.db                      # tau-store: runs, messages, costs
+$XDG_DATA_HOME/heiko/
+  heiko.db                      # heiko-store: runs, messages, costs
   repos/<name>/
     .jj/repo/                 # the one jj repo: op log, index, git store
       store/git/              # internal Git store (non-colocated)
@@ -119,7 +119,7 @@ code.
   leaves them out of step.
 - **C** does not work as metadata. `CommitBuilder` offers description,
   parents, tree, author, committer and change id, and nothing else.
-  Trailers in the description (`Tau-Run:`, `Tau-Seq:`) do work, and
+  Trailers in the description (`Heiko-Run:`, `Heiko-Seq:`) do work, and
   `jj_lib::trailer` parses them, but they are pushed with the commit.
   Operation metadata is the better place for tags: `Transaction::set_attribute`
   stores key-value pairs in `OperationMetadata::attributes`, and those
@@ -130,9 +130,9 @@ code.
   snapshot and the chat commit, then commits once, so the two cannot
   drift. The chat DAG has the same shape as the run tree: a fork's first
   chat commit has the fork point's chat commit as parent. Bookmarks live
-  under `tau/chat/<run-id>` and are never pushed unless the user asks,
+  under `heiko/chat/<run-id>` and are never pushed unless the user asks,
   for example to a private remote to sync machines.
-- **E** is what tau has today. Forks already share messages by
+- **E** is what heiko has today. Forks already share messages by
   reference, and a checkpoint is `(run, seq)`.
 
 **Proposal:** start with E plus the link records below, and add D in a
@@ -141,20 +141,20 @@ between machines, or reviewing a run's transcript next to its diff in
 one history. D is a mirror written by the plugin. SQLite stays the
 source of truth.
 
-## Mapping tau's model to jj
+## Mapping heiko's model to jj
 
-| tau                       | jj                                                                  |
+| heiko                       | jj                                                                  |
 | ------------------------- | ------------------------------------------------------------------- |
 | Project                   | One repo under `repos/<name>`                                       |
-| `RunId`                   | Workspace `run-<uuid>` and bookmark `tau/<short-id>`                |
-| Turn end                  | A snapshot: one operation tagged `tau.run`, `tau.seq`, `tau.turn`   |
+| `RunId`                   | Workspace `run-<uuid>` and bookmark `heiko/<short-id>`                |
+| Turn end                  | A snapshot: one operation tagged `heiko.run`, `heiko.seq`, `heiko.turn`   |
 | Code state at a turn      | The working-copy commit id after that snapshot                      |
 | A model-chosen commit     | A change: `vcs_commit` describes it and starts a new one on top     |
 | `Checkpoint { run, seq }` | The latest link record with `seq <= checkpoint.seq`                 |
 | Fork                      | A new workspace whose working-copy commit is a child of that commit |
 | Sub-agent run             | Shares its caller's workspace, or none; it records no links         |
 | Compare two runs          | Diff between their heads, or between each head and the fork point   |
-| `KeepBranch` (UI)         | Move `tau/<run>` onto the kept head, abandon the siblings' changes  |
+| `KeepBranch` (UI)         | Move `heiko/<run>` onto the kept head, abandon the siblings' changes  |
 | Undo                      | Restore the view of an earlier operation                            |
 
 ### Change ids and commit ids
@@ -206,9 +206,9 @@ pub struct Link {
   remotes, the operation log, and (with D) a copy of each transcript.
 - **Reverse lookups** (which run made this commit) are not served by
   `Store::records`, which reads per run. Two options: the op attribute
-  `tau.run` on the operation that wrote the commit, found by walking
+  `heiko.run` on the operation that wrote the commit, found by walking
   the op log, or a small index table owned by the plugin in its own
-  SQLite file. Adding a table to `tau-store` for one plugin goes against
+  SQLite file. Adding a table to `heiko-store` for one plugin goes against
   [0006](../decisions/0006-plugin-crates.md).
 
 ## Concurrency: one workspace per run
@@ -231,7 +231,7 @@ pub struct Link {
   `jj workspace update-stale` does **(unverified which jj-lib call the
   CLI uses; it lives in `jj-cli`, not in the library)**. The UI should
   only rewrite a run's commits while that run is not running.
-- **In-process serialization.** Within the tau process, one blocking
+- **In-process serialization.** Within the heiko process, one blocking
   worker per repo runs all jj calls for that repo in order. That turns
   most concurrent operations into a linear op log, which is easier to
   show and undo. Other processes (the user's own `jj`) still work,
@@ -241,7 +241,7 @@ pub struct Link {
 
 - Every change to the repo is an operation, with a description,
   timestamps, the workspace name and free attributes. The plugin sets
-  `tau.run`, `tau.seq`, `tau.tool` on each one.
+  `heiko.run`, `heiko.seq`, `heiko.tool` on each one.
 - **Restore** (the UI): load the repo at the chosen operation
   (`RepoLoader::load_operation`, `load_at`), start a transaction on the
   current head, and `set_view` to the old view. The working copies of
@@ -286,7 +286,7 @@ Paths are in `jj_lib::`. Signatures are from docs.rs for 0.45.1.
   to `git` and the environment. Credentials go through that environment:
   `GIT_ASKPASS` pointing at a small helper, or `GIT_CONFIG_COUNT` with a
   `credential.helper` that reads a token the app holds. The packaged app
-  must ship `git`; the Nix package for `tau-ui` should add it to the
+  must ship `git`; the Nix package for `heiko-ui` should add it to the
   wrapper's `PATH`.
 - **Snapshot limits.** `SnapshotOptions::max_new_file_size` (jj's
   default is 1 MiB) refuses large new files with `NewFileTooLarge`. The
@@ -298,7 +298,7 @@ Paths are in `jj_lib::`. Signatures are from docs.rs for 0.45.1.
 
 ### Running jj-lib inside tokio
 
-tau is tokio-based. jj-lib's `async fn`s do not need tokio, but much of
+heiko is tokio-based. jj-lib's `async fn`s do not need tokio, but much of
 their work is synchronous file and object I/O, hashing and `rayon`
 parallelism. A sketch:
 
@@ -342,10 +342,10 @@ Inside a job, async jj-lib calls are driven with `pollster::block_on`,
 which jj-lib already depends on. This sidesteps the `Send` question and
 keeps jj work off tokio's worker threads.
 
-## The `tau-vcs` plugin
+## The `heiko-vcs` plugin
 
-A crate at `crates/plugins/tau-vcs`, named `tau-vcs`, per
-[0006](../decisions/0006-plugin-crates.md). It depends on `tau-agent`
+A crate at `crates/plugins/heiko-vcs`, named `heiko-vcs`, per
+[0006](../decisions/0006-plugin-crates.md). It depends on `heiko-agent`
 and `jj-lib`, and nothing depends on it except the app.
 
 ```rust
@@ -372,9 +372,9 @@ impl Plugin for Vcs {
 - **Turn end** (`on_event(TurnEnd)`): snapshot, tag the operation, write
   a `Link` record. A turn with no file changes writes no operation and
   links the same commit again.
-- **`finish`**: a last snapshot, then point `tau/<short-id>` at the
+- **`finish`**: a last snapshot, then point `heiko/<short-id>` at the
   head so the run's work stays visible after its workspace is removed.
-- **Coding tools.** `tau-tools` stays unaware of jj. The host roots
+- **Coding tools.** `heiko-tools` stays unaware of jj. The host roots
   `CodingTools` at the run's workspace path, which the plugin exposes
   to the host (for example through `Repos::workspace_path(run)`), since
   plugin `start` cannot change another plugin's root **(open: needs a
@@ -389,7 +389,7 @@ impl Plugin for Vcs {
 
 All tools act on the run's own workspace. Revisions are change ids,
 commit ids, or a fixed set of names: `@` (the working copy), `@-`,
-`trunk`, `fork-point` (this run's first link), and `tau/*` bookmarks.
+`trunk`, `fork-point` (this run's first link), and `heiko/*` bookmarks.
 Full revsets are not accepted from the model, so a query cannot be
 made arbitrarily expensive.
 
@@ -406,7 +406,7 @@ made arbitrarily expensive.
 | `vcs_restore`  | `paths`, `from?` (default `@-`)              | restored paths                                                            | tree merge of paths from `from` into `@`, then check out   |
 | `vcs_abandon`  | `rev`                                        | abandoned change, rebased descendants count                               | `record_abandoned_commit`, `rebase_descendants`            |
 | `vcs_squash`   | `into?` (default `@-`)                       | the target change id                                                      | rewrite target with `@`'s tree, abandon `@`                |
-| `vcs_undo`     | none                                         | the operation undone                                                      | revert the head op if its `tau.run` is this run            |
+| `vcs_undo`     | none                                         | the operation undone                                                      | revert the head op if its `heiko.run` is this run            |
 
 - **Every write is scoped.** `vcs_describe`, `vcs_abandon`,
   `vcs_squash` and `vcs_undo` refuse commits that are not this run's
@@ -415,7 +415,7 @@ made arbitrarily expensive.
 - **Every write snapshots first**, so edits made with `write` or `bash`
   are never lost to a checkout.
 - **Results are text for the model** and a JSON `details` value for the
-  UI, the way `tau-tools` returns them.
+  UI, the way `heiko-tools` returns them.
 - **Conflicts are data.** jj keeps conflicts in commits. `vcs_status`
   lists conflicted paths, and the files hold conflict markers the model
   edits like any text.
@@ -425,14 +425,14 @@ made arbitrarily expensive.
 ### Operations the user triggers from the UI
 
 These change shared state, reach the network, or throw work away. They
-go through `WorkspaceEvent`s to the host, which calls `tau-vcs`
+go through `WorkspaceEvent`s to the host, which calls `heiko-vcs`
 directly, not through the model.
 
 | Operation         | What it does                                                                             |
 | ----------------- | ---------------------------------------------------------------------------------------- |
 | Add project       | Clone a GitHub repo into `repos/<name>`: init, add remote, fetch, import, check out main |
 | Fetch             | `GitFetch` for the remote, import refs; update `trunk`                                   |
-| Push              | Push `tau/<run>` (or a renamed bookmark) to `origin`; optionally open a PR               |
+| Push              | Push `heiko/<run>` (or a renamed bookmark) to `origin`; optionally open a PR               |
 | Check out a point | Open a read-only workspace at a link's commit, or show its tree without a workspace      |
 | Fork from a point | `WorkspaceEvent::Fork` at any turn, not only the latest: a checkpoint at that link's seq |
 | Compare           | Diff two runs' heads, or each against the fork point                                     |
@@ -442,7 +442,7 @@ directly, not through the model.
 | Resolve conflicts | Show conflicted files; resolution is a normal edit                                       |
 | Remove a project  | Delete the repo directory after confirming                                               |
 
-`WorkspaceEvent` in `tau-ui` has `Fork { run }` and `KeepBranch { run }`
+`WorkspaceEvent` in `heiko-ui` has `Fork { run }` and `KeepBranch { run }`
 today. A fork at an earlier turn needs a `seq` field, and the other
 operations need new variants, all handled by the host
 ([0007](../decisions/0007-gpui-interface.md)).
@@ -456,7 +456,7 @@ operations need new variants, all handled by the host
   the UI down unless caught. The worker thread design limits this to a
   failed job.
 - **Weight.** About 270 crates, mostly gitoxide. Build time and
-  `cargo deny` exceptions grow. Only the app and `tau-vcs` pay for it.
+  `cargo deny` exceptions grow. Only the app and `heiko-vcs` pay for it.
 - **A runtime `git` dependency** for fetch and push, and credential
   handling through environment variables.
 - **Record timing.** A link written at `TurnEnd` gets a `seq` after the
@@ -487,7 +487,7 @@ operations need new variants, all handled by the host
   (are they `Send`), or is the worker thread required?
 - How does the host learn a run's workspace path before `CodingTools`
   is built? Options: the host creates the workspace before starting the
-  run and passes it to both plugins, or `tau-vcs` wraps `CodingTools`.
+  run and passes it to both plugins, or `heiko-vcs` wraps `CodingTools`.
 - Should a sub-agent that edits code get its own workspace (a fork of
   its caller's state) or share its caller's? Sharing is simpler, but two
   runs then snapshot one working copy.
@@ -498,7 +498,7 @@ operations need new variants, all handled by the host
   clones, and GitHub keeps the header **(unverified for GitHub)**.
 - GitHub auth: reuse `gh`'s token, a GitHub App, or a token the user
   pastes into the UI?
-- Should `tau-vcs` also work without jj for users who only want Git?
+- Should `heiko-vcs` also work without jj for users who only want Git?
   This note assumes no.
 
 ## Staged plan
@@ -508,7 +508,7 @@ operations need new variants, all handled by the host
    files in both, snapshot both, check that the op log merges, fork a
    third workspace from a hidden snapshot, push a bookmark. Answer the
    `Send` and stale-workspace questions.
-2. **`tau-vcs` read path.** The crate, the repo worker, `Repos` under
+2. **`heiko-vcs` read path.** The crate, the repo worker, `Repos` under
    the XDG dir, and the read tools: `vcs_status`, `vcs_diff`, `vcs_log`,
    `vcs_show`, `vcs_cat`. Tests on temporary repos, no network.
 3. **Snapshots and links.** Workspace per run, snapshot at turn end,
@@ -520,9 +520,9 @@ operations need new variants, all handled by the host
    checks, plus the `bash` guard.
 5. **UI operations.** Add project, fetch, push, fork at a turn,
    compare, keep branch, op log. New `WorkspaceEvent` variants in
-   `tau-ui`, handled by the host. `git` in the Nix package.
+   `heiko-ui`, handled by the host. `git` in the Nix package.
 6. **Chat lineage (optional).** Design D: chat commits written in the
-   same transaction as the snapshot, `tau/chat/*` bookmarks, an optional
+   same transaction as the snapshot, `heiko/chat/*` bookmarks, an optional
    private remote for sync.
 7. **Decision record.** Once the spike and stage 3 hold up, write
    `docs/decisions/0008-...` with what was chosen.

@@ -1,8 +1,8 @@
-# RLM evaluation (`tau-rlm-eval`)
+# RLM evaluation (`heiko-rlm-eval`)
 
-How tau copes with an input too large to read, measured against a real
+How heiko copes with an input too large to read, measured against a real
 model, after "Recursive Language Models" (arXiv 2512.24601). The
-harness, tasks and arms are in `crates/evals/tau-rlm-eval/README.md`.
+harness, tasks and arms are in `crates/evals/heiko-rlm-eval/README.md`.
 
 - Status: harness built; first results below. 2026-10-11, `gpt-5.5`
   through the ChatGPT plan, one trial per cell.
@@ -23,7 +23,7 @@ harness, tasks and arms are in `crates/evals/tau-rlm-eval/README.md`.
 (An earlier 1000-line run, on an input with only 60 distinct messages,
 had `plain` exact for US$0.12 and `rlm` exact for US$1.13.)
 
-## Real text: `docs`, tau's own documents
+## Real text: `docs`, heiko's own documents
 
 96 Markdown files (about 300k tokens), shuffled into one file under
 `### DOCUMENT k` lines, titles removed; the question is how many are

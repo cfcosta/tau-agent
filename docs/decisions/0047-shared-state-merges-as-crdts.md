@@ -1,8 +1,8 @@
 # 0047: What devices edit at once merges, not overwrites
 
-- Status: proposed. Builds on [0013](0013-phones-connect-to-a-running-tau.md)
-  (phones steer a running tau) and [0045](0045-everything-is-a-plugin.md)
-  ("The interface's state is data"). The person has decided tau adopts
+- Status: proposed. Builds on [0013](0013-phones-connect-to-a-running-heiko.md)
+  (phones steer a running heiko) and [0045](0045-everything-is-a-plugin.md)
+  ("The interface's state is data"). The person has decided heiko adopts
   CRDTs; this records how. Changes no wire or code yet.
 - Date: 2026-11-04
 
@@ -13,9 +13,9 @@ every plugin's UI state cross to phones whole, and a phone's edit goes
 up as an event. A phone keeps what the person did while away in an
 outbox and sends it again when it reaches the computer (4ba4e7ce). The
 computer takes each request once, by its number, and that number
-outlives a restart of the computer (`tau-remote`'s `devices`).
+outlives a restart of the computer (`heiko-remote`'s `devices`).
 
-`crates/tau-ui/tests/offline_model.rs` drives the real host, feed,
+`crates/heiko-ui/tests/offline_model.rs` drives the real host, feed,
 outbox and encoding with the computer and two phones that edit the same
 things while one or both are away: drafts, open sections and a slot's
 pick (UI state), goals, the model new chats start on, models hidden,
@@ -37,7 +37,7 @@ starts again on what it saved.
   in the model's file:
   - _An edit lost to a restart._ The host applied each UI event in a
     task of its own and did not count the save as work. Edits made just
-    before tau closed came back older after it started again: a draft
+    before heiko closed came back older after it started again: a draft
     at `w8` showed `w7`. The nightly run found it and stopped shrinking
     at about twenty steps (drafts typed on the computer and on phones,
     then a restart); the regression test types 200 words on the
@@ -57,7 +57,7 @@ starts again on what it saved.
 
   The host now applies each of these as the window makes it, in order,
   and is at work until it is saved; a steer opens a closed chat as a
-  message to a finished one does. tau still does not wait for the
+  message to a finished one does. heiko still does not wait for the
   host's work when it quits, so a save in flight then is lost either
   way.
 
@@ -108,8 +108,8 @@ state but an intent, run once. No CRDT library.
 ### Requirements
 
 Two models found what the merge must also fix: this one, and the
-network model in `crates/tau-remote/tests/network_model.rs` (workspace
-`tau-mbt-net`, commits fb7ce93f and 653a5644). Each is an ignored test
+network model in `crates/heiko-remote/tests/network_model.rs` (workspace
+`heiko-mbt-net`, commits fb7ce93f and 653a5644). Each is an ignored test
 today; the migration is done when they pass.
 
 1. **A phone's clock moved back.** Request ids come from the phone's
@@ -176,7 +176,7 @@ carries out once or refuses.
 | Cancel                                                              | any device                                  | a stop for a turn that ended does nothing              | intent with an op id, run once                                                            |
 | Catalog, pushes, pull requests, code diffs, query results, resuming | the computer                                | none                                                   | none                                                                                      |
 | A chat closed or open                                               | any device (`CloseRun`; a message opens it) | close on one, write on another                         | last-writer-wins register per chat, by HLC; the stop a close makes is an intent           |
-| A chat's goal                                                       | any device (tau-goal record)                | set on two                                             | last-writer-wins register per chat, by HLC                                                |
+| A chat's goal                                                       | any device (heiko-goal record)                | set on two                                             | last-writer-wins register per chat, by HLC                                                |
 | The model an agent starts on                                        | any device                                  | picked on two                                          | last-writer-wins register per agent, by HLC                                               |
 | Models hidden                                                       | any device                                  | hide on one, show on another                           | last-writer-wins register per model (a set of them)                                       |
 | Repositories hidden                                                 | any device; shown again by adding           | hide on two, the last listed one                       | add-wins set, with the host's "one stays listed" rule on top                              |
@@ -200,7 +200,7 @@ which comes from the op id, never from a clock:
 
 ### Small types in the JSON state
 
-In `tau-ui-plugin` (the kernel's shared types), beside `UiState`:
+In `heiko-ui-plugin` (the kernel's shared types), beside `UiState`:
 
 ```rust
 pub struct ReplicaId(Uuid);
@@ -264,7 +264,7 @@ unverified.
   protocol, which wants a reliable in-order transport (the feed is
   one). Two sources of truth unless the whole `Synced` moves into it.
 - **Android.** No `-sys` crates listed; pure Rust not verified. About
-  43k lines of Rust: a larger `libtau_phone.so`.
+  43k lines of Rust: a larger `libheiko_phone.so`.
 - **Wire and size.** Compressed binary with full history; history grows
   with every keystroke unless compacted.
 
@@ -301,7 +301,7 @@ lines with the counter persisted; not worth a dependency.
 ## Recommendation
 
 1. Hand-rolled `OpId`, `Hlc`, `VersionVector`, `Lww` and `AddWins` in
-   `tau-ui-plugin`, as plain serde JSON, with the merge laws
+   `heiko-ui-plugin`, as plain serde JSON, with the merge laws
    property-tested.
 2. Every multi-writer field in the table above moves to them; the
    computer-only state stays as it is.
@@ -332,7 +332,7 @@ migration and no compatibility reading.
    `apply` is `merge`. `ui.json` is written in the new shape; an old
    file that does not read is dropped, as `load_ui_state` does today.
    The later-edit question passes for UI state.
-3. **Settings.** Closed chats, goals (the tau-goal record carries its
+3. **Settings.** Closed chats, goals (the heiko-goal record carries its
    stamp), the default model, hidden models and hidden repositories
    take their types. `repos.json` and `models.json` change in place.
 4. **Drafts,** if decided: the text type, behind the draft's register.
@@ -344,12 +344,12 @@ migration and no compatibility reading.
   device shows the same. Its rule check changes from "the last to
   arrive wins" to "the largest stamp wins". The migration is done when
   these ignored tests pass and are un-ignored:
-  - in `crates/tau-remote/tests/network_model.rs`:
+  - in `crates/heiko-remote/tests/network_model.rs`:
     `a_request_after_the_phones_clock_went_back_is_taken`,
     `a_phone_from_before_the_computers_clock_went_back_gets_a_snapshot`,
     `a_request_is_not_taken_again_after_pairing_again`,
     `a_request_made_while_away_survives_the_apps_restart`;
-  - in `crates/tau-ui/tests/offline_model.rs`:
+  - in `crates/heiko-ui/tests/offline_model.rs`:
     `the_later_edit_wins_over_one_made_away`,
     `what_a_phone_did_away_outlives_its_restart`,
     `a_phone_whose_clock_went_back_is_still_heard`, and

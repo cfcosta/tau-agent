@@ -12,16 +12,16 @@
 ## Context
 
 Repositories come from GitHub alone since change `zynomvoz`. Before it,
-tau copied a local checkout into its own storage, and when the copy
+heiko copied a local checkout into its own storage, and when the copy
 failed, ran in the checkout without a jj project, which broke forks,
 landing and snapshots. People keep work on their machine that is not
-on GitHub, or want tau's work to show up in the folder they already
+on GitHub, or want heiko's work to show up in the folder they already
 use.
 
-This time the folder is the project. tau sets up jj in it, colocated
+This time the folder is the project. heiko sets up jj in it, colocated
 with Git, and gives runs workspaces of their own outside it. That puts
-tau and the person in one repository, writing at the same time, with
-two tools (jj-lib in tau, the jj or git CLI for the person). Most of
+heiko and the person in one repository, writing at the same time, with
+two tools (jj-lib in heiko, the jj or git CLI for the person). Most of
 this decision is about keeping each out of the other's way.
 
 The UI was iterated on a design canvas (entry A, one Add screen with
@@ -35,20 +35,20 @@ small dialog).
 - A local repository is a Git or jj repository on this computer,
   added from the Add screen or the sidebar's + menu, on the desktop
   only (phones list it, and say folders are added at the computer).
-- Adding shows what tau found (repository kind, checked-out branch,
+- Adding shows what heiko found (repository kind, checked-out branch,
   remote, uncommitted files) and what it checked, then sets up jj
   beside Git with progress, all or nothing: a failed setup removes
-  the `.jj` tau made, and the folder is as before.
-- tau refuses a repository that uses Git LFS or submodules: runs would
+  the `.jj` heiko made, and the folder is as before.
+- heiko refuses a repository that uses Git LFS or submodules: runs would
   see pointer files or empty folders. Git hooks and clean/smudge
-  filters are ignored: they do not run on tau's commits.
-- tau refuses a Git worktree (it offers the main checkout) and a folder
+  filters are ignored: they do not run on heiko's commits.
+- heiko refuses a Git worktree (it offers the main checkout) and a folder
   inside a repository (it offers the repository). It refuses a plain
   folder (it does not make one a repository), a bare repository, and
   a jj repository not colocated with Git (it hints at
   `jj git colocation enable`: colocating would move the person's Git
   store).
-- tau follows the person's jj config, global and the repository's,
+- heiko follows the person's jj config, global and the repository's,
   as the jj CLI does, in every repository, clones included. Not doing
   so is a bug. This was fixed before local repositories came back:
   config layers and `--when` scopes, commit author and signing,
@@ -56,10 +56,10 @@ small dialog).
   (`snapshot.auto-track`, `max-new-file-size`, Git's excludes),
   conflict markers, diff context, `git.sign-on-push`,
   `git.private-commits`, and the `trunk()` alias a clone writes.
-  `docs/reference/vcs.md` lists the settings tau leaves aside, each
+  `docs/reference/vcs.md` lists the settings heiko leaves aside, each
   with its reason (fetch auto-tracking, `snapshot.auto-update-stale`,
   presentation settings, and others).
-- jj version skew between tau's jj-lib and the person's jj is not
+- jj version skew between heiko's jj-lib and the person's jj is not
   checked: jj's own compatibility rules apply.
 
 ### Where things live
@@ -67,17 +67,17 @@ small dialog).
 - The project root is the person's folder. jj's `default` workspace is
   the person's.
 - The main chat works in a named workspace of its own, in every
-  repository, clones included: `default` is never tau's. It is named
-  `tau-main` (`tau-main-<n>` if the person has one already). Putting
+  repository, clones included: `default` is never heiko's. It is named
+  `heiko-main` (`heiko-main-<n>` if the person has one already). Putting
   the main chat in the person's checkout, sharing one working copy,
-  is left out for now: tau would have to move Git's `HEAD` and index
+  is left out for now: heiko would have to move Git's `HEAD` and index
   there.
-- Runs work in workspaces under tau's data directory, one per run.
+- Runs work in workspaces under heiko's data directory, one per run.
   Each is also a Git worktree of the repository, so `git`, nix flakes
   and build scripts that ask Git work in runs; this holds for clones
   too.
 - The person names untracked paths (for example `.env`, `.direnv`)
-  that tau links into each run's workspace. Nothing by default. Only
+  that heiko links into each run's workspace. Nothing by default. Only
   paths jj leaves untracked in the folder can be named, and runs'
   snapshots leave linked paths out, so they never reach a commit. A
   linked folder is shared by the runs.
@@ -88,42 +88,42 @@ small dialog).
 
 ### Staying out of the person's way
 
-- tau never moves Git's `HEAD` or index in a local repository. It
+- heiko never moves Git's `HEAD` or index in a local repository. It
   exports refs only. When trunk is about to move while the person has
-  it checked out in Git (`HEAD` attached to trunk), tau detaches
+  it checked out in Git (`HEAD` attached to trunk), heiko detaches
   `HEAD` on its current commit first, as jj does, and the status bar
   says trunk moved.
-- Run heads live in a private namespace, `refs/tau/runs/<run>`,
-  written by tau, not as branches: `git branch` and `git push --all`
+- Run heads live in a private namespace, `refs/heiko/runs/<run>`,
+  written by heiko, not as branches: `git branch` and `git push --all`
   never see them. They are not jj bookmarks either, since the jj CLI
   exports every bookmark to `refs/heads/` in a colocated repository:
   a run's head is its workspace's `@-`, and the ref records it. This
-  holds for clones too, and replaces the `tau/<run>` bookmarks of
+  holds for clones too, and replaces the `heiko/<run>` bookmarks of
   [0042](0042-sub-agents-can-start-fresh-and-keep-their-work-aside.md).
-- tau sets the repository's default log revset to leave out run
+- heiko sets the repository's default log revset to leave out run
   commits that have not landed. It builds on the person's own
   `revsets.log` (from the layers below the repository's), rewrites it
   when theirs changes, and restores exactly what was there on Remove.
-  Its operations stay in the operation log, each described `tau: …`
-  and tagged as tau's.
-- When the person and tau both move trunk, the person's commit wins:
-  tau rebases what it landed on top, as a landing onto a moved trunk
+  Its operations stay in the operation log, each described `heiko: …`
+  and tagged as heiko's.
+- When the person and heiko both move trunk, the person's commit wins:
+  heiko rebases what it landed on top, as a landing onto a moved trunk
   does, and conflicts go to the main chat.
-- tau watches the operation log for operations it did not write, and
+- heiko watches the operation log for operations it did not write, and
   Git's refs, and reloads: trunk, counts, landing forecasts and the
   sidebar follow the person's commits, fetches and rebases, whether
-  made with jj or with `git` alone. Before each write tau imports
+  made with jj or with `git` alone. Before each write heiko imports
   Git's refs, under jj's own import lock, as the jj CLI does, with the
   person's `git.abandon-unreachable-commits` and bookmark tracking
   settings.
-- When the person removes tau's state (a workspace forgotten, a run's
-  head abandoned, a `refs/tau/` ref deleted), that run is recorded as
+- When the person removes heiko's state (a workspace forgotten, a run's
+  head abandoned, a `refs/heiko/` ref deleted), that run is recorded as
   dropped. The startup sweep removes only what it still finds.
 
 ### Remote
 
 - Where pushes go is chosen per repository as it is added: GitHub when
-  `origin` is on GitHub and tau's GitHub App can push there (checked
+  `origin` is on GitHub and heiko's GitHub App can push there (checked
   at add time; an SSH origin maps to HTTPS), else nowhere, which hides
   Push and pull requests until a remote is set.
 - A local repository fetches only when asked: from the repository's
@@ -146,10 +146,10 @@ small dialog).
 
 ### Removing
 
-- Remove from tau closes the repository's chats and takes away what
-  tau added: its workspaces (and their folders), `refs/tau/*`, and the
+- Remove from heiko closes the repository's chats and takes away what
+  heiko added: its workspaces (and their folders), `refs/heiko/*`, and the
   log revset it set. The folder, its branches and its commits stay,
-  and the operation log keeps what tau did. Removing `.jj` too is a
+  and the operation log keeps what heiko did. Removing `.jj` too is a
   separate choice.
 
 ## Consequences
@@ -161,23 +161,23 @@ small dialog).
 - jj-lib 0.46.0's API for a jj workspace that is also a Git worktree
   (`git::create_worktree` and `unlink_worktree`, what
   `jj workspace add` and `forget` use) runs `git worktree add --orphan` and
-  `git worktree prune`. tau creates the worktree itself with gix (there is
+  `git worktree prune`. heiko creates the worktree itself with gix (there is
   no git binary), as jj-lib lays it out but with absolute paths, so
   the person's `.git/config` is never changed, and keeps its `HEAD`
   and index in step, as `colocate.rs` does for `main/` today.
 - "The folder is as before" after a failed setup means its refs,
-  `HEAD`, index, config and files; loose objects tau wrote may stay
+  `HEAD`, index, config and files; loose objects heiko wrote may stay
   in `.git/objects` until Git collects them.
-- tau's commits carry the person's name and are signed when their
-  config signs. A signing setup that prompts would block tau's
+- heiko's commits carry the person's name and are signed when their
+  config signs. A signing setup that prompts would block heiko's
   commits; it surfaces as a failed commit.
 - What is immutable is what jj says: the person's `immutable_heads()`.
   A tracked remote bookmark that is not trunk no longer protects its
-  commits, and a broken definition stops tau's writes with an error
+  commits, and a broken definition stops heiko's writes with an error
   naming it, as it stops jj's.
 - Files outside `snapshot.auto-track` stay out of runs' commits, as
   ignored files do, and are lost with a run's workspace.
-- The person and tau share one operation log; `jj undo` by the person
-  can undo a tau landing. The op log watcher sees it, and tau reloads.
+- The person and heiko share one operation log; `jj undo` by the person
+  can undo a heiko landing. The op log watcher sees it, and heiko reloads.
 - Local repositories never push or fetch on their own, so they can
   fall behind origin until someone pulls.

@@ -1,0 +1,651 @@
+//! The interface a heiko plugin brings its UI through (ADR 0017).
+//!
+//! A plugin has two halves. Its [`UiPlugin`] is the fold that turns what
+//! it publishes into state, and the UI it adds to the interface: every
+//! interface has it, a phone's too. Its [`HostHalf`] is what it does on
+//! the machine that runs agents: only the host has it, and
+//! [`Registry::host`] gives it to the plugin. A host half lives in a
+//! crate of its own when it brings what the interface does not need (a
+//! Luau engine, jj, an MCP client), so the interface builds without it
+//! (ADR 0030). There is no plugin without a UI: `heiko-ui` builds a run's
+//! plugins only through its [`Registry`].
+//!
+//! - **On the host**, a plugin keeps its own state ([`HostHalf::Host`]),
+//!   builds its agent plugin for each run ([`HostHalf::agent_plugins`]),
+//!   describes itself ([`HostHalf::catalog`]), sends the interface its
+//!   data ([`HostHalf::data`], [`HostHalf::repo_data`]), carries out
+//!   what its UI asks ([`HostHalf::act`]), starts again the jobs a
+//!   restart cut off ([`HostHalf::resume`]), and hears when first-run
+//!   setup ends ([`HostHalf::setup_finished`]). Outside any run it may ask
+//!   the person's model ([`HostCx::model`]) and run jobs the host keeps
+//!   ([`HostCx::jobs`]).
+//! - **Wherever a run is shown**, live or stored, on a computer or a
+//!   phone, the plugin's state folds each record it published
+//!   ([`Fold::apply`]), and places anchors in the transcript and on tool
+//!   cards ([`RunCx`]).
+//! - **In the interface**, [`UiPlugin::manifest`] says where its UI goes:
+//!   its pages, the points it declares, and its contributions to points,
+//!   `heiko-ui`'s ([`points`]) or other plugins'.
+
+pub mod app;
+pub mod compaction;
+pub mod declare;
+pub mod forge;
+pub mod gate;
+pub mod host;
+pub mod jobs;
+pub mod kinds;
+pub mod loop_;
+pub mod manifest;
+pub mod model;
+pub mod notify;
+pub mod points;
+pub mod provider;
+pub mod registry;
+pub mod run;
+pub mod services;
+pub mod slots;
+pub mod store;
+pub mod sub_agents;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
+pub mod title;
+pub mod tree;
+pub mod ui_state;
+pub mod value;
+pub mod vcs;
+pub mod view;
+pub mod waiting;
+pub mod wire;
+
+pub use declare::{Declaration, Reach, StoreReach};
+pub use host::{
+    AgentRepo,
+    By,
+    ConfigDir,
+    Conversations,
+    HOST_RECORD,
+    HomeDir,
+    HostCx,
+    HostRecord,
+    Interrupted,
+    LeftOut,
+    ModelPick,
+    OutsideResources,
+    OutsideTools,
+    Prompt,
+    Push,
+    RepoCtx,
+    RepoId,
+    RepoLauncher,
+    ResourceSource,
+    ResourceWatch,
+    RunCommands,
+    RunCtx,
+    RunKind,
+    RunWake,
+    SHIPPED_SKILLS,
+    SavedSettings,
+    SkillsDir,
+    ToolSource,
+    Turn,
+    TurnCommit,
+    TurnHooks,
+    Unattended,
+    UnattendedRepo,
+    UnattendedSource,
+    Waking,
+    WatchError,
+    WorkspaceDir,
+};
+pub use jobs::{JobCx, JobInfo, Jobs, LiveRepos};
+pub use manifest::{
+    KeyAt,
+    ListedCommand,
+    Manifest,
+    Page,
+    Point,
+    PointCx,
+    SlashCommand,
+};
+pub use model::{AskSettings, Model, PluginModel};
+pub use registry::{CommandsAt, Env, ErasedPlugin, NoHost, Registry};
+pub use run::{
+    CallData,
+    CallResult,
+    CardInfo,
+    CardMark,
+    Dropped,
+    NESTED_TEXT_CHARS,
+    NestedCall,
+    NestedMark,
+    OutputCut,
+    RunCx,
+    nested_under,
+};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::Value;
+pub use services::{Provide, Services};
+use heiko_agent::plugin::Plugin;
+pub use ui_state::{UiEvent, UiState};
+pub use value::PluginValue;
+pub use view::{
+    ENTRY,
+    Handle,
+    KindPlace,
+    Link,
+    NavEntry,
+    PlanField,
+    PluginStatus,
+    RepoKind,
+    Request,
+    RowNote,
+    RunInfo,
+    SCOPE,
+    Sink,
+    ViewCx,
+    WaitGroup,
+    WaitItem,
+    Waiting,
+};
+
+/// A published body's key saying where history shows it. A run's history
+/// stores a turn's messages when the turn ends, after what plugins
+/// published during it; an interface replaying history places each body
+/// as it showed live:
+///
+/// - none: with the turn it was published in, once the turn's tool
+///   cards exist (a check on a call);
+/// - [`PLACE_NOW`]: where it was stored, before the turn's messages (a
+///   choice made before a request);
+/// - [`PLACE_MESSAGE`]: after the message the run started on, which
+///   history stores after what plugins published as the run started.
+pub const PLACE: &str = "place";
+pub const PLACE_NOW: &str = "now";
+pub const PLACE_MESSAGE: &str = "message";
+
+/// A run's history starts at its last context rewrite, and holds the
+/// details the plugin gave it (`Rewrite::details`). Once the transcript
+/// after it is in place, the plugin folds them as `{ "rewrite": details }`.
+pub const REWRITE: &str = "rewrite";
+
+/// `record`, placed in history at `place` ([`PLACE`]).
+pub fn placed(record: &impl Serialize, place: &str) -> Value {
+    let mut body =
+        serde_json::to_value(record).expect("a plugin's record serializes");
+    body[PLACE] = place.into();
+    body
+}
+
+/// A plugin's state in a run, as the records it publishes fold into it,
+/// live and from history alike.
+pub trait Fold:
+    Serialize + DeserializeOwned + Default + Clone + Send + Sync + 'static
+{
+    /// What the plugin publishes, one record at a time: the agent half
+    /// writes it, this fold reads it. A record this fold cannot read is
+    /// skipped, and said once.
+    type Record: Serialize + DeserializeOwned + Send;
+
+    fn apply(&mut self, record: Self::Record, run: &mut dyn RunCx);
+
+    /// The details of the context rewrite a run's history starts at,
+    /// once the transcript after it is in place ([`REWRITE`]).
+    fn rewritten(&mut self, details: Value, run: &mut dyn RunCx) {
+        let _ = (details, run);
+    }
+}
+
+/// A plugin with no state in a run folds nothing.
+impl Fold for () {
+    type Record = Value;
+
+    fn apply(&mut self, _: Value, _: &mut dyn RunCx) {}
+}
+
+/// What a plugin keeps on the host, made once from the host's context.
+/// Any `Default` type is made by its default.
+pub trait PluginHost: Send + Sync + Sized + 'static {
+    fn new(cx: &HostCx) -> impl Future<Output = anyhow::Result<Self>> + Send;
+}
+
+impl<T: Default + Send + Sync + 'static> PluginHost for T {
+    fn new(_: &HostCx) -> impl Future<Output = anyhow::Result<Self>> + Send {
+        std::future::ready(Ok(Self::default()))
+    }
+}
+
+/// A plugin's record, the record type of its state's fold.
+pub type RecordOf<P> = <<P as UiPlugin>::State as Fold>::Record;
+
+/// The seams a plugin can use, in the order the loop reaches them: each
+/// a hook of `heiko_agent::Plugin` or `PluginRun`. The host calls only
+/// those a plugin declares ([`Declaration::seams`]); `start` itself is
+/// always called, for the plugin's part in the run, but changes to the
+/// run's plan count only with [`Seam::Start`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Seam {
+    /// `start` changing the run's plan: its instructions, context,
+    /// tools or settings.
+    Start,
+    /// `tools` and `tool_source`.
+    Tools,
+    StartIdle,
+    BeforeRequest,
+    BeforeTool,
+    AfterTool,
+    OnEvent,
+    Rewrite,
+    Rewritten,
+    BeforeStop,
+    Finish,
+}
+
+impl Seam {
+    pub const ALL: [Self; 11] = [
+        Self::Start,
+        Self::Tools,
+        Self::StartIdle,
+        Self::BeforeRequest,
+        Self::BeforeTool,
+        Self::AfterTool,
+        Self::OnEvent,
+        Self::Rewrite,
+        Self::Rewritten,
+        Self::BeforeStop,
+        Self::Finish,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Start => "start",
+            Self::Tools => "tools",
+            Self::StartIdle => "start_idle",
+            Self::BeforeRequest => "before_request",
+            Self::BeforeTool => "before_tool",
+            Self::AfterTool => "after_tool",
+            Self::OnEvent => "on_event",
+            Self::Rewrite => "rewrite",
+            Self::Rewritten => "rewritten",
+            Self::BeforeStop => "before_stop",
+            Self::Finish => "finish",
+        }
+    }
+}
+
+/// What a plugin is for: where the Plugins screen lists it (ADR 0029).
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Default,
+    Serialize,
+    Deserialize,
+)]
+pub enum Group {
+    /// What the model sees: its effort, its context, its notes.
+    Context,
+    /// What a run may do, and when it may stop.
+    Rules,
+    /// Tools the model gets.
+    #[default]
+    Tools,
+    /// Where commands run.
+    Environment,
+    /// How heiko reaches the person: its notices.
+    App,
+    /// The person's own plugins, written in Luau.
+    Yours,
+}
+
+impl Group {
+    pub const ALL: [Self; 6] = [
+        Self::Context,
+        Self::Rules,
+        Self::Tools,
+        Self::Environment,
+        Self::App,
+        Self::Yours,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Context => "Context",
+            Self::Rules => "Rules",
+            Self::Tools => "Tools",
+            Self::Environment => "Environment",
+            Self::App => "App",
+            Self::Yours => "Yours",
+        }
+    }
+}
+
+/// A short word on a plugin's row: a count, or what needs the person.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Note {
+    pub text: String,
+    pub tone: heiko_ui_kit::theme::Tone,
+}
+
+impl Note {
+    pub fn new(text: impl Into<String>, tone: heiko_ui_kit::theme::Tone) -> Self {
+        Self {
+            text: text.into(),
+            tone,
+        }
+    }
+}
+
+/// One of a plugin's own entries on the Plugins screen: a Luau plugin
+/// of heiko-luau-plugins. Its settings pane gets its name as the `entry`
+/// parameter.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct CatalogEntry {
+    pub name: String,
+    pub description: String,
+    pub group: Group,
+    pub seams: Vec<Seam>,
+    pub note: Option<Note>,
+}
+
+/// A plugin's entry on the Plugins screen. The registry sets its name,
+/// and the host its spend.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct PluginInfo {
+    pub name: String,
+    pub description: String,
+    /// What it declares it reaches ([`UiPlugin::declaration`]); the
+    /// registry sets it.
+    #[serde(default)]
+    pub reach: Reach,
+    /// What the plugin cost over the store's recent window; the host
+    /// fills it in.
+    pub spend: f64,
+    /// The page that explains its work, if it has one.
+    pub page: Option<Link>,
+    pub group: Group,
+    pub note: Option<Note>,
+    /// Entries of its own, listed beside it.
+    pub entries: Vec<CatalogEntry>,
+    /// Whether it draws a settings pane; the registry sets it.
+    pub settings: bool,
+    /// Whether its context rewrites keep the transcript
+    /// ([`UiPlugin::rewrites_keep_transcript`]); the registry sets it,
+    /// for a phone that has no plugins of its own (ADR 0046).
+    #[serde(default)]
+    pub rewrites_keep_transcript: bool,
+}
+
+/// A plugin's UI half: what it draws, wherever a run is shown.
+pub trait UiPlugin: Sized + Send + Sync + 'static {
+    /// What the plugin knows of one run, folded from what it publishes.
+    type State: Fold;
+    /// What it knows across repositories, from the host.
+    type Data: Serialize
+        + DeserializeOwned
+        + Default
+        + Clone
+        + Send
+        + Sync
+        + 'static;
+    /// What it knows of one repository, from the host.
+    type RepoData: Serialize
+        + DeserializeOwned
+        + Default
+        + Clone
+        + Send
+        + Sync
+        + 'static;
+    /// What the user set. The host saves it under the plugin's name.
+    type Settings: Serialize
+        + DeserializeOwned
+        + Default
+        + Clone
+        + Send
+        + Sync
+        + 'static;
+    fn name(&self) -> &'static str;
+
+    /// What [`HostHalf::act`] answered, which the plugin keeps in its UI
+    /// state or acts on through `handle`.
+    fn reply(&self, _reply: Value, _handle: &Handle) {}
+
+    /// Carries out `action`, one of the plugin's own that a button, a
+    /// switch, an input's Enter or a key in one of its trees named, with
+    /// its `args` (ADR 0045). `view` is the plugin's, as it was where the
+    /// tree was drawn: the same run and parameters, read again now; what
+    /// the action asks goes through [`ViewCx::handle`].
+    fn on_action(
+        &self,
+        _action: &str,
+        _args: &Value,
+        _view: &mut ViewCx<'_, Self>,
+    ) {
+    }
+
+    /// Whether its context rewrites keep the transcript, marking what
+    /// they drop ([`RunCx::dropped`]), rather than replace it with
+    /// something new (a summary).
+    fn rewrites_keep_transcript(&self) -> bool {
+        false
+    }
+
+    /// What a run on `prompt` is about, when the plugin reads it as its
+    /// own command: for the run's title.
+    fn read_prompt(&self, _prompt: &str) -> Option<String> {
+        None
+    }
+
+    /// What it declares of itself, in one place: the plugins it comes
+    /// after or before, and what it reaches (ADR 0045). The kernel calls
+    /// only the seams, gives only the services and takes only the slot
+    /// fillers it names.
+    fn declaration(&self) -> Declaration;
+
+    /// The kinds of heiko's own repository the plugin keeps: where they
+    /// live, what they start with and how their runs go. None by
+    /// default.
+    fn repo_kinds(&self) -> Vec<kinds::KindHost> {
+        Vec::new()
+    }
+
+    fn manifest(&self) -> Manifest<Self>;
+}
+
+/// The settings of the plugin `H` is the host half of.
+pub type SettingsOf<H> = <<H as HostHalf>::Plugin as UiPlugin>::Settings;
+
+/// A plugin's host half: what it does on the machine that runs agents.
+/// [`Registry::host`] gives it to its plugin.
+pub trait HostHalf: Send + Sync + 'static {
+    /// The plugin this is the host half of.
+    type Plugin: UiPlugin;
+    /// What the plugin keeps on the host, made once.
+    type Host: PluginHost;
+
+    /// The agent plugins for one run or sub-agent; none when the plugin
+    /// is off for it. An error fails the run: what the plugin needs to
+    /// check it could not be read.
+    fn agent_plugins(
+        &self,
+        host: &Self::Host,
+        run: &RunCtx,
+        settings: &SettingsOf<Self>,
+    ) -> impl Future<Output = anyhow::Result<Vec<Box<dyn Plugin>>>> + Send;
+
+    /// The tools for one run or sub-agent that keep state per workspace,
+    /// such as the commands it leaves running: built on the run's
+    /// [`WorkspaceDir`], they go on the agent before the VCS's. The host
+    /// asks every plugin in the registry's order; none by default.
+    fn run_tools(
+        &self,
+        _host: &Self::Host,
+        _run: &RunCtx,
+        _settings: &SettingsOf<Self>,
+    ) -> impl Future<Output = anyhow::Result<Vec<Box<dyn Plugin>>>> + Send {
+        std::future::ready(Ok(Vec::new()))
+    }
+
+    /// The workspace at `dir` in `repo` closed: what the plugin keeps for
+    /// it, such as the commands left running there, ends.
+    fn workspace_closed(
+        &self,
+        _host: &Self::Host,
+        _repo: &RepoCtx,
+        _dir: &std::path::Path,
+    ) -> impl Future<Output = ()> + Send {
+        std::future::ready(())
+    }
+
+    /// What the plugin adds to a run's prompt of `kind`: the host joins
+    /// every plugin's instructions in the registry's order, between its
+    /// own first and last sentences.
+    fn prompt(
+        &self,
+        _host: &Self::Host,
+        _kind: RunKind,
+        _settings: &SettingsOf<Self>,
+    ) -> Prompt {
+        Prompt::default()
+    }
+
+    /// Records to fold into a run's state as it starts or goes on, before
+    /// anything is published: whether the plugin is on, and why not.
+    fn starting(
+        &self,
+        _host: &Self::Host,
+        _run: &RunCtx,
+        _settings: &SettingsOf<Self>,
+    ) -> impl Future<Output = Vec<RecordOf<Self::Plugin>>> + Send {
+        std::future::ready(Vec::new())
+    }
+
+    /// What agent commands in `repo` start through, when the plugin
+    /// gives them an environment: `bash`'s commands, and the
+    /// repository's MCP servers. None leaves them as they are; the host
+    /// joins every plugin's in the registry's order
+    /// ([`heiko_agent::launch::Launchers`]).
+    fn launcher(
+        &self,
+        _host: &Self::Host,
+        _repo: &RepoCtx,
+        _settings: &SettingsOf<Self>,
+    ) -> impl Future<
+        Output = Option<std::sync::Arc<dyn heiko_agent::launch::Launcher>>,
+    > + Send {
+        std::future::ready(None)
+    }
+
+    /// Whether a chat in `repo`, working in `workspace`, may land its
+    /// work on the repository's main by itself once a turn of it ends,
+    /// and go on (ADR 0034): a repository whose work the plugin checks
+    /// itself, as heiko-luau-plugins does its own. The host lands it when
+    /// any plugin says so.
+    fn lands_itself(
+        &self,
+        _host: &Self::Host,
+        _repo: &RepoCtx,
+        _workspace: &std::path::Path,
+    ) -> impl Future<Output = bool> + Send {
+        std::future::ready(false)
+    }
+
+    /// The model and effort the person's messages in `repo` go to unless
+    /// they pick others, when the plugin sets them: an agent's own (ADR
+    /// 0037). The first plugin that answers sets them.
+    fn conversation_model(
+        &self,
+        _host: &Self::Host,
+        _repo: &RepoCtx,
+    ) -> impl Future<Output = Option<ModelPick>> + Send {
+        std::future::ready(None)
+    }
+
+    /// Its entry on the Plugins screen. The registry sets its name.
+    fn catalog(
+        &self,
+        host: &Self::Host,
+        cx: &HostCx,
+        settings: &SettingsOf<Self>,
+    ) -> impl Future<Output = PluginInfo> + Send;
+
+    fn data(
+        &self,
+        _host: &Self::Host,
+        _cx: &HostCx,
+    ) -> impl Future<Output = <Self::Plugin as UiPlugin>::Data> + Send {
+        std::future::ready(Default::default())
+    }
+
+    fn repo_data(
+        &self,
+        _host: &Self::Host,
+        _repo: &RepoCtx,
+        _cx: &HostCx,
+    ) -> impl Future<Output = <Self::Plugin as UiPlugin>::RepoData> + Send {
+        std::future::ready(Default::default())
+    }
+
+    /// Called once as the host starts, after it made every plugin's host
+    /// state: the plugin starts again the jobs a restart cut off
+    /// ([`HostCx::jobs`]), from the checkpoints it keeps in its own
+    /// directory ([`HostCx::plugin_dir`]). The host only asks; what to
+    /// resume, and from where, is the plugin's.
+    fn resume(
+        &self,
+        _host: &Self::Host,
+        _cx: &HostCx,
+    ) -> impl Future<Output = ()> + Send {
+        std::future::ready(())
+    }
+
+    /// Called once, as the person reaches the end of first-run setup,
+    /// with the repositories they picked as setup knows them then (their
+    /// clones may still be going): the plugin starts what its setup step
+    /// chose ([`points::SETUP`]), such as a job that reads the
+    /// repositories as they come ([`crate::JobCx::repos`]).
+    fn setup_finished(
+        &self,
+        _host: &Self::Host,
+        _repos: &[points::SetupRepo],
+        _cx: &HostCx,
+    ) -> impl Future<Output = ()> + Send {
+        std::future::ready(())
+    }
+
+    /// Fills the slots the plugin fills ([`slots`]) from its host state:
+    /// called once, after the host made every plugin's.
+    fn fill(&self, _host: &Self::Host, _fills: &mut slots::Fills) {}
+
+    /// Fills the slots needed before any plugin's host state is made,
+    /// from the half alone: [`store::STORE`], which the host opens the
+    /// store with that every host state is made with. Called once, as
+    /// the host starts.
+    fn fill_early(&self, _fills: &mut slots::Fills) {}
+
+    /// Gives other plugins the services it provides
+    /// ([`Declaration::provides`]), as the host builds its context or a
+    /// run's: called each time, so what it gives may change, such as
+    /// once the person saves a key. None by default.
+    fn provide(
+        &self,
+        _host: &Self::Host,
+        _services: &mut services::Provide<'_>,
+    ) {
+    }
+
+    /// Carries out what the plugin's UI asked; a reply goes back to its
+    /// [`UiPlugin::reply`].
+    fn act(
+        &self,
+        _host: &Self::Host,
+        _action: Value,
+        _cx: &HostCx,
+    ) -> impl Future<Output = anyhow::Result<Option<Value>>> + Send {
+        std::future::ready(Ok(None))
+    }
+}

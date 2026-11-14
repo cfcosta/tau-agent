@@ -1,0 +1,593 @@
+//! What every tool does around its own work: snapshot the working copy,
+//! run a transaction, check out the result (`docs/reference/vcs.md`,
+//! "Scoping rules"). Runs inside a job on the workspace only.
+
+#![allow(
+    clippy::disallowed_methods,
+    reason = "runs only inside a job in spawn_blocking (ADR 0028)"
+)]
+
+use std::{
+    path::{Component, Path, PathBuf},
+    sync::Arc,
+};
+
+use futures_util::StreamExt as _;
+use jj_lib::{
+    backend::CommitId,
+    commit::Commit,
+    git::GitImportOptions,
+    matchers::{EverythingMatcher, Matcher, PrefixMatcher},
+    merge::Merge,
+    merged_tree::MergedTree,
+    object_id::{HexPrefix, ObjectId as _, PrefixResolution},
+    ref_name::WorkspaceName,
+    repo::{ReadonlyRepo, Repo, RepoLoader},
+    repo_path::RepoPathBuf,
+    revset::ResolvedRevsetExpression,
+    transaction::Transaction,
+    working_copy::{UntrackedReason, WorkingCopyFreshness},
+    workspace::{LockedWorkspace, Workspace},
+};
+use pollster::block_on;
+
+use crate::{
+    TooLarge,
+    error::VcsError,
+    lock::{GitLock, lock_repo},
+    revsets::ConfigRevsets,
+    snapshot_config::SnapshotConfig,
+    vcs::Worker,
+};
+
+/// The operation attribute naming the tool that wrote an operation.
+pub(crate) const TOOL_ATTRIBUTE: &str = "heiko.vcs.tool";
+/// The operation attribute an undo sets to the operation it undid.
+pub(crate) const UNDO_ATTRIBUTE: &str = "heiko.vcs.undo";
+/// The operation attribute of a checkpoint that only moved the run's
+/// head, a branch (a main chat's trunk): the turn changed nothing. Undo
+/// passes over it, as it does over snapshots. A run's own head moves
+/// with no operation (`crate::heads`).
+pub(crate) const HEAD_ATTRIBUTE: &str = "heiko.vcs.bookmark";
+/// The operation attribute of a landing: the change ids it landed,
+/// separated by spaces. A turn's paths leave them out.
+pub(crate) const LANDED_ATTRIBUTE: &str = "heiko.vcs.landed";
+/// The operation attribute of a confirmed landing that says what it
+/// did: `{ "child_head": <hex>, "landing": Landing }`, so a host that
+/// closed before recording the landing can read it back
+/// (`ProjectRepo::landed`).
+pub(crate) const LANDING_ATTRIBUTE: &str = "heiko.vcs.landing";
+/// The operation attribute of a catch-up: the commit, in hex, a run moved
+/// onto (`move_onto`, or a step that follows an update). A turn's paths
+/// leave out what it brought, to that run and to the runs standing on it.
+pub(crate) const CAUGHT_UP_ATTRIBUTE: &str = "heiko.vcs.caught_up";
+
+/// jj's default `snapshot.max-new-file-size`: new files larger than
+/// this stay out of a snapshot unless the person's config sets another
+/// size.
+pub const MAX_NEW_FILE_SIZE: u64 = 1024 * 1024;
+
+/// How many hex digits of an id the tools show.
+pub(crate) const SHORT_ID: usize = 12;
+
+/// The repo after a snapshot, and the working-copy commit in it.
+pub(crate) struct Snapshot {
+    pub repo: Arc<ReadonlyRepo>,
+    pub wc: Commit,
+    /// New files over the config's `snapshot.max-new-file-size`, which
+    /// the snapshot left out of `@`.
+    pub too_large: Vec<TooLarge>,
+    /// What is immutable in `repo`.
+    pub immutable: Immutable,
+}
+
+/// Snapshots the working copy, one operation if files changed, and
+/// returns the repo at head.
+pub(crate) fn snapshot(worker: &mut Worker) -> Result<Snapshot, VcsError> {
+    let env = worker.env().clone();
+    let revsets = worker.revsets()?;
+    let workspace = worker.workspace()?;
+    let repo_lock = lock_repo(workspace.repo_path())?;
+    // Before the working copy's lock, as the jj CLI takes it
+    // (`crate::lock`).
+    let git = repo_lock.git()?;
+    let name = workspace.workspace_name().to_owned();
+    let root = workspace.workspace_root().to_owned();
+    let loader = workspace.repo_loader().clone();
+    let config = SnapshotConfig::load(
+        &env,
+        workspace.settings(),
+        workspace.workspace_root(),
+        loader.store(),
+    )?;
+    let import = import_options(workspace)?;
+    let mut locked = block_on(workspace.start_working_copy_mutation())?;
+    let snapshot = snapshot_locked(
+        &mut locked,
+        &loader,
+        (&name, &root),
+        (&config, import.as_ref()),
+        &revsets,
+        &git,
+    )?;
+    block_on(locked.finish(snapshot.repo.op_id().clone()))?;
+    Ok(snapshot)
+}
+
+/// How a workspace's snapshots import Git's refs: in a local repository
+/// with the person's options, as the jj CLI does after its snapshot
+/// (ADR 0043); in a repository heiko owns, not at all, since only its
+/// updates bring upstream's refs in.
+fn import_options(
+    workspace: &Workspace,
+) -> Result<Option<GitImportOptions>, VcsError> {
+    if !crate::local::is_local(workspace.repo_path()) {
+        return Ok(None);
+    }
+    Ok(Some(crate::colocate::import_options(workspace.settings())?))
+}
+
+/// Snapshots the working copy, then runs `edit` in one transaction
+/// tagged with `tool`, and checks out the working-copy commit that
+/// results. `edit` gets the working-copy commit after the snapshot.
+pub(crate) fn mutate<T>(
+    worker: &mut Worker,
+    tool: &str,
+    edit: impl FnOnce(&mut Transaction, &Commit) -> Result<T, VcsError>,
+) -> Result<(Snapshot, T), VcsError> {
+    let env = worker.env().clone();
+    let revsets = worker.revsets()?;
+    let workspace = worker.workspace()?;
+    let repo_lock = lock_repo(workspace.repo_path())?;
+    // Before the working copy's lock, as the jj CLI takes it
+    // (`crate::lock`).
+    let git = repo_lock.git()?;
+    let name = workspace.workspace_name().to_owned();
+    let root = workspace.workspace_root().to_owned();
+    let loader = workspace.repo_loader().clone();
+    let config = SnapshotConfig::load(
+        &env,
+        workspace.settings(),
+        workspace.workspace_root(),
+        loader.store(),
+    )?;
+    let import = import_options(workspace)?;
+    let mut locked = block_on(workspace.start_working_copy_mutation())?;
+    let before = snapshot_locked(
+        &mut locked,
+        &loader,
+        (&name, &root),
+        (&config, import.as_ref()),
+        &revsets,
+        &git,
+    )?;
+    let written = (|| {
+        if before
+            .immutable
+            .contains(before.repo.as_ref(), before.wc.id())?
+        {
+            return Err(VcsError::Immutable(short_commit(before.wc.id())));
+        }
+        let mut tx = before.repo.start_transaction();
+        tx.set_workspace_name(&name);
+        tx.set_attribute(TOOL_ATTRIBUTE.to_owned(), tool.to_owned());
+        let value = edit(&mut tx, &before.wc)?;
+        if tx.repo().has_rewrites() {
+            block_on(tx.repo_mut().rebase_descendants())?;
+        }
+        let repo = if tx.repo().has_changes() {
+            crate::colocate::commit_in(tx, what(tool), &git, &name, &root)?
+        } else {
+            // A run's first turn that changed nothing claims its head
+            // with no operation (`crate::heads::point`): its ref is
+            // written now, as after one.
+            let _ = crate::heads::settle(&before.repo);
+            before.repo.clone()
+        };
+        Ok((repo, value))
+    })();
+    // The snapshot stands when the tool fails: the working copy records
+    // it, or the next tool would take what it wrote for edits since.
+    let (repo, value) = match written {
+        Ok(written) => written,
+        Err(err) => {
+            block_on(locked.finish(before.repo.op_id().clone()))?;
+            return Err(err);
+        }
+    };
+    let wc = wc_commit(&repo, &name)?;
+    if wc.id() != before.wc.id() {
+        block_on(locked.locked_wc().check_out(&wc))?;
+    }
+    block_on(locked.finish(repo.op_id().clone()))?;
+    Ok((
+        Snapshot {
+            immutable: Immutable::of(repo.as_ref(), &revsets)?,
+            repo,
+            wc,
+            too_large: before.too_large,
+        },
+        value,
+    ))
+}
+
+/// What an operation [`mutate`] writes for `tool` is described as,
+/// after `heiko: `: a model's tool by its name (`vcs_commit`), the host's
+/// step by what it does (`checkpoint`, `move onto`).
+fn what(tool: &str) -> String {
+    match tool {
+        crate::ops::CHECKPOINT => tool.to_owned(),
+        "move_onto" => "move onto".to_owned(),
+        tool => format!("vcs_{tool}"),
+    }
+}
+
+/// Snapshots the working copy of workspace `name`, at `root`, with the
+/// options the jj CLI would use there (`config`): the files it starts
+/// tracking, the largest new file it takes, and the person's Git
+/// excludes. Git's `HEAD` and index there follow (`crate::colocate`).
+/// With `import`, Git's refs are imported after, as the jj CLI imports
+/// them after its snapshot ([`import_git_refs`]).
+fn snapshot_locked(
+    locked: &mut LockedWorkspace<'_>,
+    loader: &RepoLoader,
+    (name, root): (&WorkspaceName, &Path),
+    (config, import): (&SnapshotConfig, Option<&GitImportOptions>),
+    revsets: &ConfigRevsets,
+    git: &GitLock,
+) -> Result<Snapshot, VcsError> {
+    let options = config.options();
+    let mut repo = block_on(loader.load_at_head(None))?;
+    let mut wc = wc_commit(&repo, name)?;
+    // Two operations that rewrote `@` from the same one, merged when the
+    // repository loaded: one side is a stray copy, and either may hold
+    // the work. heiko-vcs's own writes never do this (`crate::lock`);
+    // another program's can.
+    if divergent(&repo, &wc)? {
+        return Err(VcsError::Stale);
+    }
+    match block_on(WorkingCopyFreshness::check_stale(
+        locked.locked_wc(),
+        &wc,
+        &repo,
+    ))? {
+        WorkingCopyFreshness::Fresh => {}
+        WorkingCopyFreshness::Updated(op) => {
+            repo = block_on(repo.reload_at(&op))?;
+            wc = wc_commit(&repo, name)?;
+        }
+        // Another workspace's operation rewrote this one's commit: the
+        // main chat catching up with trunk restacks the commits a chat
+        // stands on. The files move to it, as jj's `workspace
+        // update-stale` does, with what was edited on disk since the last
+        // snapshot merged on top, as a rebase would.
+        WorkingCopyFreshness::WorkingCopyStale => {
+            let before = locked.locked_wc().old_tree().clone();
+            let (disk, _) = block_on(locked.locked_wc().snapshot(&options))?;
+            if disk.tree_ids_and_labels() != before.tree_ids_and_labels() {
+                let merged =
+                    block_on(MergedTree::merge(Merge::from_vec(vec![
+                        (wc.tree(), "the rewritten working copy".to_owned()),
+                        (before, "the last snapshot".to_owned()),
+                        (disk, "edits since".to_owned()),
+                    ])))?;
+                let mut tx = repo.start_transaction();
+                tx.set_is_snapshot(true);
+                tx.set_workspace_name(name);
+                let edited = write_commit(&mut tx, |repo| {
+                    repo.rewrite_commit(&wc).set_tree(merged.clone())
+                })?;
+                tx.repo_mut()
+                    .set_wc_commit(name.to_owned(), edited.id().clone())?;
+                block_on(tx.repo_mut().rebase_descendants())?;
+                repo = crate::colocate::commit_in(
+                    tx,
+                    "snapshot working copy",
+                    git,
+                    name,
+                    root,
+                )?;
+                wc = edited;
+            } else {
+                // The files move with no snapshot of their own, and Git's
+                // `HEAD` with them, as `jj workspace update-stale` resets
+                // it.
+                repo = crate::colocate::reset(&repo, name, root, &wc, git)?;
+            }
+            block_on(locked.locked_wc().check_out(&wc))?;
+        }
+        WorkingCopyFreshness::SiblingOperation => {
+            return Err(VcsError::Stale);
+        }
+    }
+
+    let (tree, stats) = block_on(locked.locked_wc().snapshot(&options))?;
+    // A new file `snapshot.auto-track` does not match stays out as the
+    // person asked, as an ignored one does; only size is reported.
+    let too_large = stats
+        .untracked_paths
+        .iter()
+        .filter_map(|(path, reason)| match reason {
+            UntrackedReason::FileTooLarge { size, max_size } => {
+                Some(TooLarge {
+                    path: path.as_internal_file_string().to_owned(),
+                    size: *size,
+                    max_size: *max_size,
+                })
+            }
+            UntrackedReason::FileNotAutoTracked => None,
+        })
+        .collect();
+
+    if tree.tree_ids_and_labels() != wc.tree().tree_ids_and_labels() {
+        let mut tx = repo.start_transaction();
+        tx.set_is_snapshot(true);
+        tx.set_workspace_name(name);
+        // A snapshot can be the very commit an undo hid, as when a file
+        // a restore deleted is deleted again once the restore is undone.
+        let new_wc = write_commit(&mut tx, |repo| {
+            repo.rewrite_commit(&wc).set_tree(tree.clone())
+        })?;
+        tx.repo_mut()
+            .set_wc_commit(name.to_owned(), new_wc.id().clone())?;
+        block_on(tx.repo_mut().rebase_descendants())?;
+        repo = crate::colocate::commit_in(
+            tx,
+            "snapshot working copy",
+            git,
+            name,
+            root,
+        )?;
+        wc = new_wc;
+    }
+    let snapshot = Snapshot {
+        immutable: Immutable::of(repo.as_ref(), revsets)?,
+        repo,
+        wc,
+        too_large,
+    };
+    match import {
+        Some(options) => import_git_refs(
+            locked,
+            snapshot,
+            (name, root),
+            options,
+            revsets,
+            git,
+        ),
+        None => Ok(snapshot),
+    }
+}
+
+/// Imports Git's refs after a snapshot, in one operation, `heiko: import
+/// git refs`, when they changed anything (jj-cli 0.46.0's
+/// `import_git_refs`): what the person did with `git` alone, such as a
+/// commit or an amend on a branch, so heiko's next write starts from it.
+/// When the import rebased this workspace's `@`, its files move to the
+/// new commit, and Git's `HEAD` here follows, as the jj CLI's
+/// transaction moves them.
+fn import_git_refs(
+    locked: &mut LockedWorkspace<'_>,
+    before: Snapshot,
+    (name, root): (&WorkspaceName, &Path),
+    options: &GitImportOptions,
+    revsets: &ConfigRevsets,
+    git: &GitLock,
+) -> Result<Snapshot, VcsError> {
+    let mut tx = before.repo.start_transaction();
+    tx.set_workspace_name(name);
+    crate::colocate::import_git(
+        &mut tx,
+        options,
+        &before.immutable.expression(),
+        git,
+    )?;
+    if !tx.repo().has_changes() {
+        return Ok(before);
+    }
+    let repo =
+        crate::colocate::commit_in(tx, "import git refs", git, name, root)?;
+    let wc = wc_commit(&repo, name)?;
+    if wc.id() != before.wc.id() {
+        block_on(locked.locked_wc().check_out(&wc))?;
+    }
+    Ok(Snapshot {
+        immutable: Immutable::of(repo.as_ref(), revsets)?,
+        repo,
+        wc,
+        too_large: before.too_large,
+    })
+}
+
+/// Whether other visible commits share `commit`'s change id.
+fn divergent(repo: &ReadonlyRepo, commit: &Commit) -> Result<bool, VcsError> {
+    let Some(targets) = block_on(repo.resolve_change_id(commit.change_id()))?
+    else {
+        return Ok(false);
+    };
+    Ok(targets.visible_with_offsets().nth(1).is_some())
+}
+
+/// Writes the commit `build` makes, with the committer's time moved on a
+/// second when jj already has one with the same content.
+///
+/// Git stores commit times in whole seconds, so redoing a rewrite an
+/// undo took back, within the same second, makes the very commit the
+/// undo hid (a describe again, or a snapshot of the same files), and jj
+/// refuses it ("Newly-created commit ... already exists"). jj's Git
+/// backend nudges the time only when the change ids differ; this is the
+/// same fix for the same change.
+pub(crate) fn write_commit(
+    tx: &mut Transaction,
+    build: impl Fn(
+        &mut jj_lib::repo::MutableRepo,
+    ) -> jj_lib::commit_builder::CommitBuilder<'_>,
+) -> Result<Commit, VcsError> {
+    const TRIES: i64 = 16;
+    for nudge in 0..TRIES {
+        let mut builder = build(tx.repo_mut());
+        if nudge > 0 {
+            let mut committer = builder.committer().clone();
+            committer.timestamp.timestamp.0 += nudge * 1000;
+            builder = builder.set_committer(committer);
+        }
+        match block_on(builder.write()) {
+            Err(err)
+                if nudge + 1 < TRIES
+                    && err.to_string().contains("already exists") => {}
+            result => return Ok(result?),
+        }
+    }
+    unreachable!("the last try returns")
+}
+
+/// The working-copy commit of workspace `name`.
+pub(crate) fn wc_commit(
+    repo: &Arc<ReadonlyRepo>,
+    name: &WorkspaceName,
+) -> Result<Commit, VcsError> {
+    let id = repo
+        .view()
+        .get_wc_commit_id(name)
+        .ok_or(VcsError::NoWorkingCopy)?;
+    Ok(repo.store().get_commit(id)?)
+}
+
+/// The immutable commits of one repository, as jj names them: the root,
+/// and every ancestor of what the config's `immutable_heads()` names
+/// (jj's default: `trunk()`, tags, and untracked remote bookmarks and
+/// tags).
+pub(crate) struct Immutable {
+    heads: Vec<CommitId>,
+}
+
+impl Immutable {
+    /// `repo`'s, under the config `revsets` come from.
+    pub(crate) fn of(
+        repo: &dyn Repo,
+        revsets: &ConfigRevsets,
+    ) -> Result<Self, VcsError> {
+        let heads = revsets.immutable_heads(repo)?.heads();
+        let heads = revsets
+            .resolve(repo, "revset-aliases.immutable_heads()", &heads)?
+            .evaluate(repo)?;
+        let heads = block_on(heads.stream().collect::<Vec<_>>())
+            .into_iter()
+            .collect::<Result<_, _>>()?;
+        Ok(Self { heads })
+    }
+
+    /// The immutable commits, as a revset: the heads' ancestors.
+    pub(crate) fn expression(&self) -> Arc<ResolvedRevsetExpression> {
+        ResolvedRevsetExpression::commits(self.heads.clone()).ancestors()
+    }
+
+    /// Whether `id` is immutable.
+    pub(crate) fn contains(
+        &self,
+        repo: &dyn Repo,
+        id: &CommitId,
+    ) -> Result<bool, VcsError> {
+        if id == repo.store().root_commit_id() {
+            return Ok(true);
+        }
+        for head in &self.heads {
+            if block_on(repo.index().is_ancestor(id, head))? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}
+
+/// Finds the commit a change id or a commit id (or a unique prefix of
+/// either) names. Nothing else is accepted: no revsets, no names.
+pub(crate) fn resolve(repo: &dyn Repo, rev: &str) -> Result<Commit, VcsError> {
+    let rev = rev.trim();
+    let not_an_id = || VcsError::NotAnId(rev.to_owned());
+    if rev.is_empty() {
+        return Err(not_an_id());
+    }
+    if rev.bytes().all(|b| (b'k'..=b'z').contains(&b)) {
+        let prefix =
+            HexPrefix::try_from_reverse_hex(rev).ok_or_else(not_an_id)?;
+        return match block_on(repo.resolve_change_id_prefix(&prefix))? {
+            PrefixResolution::NoMatch => {
+                Err(VcsError::NoChange(rev.to_owned()))
+            }
+            PrefixResolution::AmbiguousMatch => {
+                Err(VcsError::AmbiguousChange(rev.to_owned()))
+            }
+            PrefixResolution::SingleMatch(targets) => {
+                let visible: Vec<&CommitId> =
+                    targets.visible_with_offsets().map(|(_, id)| id).collect();
+                match visible.as_slice() {
+                    [] => Err(VcsError::Hidden(rev.to_owned())),
+                    [id] => Ok(repo.store().get_commit(id)?),
+                    _ => Err(VcsError::DivergentChange(rev.to_owned())),
+                }
+            }
+        };
+    }
+    if rev
+        .bytes()
+        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        let prefix = HexPrefix::try_from_hex(rev).ok_or_else(not_an_id)?;
+        return match block_on(repo.index().resolve_commit_id_prefix(&prefix))? {
+            PrefixResolution::NoMatch => {
+                Err(VcsError::NoCommit(rev.to_owned()))
+            }
+            PrefixResolution::AmbiguousMatch => {
+                Err(VcsError::AmbiguousCommit(rev.to_owned()))
+            }
+            PrefixResolution::SingleMatch(id) => {
+                Ok(repo.store().get_commit(&id)?)
+            }
+        };
+    }
+    Err(not_an_id())
+}
+
+/// A path the model gave, as a path in the repo. Relative paths are
+/// relative to the workspace root; absolute ones must be inside it.
+pub(crate) fn repo_path(
+    workspace: &Workspace,
+    given_root: &Path,
+    input: &str,
+) -> Result<RepoPathBuf, VcsError> {
+    let path = Path::new(input.trim());
+    let relative = if path.is_absolute() {
+        path.strip_prefix(workspace.workspace_root())
+            .or_else(|_| path.strip_prefix(given_root))
+            .map_err(|_| VcsError::OutsideRepo(input.to_owned()))?
+    } else {
+        path
+    };
+    let cleaned: PathBuf = relative
+        .components()
+        .filter(|component| !matches!(component, Component::CurDir))
+        .collect();
+    if cleaned.as_os_str().is_empty() {
+        return Ok(RepoPathBuf::root());
+    }
+    RepoPathBuf::from_relative_path(&cleaned)
+        .map_err(|_| VcsError::NotInRepo(input.to_owned()))
+}
+
+/// Matches `paths` and everything under them; everything when there are
+/// none.
+pub(crate) fn matcher(paths: Vec<RepoPathBuf>) -> Box<dyn Matcher> {
+    if paths.is_empty() {
+        Box::new(EverythingMatcher)
+    } else {
+        Box::new(PrefixMatcher::new(paths))
+    }
+}
+
+/// The first [`SHORT_ID`] digits of a commit id.
+pub(crate) fn short_commit(id: &CommitId) -> String {
+    let mut hex = id.hex();
+    hex.truncate(SHORT_ID);
+    hex
+}

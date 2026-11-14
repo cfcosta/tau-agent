@@ -7,8 +7,8 @@
   [0006](0006-plugin-crates.md), [0028](0028-async-all-the-way-blocking-only-in-spawn-blocking.md),
   [0030](0030-host-halves-are-crates.md) and
   [0043](0043-local-repositories-in-place.md). Built in
-  `tau-memory-host` first; since [0050](0050-tau-s-plugins-in-luau.md)
-  (gap L, 2026-11-10) the import is tau-memory's Luau (`plugins/tau-memory`:
+  `heiko-memory-host` first; since [0050](0050-heiko-s-plugins-in-luau.md)
+  (gap L, 2026-11-10) the import is heiko-memory's Luau (`plugins/heiko-memory`:
   `import_read.luau`, `import.luau`, `ui_import.luau`), a job of the
   plugin's whose pages and setup step draw it; what this ADR says of
   host halves is now what a Luau plugin's `app`, jobs and actions do.
@@ -16,18 +16,18 @@
 
 ## Context
 
-People come to tau with months of work in Claude Code and Codex. Both
+People come to heiko with months of work in Claude Code and Codex. Both
 keep what they learned on this computer: Claude Code as memory notes
 per folder (`~/.claude/projects/<folder>/memory/*.md`) and chat
 transcripts (`*.jsonl` beside them); Codex as a memory folder
 (`~/.codex/memories/`, grouped by working directory, with rollout
 summaries) and session transcripts (`~/.codex/sessions/**/*.jsonl`).
-tau's memory starts empty.
+heiko's memory starts empty.
 
 The import belongs to the memory plugin: its notes, its checks, its
 review. Today a plugin cannot do it alone. First-run setup is a closed
 enum; a host half has no model but Jev; background work has no owner
-and no progress; the status bar shows only tau's own news; a
+and no progress; the status bar shows only heiko's own news; a
 repository is known by its sidebar name alone; and core names the
 memory plugin in the repository menu, against ADR 0006.
 
@@ -42,19 +42,19 @@ repository screens of ADR 0043.
   Ready, when Claude Code or Codex is on this computer. For each tool
   it offers what the tool saved and its chats, both on by default, for
   the folders that match the repositories just picked. Notes about the
-  person go to their own scope. A checkbox keeps notes for folders tau
+  person go to their own scope. A checkbox keeps notes for folders heiko
   does not have yet, offered when such a repository is added.
 - The person's model turns what was saved and what was said into
-  tau's notes. It merges notes that say the same thing. A note that
-  disagrees with one tau has, or that held a secret, waits unticked
+  heiko's notes. It merges notes that say the same thing. A note that
+  disagrees with one heiko has, or that held a secret, waits unticked
   under "Need a look".
 - A review page lists the proposed notes per scope, each with its type
   and where it came from. Nothing is kept until the person keeps it.
   Reading chats goes on after setup, and new proposals join the list.
 - The Memory tab offers "Import from Claude Code or Codex…" at any
   time, and a banner when a repository those tools know is added.
-- No cost is shown: tau runs on the person's subscription.
-- tau only reads those tools' files. What they wrote is data, never
+- No cost is shown: heiko runs on the person's subscription.
+- heiko only reads those tools' files. What they wrote is data, never
   instructions: every imported note goes through `Memory::write`, so
   it is redacted and refused when it reads as an injection.
 
@@ -125,7 +125,7 @@ the memory plugin.
 - **A hidden plugin run for the model calls.** It would reuse
   `PluginCtx::ask` and run charging, but a run without a chat is a
   run that History and landing must learn to ignore.
-- **A chat in a repository of tau's own.** Visible and auditable, but
+- **A chat in a repository of heiko's own.** Visible and auditable, but
   it fills History with work the person did not ask to watch.
 - **Plugins spawn their own background tasks.** They can today, but
   nothing shows progress, survives a restart, or sees repositories

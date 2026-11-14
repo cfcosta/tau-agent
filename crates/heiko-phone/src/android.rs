@@ -1,0 +1,304 @@
+//! The app Android's NativeActivity starts.
+
+use std::{path::PathBuf, sync::Arc};
+
+use gpui::{App, AppContext, Application, WindowOptions};
+use gpui_mobile::android::jni as mobile;
+use jni::{
+    EnvUnowned,
+    errors::{Error, ThrowRuntimeExAndDefault},
+    objects::{JByteBuffer, JClass, JObject, JString, JValue},
+    sys::jint,
+};
+use heiko_ui_remote::{
+    SystemBars,
+    Workspace,
+    assets::Assets,
+    catalog::Catalog,
+    remote::{self, Platform},
+};
+
+use crate::qr::{self, Frame};
+
+/// heiko's own Java, in the APK beside gpui-pre-mobile's.
+const SCANNER: &str = "dev.cfcosta.heiko.HeikoScanner";
+
+/// What shows agents' notices as Android notifications.
+const NOTICES: &str = "dev.cfcosta.heiko.HeikoNotices";
+
+/// Called by `android-activity` on its own thread once NativeActivity
+/// loads this library. Returns when the activity is gone.
+#[unsafe(no_mangle)]
+fn android_main(app: android_activity::AndroidApp) {
+    android_logger::init_once(
+        android_logger::Config::default()
+            .with_max_level(log::LevelFilter::Info)
+            .with_tag("heiko"),
+    );
+    mobile::install_panic_hook();
+
+    let _platform = mobile::init_platform(&app);
+    let Some(platform) = mobile::shared_platform() else {
+        log::error!("heiko: no Android platform");
+        return;
+    };
+    let dir = app
+        .internal_data_path()
+        .unwrap_or_else(|| PathBuf::from("/data/local/tmp/heiko"));
+
+    // Blocks, driving Android's event loop. The closure runs once the
+    // system hands over a surface.
+    Application::with_platform(platform.into_rc())
+        .with_assets(Assets)
+        .run(move |cx: &mut App| {
+            heiko_ui_remote::init(cx);
+            // The system gives the window its size.
+            let options = WindowOptions {
+                window_bounds: None,
+                ..Default::default()
+            };
+            let opened = cx.open_window(options, |window, cx| {
+                cx.new(|cx| {
+                    Workspace::new(
+                        "heiko",
+                        Vec::new(),
+                        Catalog::default(),
+                        window,
+                        cx,
+                    )
+                })
+            });
+            match opened.and_then(|window| window.entity(cx)) {
+                Ok(workspace) => {
+                    keep_clear_of_system_bars(&workspace, cx);
+                    let platform = Platform {
+                        dir,
+                        scan: Arc::new(scan),
+                        name: device_name(),
+                    };
+                    remote::connect(platform, &workspace, cx);
+                    follow_agents(&workspace, cx);
+                }
+                Err(error) => {
+                    log::error!("heiko: could not open a window: {error:#}")
+                }
+            }
+            cx.activate(true);
+        });
+}
+
+/// Android draws heiko edge to edge, under its status bar and navigation
+/// bar: the workspace keeps clear of them, black behind each, with the
+/// status bar's icons light on it.
+fn keep_clear_of_system_bars(
+    workspace: &gpui::Entity<Workspace>,
+    cx: &mut App,
+) {
+    mobile::set_system_chrome(&gpui_mobile::SystemChromeStyle {
+        status_bar_color: Some(0x000000),
+        status_bar_style: gpui_mobile::StatusBarContentStyle::Light,
+        navigation_bar_color: Some(0x000000),
+    });
+    workspace
+        .update(cx, |ws, cx| ws.keep_clear_of_system_bars(system_bars, cx));
+}
+
+/// Where the system's bars reach now, as the window last heard: they
+/// move as the phone turns.
+fn system_bars() -> SystemBars {
+    mobile::platform()
+        .and_then(|platform| platform.primary_window())
+        .map(|window| {
+            let insets = window.safe_area_insets_logical();
+            SystemBars {
+                top: insets.top,
+                bottom: insets.bottom,
+            }
+        })
+        .unwrap_or_default()
+}
+
+/// Opens heiko's viewfinder and waits for the computer's pairing code in
+/// it. Blocks until the viewfinder closes.
+fn scan() -> Result<Option<String>, String> {
+    mobile::with_env(|env| {
+        let activity = mobile::activity(env)?;
+        let class = mobile::find_app_class(env, SCANNER)?;
+        let code = env
+            .call_static_method(
+                &class,
+                jni::jni_str!("scan"),
+                jni::jni_sig!("(Landroid/app/Activity;)Ljava/lang/String;"),
+                &[JValue::Object(&activity)],
+            )
+            .and_then(|value| value.l())
+            .map_err(|error| match env.exception_catch() {
+                // The viewfinder says what went wrong in words.
+                Err(Error::CaughtJavaException { msg, .. }) => msg,
+                _ => format!("The camera did not open: {error}"),
+            })?;
+        Ok((!code.is_null()).then(|| mobile::get_string(env, &code)))
+    })
+}
+
+/// `HeikoViewfinder.decode`: the pairing code in a camera frame's
+/// luminance, or null. The viewfinder calls it on its analysis thread,
+/// one frame at a time, and drops the frames that come meanwhile.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_cfcosta_heiko_HeikoViewfinder_decode<'caller>(
+    mut env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+    luma: JByteBuffer<'caller>,
+    width: jint,
+    height: jint,
+    stride: jint,
+) -> JObject<'caller> {
+    env.with_env(|env| -> jni::errors::Result<JObject<'caller>> {
+        let address = env.get_direct_buffer_address(&luma)?;
+        let len = env.get_direct_buffer_capacity(&luma)?;
+        // SAFETY: a direct buffer's memory; the viewfinder closes the
+        // frame it belongs to only once this returns.
+        let luma = unsafe { std::slice::from_raw_parts(address, len) };
+        let size = |n: jint| usize::try_from(n).unwrap_or(0);
+        let code = Frame::new(luma, size(width), size(height), size(stride))
+            .and_then(qr::pairing_code);
+        Ok(match code {
+            Some(code) => JString::from_str(env, code)?.into(),
+            None => JObject::null(),
+        })
+    })
+    .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+/// Shows what waits on the person among the computer's plugins' things
+/// as Android notifications, while the phone is connected (ADR 0037):
+/// each agent's note or question, and each that reaches its cap, once.
+/// Tapping one opens that agent's conversation.
+fn follow_agents(workspace: &gpui::Entity<Workspace>, cx: &mut App) {
+    let mut watch = heiko_ui_plugin::waiting::Watch::default();
+    cx.observe(workspace, move |workspace, cx| {
+        // What waits is a view the computer builds (ADR 0046): asked
+        // for here too, so it comes while nothing on screen draws it.
+        let waiting = workspace.update(cx, |ws, cx| {
+            let waiting = ws.waiting();
+            ws.ask_for_views(cx);
+            waiting
+        });
+        for alert in watch.observe(&waiting) {
+            let tag =
+                format!("{}:{}:{}", alert.plugin, alert.group, alert.title);
+            if let Err(error) =
+                show(&tag, &alert.group, &alert.title, &alert.body)
+            {
+                log::error!("heiko: cannot show a notification: {error}");
+            }
+        }
+    })
+    .detach();
+    // A tapped notice opens its agent's conversation, once the window
+    // knows the agent: the app may have started from the tap.
+    let workspace = workspace.downgrade();
+    cx.spawn(async move |cx| {
+        let mut pending: Option<String> = None;
+        loop {
+            cx.background_executor().timer(TAPS_EVERY).await;
+            match take_opened() {
+                Ok(Some(agent)) => pending = Some(agent),
+                Ok(None) => {}
+                Err(error) => {
+                    log::error!("heiko: cannot read a tapped notice: {error}")
+                }
+            }
+            let Some(agent) = pending.clone() else {
+                continue;
+            };
+            let opened = workspace
+                .update(cx, |ws, cx| ws.open_agent_once_known(&agent, cx));
+            match opened {
+                Ok(true) => pending = None,
+                Ok(false) => {}
+                Err(_) => return,
+            }
+        }
+    })
+    .detach();
+}
+
+/// How often the app looks for a notice the person tapped.
+const TAPS_EVERY: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// The agent whose notice was tapped since the last look, if any.
+fn take_opened() -> Result<Option<String>, String> {
+    mobile::with_env(|env| {
+        let class = mobile::find_app_class(env, NOTICES)?;
+        let agent = env
+            .call_static_method(
+                &class,
+                jni::jni_str!("takeOpened"),
+                jni::jni_sig!("()Ljava/lang/String;"),
+                &[],
+            )
+            .and_then(|value| value.l())
+            .map_err(|error| {
+                env.exception_clear();
+                error.to_string()
+            })?;
+        Ok((!agent.is_null()).then(|| mobile::get_string(env, &agent)))
+    })
+}
+
+/// Shows one notification, `tag` its own: the same tag again replaces it.
+/// Tapping it opens `agent`'s conversation.
+fn show(tag: &str, agent: &str, title: &str, body: &str) -> Result<(), String> {
+    mobile::with_env(|env| {
+        let activity = mobile::activity(env)?;
+        let class = mobile::find_app_class(env, NOTICES)?;
+        let tag = env.new_string(tag).map_err(|error| error.to_string())?;
+        let agent = env.new_string(agent).map_err(|error| error.to_string())?;
+        let title = env.new_string(title).map_err(|error| error.to_string())?;
+        let body = env.new_string(body).map_err(|error| error.to_string())?;
+        env.call_static_method(
+            &class,
+            jni::jni_str!("show"),
+            jni::jni_sig!(
+                "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V"
+            ),
+            &[
+                JValue::Object(&activity),
+                JValue::Object(&tag),
+                JValue::Object(&agent),
+                JValue::Object(&title),
+                JValue::Object(&body),
+            ],
+        )
+        .map(|_| ())
+        .map_err(|error| {
+            env.exception_clear();
+            error.to_string()
+        })
+    })
+}
+
+/// The phone's model, as the computer lists it.
+fn device_name() -> String {
+    let name = mobile::with_env(|env| {
+        let class = mobile::find_app_class(env, SCANNER)?;
+        let name = env
+            .call_static_method(
+                &class,
+                jni::jni_str!("deviceName"),
+                jni::jni_sig!("()Ljava/lang/String;"),
+                &[],
+            )
+            .and_then(|value| value.l())
+            .map_err(|error| {
+                env.exception_clear();
+                error.to_string()
+            })?;
+        Ok(mobile::get_string(env, &name))
+    });
+    match name {
+        Ok(name) if !name.is_empty() => name,
+        _ => "Android phone".into(),
+    }
+}

@@ -1,4 +1,4 @@
-# Codemode (`tau-codemode`)
+# Codemode (`heiko-codemode`)
 
 Related reference pages: [evaluation](codemode-evaluation.md),
 [module records](codemode-modules-records.md),
@@ -10,12 +10,12 @@ Related reference pages: [evaluation](codemode-evaluation.md),
 [inference budget](codemode-inference-budget.md), and
 [inference traces](codemode-inference-traces.md).
 
-- Status: built. `crates/plugins/tau-codemode-host` has the engine,
+- Status: built. `crates/plugins/heiko-codemode-host` has the engine,
   behind a `Host` trait, and the `Codemode` plugin that wires it to
-  `ToolCtx::call`; `crates/plugins/tau-codemode` has its interface,
+  `ToolCtx::call`; `crates/plugins/heiko-codemode` has its interface,
   `CodemodeUi` (a `UiPlugin`, after
   [0017](../decisions/0017-plugins-bring-their-ui.md)), registered in
-  tau-ui. Decided in [0018](../decisions/0018-codemode-and-mcp.md).
+  heiko-ui. Decided in [0018](../decisions/0018-codemode-and-mcp.md).
 - Date: 2026-10-01
 
 `codemode` is a tool whose input is a Luau script. The script runs in
@@ -27,7 +27,7 @@ This follows pi's Codemode (`packages/codemode` and
 `coding-agent/src/extensions/codemode`, audited in
 [research/pi-codemode.md](../research/pi-codemode.md)) with Lua in
 place of JavaScript. Keep the strings and limits written here; where
-tau differs from pi, it says so.
+heiko differs from pi, it says so.
 
 ## The tool
 
@@ -185,7 +185,7 @@ b` appends each value that is not `nil`. A return value JSON cannot
   `Nested`, and the tool sources' tools (`ToolCtx::catalog`).
   `codemode` and other `ModelOnly` tools are not callable.
 - **Names:** a tool's name is its key in `tools`. Names are already
-  identifiers (MCP tools are sanitized by tau-mcp), so there is no
+  identifiers (MCP tools are sanitized by heiko-mcp), so there is no
   second, normalized name as in pi.
 - **The value a call returns:**
   - the tool's `structured` output, when it has an output schema and
@@ -236,7 +236,7 @@ b` appends each value that is not `nil`. A return value JSON cannot
 - **What pi does:** "Codemode state is maintained as part of the
   session transcript instead of the file system." Values are JSON, at
   most 256 KiB of JSON text each and 1 MiB in all. Keys are strings.
-- **In tau:** a successful script's writes become one plugin record,
+- **In heiko:** a successful script's writes become one plugin record,
   `{ "kind": "store", "set": { key: value }, "delete": [key] }`, through
   `PluginCtx::try_publish` on `ToolCtx::plugin()`, which reports the record
   and stores it with the run
@@ -253,12 +253,12 @@ b` appends each value that is not `nil`. A return value JSON cannot
 
 ### Jev
 
-- `jev` exists when the plugin was built with a Jev (in tau-ui, a
+- `jev` exists when the plugin was built with a Jev (in heiko-ui, a
   metered Jev when a TypeSafe key is saved). Without one, `jev` is nil,
   and the description says so.
 - `state` is any JSON value; `question` is the instructions. The
-  question kinds and limits are tau-jev's (at most 255 choice options,
-  2 to 10 score levels). Answers are checked as tau-jev checks them.
+  question kinds and limits are heiko-jev's (at most 255 choice options,
+  2 to 10 score levels). Answers are checked as heiko-jev checks them.
 - Each request's usage is charged to the run
   (`PluginCtx::charge`), so it counts toward the run's limits and the
   plugin's cost. The call rows in `details` carry it; their ids are
@@ -268,7 +268,7 @@ b` appends each value that is not `nil`. A return value JSON cannot
 
 ### HTTP (an agent's runs only)
 
-- `http` exists only in a run that has the `http` tool: tau-ui gives it
+- `http` exists only in a run that has the `http` tool: heiko-ui gives it
   to the runs of an agent's repository (ADR 0037) and to no other run.
   Elsewhere `http` is nil.
 - `http.request { method?, url, headers?, body?, timeout? }` calls the
@@ -277,14 +277,14 @@ b` appends each value that is not `nil`. A return value JSON cannot
   `timeout` is in seconds, 30 by default and at most 60. Only `http` and
   `https` URLs; redirects are answered, not followed.
 - `http.secret(name, prefix?)` names a secret from the agent's own
-  secret store (`~/.config/tau/secrets/<agent>.json`). It is a table, `{ ["$secret"] = name,
+  secret store (`~/.config/heiko/secrets/<agent>.json`). It is a table, `{ ["$secret"] = name,
 prefix = prefix }`, that a header or the body may hold, at any depth
   of a JSON body. `"Bearer " .. http.secret("github")` is the same as
   `http.secret("github", "Bearer ")`; a secret can follow text, nothing
   else. The value goes in as the request leaves: the script, the
   transcript and the run's records never hold it, and every value in
   the store is scrubbed (as `[secret:<name>]`) from what comes back.
-- `tau.secret` in an agent's `src/agent.luau` is the same marker, for its
+- `heiko.secret` in an agent's `src/agent.luau` is the same marker, for its
   polls.
 
 ### Discovery
@@ -394,7 +394,7 @@ pi's `selectCatalog` does. Tools that do not fit are left to
 call, as Luau signatures. Others may be callable too: find them with
 `search_tools(query)`.``) and the signatures in a `luau` fence; a run
 with no direct tool gets none. Only the tools in the plan when
-Codemode starts are listed, so a plugin that adds tools (tau-mcp)
+Codemode starts are listed, so a plugin that adds tools (heiko-mcp)
 goes before it. `Nested` tools are never listed: there are many, and
 they change as servers connect.
 
@@ -455,7 +455,7 @@ A hand-written renderer over `serde_json::Value`, after pi's
   the middle, half kept
   from each end at UTF-8 boundaries, as
   `Warning: truncated output (original token count: N)\nTotal output lines: L\n\n<head>…N tokens truncated…<tail>\n\n[Full output: <path> (read it with offset/limit)]`,
-  the full text written to `$TMPDIR/tau-codemode-<hex>.txt`. Images
+  the full text written to `$TMPDIR/heiko-codemode-<hex>.txt`. Images
   follow.
 - **`is_error`** on failure.
 - **`details`:** `{ calls, complete, store, usage, wall_ms }`.
@@ -480,7 +480,7 @@ A Jev request is not a call through the loop, so it makes no events
 of its own. The codemode call reports it instead, as its own
 `ToolUpdate`s (`parent: None`, no content): one when the request
 starts and one when it ends, before the call's `ToolEnd`. Their
-details are `{ "jev": <row>, "after": n }` (`tau_codemode::live`):
+details are `{ "jev": <row>, "after": n }` (`heiko_codemode::live`):
 the row as `details.calls` would list it then (`running` until it
 ends), and `n`, the tool calls the script had started before it,
 which places it among them. A request past the rows' cap is not
@@ -488,9 +488,9 @@ reported, as it is not listed.
 
 ## The interface
 
-`CodemodeUi` (`src/ui.rs`) is the plugin with its UI. tau-ui registers
+`CodemodeUi` (`src/ui.rs`) is the plugin with its UI. heiko-ui registers
 it after the other plugins: a plugin that adds tools in its `start`
-(tau-mcp) goes before it, so the signatures list them.
+(heiko-mcp) goes before it, so the signatures list them.
 
 - **Per run:** `agent_plugins` builds `Codemode::new(jev)` with the
   run's metered Jev when a TypeSafe key is saved, else without Jev.
@@ -509,8 +509,8 @@ it after the other plugins: a plugin that adds tools in its `start`
   the header. The body stays open while the script runs, so its calls
   show as they come, and folds to the header once it ended.
 - **Rows, live and stored.** While the script runs, its rows come
-  from the nested calls tau-ui folds into the card's `CallData`
-  (`plugins.md`, "In tau-ui"): only the script's own calls, with the
+  from the nested calls heiko-ui folds into the card's `CallData`
+  (`plugins.md`, "In heiko-ui"): only the script's own calls, with the
   same argument and error cuts as `details.calls`; and its Jev rows
   from the call's updates (`CallData::updates`), the latest of each
   standing, each after the `n` tool calls its update names. Rows are
@@ -519,11 +519,11 @@ it after the other plugins: a plugin that adds tools in its `start`
   way. The header counts the calls so far and adds what Jev has cost
   so far. Once it ends they
   come from `details.calls`, which is all a stored run has, and
-  tau-ui has dropped the live rows: a live card and a stored one draw
+  heiko-ui has dropped the live rows: a live card and a stored one draw
   the same thing. Verdicts come from `CallData::nested_marks` in both.
 - **A script's calls count as the model's.** A `vcs_land` a script
   calls proposes the run's landing, and a `spawn` it calls opens its
-  sub-agent's chat, as the model's would: tau-ui reads
+  sub-agent's chat, as the model's would: heiko-ui reads
   them from the nested calls' events while the script runs, and from
   `details.calls` once it ended, so a stored run reads the same
   (`vcs.md`, "vcs_land" and "Sub-agents: spawn").
@@ -553,7 +553,7 @@ holds for every input:
   loop times out; cancel stops a tight loop; the memory limit; no
   `io`, `os.execute`, or file imports; globals are read-only; calls still
   running at the end are cancelled.
-- **In the loop** (`tau-testing::ScriptedModel`): a codemode call
+- **In the loop** (`heiko-testing::ScriptedModel`): a codemode call
   makes one transcript result however many nested calls it makes; a
   plugin's `before_tool` blocks a nested call; Jev's usage reaches the
   run's total; a Jev request reaches the run as the call's updates,
@@ -561,9 +561,9 @@ holds for every input:
 - **Interface** (`tests/ui.rs`): for any generated script, its tool
   calls and Jev requests in turn or in `parallel_settled`, failing or
   not, the rows folded from its nested calls' events and its updates
-  as tau-ui folds them, merged in any order that keeps each channel's
+  as heiko-ui folds them, merged in any order that keeps each channel's
   own, equal the rows its details list; the output and failure read back from the result; the store
   state equals the plugin's fold; the card's tree, and the action its
-  button carries to `on_action`. tau-ui's
+  button carries to `on_action`. heiko-ui's
   view tests check that nested events make no cards, whatever their
   depth.

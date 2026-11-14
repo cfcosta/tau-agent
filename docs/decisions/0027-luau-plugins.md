@@ -1,9 +1,9 @@
-# 0027: Luau plugins, written and rewritten through tau
+# 0027: Luau plugins, written and rewritten through heiko
 
 - Status: proposed. Builds on [0005](0005-plugins.md),
   [0017](0017-plugins-bring-their-ui.md) and
   [0018](0018-codemode-and-mcp.md), unchanged for Rust plugins. Amends
-  [0015](0015-a-main-chat-per-repository.md): tau keeps one local
+  [0015](0015-a-main-chat-per-repository.md): heiko keeps one local
   repository of its own, the plugins repository, beside those from
   GitHub. Amended by [0033](0033-plugins-are-live.md): plugins are
   live in runs already going, and in the chat that writes them. And by
@@ -16,16 +16,16 @@
 
 ## Context
 
-Every plugin today is a Rust crate compiled into tau. A rule ("no
+Every plugin today is a Rust crate compiled into heiko. A rule ("no
 deploys on Friday"), a tool for one's stack, or a check before a run
-stops needs a fork of tau, Rust and a rebuild.
+stops needs a fork of heiko, Rust and a rebuild.
 
-The person should instead ask tau for a plugin, try it, and ask again
+The person should instead ask heiko for a plugin, try it, and ask again
 until it does what they want, as often as they like. So a plugin is
 something an agent writes, tests and changes in a loop, and the
 interface follows each change.
 
-tau-codemode already runs Luau safely: a fresh VM per call, a memory
+heiko-codemode already runs Luau safely: a fresh VM per call, a memory
 cap, a deadline and cancel interrupt, no files, processes or network,
 and globals (`tools.*`, `jev.*`, `infer`, the store) that go back
 through the run's loop, so rules and other plugins still see each
@@ -46,10 +46,10 @@ Three things stand in the way:
 
 ## Decision
 
-### Plugins are files in tau's plugins repository
+### Plugins are files in heiko's plugins repository
 
-- tau keeps a local jj repository of its own, named `tau-plugins`,
-  under `$XDG_DATA_HOME/tau/luau-plugins` (`plugins/` there holds Rust
+- heiko keeps a local jj repository of its own, named `heiko-plugins`,
+  under `$XDG_DATA_HOME/heiko/luau-plugins` (`plugins/` there holds Rust
   plugins' own data), with a main chat and chats under it like a
   repository from GitHub. Nothing new is needed to edit it: runs there
   use the usual tools, commit, land and show their diffs.
@@ -62,11 +62,11 @@ Three things stand in the way:
 - One plugin is one folder:
 
   ```text
-  tau-plugins/
+  heiko-plugins/
     no-friday-deploys/
       plugin.luau        -- the plugin: returns its table
       lib/*.luau         -- modules it requires, by name; each may
-                         -- require only `tau`
+                         -- require only `heiko`
       tests/*.luau       -- its tests
       README.md          -- what it is for, for the person and the model
   ```
@@ -82,10 +82,10 @@ Three things stand in the way:
 fresh VM to read what it declares; hooks then run in their own VMs.
 
 ```luau
-local tau = require("tau")      -- the host's API, below
-local ui = tau.ui               -- the view pieces
+local heiko = require("heiko")      -- the host's API, below
+local ui = heiko.ui               -- the view pieces
 
-return tau.plugin {
+return heiko.plugin {
   name = "no-friday-deploys",
   description = "Blocks deploy commands on Fridays.",
 
@@ -107,7 +107,7 @@ return tau.plugin {
       description = "Whether now is a safe time to deploy.",
       parameters = { type = "object", properties = {} },
       call = function(args, ctx)
-        return { ok = not tau.contains(ctx.settings.days, ctx.now.weekday) }
+        return { ok = not heiko.contains(ctx.settings.days, ctx.now.weekday) }
       end,
       -- Its card's body, from the call and its result.
       card = function(call, result, ctx)
@@ -119,15 +119,15 @@ return tau.plugin {
   -- Before each tool call: allow (nil), block, or flag for review.
   before_tool = function(call, ctx)
     if call.name == "bash" and call.args.command:find("deploy")
-       and tau.contains(ctx.settings.days, ctx.now.weekday) then
-      return tau.block("No deploys on " .. ctx.now.weekday .. ".")
+       and heiko.contains(ctx.settings.days, ctx.now.weekday) then
+      return heiko.block("No deploys on " .. ctx.now.weekday .. ".")
     end
   end,
 
   -- When the model would stop: stop (nil), or go on with a message.
   before_stop = function(stop, ctx)
     if not stop.text:find("tests") then
-      return tau.continue("Say which tests you ran.")
+      return heiko.continue("Say which tests you ran.")
     end
   end,
 
@@ -169,8 +169,8 @@ return tau.plugin {
 | ------------- | -------------------------------------- | --------------------------------------------- | ---------- |
 | tool `call`   | the arguments                          | a JSON value, or `error(message)`             | 60 s       |
 | tool `card`   | the call and its result                | a view tree                                   | 200 ms     |
-| `before_tool` | `{ id, name, args }`                   | `nil`, `tau.block(why)`, `tau.flag(why)`      | 2 s        |
-| `before_stop` | `{ text, turn, reason }`               | `nil`, `tau.continue(message)`                | 10 s       |
+| `before_tool` | `{ id, name, args }`                   | `nil`, `heiko.block(why)`, `heiko.flag(why)`      | 2 s        |
+| `before_stop` | `{ text, turn, reason }`               | `nil`, `heiko.continue(message)`                | 10 s       |
 | `turn_end`    | `{ turn, text, calls = { name, ok } }` | nothing                                       | 2 s        |
 | `run_end`     | `{ stop, turns, cost }`                | nothing                                       | 10 s       |
 | `view`        | the state                              | `{ status?, note?, card?, page? }` view trees | 200 ms     |
@@ -188,7 +188,7 @@ return tau.plugin {
   message, and to the plugin's log: a tool that refuses ("held by
   another run") is not at fault, however often it refuses. A time out,
   a cancel or a store that fails still counts as a failure.
-- **`before_stop` is capped**: three continuations a run, as tau-goal's
+- **`before_stop` is capped**: three continuations a run, as heiko-goal's
   are, so two plugins cannot keep a run going forever.
 - **Not in this interface yet:** changing a call's arguments, rewriting
   a result, rewriting the context, choosing the model or effort. They
@@ -197,7 +197,7 @@ return tau.plugin {
 
 ### The view: a JSON tree, drawn by Rust
 
-`tau.ui` (a field of `tau`: codemode's module names cannot hold a dot)
+`heiko.ui` (a field of `heiko`: codemode's module names cannot hold a dot)
 builds plain tables: `text`, `rich` (with `code` and
 `**bold**`), `mono`, `badge(text, tone)`, `rows({ key = value })`,
 `list`, `progress(share)`, `code(lang, text)`, `stack`/`row` to lay
@@ -214,7 +214,7 @@ the plugin's page.
 ### The interface follows each change
 
 - **The registry watches trunk.** When the plugins repository's trunk
-  moves, tau reloads the plugins that changed: it reads each one's
+  moves, heiko reloads the plugins that changed: it reads each one's
   declaration, runs its tests, and shows the outcome at once on the
   Plugins screen: active at which commit, tests passing or failing,
   waiting for a click, or broken (with the Luau error and line).
@@ -256,41 +256,41 @@ A version is named by its commit and the digest of its folder; the
 person can pin a plugin to a version, or roll back to one, from its
 page.
 
-**Plugins from other repositories** (a team's `.tau/plugins` folder)
+**Plugins from other repositories** (a team's `.heiko/plugins` folder)
 never activate by themselves: they arrive through codemode's
 promotion, approved by digest, and are copied into the plugins
 repository as a change of their own.
 
-### Writing one: a skill tau ships, and tools to test
+### Writing one: a skill heiko ships, and tools to test
 
-- **A built-in skill, `tau-plugins`**, is listed in every run: the
+- **A built-in skill, `heiko-plugins`**, is listed in every run: the
   interface above, the view pieces, three worked plugins (a rule, a
   tool with a card, a stop check), how to test, and how the person sees
   the result. A skill of the same name in `~/.agents/skills` replaces it.
-  tau-skills gains built-in skills, which a plugin crate installs under
-  `$XDG_DATA_HOME/tau/skills` as its host starts, marked "built in" on
+  heiko-skills gains built-in skills, which a plugin crate installs under
+  `$XDG_DATA_HOME/heiko/skills` as its host starts, marked "built in" on
   the Skills screen. The worked plugins are files of their own, inlined
   into `SKILL.md` as it is installed and run as tests of the host, so
   the skill cannot drift from the interface. The skill
-  (`crates/plugins/tau-luau-plugins-host/skill/`) is the interface's
+  (`crates/plugins/heiko-luau-plugins-host/skill/`) is the interface's
   reference.
 - **`/plugin <what it should do>`** in any chat starts a chat in the
-  plugins repository whose first message is `/tau-plugins <what it
+  plugins repository whose first message is `/heiko-plugins <what it
 should do>`, which loads the skill, with the person's words as its
-  task. "Edit with tau" on a plugin's page does the same for that
+  task. "Edit with heiko" on a plugin's page does the same for that
   plugin.
 - **Tests** are Luau files under `tests/`, run in fresh VMs with a fake
   run:
 
   ```luau
-  local tau = require("tau")
-  local ui = tau.ui
-  local t = tau.test   -- the plugin in the folder is the one tested
+  local heiko = require("heiko")
+  local ui = heiko.ui
+  local t = heiko.test   -- the plugin in the folder is the one tested
 
   t.case("blocks deploys on Friday", function()
     local run = t.run { now = "2026-10-09T10:00:00Z" }   -- a Friday
     local result = run:before_tool { name = "bash", args = { command = "make deploy" } }
-    t.equal(result, tau.block("No deploys on Friday."))
+    t.equal(result, heiko.block("No deploys on Friday."))
   end)
 
   t.case("the card says when to wait", function()
@@ -312,7 +312,7 @@ should do>`, which loads the skill, with the person's words as its
    skill and `/plugin`. Done; in it, `ctx.tools` is reached from tools'
    handlers only, and settings are the declared defaults.
 2. The rest of the view (notes, pages, buttons and actions), settings
-   forms, `ctx.tools` in the other hooks, "Edit with tau", pinning and
+   forms, `ctx.tools` in the other hooks, "Edit with heiko", pinning and
    rollback, plugins from other repositories.
 3. Perhaps more seams: lines in the first message, then results.
 
@@ -337,7 +337,7 @@ should do>`, which loads the skill, with the person's words as its
 
 - Making or changing a plugin is a conversation: no Rust, no rebuild,
   and the interface shows each version as it lands.
-- tau owns one local repository, an exception to "repositories come
+- heiko owns one local repository, an exception to "repositories come
   from GitHub" (0015). It does not push anywhere unless the person adds
   a remote.
 - Every hook pays for a VM, a few milliseconds; per tool call that is

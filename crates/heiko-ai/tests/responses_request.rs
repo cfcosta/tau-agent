@@ -1,0 +1,273 @@
+//! The `response.create` body (`heiko_ai::responses::request`).
+
+use hegel::{
+    TestCase,
+    generators as gs,
+    generators::{Generator as _, PrintableGenerator},
+};
+use serde_json::{Value, json};
+use heiko_ai::responses::request::{
+    LITE_MARKER,
+    Lineage,
+    PROMPT_CACHE_KEY_MAX_CHARS,
+    ReasoningEffort,
+    Settings,
+    ToolDefinition,
+    Wire,
+};
+use heiko_testing::generators;
+
+/// The body as one JSON object.
+fn body(
+    (settings, wire): &(Settings, Wire),
+    input: Vec<Value>,
+) -> serde_json::Map<String, Value> {
+    heiko_ai::responses::request::body_on(settings, wire, input).to_map()
+}
+
+fn settings() -> impl PrintableGenerator<(Settings, Wire)> {
+    // Settings and Wire are heiko's own types, so their drawn values print
+    // through Debug.
+    settings_unprinted().print_as_debug()
+}
+
+#[hegel::composite]
+fn settings_unprinted(tc: &TestCase) -> (Settings, Wire) {
+    let tool_count = tc.draw(gs::integers::<usize>().max_value(3));
+    let wire = Wire {
+        reasoning_model: tc.draw(gs::booleans()),
+        lite: tc.draw(gs::booleans()),
+        service_tier: tc.draw(gs::optional(gs::sampled_from(vec![
+            "flex".to_owned(),
+            "priority".to_owned(),
+        ]))),
+    };
+    let settings = Settings {
+        model: tc.draw(gs::sampled_from(vec!["gpt-5.5".to_owned(), "gpt-5.4-mini".to_owned()])),
+        instructions: tc.draw(gs::optional(generators::text(40))),
+        tools: (0..tool_count)
+            .map(|i| ToolDefinition {
+                name: format!("tool_{i}"),
+                description: tc.draw(generators::text(20)),
+                parameters: json!({"type": "object", "properties": {}}),
+                strict: tc.draw(gs::booleans()),
+            })
+            .collect(),
+        reasoning: tc.draw(gs::optional(gs::sampled_from(vec![
+            ReasoningEffort::None,
+            ReasoningEffort::Minimal,
+            ReasoningEffort::Low,
+            ReasoningEffort::Medium,
+            ReasoningEffort::High,
+            ReasoningEffort::Xhigh,
+            ReasoningEffort::Max,
+        ])).print_as_debug()),
+        text_format: tc.draw(gs::optional(gs::just(json!({"type": "json_schema", "name": "T", "schema": {}, "strict": true})))),
+        max_output_tokens: tc.draw(gs::optional(gs::integers::<u32>().min_value(1).max_value(8192))),
+        lineage: tc.draw(gs::optional(generators::text(100))).map(|path| Lineage {
+            path,
+            parent: None,
+        }),
+    };
+    (settings, wire)
+}
+
+fn input(tc: &TestCase) -> Vec<Value> {
+    tc.draw(gs::vecs(generators::lane::item()).max_size(4))
+}
+
+/// The WebSocket rules hold for every body: fixed type, `store: false`,
+/// no forbidden fields, and the input as given.
+#[hegel::test(test_cases = 300)]
+fn bodies_follow_websocket_rules(tc: TestCase) {
+    let request = tc.draw(settings());
+    let (settings, _) = &request;
+    let items = input(&tc);
+    let body = body(&request, items.clone());
+    assert_eq!(body["type"], "response.create");
+    assert_eq!(body["store"], false);
+    for forbidden in
+        ["stream", "background", "previous_response_id", "stream_id"]
+    {
+        assert!(!body.contains_key(forbidden), "{forbidden}");
+    }
+    assert_eq!(body["input"], Value::Array(items));
+    assert_eq!(body["model"], json!(settings.model));
+    assert_eq!(
+        body.get("instructions"),
+        settings.instructions.as_ref().map(|i| json!(i)).as_ref()
+    );
+    // Every tool, in order, as a function; no `tools` at all without any.
+    let tools: Vec<Value> = settings
+        .tools
+        .iter()
+        .map(|tool| {
+            json!({
+                "type": "function",
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
+                "strict": tool.strict,
+            })
+        })
+        .collect();
+    assert_eq!(
+        body.get("tools"),
+        (!tools.is_empty()).then(|| Value::Array(tools)).as_ref()
+    );
+}
+
+/// Reasoning models always ask for encrypted reasoning, so a full resend
+/// can replay it; other models never do. The effort is sent only when
+/// set, and a Lite request reasons over all turns.
+#[hegel::test(test_cases = 300)]
+fn encrypted_reasoning_follows_the_model(tc: TestCase) {
+    let request = tc.draw(settings());
+    let (settings, wire) = &request;
+    let body = body(&request, vec![]);
+    assert_eq!(body.contains_key("include"), wire.reasoning_model);
+    if wire.reasoning_model {
+        assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+    }
+    let mut expected = serde_json::Map::new();
+    if wire.reasoning_model
+        && let Some(effort) = settings.reasoning
+    {
+        expected.insert("effort".into(), json!(effort.as_str()));
+        expected.insert("summary".into(), json!("auto"));
+    }
+    if wire.lite {
+        expected.insert("context".into(), json!("all_turns"));
+    }
+    let expected = (!expected.is_empty()).then_some(Value::Object(expected));
+    assert_eq!(body.get("reasoning").cloned(), expected);
+}
+
+/// A Lite request carries the marker, all-turns reasoning and one tool
+/// call at a time, as Codex sends it; any other carries none of them.
+#[hegel::test(test_cases = 300)]
+fn lite_requests_say_so(tc: TestCase) {
+    let request = tc.draw(settings());
+    let (_, wire) = &request;
+    let body = body(&request, vec![]);
+    let marked = body
+        .get("client_metadata")
+        .and_then(|metadata| metadata.get(LITE_MARKER))
+        == Some(&json!("true"));
+    assert_eq!(marked, wire.lite);
+    assert_eq!(
+        body.get("parallel_tool_calls"),
+        wire.lite.then_some(json!(false)).as_ref()
+    );
+    assert_eq!(
+        body.get("reasoning")
+            .and_then(|reasoning| reasoning.get("context")),
+        wire.lite.then_some(json!("all_turns")).as_ref()
+    );
+}
+
+/// The plan families from 5.6 on go as Lite, as Codex's table has them;
+/// gpt-5.5 and other shapes do not.
+#[test]
+fn lite_models_are_codexs() {
+    use heiko_ai::model::is_lite;
+    for id in [
+        "gpt-6-astra",
+        "gpt-6.1-sol",
+        "gpt-6-sol",
+        "gpt-6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+    ] {
+        assert!(is_lite(id), "{id}");
+    }
+    for id in ["gpt-5.5", "gpt-5.4-mini", "gpt-4o", "o3", "gpt-5.5-sol"] {
+        assert!(!is_lite(id), "{id}");
+    }
+}
+
+/// Property inventory: generic request fields preserve the optional output
+/// ceiling and clamp the cache key. Settings is the oracle; its generator
+/// builds valid limits by construction, and `hegel.toml` supplies CI counts.
+#[hegel::test(test_cases = 300)]
+fn wire_limits_are_clamped(tc: TestCase) {
+    let request = tc.draw(settings());
+    let (settings, wire) = &request;
+    let body = body(&request, vec![]);
+    assert_eq!(
+        body.get("max_output_tokens"),
+        settings
+            .max_output_tokens
+            .map(|limit| json!(limit))
+            .as_ref()
+    );
+    if let Some(key) = settings.lineage.as_ref().map(|lineage| &lineage.path) {
+        let sent = body["prompt_cache_key"].as_str().unwrap();
+        assert_eq!(
+            sent.chars().count(),
+            key.chars().count().min(PROMPT_CACHE_KEY_MAX_CHARS)
+        );
+        assert!(key.starts_with(sent));
+    } else {
+        assert!(!body.contains_key("prompt_cache_key"));
+    }
+    assert_eq!(
+        body.get("service_tier").and_then(Value::as_str),
+        wire.service_tier.as_deref()
+    );
+    assert_eq!(
+        body.get("text"),
+        settings
+            .text_format
+            .as_ref()
+            .map(|f| json!({"format": f}))
+            .as_ref()
+    );
+}
+
+/// A full body in the shape the WebSocket guide shows.
+#[test]
+fn golden_body() {
+    let settings = Settings {
+        model: "gpt-5.5".into(),
+        instructions: Some("Be brief.".into()),
+        tools: vec![ToolDefinition {
+            name: "search".into(),
+            description: "Search the web.".into(),
+            parameters: json!({"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"], "additionalProperties": false}),
+            strict: true,
+        }],
+        reasoning: Some(ReasoningEffort::High),
+        ..Settings::default()
+    };
+    let wire = Wire {
+        reasoning_model: true,
+        ..Wire::default()
+    };
+    let body = body(
+        &(settings, wire),
+        vec![
+            json!({"role": "user", "content": [{"type": "input_text", "text": "hi"}]}),
+        ],
+    );
+    assert_eq!(
+        Value::Object(body),
+        json!({
+            "type": "response.create",
+            "model": "gpt-5.5",
+            "store": false,
+            "instructions": "Be brief.",
+            "tools": [{
+                "type": "function",
+                "name": "search",
+                "description": "Search the web.",
+                "parameters": {"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"], "additionalProperties": false},
+                "strict": true
+            }],
+            "reasoning": {"effort": "high", "summary": "auto"},
+            "include": ["reasoning.encrypted_content"],
+            "input": [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}]
+        })
+    );
+}

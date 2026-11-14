@@ -1,10 +1,10 @@
 -- A rule: blocks deploy commands on the days the person set.
-local tau = require("tau")
-local ui = tau.ui
+local heiko = require("heiko")
+local ui = heiko.ui
 
 local DAYS = { "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday" }
 
-return tau.plugin {
+return heiko.plugin {
 	-- `before_tool` reaches every call, so its first version waits for
 	-- the person's Allow.
 	settings = {
@@ -29,8 +29,8 @@ return tau.plugin {
 	before_tool = function(call, _, env)
 		local command = call.args.cmd
 		if call.name == "exec_command" and type(command) == "string" and command:find("deploy") then
-			if tau.contains(env.settings.days, env.now.weekday) then
-				return tau.block("No deploys on " .. env.now.weekday .. ".")
+			if heiko.contains(env.settings.days, env.now.weekday) then
+				return heiko.block("No deploys on " .. env.now.weekday .. ".")
 			end
 		end
 	end,

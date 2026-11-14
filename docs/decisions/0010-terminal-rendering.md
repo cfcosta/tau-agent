@@ -8,8 +8,8 @@
 ## Context
 
 `bash` ran commands on pipes. Programs saw no terminal, so they printed
-no colors and no progress bars, and tau-ui showed their output as plain
-lines. We want tau-ui to show a command's output as a real terminal
+no colors and no progress bars, and heiko-ui showed their output as plain
+lines. We want heiko-ui to show a command's output as a real terminal
 screen: a fixed grid, the program's colors, scrollback, and a way to
 compare it with the text the model saw.
 
@@ -25,11 +25,11 @@ so a reopened run can draw the same screen.
   clusters, wide characters, reflow, current OSC and Kitty sequences),
   used every day in Ghostty. Its formatter gives plain text, its render
   state gives styled cells, and its tracked grid references let us read
-  every row once as it scrolls away. The model's text and tau-ui's
+  every row once as it scrolls away. The model's text and heiko-ui's
   screen come from the same engine, so they cannot disagree about what
   the output was.
-- **A crate of its own, `tau-terminal`** (`crates/tau-terminal`), depending
-  on no other tau crate, so any GPUI app can use it:
+- **A crate of its own, `heiko-terminal`** (`crates/heiko-terminal`), depending
+  on no other heiko crate, so any GPUI app can use it:
   - `Terminal`: write bytes, read plain text, a VT replay, and a styled
     `Screen` snapshot (runs of cells with colors, attributes, wide
     characters and the cursor) that a renderer draws from;
@@ -39,13 +39,13 @@ so a reopened run can draw the same screen.
     pager set to `cat`. It streams the bytes in order, feeds a
     `Terminal` on a thread of its own, and reports the text and the exit
     status;
-  - `view`: the GPUI side. `tau-terminal` always depends on `gpui`.
-- **`tau-tools` uses it behind a cargo feature, `terminal`.** With the
+  - `view`: the GPUI side. `heiko-terminal` always depends on `gpui`.
+- **`heiko-tools` uses it behind a cargo feature, `terminal`.** With the
   feature off, `bash` is exactly the pipe implementation, and neither
   libghostty nor GPUI is built ([0001](0001-library-not-product.md),
   [0007](0007-gpui-interface.md)). With it on, `bash` runs under a
   terminal by default (`Bash::with_terminal(false)` goes back to pipes)
-  and adapts tau-terminal's runner to the tool contract. **tau-ui turns
+  and adapts heiko-terminal's runner to the tool contract. **heiko-ui turns
   the feature on**: it is the product, and it draws the terminal.
 - **The model's text keeps pi's limits.** It is the terminal's plain
   text, fed through the same accumulator as pipe mode: `truncate_tail`
@@ -69,7 +69,7 @@ so a reopened run can draw the same screen.
 
 - **The API is pre-1.0.** The crate's README and Ghostty's C API docs
   both expect breaking changes. Every libghostty call is inside
-  `tau-terminal`, so an upgrade touches one crate.
+  `heiko-terminal`, so an upgrade touches one crate.
 - **The Ghostty input and the crate move together.** A crate version
   that pins a new Ghostty commit needs the flake input at that commit in
   the same change, or the library and the bindings disagree. Comments
@@ -81,7 +81,7 @@ so a reopened run can draw the same screen.
   and building it with Zig 0.15.
 - **`Terminal` is `!Send`.** libghostty-vt is not thread-safe. The
   runner keeps each command's terminal on a thread of its own and sends
-  plain data out; tau-ui keeps its terminals on the GPUI foreground
+  plain data out; heiko-ui keeps its terminals on the GPUI foreground
   thread. `Screen` snapshots are plain data and cross threads.
 - **Terminal behavior reaches the model.** A tab becomes spaces, a `\r`
   redraw leaves only its last frame, and what a program drew on the

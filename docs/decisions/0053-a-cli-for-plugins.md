@@ -1,17 +1,17 @@
-# 0053: tau-plugin, a command line for Luau plugins
+# 0053: heiko-plugin, a command line for Luau plugins
 
 - Status: accepted.
 - Date: 2026-11-10
 
 ## Context
 
-A Luau plugin is a package (ADR 0051): `tau.toml`, `src/`, `tests/`, and
-for tau's own `fixtures/`. What a person or an agent can do with one from
+A Luau plugin is a package (ADR 0051): `heiko.toml`, `src/`, `tests/`, and
+for heiko's own `fixtures/`. What a person or an agent can do with one from
 a shell today:
 
-- `tau --plugin-test <folder>` loads a package and runs its Luau cases
+- `heiko --plugin-test <folder>` loads a package and runs its Luau cases
   and properties.
-- `tau --check-plugins` reads and loads tau's own, as starting does.
+- `heiko --check-plugins` reads and loads heiko's own, as starting does.
 
 Both are flags of the app's binary, which links gpui: testing a plugin
 means building the interface first, and the flags sit beside `--demo` and
@@ -19,7 +19,7 @@ means building the interface first, and the flags sit beside `--demo` and
 
 Everything else needs Rust. Each built-in's fixtures, the JSON the demo
 and the screenshots draw, are built by code of its own in
-`tau-built-in-tests` (`canvas/luau.rs` and nine more), written anew with
+`heiko-built-in-tests` (`canvas/luau.rs` and nine more), written anew with
 `BLESS_FIXTURES=1 cargo nextest ...`. What a plugin does in a real loop
 (compaction, tree-compaction, fast-compaction, canvas) is Rust too: an
 `Agent` with `ScriptedModel`, an in-memory store, sometimes a `FakeJev` or
@@ -31,38 +31,38 @@ repository (ADR 0027) but a chat there.
 
 ### A binary of its own
 
-`tau-plugin` is a crate, `crates/tau-plugin`, and a binary of that name:
-headless, on `tau-luau-plugins-host`, with no gpui and no window. The Nix
-package installs it beside `tau`, so it finds the plugins tau comes with
-as `tau` does (`../share/tau/plugins`, or `TAU_PLUGINS_DIR`).
+`heiko-plugin` is a crate, `crates/heiko-plugin`, and a binary of that name:
+headless, on `heiko-luau-plugins-host`, with no gpui and no window. The Nix
+package installs it beside `heiko`, so it finds the plugins heiko comes with
+as `heiko` does (`../share/heiko/plugins`, or `HEIKO_PLUGINS_DIR`).
 
-The work is in `tau_luau_plugins_host::testing` and a new
-`tau_luau_plugins_host::packages` module; the binary parses and prints.
-So the in-app `plugin_test` tool, `tau-built-in-tests` and the CLI run
+The work is in `heiko_luau_plugins_host::testing` and a new
+`heiko_luau_plugins_host::packages` module; the binary parses and prints.
+So the in-app `plugin_test` tool, `heiko-built-in-tests` and the CLI run
 the same code, and a plugin passing in one passes in all three.
 
 | Command                              | What it does                                                                                   |
 | ------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| `tau-plugin new <name> [--in <dir>]` | Writes a package that loads and passes its tests                                               |
-| `tau-plugin new --built-in <name>`   | The same under `plugins/`, with its line in `plugins/built-in.toml`                            |
-| `tau-plugin check [<folder>...]`     | Loads each and says what it declares and what it reaches                                       |
-| `tau-plugin test [<folder>...]`      | Cases, properties, fixtures and loops; `--bless`, `--watch`, `--filter`, `--verbose`, `--jobs` |
-| `tau-plugin install <folder>`        | Tests it, then commits it to the person's plugins repository                                   |
+| `heiko-plugin new <name> [--in <dir>]` | Writes a package that loads and passes its tests                                               |
+| `heiko-plugin new --built-in <name>`   | The same under `plugins/`, with its line in `plugins/built-in.toml`                            |
+| `heiko-plugin check [<folder>...]`     | Loads each and says what it declares and what it reaches                                       |
+| `heiko-plugin test [<folder>...]`      | Cases, properties, fixtures and loops; `--bless`, `--watch`, `--filter`, `--verbose`, `--jobs` |
+| `heiko-plugin install <folder>`        | Tests it, then commits it to the person's plugins repository                                   |
 
 With no folder, `check` and `test` take the folder they are run in when it
-holds a `tau.toml`, else every plugin tau comes with. Each exits 0 when
+holds a `heiko.toml`, else every plugin heiko comes with. Each exits 0 when
 all is well, 1 when a test fails or a package does not load, 2 when it
 was asked wrongly. `--json` prints what it found as one JSON value, for
 an agent or a script. _(`--json`, `--filter` and the exit codes are
 choices of this ADR's, not asked.)_
 
-`tau --plugin-test` and `tau --check-plugins` go, with `crates/tau/tests/
+`heiko --plugin-test` and `heiko --check-plugins` go, with `crates/heiko/tests/
 flags.rs`'s cases of them; the READMEs, `docs/reference/plugins.md`, ADR
-0051's table and the flake's install check say `tau-plugin` instead.
+0051's table and the flake's install check say `heiko-plugin` instead.
 
 ### new
 
-`new <name>` writes `<dir>/<name>/`: `tau.toml` (name, version `0.1.0`,
+`new <name>` writes `<dir>/<name>/`: `heiko.toml` (name, version `0.1.0`,
 a description to fill in, `entry = "src/plugin.luau"`), a
 `src/plugin.luau` with one tool, a status in its view and a button
 action, a `tests/plugin.luau` with a case and a property over them, and a
@@ -71,9 +71,9 @@ README. It refuses a folder that exists. The test after `new` passes:
 
 `--built-in` writes the same under the repository's `plugins/` and adds
 the name to `plugins/built-in.toml`, last, since order is only what the
-compactions rewrite in. It needs nothing in `tau-built-in-tests`: that
+compactions rewrite in. It needs nothing in `heiko-built-in-tests`: that
 crate runs every built-in's tests through one test (below). The name must
-be lowercase words joined by `-` and, for a built-in, begin `tau-`.
+be lowercase words joined by `-` and, for a built-in, begin `heiko-`.
 
 ### check
 
@@ -102,7 +102,7 @@ package, one per failure, and with `--verbose` one per thing:
    The value `fn` returns is held to `fixtures/<name>.json`, compared as
    JSON; a difference names the first path that differs and both values
    there. `fixtures/declaration.json`, which every built-in has, is the
-   package's declaration as tau reads it, with no `t.fixture` for it. A
+   package's declaration as heiko reads it, with no `t.fixture` for it. A
    file in `fixtures/` that nothing declares fails, so a fixture cannot
    outlive the test that made it. `--bless` writes each fixture anew,
    formatted as the repository formats JSON, and removes the undeclared
@@ -159,14 +159,14 @@ package, one per failure, and with `--verbose` one per thing:
    in a fresh VM to call `check` with what the run came to, as it runs a
    property: a loop never holds a file's 10 s. The host loads the same
    package again, and builds the `Agent` with a scripted model,
-   `tau_store_sqlite::memory()`, a folder of its own for the workspace,
+   `heiko_store_sqlite::memory()`, a folder of its own for the workspace,
    the blobs and the archive, and retries a millisecond apart.
-   `ScriptedModel` moves out of `tau-testing` into a crate of its own,
-   `tau-scripted`, on `tau-ai` alone, which `tau-testing` re-exports; it
-   and `tau-store-sqlite` become normal dependencies of
-   `tau-luau-plugins-host`, behind no feature, since a person's tests use
-   them in the app too. `tau-testing` stays a dev-dependency. `FakeJev`
-   is already `tau_jev::fake`.
+   `ScriptedModel` moves out of `heiko-testing` into a crate of its own,
+   `heiko-scripted`, on `heiko-ai` alone, which `heiko-testing` re-exports; it
+   and `heiko-store-sqlite` become normal dependencies of
+   `heiko-luau-plugins-host`, behind no feature, since a person's tests use
+   them in the app too. `heiko-testing` stays a dev-dependency. `FakeJev`
+   is already `heiko_jev::fake`.
 
 4. Nothing else: a test file that declares nothing fails, as now.
 
@@ -179,34 +179,34 @@ stops at Ctrl-C. _(Polling the digest is this ADR's choice.)_
 
 `install <folder>` runs `test` on the package and stops if anything
 fails. Then it copies the package into the plugins repository
-(`$XDG_DATA_HOME/tau/luau-plugins`, ADR 0027), replacing a folder of the
-same name, and commits it on the trunk through `tau-vcs-host`, as a chat
+(`$XDG_DATA_HOME/heiko/luau-plugins`, ADR 0027), replacing a folder of the
+same name, and commits it on the trunk through `heiko-vcs-host`, as a chat
 landing there would, with the description `install <name> <version>`.
 The plugin is then a new version like any other: it is active once the
 person allows what it reaches on the Plugins page. A package named like
-one of tau's own is refused. _(Testing before installing, and refusing
+one of heiko's own is refused. _(Testing before installing, and refusing
 built-in names, are this ADR's choices.)_
 
-### tau's own tests move to Luau
+### heiko's own tests move to Luau
 
 Each built-in's Rust fixture builders become `t.fixture`s and its
 `in_the_loop` tests `t.loop`s, in its `tests/`. A moved fixture is right
 when `test --bless` leaves `fixtures/` as it was; a moved loop when it
 fails where its Rust one failed (one assertion inverted). Then the Rust
-goes. `tau-built-in-tests` keeps:
+goes. `heiko-built-in-tests` keeps:
 
 - one test that runs `testing::test` over every built-in and fails with
   their failures, which replaces each plugin's `the_plugin_loads_and_
 passes_its_tests`;
-- what Luau cannot say: tau-todo's `crash_model`, `store_model`,
+- what Luau cannot say: heiko-todo's `crash_model`, `store_model`,
   `beads_oracle` and `schemas` (the SQLite store under a fuse, an
-  external oracle, providers' schema rules), tau-reasoning's `replayed`
-  (stored runs from `tau-store`), and `binaries` and `package`;
-- tau-ui's pane and card tests stay in tau-ui.
+  external oracle, providers' schema rules), heiko-reasoning's `replayed`
+  (stored runs from `heiko-store`), and `binaries` and `package`;
+- heiko-ui's pane and card tests stay in heiko-ui.
 
 ## Alternatives considered
 
-- **Subcommands of `tau`.** One binary to install, but testing a plugin
+- **Subcommands of `heiko`.** One binary to install, but testing a plugin
   would still build and link the interface.
 - **A cargo xtask.** Nothing would ship to a person writing a plugin.
 - **JSON replay specs for fixtures, scenario files for loops.** Data a
@@ -219,27 +219,27 @@ passes_its_tests`;
 
 - A plugin is written, tested, its fixtures blessed and installed with
   no Rust and no interface build; CI and the Nix install check run
-  `tau-plugin test` over tau's own.
-- About 4,000 of `tau-built-in-tests`' 5,200 lines move to Luau, so a
+  `heiko-plugin test` over heiko's own.
+- About 4,000 of `heiko-built-in-tests`' 5,200 lines move to Luau, so a
   change to a built-in's tests compiles nothing.
-- The scripted model ships in tau's binaries, in `tau-scripted`, without
-  `tau-testing`'s turmoil, hegeltest and ring.
+- The scripted model ships in heiko's binaries, in `heiko-scripted`, without
+  `heiko-testing`'s turmoil, hegeltest and ring.
 - The in-app `plugin_test` tool runs fixtures and loops too, so an agent
   in the plugins repository can test a plugin in a real loop before it
   lands.
 - A later model for plugins (an Elm-style `update`, considered after
-  tau-github) changes what `t.run` and `t.loop` drive, not this command.
+  heiko-github) changes what `t.run` and `t.loop` drive, not this command.
 
 ## As built
 
 - **The commands.** `check`, `test` (`--bless`, `--watch`, `--filter`,
   `--verbose`, `--json`), `new` (`--in`, `--built-in`) and `install`,
-  in `crates/tau-plugin`; the work in tau-luau-plugins-host's
+  in `crates/heiko-plugin`; the work in heiko-luau-plugins-host's
   `packages`, `scaffold` and `looping` modules. `new` writes a tool
   `<name>_greet`, a status and a button, and a case and a property over
   them, and runs them before it says it is done. `--watch` waits out a
   package that cannot be read for a moment, as one half saved.
-- **Install.** The plugins repository is `luau-plugins` in tau's data
+- **Install.** The plugins repository is `luau-plugins` in heiko's data
   directory, found as the app finds it, and made with the files the app
   makes it with when it is not there. A package goes on trunk through a
   new `ProjectRepo::commit_folder_on_trunk`: the folder's files replace
@@ -248,25 +248,25 @@ passes_its_tests`;
   next look at trunk, as a version like any other.
 - **Fixtures moved.** Nine plugins' builders became `tests/fixtures.luau`;
   blessing them all left every fixture's value as it was (compared as
-  JSON, file by file), and only the key order changed. tau-watcher gained
+  JSON, file by file), and only the key order changed. heiko-watcher gained
   the `declaration.json` it lacked. `t.run` gained `repo`.
 - **Loops moved.** canvas's 2, compaction's 13, tree-compaction's 9 and
   fast-compaction's 13 Rust loop tests are `t.loop`s, with every
   assertion; each loop fails when one of its assertions is changed. That
   took more of the spec than first written: `then` steps (a fork, the
   same run resumed, or idle compaction), `steer` as a list, `reasoning`,
-  `clock`, `retry`, `plugins` (others of tau's own beside it), model
+  `clock`, `retry`, `plugins` (others of heiko's own beside it), model
   parts `cost`, `delay` and `failure`, and in what a run came to its
   `record`, `transcript`, `outcome.request` and `most_at_once`, the most
   model responses going on at once, which a plugin's limit on its own
   requests shows.
-- **What stays Rust.** `tau-built-in-tests` went from about 7,000 lines
-  to 2,600: `built_ins.rs` runs `tau-plugin test`'s checks over every
-  built-in (now `packages.rs`, below); tau-todo's store under a fuse, its model, the `br` oracle and
-  the providers' schema rules; tau-reasoning's stored runs; tau-schedule
-  waking a chat through the real host; tau-constitution against the real
+- **What stays Rust.** `heiko-built-in-tests` went from about 7,000 lines
+  to 2,600: `built_ins.rs` runs `heiko-plugin test`'s checks over every
+  built-in (now `packages.rs`, below); heiko-todo's store under a fuse, its model, the `br` oracle and
+  the providers' schema rules; heiko-reasoning's stored runs; heiko-schedule
+  waking a chat through the real host; heiko-constitution against the real
   Jev; and the one-binary and package checks.
-- **A fix it found.** Changing a README changed tau-tree-compaction's
+- **A fix it found.** Changing a README changed heiko-tree-compaction's
   digest, so one property drew new cases, and with mlua 0.12.1 its
   script slept until its limit about one run in two: the interrupt's
   yield lost the wake-up of a call that waited. mlua 0.12.2 fixed it,
@@ -274,12 +274,12 @@ passes_its_tests`;
 
 ### Tests at once, 2026-11-14
 
-`tau-plugin test` over every package took about 51 s on one core of 32,
+`heiko-plugin test` over every package took about 51 s on one core of 32,
 95% of it hegel's properties and machines, each package, file, property
-and loop one after another; in nextest, `every_built_in_passes_tau_plugin_test`
+and loop one after another; in nextest, `every_built_in_passes_heiko_plugin_test`
 ran all of it as one test, about 100 s under the suite's load.
 
-- **A pool of jobs** (`tau_luau_plugins_host::pool`): threads of their
+- **A pool of jobs** (`heiko_luau_plugins_host::pool`): threads of their
   own, each with its own runtime, taking the costliest job waiting
   first. A job runs to its end on one thread, as hegel's error channel
   is the thread's. Each file's cases go first, as what they register is
@@ -287,15 +287,15 @@ ran all of it as one test, about 100 s under the suite's load.
   time, or what it asks for. Results come in the order the files declare
   them, and seeds are each property's own, so what they come to does not
   depend on the order they ran in.
-- **Every package at once** in `tau-plugin test`, its tree drawing each
+- **Every package at once** in `heiko-plugin test`, its tree drawing each
   package going on with its tests going on. `--jobs <n>` runs n at once,
-  else one a core; what each test took is kept in tau's cache folder.
-  Inside tau, as a plugin is installed, the pool takes half the cores.
-- **A nextest test a package**: `tau-built-in-tests`' `packages` binary
+  else one a core; what each test took is kept in heiko's cache folder.
+  Inside heiko, as a plugin is installed, the pool takes half the cores.
+- **A nextest test a package**: `heiko-built-in-tests`' `packages` binary
   speaks enough of libtest's command line to list one test a built-in,
-  so nextest runs them at once and `test(tau-memory)` takes one; each
+  so nextest runs them at once and `test(heiko-memory)` takes one; each
   takes a quarter of the cores for its own tests.
 - Every package went from about 92 s with `--jobs 1` to about 30 s, and
   the built-ins in nextest from about 100 s to about 31 s: each bound by
-  tau-ask's view machine, which on this version runs to the property's
+  heiko-ask's view machine, which on this version runs to the property's
   30 s limit by itself.

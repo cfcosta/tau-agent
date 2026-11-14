@@ -27,7 +27,7 @@ source, signatures, dependency versions, closure, and copied test evidence are
 behind a closed disclosure. Pending requests have **Approve** and **Decline**
 controls with a 32 px minimum disclosure target. The UI action carries only
 `{action:"promote", run, request_id, decision}`. The host reads persisted
-`tau-host`, codemode, scratch, and run-owned pin records. It checks the current
+`heiko-host`, codemode, scratch, and run-owned pin records. It checks the current
 repository configuration, request owner and ID, exact root and closure,
 content digest, and evidence against the persisted record prefix at request
 time. Duplicate or malformed request records, foreign
@@ -72,7 +72,7 @@ persist the terminal record.
 
 The public Rust repository API stages and reads versions and snapshots pins.
 Receipt checks and activation are host-internal operations reached through the
-persisted-record validation in `HostHalf::act` (`tau-codemode-host`); a caller-built `Request` is not
+persisted-record validation in `HostHalf::act` (`heiko-codemode-host`); a caller-built `Request` is not
 an approval grant.
 
 A running or resumed run retains its original immutable repository pin. A fresh

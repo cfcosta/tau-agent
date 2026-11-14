@@ -39,13 +39,13 @@ models have been trained on exactly this contract.
   before, so a command that reads input still ends at once instead of
   hanging. With it, stdin is the terminal: a line, `^D` (`\u0004`) and
   `^C` (`\u0003`, which the terminal turns into `SIGINT`) reach the
-  process like a person's keys. `tau-terminal` gains
+  process like a person's keys. `heiko-terminal` gains
   `Command::interactive` and `Run::input` for this.
 - **Processes live in the run's workspace.** The host keeps one
   `exec::Processes` per workspace directory and gives it to every turn's
   tools, so a process survives turns (each turn builds new tools). A
   workspace that closes (a landing, a dropped chat) kills its
-  processes; so does dropping the store, so nothing outlives tau.
+  processes; so does dropping the store, so nothing outlives heiko.
   Tests and evals that build `CodingTools` get a store of their own.
 - **A cancelled call leaves the process running.** The call fails with
   `Operation aborted`, saying the process goes on, and what the process
@@ -59,14 +59,14 @@ models have been trained on exactly this contract.
   line, backspace and tab move the cursor, other escapes are dropped,
   and a line still being written is said as far as it is and not said
   again. The raw bytes still go to the card in `details.term`, and
-  tau-ui still draws them with libghostty-vt, so the card shows the
+  heiko-ui still draws them with libghostty-vt, so the card shows the
   true screen and the model reads its text. 0010's guarantee that both
   come from one engine holds only for the card; the cleaner is covered
   by a chunking-invariance property test.
 - **Limits.** Each answer is `truncate_tail` (2000 lines or 50 KiB). At
   most 1 MiB of unread text and 4 MiB of raw bytes per call are kept;
   lines lost past that are counted in a note. 64 processes at most.
-- **Output pruning** (tau-fast-compaction) prunes the results of both
+- **Output pruning** (heiko-fast-compaction) prunes the results of both
   tools, from the text of the result: with no spill file, that text is
   the whole output, and the archive is written when it prunes.
 - **Command artifacts go.** Only `read` publishes artifacts. The
@@ -80,11 +80,11 @@ models have been trained on exactly this contract.
 - **A `background: true` flag on `bash`.** A call that is sometimes
   blocking and sometimes not, and no way to read or feed the process
   afterwards.
-- **Start a turn whenever a process ends**, as tau does for sub-agents
+- **Start a turn whenever a process ends**, as heiko does for sub-agents
   (0031). Codex does not, and a process the model forgot about would
   start turns nobody asked for. So the wake is opt-in per command
   (`notify`): the model asks for it for a build or a test run, not for a
-  server. It goes through the host (`Host::steer`, then a tau turn if the
+  server. It goes through the host (`Host::steer`, then a heiko turn if the
   run is idle) and is told once, only if no call had reported the end.
 - **Feed the emulator's text across calls.** Screen rows repeat or are
   withheld, as above.

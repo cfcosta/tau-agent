@@ -1,5 +1,5 @@
-local tau = require("tau")
-local t = tau.test
+local heiko = require("heiko")
+local t = heiko.test
 
 local FRIDAY = "2026-10-09T10:00:00Z"
 local MONDAY = "2026-10-05T10:00:00Z"
@@ -9,7 +9,7 @@ local function deploy(run)
 end
 
 t.case("blocks deploys on Friday", function()
-	t.equal(deploy(t.run({ now = FRIDAY })), tau.block("No deploys on Friday."))
+	t.equal(deploy(t.run({ now = FRIDAY })), heiko.block("No deploys on Friday."))
 end)
 
 t.case("allows them on Monday", function()
@@ -18,7 +18,7 @@ end)
 
 t.case("follows the days the person set", function()
 	local run = t.run({ now = MONDAY, settings = { days = { "Monday" } } })
-	t.equal(deploy(run), tau.block("No deploys on Monday."))
+	t.equal(deploy(run), heiko.block("No deploys on Monday."))
 end)
 
 t.case("leaves other commands alone", function()
@@ -29,7 +29,7 @@ end)
 
 t.case("its settings page offers every day", function()
 	local page = t.run({ settings = { days = { "Monday" } } }):settings_view()
-	t.equal(page.children[2], tau.ui.choice("days", {
+	t.equal(page.children[2], heiko.ui.choice("days", {
 		"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
 	}, { multi = true }))
 end)

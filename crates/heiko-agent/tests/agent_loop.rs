@@ -1,0 +1,1429 @@
+//! The agent loop (`docs/reference/agent-loop.md`), driven through
+//! `Agent` with `ScriptedModel`, `heiko_store_sqlite::memory()` and paused time.
+
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
+
+use async_trait::async_trait;
+use common::{
+    assert_grammar,
+    assert_results_follow_calls,
+    counter_clock,
+    stored,
+};
+use hegel::{TestCase, generators as gs};
+use serde_json::{Value, json};
+use heiko_agent::{
+    agent::Agent,
+    error::{PluginError, ToolError},
+    event::{RunEvent, StopReason},
+    plugin::{Decision, Plugin, PluginCtx, PluginRun, RunPlan, ToolCall},
+    runner::{CANCELLED, TRUNCATED},
+    tool::{AgentTool, ExecutionMode, ToolCtx, ToolOutput},
+};
+use heiko_ai::message::{
+    AssistantBlock,
+    InputBlock,
+    Message,
+    StopReason as MessageStop,
+};
+use heiko_testing::{block_on, scripted::ScriptedModel};
+use tokio::time::Instant;
+
+use crate::common;
+
+/// A tool that sleeps `ms` virtual milliseconds (stopping early on
+/// cancel), optionally fails, and records when it ran.
+struct Probe {
+    name: &'static str,
+    mode: ExecutionMode,
+    schema: Value,
+    log: Arc<Mutex<Vec<Interval>>>,
+}
+
+#[derive(Debug, Clone)]
+struct Interval {
+    tool: &'static str,
+    start: Instant,
+    end: Instant,
+}
+
+impl Probe {
+    fn new(
+        name: &'static str,
+        mode: ExecutionMode,
+        log: Arc<Mutex<Vec<Interval>>>,
+    ) -> Self {
+        Self {
+            name,
+            mode,
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "ms": {"type": "integer", "minimum": 0},
+                    "fail": {"type": "boolean"}
+                },
+                "required": ["ms"]
+            }),
+            log,
+        }
+    }
+}
+
+#[async_trait]
+impl AgentTool for Probe {
+    fn name(&self) -> &str {
+        self.name
+    }
+    fn description(&self) -> &str {
+        "Sleeps, then answers."
+    }
+    fn parameters(&self) -> &Value {
+        &self.schema
+    }
+    fn execution_mode(&self) -> ExecutionMode {
+        self.mode
+    }
+    async fn call(
+        &self,
+        args: Value,
+        ctx: ToolCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        let start = Instant::now();
+        ctx.updates.send(ToolOutput::text("working"));
+        let ms = args["ms"].as_u64().unwrap_or(0);
+        let cancelled = tokio::select! {
+            _ = tokio::time::sleep(Duration::from_millis(ms)) => false,
+            _ = ctx.cancel.cancelled() => true,
+        };
+        self.log.lock().unwrap().push(Interval {
+            tool: self.name,
+            start,
+            end: Instant::now(),
+        });
+        if cancelled {
+            return Err("cancelled".into());
+        }
+        if args["fail"].as_bool() == Some(true) {
+            return Err("probe failed".into());
+        }
+        Ok(ToolOutput::text(format!("slept {ms}")))
+    }
+}
+
+/// Records every event, in order.
+#[derive(Clone, Default)]
+struct Recorder(Arc<Mutex<Vec<RunEvent>>>);
+
+#[async_trait]
+impl PluginRun for Recorder {
+    async fn on_event(&mut self, event: &RunEvent, _ctx: &PluginCtx) {
+        self.0.lock().unwrap().push(event.clone());
+    }
+}
+
+#[async_trait]
+impl Plugin for Recorder {
+    fn name(&self) -> &str {
+        "recorder"
+    }
+
+    async fn start(
+        &self,
+        _plan: &mut RunPlan,
+        _ctx: &PluginCtx,
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
+        Ok(Box::new(self.clone()))
+    }
+}
+
+impl Recorder {
+    fn events(&self) -> Vec<RunEvent> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+#[derive(Debug, Clone, hegel::PrettyPrintable)]
+struct ScriptedCall {
+    tool: &'static str,
+    ms: u64,
+    fail: bool,
+}
+
+#[hegel::composite]
+fn scripted_call(tc: &TestCase, sequential_allowed: bool) -> ScriptedCall {
+    let mut tools = vec!["probe", "probe", "missing"];
+    if sequential_allowed {
+        tools.push("serial");
+    }
+    ScriptedCall {
+        tool: tc.draw(gs::sampled_from(tools)),
+        ms: tc.draw(gs::integers::<u64>().max_value(500)),
+        fail: tc.draw(gs::booleans()),
+    }
+}
+
+/// The loop over generated scripts: tool calls that sleep, fail, or name
+/// a missing or sequential tool, and sometimes a cancel at a drawn
+/// virtual time.
+#[hegel::test(test_cases = 60)]
+fn loop_over_generated_scripts(tc: TestCase) {
+    loop_over_generated_scripts_body(tc)
+}
+
+/// [`loop_over_generated_scripts`] with more cases, for the nightly tier.
+#[hegel::test(profile = "nightly_slow")]
+#[ignore = "nightly"]
+fn loop_over_generated_scripts_nightly(tc: TestCase) {
+    loop_over_generated_scripts_body(tc)
+}
+
+fn loop_over_generated_scripts_body(tc: TestCase) {
+    let driver = heiko_agent::testing::filler(&tc);
+    let turns: Vec<Vec<ScriptedCall>> = tc
+        // A turn without tool calls ends the run, so every turn before the
+        // final text turn calls at least one tool.
+        .draw(
+            gs::vecs(gs::vecs(scripted_call(true)).min_size(1).max_size(3))
+                .max_size(3),
+        );
+    let cancel_at =
+        tc.draw(gs::optional(gs::integers::<u64>().max_value(1500)));
+    let usages: Vec<(u64, u64)> = (0..=turns.len())
+        .map(|_| {
+            (
+                tc.draw(gs::integers::<u64>().max_value(10_000)),
+                tc.draw(gs::integers::<u64>().max_value(10_000)),
+            )
+        })
+        .collect();
+
+    let mut llm = ScriptedModel::new();
+    for (calls, usage) in turns.iter().zip(&usages) {
+        let think = tc.draw(gs::booleans());
+        llm = llm.turn(|mut t| {
+            if think {
+                t = t.thinking("weighing the options");
+            }
+            for call in calls {
+                t = t.tool_call(
+                    call.tool,
+                    json!({"ms": call.ms, "fail": call.fail}),
+                );
+            }
+            t.usage(usage.0, usage.1)
+        });
+    }
+    let last = *usages.last().unwrap();
+    llm = llm.turn(|t| t.text("done").usage(last.0, last.1));
+
+    block_on(async {
+        let store = heiko_store_sqlite::memory().await.unwrap();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let recorder = Recorder::default();
+        let agent = Agent::new(llm.clone())
+            .with_loop(driver.clone())
+            .tool(Probe::new("probe", ExecutionMode::Parallel, log.clone()))
+            .tool(Probe::new("serial", ExecutionMode::Sequential, log.clone()))
+            .plugin(recorder.clone())
+            .clock(counter_clock());
+        let run = agent.start("go", &store);
+        let id = run.id();
+        let started = Instant::now();
+        // How many events the recorder held when the cancel fired: the
+        // runtime runs one task at a time, so this places the cancel
+        // exactly within the event sequence.
+        let cancelled_at: Arc<Mutex<Option<usize>>> = Arc::default();
+        if let Some(ms) = cancel_at {
+            let control = run.control();
+            let recorder = recorder.clone();
+            let cancelled_at = cancelled_at.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(ms)).await;
+                control.cancel();
+                *cancelled_at.lock().unwrap() = Some(recorder.events().len());
+            });
+        }
+        let outcome = run.outcome().await.unwrap();
+        // A cancel that fires after the run ended changes nothing.
+        let cancelled_at = *cancelled_at.lock().unwrap();
+        let events = recorder.events();
+        let transcript = stored(&store, &id.0).await;
+
+        // The run checks for a cancel when a turn's response and tools are
+        // done, just before its `TurnEnd`, and a cancel during a response
+        // aborts it. So the run was cancelled exactly when the cancel came
+        // before the last `TurnEnd`; after it, the run had already stopped.
+        let last_turn_end = events
+            .iter()
+            .rposition(|e| matches!(e, RunEvent::TurnEnd { .. }))
+            .expect("every run takes a turn");
+        if cancelled_at.is_some_and(|at| at <= last_turn_end) {
+            tc.event("cancel before end");
+            assert_eq!(outcome.stop, StopReason::Cancelled);
+        } else {
+            if cancel_at.is_some() {
+                tc.event("cancel after end");
+            }
+            assert_eq!(outcome.stop, StopReason::Stop);
+            assert_eq!(outcome.text, "done");
+        }
+        let (mut input, mut output) = (0, 0);
+        for message in &transcript {
+            if let Message::Assistant(a) = message {
+                input += a.usage.input;
+                output += a.usage.output;
+            }
+        }
+        assert_eq!(
+            (outcome.usage.input, outcome.usage.output),
+            (input, output)
+        );
+        if let (Some(at), Some(ms)) = (cancelled_at, cancel_at) {
+            // Nothing starts after a cancel, and running tools stop at it.
+            assert!(
+                events[at..]
+                    .iter()
+                    .all(|e| !matches!(e, RunEvent::ToolStart { .. })),
+                "a tool started after the cancel"
+            );
+            let cancel_instant = started + Duration::from_millis(ms);
+            for interval in log.lock().unwrap().iter() {
+                assert!(
+                    interval.end <= cancel_instant,
+                    "a tool ran past the cancel"
+                );
+            }
+        }
+
+        // Every result answers its own call: the scripted calls pair with
+        // the transcript's call blocks turn by turn, in source order.
+        let mut scripted: std::collections::HashMap<String, &ScriptedCall> =
+            Default::default();
+        let assistant_turns = transcript.iter().filter_map(|m| match m {
+            Message::Assistant(a) => Some(a),
+            _ => None,
+        });
+        for (message, calls) in assistant_turns.zip(&turns) {
+            let ids = message.content.iter().filter_map(|b| match b {
+                AssistantBlock::ToolCall(c) => Some(c.id.clone()),
+                _ => None,
+            });
+            for (call_id, call) in ids.zip(calls) {
+                scripted.insert(call_id, call);
+            }
+        }
+        for message in &transcript {
+            let Message::ToolResult(result) = message else {
+                continue;
+            };
+            let call = scripted[&result.tool_call_id];
+            assert_eq!(result.tool_name, call.tool);
+            let text: String = result
+                .content
+                .iter()
+                .filter_map(|b| match b {
+                    InputBlock::Text(t) => Some(t.text.as_str()),
+                    InputBlock::Image(_) => None,
+                })
+                .collect();
+            let end = events
+                .iter()
+                .position(|e| {
+                    matches!(e, RunEvent::ToolEnd { call_id, .. }
+                        if *call_id == result.tool_call_id)
+                })
+                .expect("every result has its ToolEnd");
+            // A call that ended after the cancel may have been cut short.
+            if cancelled_at.is_some_and(|at| end >= at)
+                && result.is_error
+                && (text == "cancelled" || text == CANCELLED)
+            {
+                continue;
+            }
+            let failed = call.tool == "missing" || call.fail;
+            assert_eq!(result.is_error, failed, "{result:?} for {call:?}");
+            let want = if call.tool == "missing" {
+                "Tool missing not found".to_owned()
+            } else if call.fail {
+                "probe failed".to_owned()
+            } else {
+                format!("slept {}", call.ms)
+            };
+            assert_eq!(text, want, "result for {call:?}");
+        }
+        if turns.iter().flatten().any(|c| c.tool == "serial") {
+            tc.event("serial batch");
+        }
+        if turns.iter().flatten().any(|c| c.tool == "missing") {
+            tc.event("missing tool");
+        }
+
+        assert_grammar(&events);
+        assert_results_follow_calls(&transcript);
+
+        // ToolStart comes in source order within each turn, and every
+        // started call ends exactly once.
+        let starts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                RunEvent::ToolStart { call_id, .. } => Some(call_id.clone()),
+                _ => None,
+            })
+            .collect();
+        let mut ends: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                RunEvent::ToolEnd { call_id, .. } => Some(call_id.clone()),
+                _ => None,
+            })
+            .collect();
+        let source: Vec<String> = transcript
+            .iter()
+            .flat_map(|m| match m {
+                Message::Assistant(a) => a
+                    .content
+                    .iter()
+                    .filter_map(|b| match b {
+                        AssistantBlock::ToolCall(c) => Some(c.id.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>(),
+                _ => vec![],
+            })
+            .collect();
+        assert_eq!(starts, source);
+        ends.sort();
+        let mut sorted = starts.clone();
+        sorted.sort();
+        assert_eq!(ends, sorted);
+
+        // No update after its call's end.
+        let mut ended = std::collections::HashSet::new();
+        for event in &events {
+            match event {
+                RunEvent::ToolEnd { call_id, .. } => {
+                    ended.insert(call_id.clone());
+                }
+                RunEvent::ToolUpdate { call_id, .. } => {
+                    assert!(!ended.contains(call_id), "update after end")
+                }
+                _ => {}
+            }
+        }
+
+        // Deltas add up to what was stored, turn by turn, and every call
+        // to a tool that exists reports its update before it ends.
+        let assistants: Vec<&heiko_ai::message::AssistantMessage> = transcript
+            .iter()
+            .filter_map(|m| match m {
+                Message::Assistant(a) => Some(a),
+                _ => None,
+            })
+            .collect();
+        let mut turn_index = 0;
+        let (mut text, mut thinking) = (String::new(), String::new());
+        let mut fragments: std::collections::BTreeMap<String, String> =
+            Default::default();
+        for event in &events {
+            match event {
+                RunEvent::TextDelta { delta, .. } => text.push_str(delta),
+                RunEvent::ThinkingDelta { delta, .. } => {
+                    thinking.push_str(delta)
+                }
+                RunEvent::ToolCallDelta {
+                    call_id,
+                    json_fragment,
+                    ..
+                } => fragments
+                    .entry(call_id.clone())
+                    .or_default()
+                    .push_str(json_fragment),
+                RunEvent::TurnEnd { .. } => {
+                    if cancel_at.is_none() {
+                        let message = assistants[turn_index];
+                        let mut want_text = String::new();
+                        let mut want_thinking = String::new();
+                        for block in &message.content {
+                            match block {
+                                AssistantBlock::Text(t) => {
+                                    want_text.push_str(&t.text)
+                                }
+                                AssistantBlock::Thinking(t) => {
+                                    want_thinking.push_str(&t.thinking)
+                                }
+                                AssistantBlock::ToolCall(call) => {
+                                    let sent: Value = serde_json::from_str(
+                                        &fragments[&call.id],
+                                    )
+                                    .unwrap();
+                                    assert_eq!(
+                                        sent,
+                                        Value::Object(call.arguments.clone())
+                                    );
+                                }
+                            }
+                        }
+                        assert_eq!(text, want_text, "turn {turn_index} text");
+                        assert_eq!(
+                            thinking, want_thinking,
+                            "turn {turn_index} thinking"
+                        );
+                    }
+                    turn_index += 1;
+                    text.clear();
+                    thinking.clear();
+                }
+                _ => {}
+            }
+        }
+        if cancel_at.is_none() {
+            let updated: Vec<&String> = events
+                .iter()
+                .filter_map(|e| match e {
+                    RunEvent::ToolUpdate { call_id, .. } => Some(call_id),
+                    _ => None,
+                })
+                .collect();
+            let existing: Vec<String> = transcript
+                .iter()
+                .flat_map(|m| match m {
+                    Message::Assistant(a) => a
+                        .content
+                        .iter()
+                        .filter_map(|b| match b {
+                            AssistantBlock::ToolCall(c)
+                                if c.name != "missing" =>
+                            {
+                                Some(c.id.clone())
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>(),
+                    _ => vec![],
+                })
+                .collect();
+            let mut updated: Vec<String> =
+                updated.into_iter().cloned().collect();
+            updated.sort();
+            let mut existing = existing;
+            existing.sort();
+            assert_eq!(
+                updated, existing,
+                "one update per call to an existing tool"
+            );
+        }
+
+        // Stored usage equals the sum of the turns' usage.
+        let record = store.run(&id.0).await.unwrap().unwrap();
+        let (mut input, mut output) = (0i64, 0i64);
+        for message in &transcript {
+            if let Message::Assistant(a) = message {
+                input += (a.usage.input
+                    + a.usage.cache_read
+                    + a.usage.cache_write) as i64;
+                output += a.usage.output as i64;
+            }
+        }
+        assert_eq!(
+            (record.input_tokens, record.output_tokens),
+            (input, output)
+        );
+
+        // Without a cancel, parallel batches overlap and sequential ones
+        // do not.
+        if cancel_at.is_none() {
+            let intervals = log.lock().unwrap().clone();
+            let mut offset = 0;
+            for calls in &turns {
+                let ran: Vec<&ScriptedCall> =
+                    calls.iter().filter(|c| c.tool != "missing").collect();
+                let batch = &intervals[offset..offset + ran.len()];
+                offset += ran.len();
+                let sequential = ran.iter().any(|c| c.tool == "serial");
+                if sequential {
+                    let mut sorted = batch.to_vec();
+                    sorted.sort_by_key(|i| i.start);
+                    for pair in sorted.windows(2) {
+                        assert!(
+                            pair[0].end <= pair[1].start,
+                            "sequential calls overlapped"
+                        );
+                    }
+                } else {
+                    // Calls that take time all start before any of them
+                    // ends: run one after another, the second would start
+                    // exactly when the first ended.
+                    let timed: Vec<&Interval> =
+                        batch.iter().filter(|i| i.end > i.start).collect();
+                    if let Some(first_end) = timed.iter().map(|i| i.end).min() {
+                        assert!(
+                            timed.iter().all(|i| i.start < first_end),
+                            "parallel calls did not overlap"
+                        );
+                    }
+                }
+            }
+        }
+    });
+}
+
+/// A tool call cut off by the output limit never runs; its result says
+/// why (pi, `agent-loop.ts:408`).
+#[test]
+fn truncated_calls_never_run() {
+    let llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call("probe", json!({"ms": 1}))
+                .stop(MessageStop::Length)
+        })
+        .turn(|t| t.text("ok"));
+    block_on(async {
+        let store = heiko_store_sqlite::memory().await.unwrap();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let agent = Agent::new(llm).tool(Probe::new(
+            "probe",
+            ExecutionMode::Parallel,
+            log.clone(),
+        ));
+        let run = agent.start("go", &store);
+        let id = run.id();
+        run.outcome().await.unwrap();
+        assert!(log.lock().unwrap().is_empty());
+        let transcript = stored(&store, &id.0).await;
+        let Message::ToolResult(result) = &transcript[2] else {
+            panic!("{transcript:?}")
+        };
+        assert!(result.is_error);
+        let text = serde_json::to_string(&result.content).unwrap();
+        assert!(text.contains(TRUNCATED), "{text}");
+    });
+}
+
+fn picture(data: &str) -> heiko_ai::message::ImageContent {
+    heiko_ai::message::ImageContent {
+        data: data.into(),
+        mime_type: "image/png".into(),
+    }
+}
+
+/// The images of the stored user message at `at`, by their data.
+fn images_at(transcript: &[Message], at: usize) -> Vec<String> {
+    let Message::User(user) = &transcript[at] else {
+        panic!("message {at} is the user's");
+    };
+    match &user.content {
+        heiko_ai::message::UserContent::Blocks(blocks) => blocks
+            .iter()
+            .filter_map(|block| match block {
+                heiko_ai::message::InputBlock::Image(image) => {
+                    Some(image.data.clone())
+                }
+                _ => None,
+            })
+            .collect(),
+        heiko_ai::message::UserContent::Text(_) => Vec::new(),
+    }
+}
+
+/// Images sent with the input follow its text in the first user message,
+/// and the model's first request carries them; images sent with a
+/// steered message go with it.
+#[test]
+fn images_go_with_the_input_and_with_steering() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("probe", json!({"ms": 100})))
+        .turn(|t| t.text("seen"));
+    block_on(async {
+        let store = heiko_store_sqlite::memory().await.unwrap();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let agent = Agent::new(llm.clone()).tool(Probe::new(
+            "probe",
+            ExecutionMode::Parallel,
+            log,
+        ));
+        let input = heiko_agent::agent::Input::new("what is this?")
+            .images(vec![picture("AAAA"), picture("BBBB")]);
+        let run = agent.start(input, &store);
+        let id = run.id();
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        run.steer(
+            heiko_agent::agent::Prompt::new("and this")
+                .images(vec![picture("CCCC")]),
+        );
+        run.outcome().await.unwrap();
+        let transcript = stored(&store, &id.0).await;
+        assert_eq!(images_at(&transcript, 0), ["AAAA", "BBBB"]);
+        assert_eq!(images_at(&transcript, 3), ["CCCC"]);
+        let first =
+            serde_json::to_string(&llm.requests()[0].transcript).unwrap();
+        assert!(first.contains("what is this?") && first.contains("BBBB"));
+        // Text alone stays plain text.
+        let Message::User(user) = &transcript[0] else {
+            unreachable!()
+        };
+        let heiko_ai::message::UserContent::Blocks(blocks) = &user.content else {
+            panic!("text and images are blocks");
+        };
+        assert!(
+            matches!(&blocks[0], heiko_ai::message::InputBlock::Text(t) if t.text == "what is this?")
+        );
+    });
+}
+
+/// A steered message cuts a response short while it streams (Codex's
+/// instant interrupt): the tool call that finished in it runs, the text
+/// streamed so far stays, and the next request carries the message,
+/// without waiting for the rest.
+#[test]
+fn steering_cuts_a_streaming_response_short() {
+    let long = "Now I will write a very long answer about everything";
+    let llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call("probe", json!({"ms": 1}))
+                .text(long)
+                .stall(Duration::from_secs(600))
+        })
+        .turn(|t| t.text("heard you"));
+    block_on(async {
+        let store = heiko_store_sqlite::memory().await.unwrap();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let agent = Agent::new(llm.clone()).tool(Probe::new(
+            "probe",
+            ExecutionMode::Parallel,
+            log.clone(),
+        ));
+        let run = agent.start("go", &store);
+        let id = run.id();
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        run.steer("stop, do this instead");
+        let outcome = run.outcome().await.unwrap();
+        assert_eq!(outcome.text, "heard you");
+        assert_eq!(log.lock().unwrap().len(), 1, "the finished call ran");
+        let transcript = stored(&store, &id.0).await;
+        let kinds: Vec<&str> = transcript.iter().map(|m| m.role()).collect();
+        assert_eq!(
+            kinds,
+            ["user", "assistant", "toolResult", "user", "assistant"]
+        );
+        let Message::Assistant(cut) = &transcript[1] else {
+            panic!("{transcript:?}")
+        };
+        let [AssistantBlock::ToolCall(_), AssistantBlock::Text(text)] =
+            cut.content.as_slice()
+        else {
+            panic!("{cut:?}")
+        };
+        // Cut, not waited out: the text as far as it had streamed.
+        assert!(
+            !text.text.is_empty()
+                && text.text.len() < long.len()
+                && long.starts_with(&text.text),
+            "the text so far: {:?}",
+            text.text
+        );
+        let requests = llm.requests();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[1].transcript.len(), 4, "the steered message");
+    });
+}
+
+/// A response cut short before anything in it finished leaves nothing:
+/// its half-streamed reasoning cannot go back to the model.
+#[test]
+fn a_response_cut_before_anything_finished_leaves_nothing() {
+    let llm = ScriptedModel::new()
+        .turn(|t| {
+            t.thinking("weighing the options at length")
+                .stall(Duration::from_secs(600))
+        })
+        .turn(|t| t.text("heard you"));
+    block_on(async {
+        let store = heiko_store_sqlite::memory().await.unwrap();
+        let run = Agent::new(llm.clone()).start("go", &store);
+        let id = run.id();
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        run.steer("never mind");
+        let outcome = run.outcome().await.unwrap();
+        assert_eq!(outcome.text, "heard you");
+        let transcript = stored(&store, &id.0).await;
+        let kinds: Vec<&str> = transcript.iter().map(|m| m.role()).collect();
+        assert_eq!(kinds, ["user", "user", "assistant"]);
+    });
+}
+
+/// A `RunControl` steers and cancels while another task reads events.
+#[test]
+fn control_steers_and_cancels_while_events_are_read() {
+    use futures_util::StreamExt;
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("probe", json!({"ms": 100})))
+        .turn(|t| t.tool_call("probe", json!({"ms": 5_000})))
+        .turn(|t| t.text("never reached"));
+    block_on(async {
+        let store = heiko_store_sqlite::memory().await.unwrap();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let agent = Agent::new(llm.clone()).tool(Probe::new(
+            "probe",
+            ExecutionMode::Parallel,
+            log,
+        ));
+        let mut run = agent.start("go", &store);
+        let control = run.control();
+        assert_eq!(control.id(), run.id());
+        let reader = tokio::spawn(async move {
+            let (mut ends, mut steered) = (Vec::new(), Vec::new());
+            {
+                let mut events = run.events();
+                while let Some(event) = events.next().await {
+                    match event {
+                        RunEvent::RunEnd { stop, .. } => ends.push(stop),
+                        RunEvent::Steered { text, .. } => steered.push(text),
+                        _ => {}
+                    }
+                }
+            }
+            (ends, steered, run.outcome().await)
+        });
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        control.steer("also check the tests");
+        // Cancel once the second request, which carries the steered
+        // message, is out and its 5 s tool call is running.
+        while llm.requests().len() < 2 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        control.cancel();
+        let (ends, steered, outcome) = reader.await.unwrap();
+        assert_eq!(ends, [StopReason::Cancelled]);
+        // Interfaces hear when the run read it, to show it.
+        assert_eq!(steered, ["also check the tests"]);
+        assert_eq!(outcome.unwrap().stop, StopReason::Cancelled);
+        let second = &llm.requests()[1];
+        assert_eq!(second.transcript.len(), 4, "the steered message");
+        assert_eq!(llm.requests().len(), 2, "no request after the cancel");
+    });
+}
+
+/// What a `before_tool` hook does with one call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Hooked {
+    Allow,
+    Block,
+    Fail,
+    /// Changes the arguments to ones that validate after coercion.
+    Fix,
+    /// Changes the arguments to ones that never validate.
+    Break,
+}
+
+hegel::pretty_print_as_debug!(Hooked);
+
+/// What a hook was shown: its name, the call's position, the arguments.
+type Shown = (&'static str, usize, Value);
+
+/// A plugin whose `before_tool` does what its script says for each call,
+/// by the call's position in the batch, and logs what it was shown.
+#[derive(Clone)]
+struct Hook {
+    name: &'static str,
+    script: Vec<Hooked>,
+    seen: Arc<Mutex<Vec<Shown>>>,
+}
+
+#[async_trait]
+impl PluginRun for Hook {
+    async fn before_tool(
+        &mut self,
+        call: &mut ToolCall,
+        _ctx: &PluginCtx,
+    ) -> Result<Decision, PluginError> {
+        // The scripted model numbers its calls `call_{n}|fc_{n}`.
+        let at: usize = call.id["call_".len()..call.id.find('|').unwrap()]
+            .parse()
+            .unwrap();
+        self.seen
+            .lock()
+            .unwrap()
+            .push((self.name, at, call.args.clone()));
+        match self.script[at] {
+            Hooked::Allow => Ok(Decision::Allow),
+            Hooked::Block => {
+                Ok(Decision::Block(format!("{} blocks", self.name)))
+            }
+            Hooked::Fail => Err(format!("{} failed", self.name).into()),
+            Hooked::Fix => {
+                call.args = json!({"ms": "7"});
+                Ok(Decision::Allow)
+            }
+            Hooked::Break => {
+                call.args = json!({"ms": "not a number at all"});
+                Ok(Decision::Allow)
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl Plugin for Hook {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    async fn start(
+        &self,
+        _plan: &mut RunPlan,
+        _ctx: &PluginCtx,
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
+        Ok(Box::new(self.clone()))
+    }
+}
+
+/// How a call ends, as the fold below predicts it.
+#[derive(Debug, PartialEq)]
+enum Ends {
+    /// An error result with exactly this text.
+    Refused(String),
+    /// An error result from validating changed arguments.
+    Invalid,
+    /// The tool ran with this many milliseconds.
+    Ran(u64),
+}
+
+/// `before_tool` hooks, against a left fold: for each call, the plugins
+/// in the order they were added each see the arguments as the ones before
+/// left them; the first that blocks or fails ends the call with its
+/// reason; arguments a hook changed are validated at once, an invalid
+/// change ends the call, and a valid one goes on coerced; a call no hook
+/// stopped runs with the arguments the last hook left. A stopped call
+/// never reaches a later hook or the tool.
+#[hegel::test(test_cases = 60)]
+fn before_tool_hooks_fold_in_order_and_the_first_stop_wins(tc: TestCase) {
+    let driver = heiko_agent::testing::filler(&tc);
+    let calls = tc.draw(gs::integers::<usize>().min_value(1).max_value(4));
+    let names = ["first", "second", "third"];
+    let plugins = tc.draw(gs::integers::<usize>().min_value(1).max_value(3));
+    // Mostly allowing, so later hooks are reached.
+    let action = || {
+        gs::sampled_from(vec![
+            Hooked::Allow,
+            Hooked::Allow,
+            Hooked::Allow,
+            Hooked::Block,
+            Hooked::Fail,
+            Hooked::Fix,
+            Hooked::Break,
+        ])
+    };
+    let scripts: Vec<Vec<Hooked>> = (0..plugins)
+        .map(|_| tc.draw(gs::vecs(action()).min_size(calls).max_size(calls)))
+        .collect();
+
+    // The fold.
+    let mut want_seen = Vec::new();
+    let mut want = Vec::new();
+    for at in 0..calls {
+        let mut args = json!({"ms": 1});
+        let mut ends = None;
+        for (name, script) in names.iter().zip(&scripts) {
+            want_seen.push((*name, at, args.clone()));
+            match script[at] {
+                Hooked::Allow => {}
+                Hooked::Block => {
+                    ends = Some(Ends::Refused(format!("{name} blocks")))
+                }
+                Hooked::Fail => {
+                    ends = Some(Ends::Refused(format!("{name} failed")))
+                }
+                Hooked::Fix => args = json!({"ms": 7}),
+                Hooked::Break => ends = Some(Ends::Invalid),
+            }
+            if ends.is_some() {
+                break;
+            }
+        }
+        want.push(ends.unwrap_or(Ends::Ran(args["ms"].as_u64().unwrap())));
+    }
+
+    let llm = ScriptedModel::new()
+        .turn(|mut t| {
+            for _ in 0..calls {
+                t = t.tool_call("probe", json!({"ms": 1}));
+            }
+            t
+        })
+        .turn(|t| t.text("ok"));
+    block_on(async {
+        let store = heiko_store_sqlite::memory().await.unwrap();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut agent = Agent::new(llm)
+            .with_loop(driver.clone())
+            .tool(Probe::new("probe", ExecutionMode::Parallel, log.clone()));
+        for (name, script) in names.iter().zip(&scripts) {
+            agent = agent.plugin(Hook {
+                name,
+                script: script.clone(),
+                seen: seen.clone(),
+            });
+        }
+        let run = agent.start("go", &store);
+        let id = run.id();
+        run.outcome().await.unwrap();
+        let transcript = stored(&store, &id.0).await;
+        let got: Vec<Ends> = transcript[2..2 + calls]
+            .iter()
+            .map(|m| {
+                let Message::ToolResult(r) = m else {
+                    panic!("{transcript:?}")
+                };
+                let InputBlock::Text(text) = &r.content[0] else {
+                    panic!("{r:?}")
+                };
+                match text.text.strip_prefix("slept ") {
+                    Some(ms) if !r.is_error => Ends::Ran(ms.parse().unwrap()),
+                    _ if text.text.starts_with("Validation failed:") => {
+                        assert!(r.is_error);
+                        Ends::Invalid
+                    }
+                    _ => {
+                        assert!(r.is_error, "{r:?}");
+                        Ends::Refused(text.text.clone())
+                    }
+                }
+            })
+            .collect();
+        assert_eq!(got, want);
+        let ran = want.iter().filter(|e| matches!(e, Ends::Ran(_))).count();
+        assert_eq!(log.lock().unwrap().len(), ran, "only unstopped calls run");
+        let mut seen = seen.lock().unwrap().clone();
+        // Calls go through the hooks one at a time, in order.
+        seen.sort_by_key(|(_, at, _)| *at);
+        assert_eq!(seen, want_seen);
+    });
+}
+
+/// A tool that fails with output of its own.
+struct FailsWithOutput(Value);
+
+#[async_trait]
+impl AgentTool for FailsWithOutput {
+    fn name(&self) -> &str {
+        "fails"
+    }
+    fn description(&self) -> &str {
+        "Fails, keeping its output."
+    }
+    fn parameters(&self) -> &Value {
+        &self.0
+    }
+    async fn call(
+        &self,
+        _args: Value,
+        _ctx: ToolCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        let mut output =
+            ToolOutput::text("partial\n\nCommand exited with code 2");
+        output.details = Some(json!({"terminal": {"exitCode": 2}}));
+        Err(ToolError::output(output))
+    }
+}
+
+/// A failure that carries output is an error result with that output's
+/// text and its details, in the `ToolEnd` event and in the store
+/// (`docs/reference/agent-loop.md`, "Tool execution").
+#[test]
+fn a_failure_with_output_keeps_its_details() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("fails", json!({})))
+        .turn(|t| t.text("ok"));
+    block_on(async {
+        let store = heiko_store_sqlite::memory().await.unwrap();
+        let recorder = Recorder::default();
+        let run = Agent::new(llm)
+            .tool(FailsWithOutput(json!({"type": "object"})))
+            .plugin(recorder.clone())
+            .start("go", &store);
+        let id = run.id();
+        run.outcome().await.unwrap();
+
+        let details = json!({"terminal": {"exitCode": 2}});
+        let end = recorder
+            .events()
+            .into_iter()
+            .find_map(|event| match event {
+                RunEvent::ToolEnd {
+                    output, is_error, ..
+                } => Some((output, is_error)),
+                _ => None,
+            })
+            .expect("the call ended");
+        assert!(end.1);
+        assert_eq!(end.0.details, Some(details.clone()));
+
+        let transcript = stored(&store, &id.0).await;
+        let Message::ToolResult(result) = &transcript[2] else {
+            panic!("{transcript:?}")
+        };
+        assert!(result.is_error);
+        assert_eq!(result.details, Some(details));
+        let InputBlock::Text(text) = &result.content[0] else {
+            panic!()
+        };
+        assert_eq!(text.text, "partial\n\nCommand exited with code 2");
+    });
+}
+
+/// A slow subscriber holds its own run and no other. The slow run's hook
+/// waits on a gate; the other run finishes while the gate is shut, and
+/// the slow run finishes only once it opens.
+#[test]
+fn slow_hook_holds_only_its_run() {
+    #[derive(Clone)]
+    struct Gate(Arc<tokio::sync::Semaphore>);
+    #[async_trait]
+    impl PluginRun for Gate {
+        async fn on_event(&mut self, _: &RunEvent, _ctx: &PluginCtx) {
+            let _permit = self.0.acquire().await.unwrap();
+        }
+    }
+
+    #[async_trait]
+    impl Plugin for Gate {
+        fn name(&self) -> &str {
+            "gate"
+        }
+
+        async fn start(
+            &self,
+            _plan: &mut RunPlan,
+            _ctx: &PluginCtx,
+        ) -> Result<Box<dyn PluginRun>, PluginError> {
+            Ok(Box::new(self.clone()))
+        }
+    }
+    block_on(async {
+        let store = heiko_store_sqlite::memory().await.unwrap();
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let slow = Agent::new(ScriptedModel::new().turn(|t| t.text("slow")))
+            .plugin(Gate(gate.clone()))
+            .start("go", &store);
+        let fast = Agent::new(ScriptedModel::new().turn(|t| t.text("fast")))
+            .run("go", &store)
+            .await
+            .unwrap();
+        assert_eq!(fast.text, "fast");
+        let mut slow = std::pin::pin!(slow.outcome());
+        assert!(
+            futures_util::FutureExt::now_or_never(slow.as_mut()).is_none(),
+            "the slow run finished with its hook blocked"
+        );
+        gate.add_permits(1_000);
+        assert_eq!(slow.await.unwrap().text, "slow");
+    });
+}
+
+/// The run sends the agent's model, instructions and reasoning, and tool
+/// schemas in strict form.
+#[test]
+fn settings_reach_the_model() {
+    let llm = ScriptedModel::new().turn(|t| t.text("ok"));
+    block_on(async {
+        let store = heiko_store_sqlite::memory().await.unwrap();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        Agent::new(llm.clone())
+            .model("gpt-5.4-mini")
+            .instructions("Be brief.")
+            .reasoning(heiko_ai::responses::request::ReasoningEffort::High)
+            .tool(Probe::new("probe", ExecutionMode::Parallel, log))
+            .run("go", &store)
+            .await
+            .unwrap();
+        let settings = &llm.requests()[0].settings;
+        assert_eq!(settings.model, "gpt-5.4-mini");
+        assert_eq!(settings.instructions.as_deref(), Some("Be brief."));
+        assert_eq!(
+            settings.reasoning,
+            Some(heiko_ai::responses::request::ReasoningEffort::High)
+        );
+        let tool = &settings.tools[0];
+        assert_eq!((tool.name.as_str(), tool.strict), ("probe", true));
+        assert_eq!(tool.parameters["additionalProperties"], json!(false));
+        assert_eq!(tool.description, "Sleeps, then answers.");
+    });
+}
+
+/// A tool that says it started, then waits for the run's cancel.
+struct Waiter(Arc<tokio::sync::Notify>, Value);
+
+#[async_trait]
+impl AgentTool for Waiter {
+    fn name(&self) -> &str {
+        "wait"
+    }
+    fn description(&self) -> &str {
+        "Waits for cancellation."
+    }
+    fn parameters(&self) -> &Value {
+        &self.1
+    }
+    async fn call(
+        &self,
+        _: Value,
+        ctx: ToolCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        self.0.notify_one();
+        ctx.cancel.cancelled().await;
+        return Err("cancelled while waiting".into());
+    }
+}
+
+/// Cancelling a run mid-batch ends it as cancelled; the running tool sees
+/// the token and every call still gets a result. The cancel waits for the
+/// tool to start rather than for virtual time, which store writes can
+/// move.
+#[test]
+fn cancel_mid_batch() {
+    let llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call("wait", json!({}))
+                .tool_call("probe", json!({"ms": 1}))
+        })
+        .turn(|t| t.text("never"));
+    block_on(async {
+        let store = heiko_store_sqlite::memory().await.unwrap();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let started = Arc::new(tokio::sync::Notify::new());
+        let run = Agent::new(llm.clone())
+            .tool(Waiter(started.clone(), json!({"type": "object"})))
+            .tool(Probe::new("probe", ExecutionMode::Parallel, log.clone()))
+            .start("go", &store);
+        let id = run.id();
+        started.notified().await;
+        run.cancel();
+        let outcome = run.outcome().await.unwrap();
+        assert_eq!(outcome.stop, StopReason::Cancelled);
+        let transcript = stored(&store, &id.0).await;
+        assert_results_follow_calls(&transcript);
+        let Message::ToolResult(waited) = &transcript[2] else {
+            panic!("{transcript:?}")
+        };
+        assert!(waited.is_error);
+        assert!(
+            serde_json::to_string(&waited.content)
+                .unwrap()
+                .contains("cancelled while waiting")
+        );
+        // The run stopped: the model was asked only once.
+        assert_eq!(llm.requests().len(), 1);
+        let record = store.run(&id.0).await.unwrap().unwrap();
+        assert_eq!(record.status, heiko_store::Status::Cancelled);
+    });
+}
+
+/// A cancel while a batch's first group runs skips every later group:
+/// none of their calls starts, and each ends as cancelled.
+#[test]
+fn a_cancel_skips_the_groups_still_to_start() {
+    let llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call("wait", json!({}))
+                .tool_call("g", json!({"ms": 1}))
+                .tool_call("h", json!({"ms": 1}))
+                .tool_call("g", json!({"ms": 1}))
+        })
+        .turn(|t| t.text("never"));
+    block_on(async {
+        let store = heiko_store_sqlite::memory().await.unwrap();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let started = Arc::new(tokio::sync::Notify::new());
+        let run = Agent::new(llm.clone())
+            .tool(Waiter(started.clone(), json!({"type": "object"})))
+            .tool(Probe::new("g", ExecutionMode::Grouped, log.clone()))
+            .tool(Probe::new("h", ExecutionMode::Grouped, log.clone()))
+            .start("go", &store);
+        let id = run.id();
+        started.notified().await;
+        run.cancel();
+        let outcome = run.outcome().await.unwrap();
+        assert_eq!(outcome.stop, StopReason::Cancelled);
+        assert!(log.lock().unwrap().is_empty(), "a later group started");
+        let transcript = stored(&store, &id.0).await;
+        assert_results_follow_calls(&transcript);
+        let skipped: Vec<_> = transcript[3..6]
+            .iter()
+            .map(|message| match message {
+                Message::ToolResult(result) => (
+                    result.is_error,
+                    serde_json::to_string(&result.content).unwrap(),
+                ),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        for (is_error, content) in skipped {
+            assert!(is_error);
+            assert!(content.contains(CANCELLED), "{content}");
+        }
+    });
+}
+
+/// A response that failed runs none of its tool calls.
+#[test]
+fn failed_response_runs_no_tools() {
+    let llm = ScriptedModel::new().turn_with(|_| {
+        let mut message = heiko_ai::message::AssistantMessage {
+            content: vec![AssistantBlock::ToolCall(
+                heiko_ai::message::ToolCall {
+                    id: "call_1|fc_1".into(),
+                    name: "probe".into(),
+                    arguments: json!({"ms": 1}).as_object().unwrap().clone(),
+                },
+            )],
+            model: "gpt-5.5".into(),
+            response_id: None,
+            usage: Default::default(),
+            stop_reason: MessageStop::Error,
+            error_message: Some("server_error: boom".into()),
+            timestamp: 0,
+        };
+        message.usage.output = 1;
+        message
+    });
+    block_on(async {
+        let store = heiko_store_sqlite::memory().await.unwrap();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let outcome = Agent::new(llm)
+            .tool(Probe::new("probe", ExecutionMode::Parallel, log.clone()))
+            .run("go", &store)
+            .await
+            .unwrap();
+        assert!(
+            matches!(outcome.stop, StopReason::Error(_)),
+            "{:?}",
+            outcome.stop
+        );
+        assert!(log.lock().unwrap().is_empty());
+    });
+}
+
+/// With warm-up on, each run warms its session up once, with the run's
+/// settings, before its first turn; with it off (the default), never.
+#[test]
+fn warm_up_runs_once_per_run_when_on() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("one"))
+        .turn(|t| t.text("two"))
+        .turn(|t| t.text("three"));
+    block_on(async {
+        let store = heiko_store_sqlite::memory().await.unwrap();
+        let agent = Agent::new(llm.clone()).instructions("Be brief.");
+        agent.run("cold", &store).await.unwrap();
+        assert!(llm.warm_ups().is_empty());
+        let warm = agent.warmup(true);
+        warm.run("warm", &store).await.unwrap();
+        warm.run("warm again", &store).await.unwrap();
+        let warm_ups = llm.warm_ups();
+        assert_eq!(warm_ups.len(), 2);
+        assert_eq!(warm_ups[0], llm.requests()[1].settings);
+    });
+}
+
+/// `tools` adds several tools at once, after any added one by one, in
+/// order.
+#[test]
+fn tools_adds_several_in_order() {
+    let llm = ScriptedModel::new().turn(|t| t.text("ok"));
+    block_on(async {
+        let store = heiko_store_sqlite::memory().await.unwrap();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let kit: Vec<Arc<dyn AgentTool>> = vec![
+            Arc::new(Probe::new("a", ExecutionMode::Parallel, log.clone())),
+            Arc::new(Probe::new("b", ExecutionMode::Parallel, log.clone())),
+        ];
+        Agent::new(llm.clone())
+            .tool(Probe::new("first", ExecutionMode::Parallel, log))
+            .tools(kit)
+            .run("go", &store)
+            .await
+            .unwrap();
+        let names: Vec<String> = llm.requests()[0]
+            .settings
+            .tools
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
+        assert_eq!(names, ["first", "a", "b"]);
+    });
+}
+
+/// A batch that mixes grouped tools with others runs in groups: each
+/// grouped tool's calls together, and the other calls together, one
+/// group after another in the order their first calls come. Nothing in
+/// one group overlaps another.
+#[hegel::test(test_cases = 60)]
+fn grouped_calls_run_together_and_apart(tc: TestCase) {
+    let driver = heiko_agent::testing::filler(&tc);
+    // Each call's duration is unique, so its interval names it.
+    let tools: Vec<&'static str> = tc.draw(
+        gs::vecs(gs::sampled_from(vec!["a", "b", "g", "h"]))
+            .min_size(1)
+            .max_size(6),
+    );
+    let key = |tool: &str| match tool {
+        "g" | "h" => tool.to_owned(),
+        _ => "rest".to_owned(),
+    };
+    let llm = ScriptedModel::new()
+        .turn(|mut t| {
+            for (i, tool) in tools.iter().enumerate() {
+                t = t.tool_call(*tool, json!({"ms": 10 * (i + 1)}));
+            }
+            t
+        })
+        .turn(|t| t.text("done"));
+    block_on(async {
+        let store = heiko_store_sqlite::memory().await.unwrap();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let agent = Agent::new(llm.clone())
+            .with_loop(driver.clone())
+            .tool(Probe::new("a", ExecutionMode::Parallel, log.clone()))
+            .tool(Probe::new("b", ExecutionMode::Parallel, log.clone()))
+            .tool(Probe::new("g", ExecutionMode::Grouped, log.clone()))
+            .tool(Probe::new("h", ExecutionMode::Grouped, log.clone()));
+        let outcome = agent.run("go", &store).await.unwrap();
+        assert_eq!(outcome.text, "done");
+        let log = log.lock().unwrap().clone();
+        assert_eq!(log.len(), tools.len());
+
+        // The groups, in the order their first calls come.
+        let mut order: Vec<String> = Vec::new();
+        for tool in &tools {
+            if !order.contains(&key(tool)) {
+                order.push(key(tool));
+            }
+        }
+        let starts: Vec<Instant> = order
+            .iter()
+            .map(|group| {
+                let mut starts = log
+                    .iter()
+                    .filter(|i| key(i.tool) == *group)
+                    .map(|i| i.start);
+                let first = starts.next().unwrap();
+                // A group's calls all start at once.
+                assert!(starts.all(|s| s == first), "{group}: {log:?}");
+                first
+            })
+            .collect();
+        assert!(starts.windows(2).all(|w| w[0] < w[1]), "{log:?}");
+        for x in &log {
+            for y in &log {
+                if key(x.tool) != key(y.tool) {
+                    let overlap = x.start < y.end && y.start < x.end;
+                    assert!(!overlap, "{x:?} overlaps {y:?}");
+                }
+            }
+        }
+    });
+}

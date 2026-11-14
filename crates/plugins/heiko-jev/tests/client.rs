@@ -1,0 +1,399 @@
+//! `TypeSafe`, the HTTP client, against a local server that plays back
+//! scripted responses and records the requests it gets.
+
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0028)"
+)]
+
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
+
+use serde_json::{Value, json};
+use heiko_ai::retry::RetryPolicy;
+use heiko_jev::{Jev, JevError, Question, Request, TypeSafe};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpListener,
+};
+
+/// One scripted HTTP response.
+struct Reply {
+    status: u16,
+    headers: Vec<(&'static str, &'static str)>,
+    body: String,
+}
+
+fn ok(body: Value) -> Reply {
+    Reply {
+        status: 200,
+        headers: vec![],
+        body: body.to_string(),
+    }
+}
+
+fn status(status: u16, headers: Vec<(&'static str, &'static str)>) -> Reply {
+    Reply {
+        status,
+        headers,
+        body: "{\"error\":\"echoes the request\"}".into(),
+    }
+}
+
+/// A request the server got: its headers (lowercased names) and body.
+#[derive(Debug, Clone)]
+struct Seen {
+    headers: Vec<(String, String)>,
+    body: Value,
+}
+
+/// Serves `replies` in order, one per connection, on a free port.
+async fn serve(replies: Vec<Reply>) -> (String, Arc<Mutex<Vec<Seen>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/v1/systemone", listener.local_addr().unwrap());
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let record = seen.clone();
+    tokio::spawn(async move {
+        for reply in replies {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = Vec::new();
+            let mut chunk = [0u8; 4096];
+            let (head, body_start) = loop {
+                let n = socket.read(&mut chunk).await.unwrap();
+                buffer.extend_from_slice(&chunk[..n]);
+                if let Some(end) =
+                    buffer.windows(4).position(|w| w == b"\r\n\r\n")
+                {
+                    break (
+                        String::from_utf8(buffer[..end].to_vec()).unwrap(),
+                        end + 4,
+                    );
+                }
+            };
+            let headers: Vec<(String, String)> = head
+                .lines()
+                .skip(1)
+                .filter_map(|line| line.split_once(':'))
+                .map(|(k, v)| (k.trim().to_lowercase(), v.trim().to_owned()))
+                .collect();
+            let length: usize = headers
+                .iter()
+                .find(|(k, _)| k == "content-length")
+                .map_or(0, |(_, v)| v.parse().unwrap());
+            while buffer.len() < body_start + length {
+                let n = socket.read(&mut chunk).await.unwrap();
+                buffer.extend_from_slice(&chunk[..n]);
+            }
+            let body = serde_json::from_slice(
+                &buffer[body_start..body_start + length],
+            )
+            .unwrap();
+            record.lock().unwrap().push(Seen { headers, body });
+            let mut response = format!(
+                "HTTP/1.1 {} X\r\ncontent-length: {}\r\ncontent-type: application/json\r\nconnection: close\r\n",
+                reply.status,
+                reply.body.len()
+            );
+            for (name, value) in reply.headers {
+                response.push_str(&format!("{name}: {value}\r\n"));
+            }
+            response.push_str("\r\n");
+            response.push_str(&reply.body);
+            socket.write_all(response.as_bytes()).await.unwrap();
+            socket.shutdown().await.unwrap();
+        }
+    });
+    (url, seen)
+}
+
+fn runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+}
+
+fn fast_retries() -> RetryPolicy {
+    RetryPolicy {
+        max_attempts: 3,
+        base: Duration::from_millis(1),
+        max_delay: Duration::from_millis(5),
+    }
+}
+
+fn request() -> Request {
+    Request::new(json!({"ticket": "refund please"}))
+        .question("refund", Question::noul("Does this ask for a refund?"))
+        .question(
+            "team",
+            Question::choice(
+                "Which team?",
+                [("billing", "money"), ("support", "rest")],
+            ),
+        )
+        .question("urgency", Question::score("How urgent?", ["low", "high"]))
+}
+
+fn answers() -> Value {
+    json!({
+        "model": "jev-1.13.0",
+        "answers": {
+            "refund": {"type": "noul", "noul": 0.97},
+            "team": {"type": "choice", "choice": "billing", "probabilities": {"billing": 0.9, "support": 0.1}, "confidence": 0.8},
+            "urgency": {"type": "score", "score": 0.6, "probabilities": {"0": 0.4, "1": 0.6}, "confidence": 0.2},
+        },
+        "usage": {"input_tokens": 1_000_000, "output_tokens": 20},
+    })
+}
+
+/// The request goes as TypeSafe documents it, with the key as a bearer
+/// token and the client's model; the answers come back typed, and the
+/// usage is priced per input token.
+#[test]
+fn a_request_round_trips() {
+    runtime().block_on(async {
+        let (url, seen) = serve(vec![ok(answers())]).await;
+        let jev = TypeSafe::new("sk-test").url(url).model("jev-preview");
+        let response = jev.ask(&request()).await.unwrap();
+        assert_eq!(response.noul("refund").unwrap(), 0.97);
+        assert_eq!(response.choice("team").unwrap(), ("billing", 0.8));
+        assert_eq!(response.score("urgency").unwrap(), (0.6, 0.2));
+        assert_eq!(
+            response.usage(),
+            heiko_ai::message::Usage {
+                input: 1_000_000,
+                output: 20,
+                total_tokens: 1_000_020,
+                cost: heiko_ai::message::UsageCost {
+                    input: 0.042,
+                    total: 0.042,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        );
+
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 1);
+        assert!(
+            seen[0]
+                .headers
+                .contains(&("authorization".into(), "Bearer sk-test".into()))
+        );
+        assert_eq!(
+            seen[0].body,
+            json!({
+                "model": "jev-preview",
+                "state": {"ticket": "refund please"},
+                "questions": {
+                    "refund": {"type": "noul", "instructions": "Does this ask for a refund?"},
+                    "team": {"type": "choice", "instructions": "Which team?", "criteria": {"billing": "money", "support": "rest"}},
+                    "urgency": {"type": "score", "instructions": "How urgent?", "criteria": ["low", "high"]},
+                },
+            })
+        );
+    });
+}
+
+/// 429, 503 and 529 are retried, up to the policy's attempts; the last
+/// status is the error once the policy runs out.
+#[test]
+fn overload_is_retried_under_the_policy() {
+    runtime().block_on(async {
+        let (url, seen) = serve(vec![
+            status(429, vec![("retry-after", "0")]),
+            status(503, vec![]),
+            ok(answers()),
+        ])
+        .await;
+        let jev = TypeSafe::new("k").url(url).retry(fast_retries());
+        assert!(jev.ask(&request()).await.is_ok());
+        assert_eq!(seen.lock().unwrap().len(), 3);
+
+        let (url, seen) = serve(vec![
+            status(529, vec![]),
+            status(529, vec![]),
+            status(529, vec![]),
+        ])
+        .await;
+        let jev = TypeSafe::new("k").url(url).retry(fast_retries());
+        assert_eq!(jev.ask(&request()).await, Err(JevError::Status(529)));
+        assert_eq!(seen.lock().unwrap().len(), 3);
+    });
+}
+
+/// Other errors are not retried, and their body is not kept.
+#[test]
+fn other_errors_fail_at_once() {
+    runtime().block_on(async {
+        let (url, seen) = serve(vec![status(401, vec![]), ok(answers())]).await;
+        let jev = TypeSafe::new("bad").url(url).retry(fast_retries());
+        let error = jev.ask(&request()).await.unwrap_err();
+        assert_eq!(error, JevError::Status(401));
+        assert!(!error.to_string().contains("echoes"));
+        assert_eq!(seen.lock().unwrap().len(), 1);
+    });
+}
+
+/// A body that is not TypeSafe's JSON is an error, not a guess.
+#[test]
+fn malformed_responses_are_errors() {
+    runtime().block_on(async {
+        let (url, _) = serve(vec![Reply {
+            status: 200,
+            headers: vec![],
+            body: "{\"answers\": 3}".into(),
+        }])
+        .await;
+        let jev = TypeSafe::new("k").url(url);
+        assert!(matches!(
+            jev.ask(&request()).await,
+            Err(JevError::Malformed(_))
+        ));
+    });
+}
+
+/// A probability as Jev may send one: at and just past either end of
+/// `[0, 1]`, inside, outside, or not a number.
+fn probability() -> impl hegel::generators::PrintableGenerator<f64> {
+    use hegel::generators as gs;
+    hegel::one_of!(
+        gs::sampled_from(vec![
+            0.0,
+            -0.0,
+            1.0,
+            0.0_f64.next_down(),
+            1.0_f64.next_up(),
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ]),
+        gs::floats::<f64>().min_value(0.0).max_value(1.0),
+        gs::floats::<f64>().min_value(-2.0).max_value(3.0),
+    )
+}
+
+/// Answers are checked when read: a Noul's probability, and a choice's
+/// or a score's confidence, reads back when it is from 0 to 1 and is
+/// out of range otherwise; an answer of another kind, or none, is an
+/// error.
+#[hegel::test(test_cases = 300)]
+fn answers_are_read_only_within_range(tc: hegel::TestCase) {
+    use std::collections::BTreeMap;
+
+    use heiko_jev::Answer;
+    let value = tc.draw(probability());
+    // NaN clamps to itself and equals nothing, so it is not within.
+    let within = value.clamp(0.0, 1.0) == value;
+    let answers = BTreeMap::from([
+        ("noul".to_owned(), Answer::Noul { noul: value }),
+        (
+            "choice".to_owned(),
+            Answer::Choice {
+                choice: "billing".into(),
+                probabilities: BTreeMap::from([("billing".into(), 1.0)]),
+                confidence: value,
+            },
+        ),
+        (
+            "score".to_owned(),
+            Answer::Score {
+                score: 2.0,
+                probabilities: BTreeMap::from([("2".into(), 1.0)]),
+                confidence: value,
+            },
+        ),
+    ]);
+    let response = heiko_jev::fake::response(answers, &request());
+    let out_of_range = |result: Result<f64, JevError>, id: &str| match result {
+        Ok(read) => {
+            assert!(within, "{id}: {value} read as {read}");
+            assert_eq!(read.to_bits(), value.to_bits(), "{id}");
+        }
+        Err(JevError::OutOfRange { id: at, value: got }) => {
+            assert!(!within, "{id}: {value} refused");
+            assert_eq!((at.as_str(), got.to_bits()), (id, value.to_bits()));
+        }
+        Err(other) => panic!("{id}: {other:?}"),
+    };
+    out_of_range(response.noul("noul"), "noul");
+    out_of_range(
+        response.choice("choice").map(|(choice, confidence)| {
+            assert_eq!(choice, "billing");
+            confidence
+        }),
+        "choice",
+    );
+    out_of_range(
+        response.score("score").map(|(score, confidence)| {
+            assert_eq!(score, 2.0);
+            confidence
+        }),
+        "score",
+    );
+
+    assert!(matches!(
+        response.noul("choice"),
+        Err(JevError::WrongAnswer { .. })
+    ));
+    assert!(matches!(
+        response.choice("score"),
+        Err(JevError::WrongAnswer { .. })
+    ));
+    assert!(matches!(
+        response.score("noul"),
+        Err(JevError::WrongAnswer { .. })
+    ));
+    assert!(matches!(
+        response.noul("gone"),
+        Err(JevError::MissingAnswer(_))
+    ));
+}
+
+/// The key never shows in debug output, whatever it is, and the
+/// endpoint and the model do.
+#[hegel::test]
+fn the_key_stays_secret(tc: hegel::TestCase) {
+    use hegel::generators as gs;
+    // Long enough not to occur in the rest by chance.
+    let key =
+        tc.draw(gs::from_regex("sk-[A-Za-z0-9_-]{16,40}").fullmatch(true));
+    let model = tc.draw(gs::from_regex("jev-[a-z0-9.]{1,12}").fullmatch(true));
+    let shown =
+        format!("{:?}", TypeSafe::new(key.as_str()).model(model.as_str()));
+    assert!(!shown.contains(&key), "{shown}");
+    assert!(
+        shown.contains("https://api.typesafe.ai/v1/systemone"),
+        "{shown}"
+    );
+    assert!(shown.contains(&model), "{shown}");
+}
+
+/// A key from the environment is read trimmed; a missing or blank one
+/// is an error that names the variable.
+#[hegel::test(test_cases = 500)]
+fn keys_come_trimmed_or_not_at_all(tc: hegel::TestCase) {
+    use hegel::generators as gs;
+    use heiko_jev::{MissingApiKey, api_key};
+    let space = || {
+        gs::text()
+            .alphabet(" \t\n\r\u{a0}\u{2028}\u{3000}")
+            .max_size(3)
+    };
+    let key = tc.draw(hegel::one_of!(
+        gs::just(String::new()),
+        gs::from_regex("sk-[A-Za-z0-9 _-]{0,20}[A-Za-z0-9]").fullmatch(true),
+    ));
+    let given = tc
+        .draw(gs::booleans())
+        .then(|| format!("{}{key}{}", tc.draw(space()), tc.draw(space())));
+    let expected = if key.is_empty() || given.is_none() {
+        Err(MissingApiKey)
+    } else {
+        Ok(key.clone())
+    };
+    assert_eq!(api_key(given.clone()), expected, "{given:?}");
+    assert_eq!(MissingApiKey.to_string(), "TYPESAFE_API_KEY is not set");
+}

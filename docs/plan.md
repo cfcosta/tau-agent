@@ -1,6 +1,6 @@
 # Plan
 
-This plan covers the scope, size, milestones and risks for tau-agent. The
+This plan covers the scope, size, milestones and risks for heiko-agent. The
 fixed decisions behind it are in [`decisions/`](decisions/). Sizes and
 durations are estimates for one senior Rust engineer, and exclude tests.
 
@@ -16,22 +16,22 @@ as separate tested commits.
 
 | Crate / module                                                 | Est. lines | Difficulty (1–5) | Key dependencies                            |
 | -------------------------------------------------------------- | ---------: | :--------------: | ------------------------------------------- |
-| `tau-ai`: types, events, accumulator                           |       0.8k |        2         | `serde_json` (`preserve_order`), `indexmap` |
-| `tau-ai`: Responses conversion + event processor               |       1.0k |        3         | `serde`, `jiter`                            |
-| `tau-ai`: WebSocket pool, lanes, continuation                  |       0.9k |        4         | `tokio-tungstenite` (rustls)                |
-| `tau-ai`: retry, cost, auth, model table                       |       0.4k |        2         | `tokio-util`                                |
-| `tau-agent`: loop, `Agent`, `Run`, steering, cancel            |       1.3k |        3         | `tokio`, `futures`                          |
-| `tau-agent`: tool trait, coercion + validation, strict schemas |       0.7k |        3         | `jsonschema`, `schemars`                    |
-| `tau-agent`: typed results, sub-agents, limits, forks, hooks   |       0.9k |        3         | none                                        |
-| `tau-agent`: compaction                                        |       0.5k |        2         | none                                        |
-| `tau-store`: runs, messages, forks                             |       0.6k |        2         | `sqlx` (`sqlite`, `macros`, `migrate`)      |
-| `tau-testing`: scripted model, generators, run replay          |       0.4k |        1         | `hegeltest`                                 |
+| `heiko-ai`: types, events, accumulator                           |       0.8k |        2         | `serde_json` (`preserve_order`), `indexmap` |
+| `heiko-ai`: Responses conversion + event processor               |       1.0k |        3         | `serde`, `jiter`                            |
+| `heiko-ai`: WebSocket pool, lanes, continuation                  |       0.9k |        4         | `tokio-tungstenite` (rustls)                |
+| `heiko-ai`: retry, cost, auth, model table                       |       0.4k |        2         | `tokio-util`                                |
+| `heiko-agent`: loop, `Agent`, `Run`, steering, cancel            |       1.3k |        3         | `tokio`, `futures`                          |
+| `heiko-agent`: tool trait, coercion + validation, strict schemas |       0.7k |        3         | `jsonschema`, `schemars`                    |
+| `heiko-agent`: typed results, sub-agents, limits, forks, hooks   |       0.9k |        3         | none                                        |
+| `heiko-agent`: compaction                                        |       0.5k |        2         | none                                        |
+| `heiko-store`: runs, messages, forks                             |       0.6k |        2         | `sqlx` (`sqlite`, `macros`, `migrate`)      |
+| `heiko-testing`: scripted model, generators, run replay          |       0.4k |        1         | `hegeltest`                                 |
 
 ### Optional crate (~2k lines)
 
 | Crate                                                | Est. lines | Difficulty (1–5) | Key dependencies                                       |
 | ---------------------------------------------------- | ---------: | :--------------: | ------------------------------------------------------ |
-| `tau-tools`: read, bash, edit, write, grep, find, ls |       2.0k |        2         | `nix`, `similar`, `grep-searcher`, `ignore`, `globset` |
+| `heiko-tools`: read, bash, edit, write, grep, find, ls |       2.0k |        2         | `nix`, `similar`, `grep-searcher`, `ignore`, `globset` |
 
 ### Hardest part
 
@@ -107,24 +107,24 @@ The hardest part is the WebSocket layer. It has to:
       [`reference/openai-websocket.md`](reference/openai-websocket.md)).
 - [x] `OpenAi` client with one `Session` per run.
 - [ ] Test infrastructure (see [`reference/testing.md`](reference/testing.md)):
-  - [x] `hegeltest` wired in; `tau_testing::block_on` on a paused
+  - [x] `hegeltest` wired in; `heiko_testing::block_on` on a paused
         current-thread runtime;
   - [x] shared generators for messages, transcripts and `response.*`
-        event streams in `tau_testing::generators`;
-  - [x] `tau_testing::FakeOpenAi`, a turmoil host that speaks the
+        event streams in `heiko_testing::generators`;
+  - [x] `heiko_testing::FakeOpenAi`, a turmoil host that speaks the
         Responses WebSocket protocol, with server-side continuation,
         limits (16 in flight, 32 stream ids, 60-minute close), delayed
         and overlapping replies, and fault injection (drops, stalls);
   - [ ] CI Check tier, nightly tier, and the nightly live job with a
         budget cap. The live job waits for the live tests.
 - [ ] Tests:
-  - [x] the `tau-ai` properties from the testing inventory;
+  - [x] the `heiko-ai` properties from the testing inventory;
   - [ ] replay recorded `response.*` streams (needs live recordings);
   - [x] delta-rule model test, including its extended variant;
   - [x] `ws::proto` properties over generated event orders;
   - [x] transport tests in turmoil against `FakeOpenAi`, with
         Hegel-drawn fault schedules, asserting on `PoolStats`;
-  - [x] the `tau-ai` known cases;
+  - [x] the `heiko-ai` known cases;
   - [x] model and pricing table checks;
   - [ ] live cases for plain, reasoning and tool turns, plus the
         continuation probe;
@@ -149,8 +149,8 @@ The hardest part is the WebSocket layer. It has to:
 - [x] Steering: messages are injected after the current tool batch.
 - [x] Cancellation through a `CancellationToken`. Every tool call gets a
       result, even when the batch is aborted mid-way.
-- [x] `tau-testing::ScriptedModel`, ported from pi's `faux.ts`.
-- [x] The `tau-agent` properties from the testing inventory, including
+- [x] `heiko-testing::ScriptedModel`, ported from pi's `faux.ts`.
+- [x] The `heiko-agent` properties from the testing inventory, including
       the loop model test over generated scripts, and the loop known
       cases.
 - [x] `trybuild` compile-fail cases for `Agent`, `TypedTool` and
@@ -174,7 +174,7 @@ The hardest part is the WebSocket layer. It has to:
 - [x] CI runs `cargo sqlx prepare --check`.
 - [x] Metric: time spent waiting for the writer connection
       (`Store::writer_stats`).
-- [x] The `tau-store` properties from the testing inventory, including
+- [x] The `heiko-store` properties from the testing inventory, including
       the store model test and the combined loop-and-store test (a
       cancel or a failed write leaves no partial turn).
 
@@ -205,27 +205,27 @@ The hardest part is the WebSocket layer. It has to:
       rule sends it in full (covered by the `ws::proto` properties).
 - [x] Three example workflows that double as integration tests: a typed
       pipeline, a supervisor with sub-agents, and a fork fan-out
-      (`crates/tau-agent/tests/examples.rs`).
-- [x] The remaining `tau-agent` properties: limits, forks, compaction,
+      (`crates/heiko-agent/tests/examples.rs`).
+- [x] The remaining `heiko-agent` properties: limits, forks, compaction,
       with the compaction known cases.
 - [ ] Live cases for damaged transcripts, forks, compaction and a real
       context overflow. Waits for the live tier (M1 open item).
 - [ ] `cargo mutants` clean on the modules listed in the testing doc
       (`scripts/mutants.sh`, by hand). A partial pass on 2026-10-06
-      (297 of 1367 mutants) missed 18, in tau-agent's `agent.rs`,
+      (297 of 1367 mutants) missed 18, in heiko-agent's `agent.rs`,
       `plugin.rs` and `runner.rs`; some are `.cargo/mutants.toml`
       exclusions whose signatures have since changed.
 - Open:
   - a threshold compaction that fails turns compaction off for the rest
     of the run rather than retrying later.
 
-### M5: `tau-tools` (weeks 6–7, optional)
+### M5: `heiko-tools` (weeks 6–7, optional)
 
 - [x] The seven tools as specified in [`reference/tools.md`](reference/tools.md),
       plus `coding_tools(&root)` and `Agent::tools` to add them at once.
 - [x] Search runs natively, with no `rg` or `fd` subprocesses and no
       binaries downloaded at runtime.
-- [x] The `tau-tools` properties, example tests and known cases from
+- [x] The `heiko-tools` properties, example tests and known cases from
       the testing doc, and an example test for every error string in
       `tools.md`.
 
@@ -234,7 +234,7 @@ The hardest part is the WebSocket layer. It has to:
 | Risk                                                                                                            | Mitigation                                                                                                                                                                                                                                                             |
 | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | WebSocket mode is recent, and networks that block WebSocket upgrades stop every agent.                          | Surface connection failures clearly. Document the network requirement.                                                                                                                                                                                                 |
-| One vendor.                                                                                                     | Keep `tau-ai` behind an `Llm` trait, which `ScriptedModel` already implements.                                                                                                                                                                                         |
+| One vendor.                                                                                                     | Keep `heiko-ai` behind an `Llm` trait, which `ScriptedModel` already implements.                                                                                                                                                                                         |
 | Continuation correctness across lanes: a cancel, a compaction or a reconnect must reset exactly the right lane. | An I/O-free `ws::proto` tested with properties over generated event orders, and transport tests in turmoil against `FakeOpenAi`, which rebuilds the input server-side. `PoolStats` from M1. A nightly live probe asserts the delta hit rate against the real endpoint. |
 | SQLite has a single writer.                                                                                     | Batch appends per turn. Measure writer wait time. It only matters at very wide fan-out.                                                                                                                                                                                |
-| No upstream to track. tau-agent reuses pi's ideas as of `2b0a123`; it does not follow pi's releases.            | Pull fixes from pi by hand when they are relevant.                                                                                                                                                                                                                     |
+| No upstream to track. heiko-agent reuses pi's ideas as of `2b0a123`; it does not follow pi's releases.            | Pull fixes from pi by hand when they are relevant.                                                                                                                                                                                                                     |

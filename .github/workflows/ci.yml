@@ -48,14 +48,14 @@ jobs:
       # host halves.
       - name: Clippy without the plugins' host halves
         run: |
-          nix develop -c cargo clippy -p tau-ui-remote --all-targets -- -D warnings
-          for plugin in tau-codemode tau-mcp tau-tools tau-vcs; do
+          nix develop -c cargo clippy -p heiko-ui-remote --all-targets -- -D warnings
+          for plugin in heiko-codemode heiko-mcp heiko-tools heiko-vcs; do
             nix develop -c cargo clippy -p "$plugin" --no-default-features --lib -- -D warnings
           done
 
       # Ubuntu's AppArmor keeps unprivileged processes out of user
       # namespaces, which bwrap makes an agent's sandbox in
-      # (tau-agents-host's sandbox test runs a real one).
+      # (heiko-agents-host's sandbox test runs a real one).
       - name: Allow user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
@@ -67,11 +67,11 @@ jobs:
         run: nix develop -c cargo nextest run --release --workspace --no-fail-fast --profile ci
 
       - name: sqlx offline metadata is current
-        working-directory: crates/tau-store-sqlite
+        working-directory: crates/heiko-store-sqlite
         run: |
-          export DATABASE_URL="sqlite://$RUNNER_TEMP/tau-store-ci.db"
+          export DATABASE_URL="sqlite://$RUNNER_TEMP/heiko-store-ci.db"
           nix develop -c sqlx database setup
-          nix develop -c cargo sqlx prepare --check -- -p tau-store-sqlite
+          nix develop -c cargo sqlx prepare --check -- -p heiko-store-sqlite
 
   # Its own job: a new advisory fails it alone, and Check still saves its
   # build cache, which a failed job does not.

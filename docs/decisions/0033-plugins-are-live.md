@@ -20,7 +20,7 @@ model could not: the plugin was not active. Two rules kept it out:
   pinned per run"). Even once landed, a change reached a chat only on
   its next message, never during a turn.
 
-The person wants tau to feel like a living thing: a plugin works as
+The person wants heiko to feel like a living thing: a plugin works as
 soon as it changes.
 
 ## Decision

@@ -1,8 +1,8 @@
--- Whether a change may ship, as a machine (`tau.machine`): nothing asked,
+-- Whether a change may ship, as a machine (`heiko.machine`): nothing asked,
 -- a change waiting for the person, or the person's answer on it. A state
 -- is a plain table the plugin keeps in its state, so it is saved and
 -- shown on the phone as it is.
-local tau = require("tau")
+local heiko = require("heiko")
 
 local gate = {}
 
@@ -10,7 +10,7 @@ local function asked(_, e)
 	return { state = "waiting", change = e.change }
 end
 
-gate.machine = tau.machine({
+gate.machine = heiko.machine({
 	-- Every state, and the fields it carries: no others.
 	states = {
 		idle = {},

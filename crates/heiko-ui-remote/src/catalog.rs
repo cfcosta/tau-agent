@@ -1,0 +1,277 @@
+//! What the workspace shows beyond single runs: the agent's plugins, the
+//! repositories with each plugin's data for them, and the store. The
+//! host fills it from its agents and plugin crates; `heiko_demo` has
+//! an example.
+
+use serde::{Deserialize, Serialize};
+use heiko_ui_plugin::PluginValue;
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct Catalog {
+    /// The agent the plugin screen describes.
+    pub agent: String,
+    /// Where the agent is defined, for the header.
+    pub agent_source: Option<String>,
+    /// In registration order.
+    pub plugins: Vec<PluginInfo>,
+    /// The repositories runs work on, in the sidebar's order. Each has
+    /// its own notes and rules. heiko's own are among them, but only
+    /// [`Catalog::listed`] are the person's.
+    pub repos: Vec<Repo>,
+    /// The repositories the sidebar had open when the user last left it.
+    pub open_repos: Vec<String>,
+    /// Conversations the user closed: History lists them, the sidebar
+    /// does not.
+    pub closed_runs: Vec<heiko_agent::tool::RunId>,
+    pub store: StoreInfo,
+    /// Whether the host can open pull requests from runs: the forge is
+    /// signed in.
+    pub pull_requests: bool,
+    /// What the forge is called, for labels: `GitHub`. `None` when no
+    /// plugin fills the forge's slot.
+    #[serde(default)]
+    pub forge: Option<String>,
+    /// Each slot some plugin can fill, with those plugins in the slot's
+    /// order (ADR 0045): the first fills it until the person picks
+    /// another, which the UI state keeps (`heiko_ui_plugin::slots::PICKS`).
+    #[serde(default)]
+    pub slots: Vec<SlotInfo>,
+    /// Where runs work.
+    pub project: ProjectStatus,
+    /// What the latest update of a repository found, for the status bar:
+    /// `heiko-agent is up to date`.
+    pub update: Option<String>,
+    /// The models the picker offers, and the user's choices about them.
+    pub models: crate::models::Models,
+    /// Each plugin's data across repositories, by plugin
+    /// (`UiPlugin::data`).
+    #[serde(default)]
+    pub plugin_data: std::collections::BTreeMap<String, PluginValue>,
+    /// Each plugin's settings, as JSON, by plugin.
+    #[serde(default)]
+    pub plugin_settings: std::collections::BTreeMap<String, PluginValue>,
+    /// The repositories' own copies of plugins' settings, by repository,
+    /// then plugin (ADR 0029).
+    #[serde(default)]
+    pub repo_plugin_settings: std::collections::BTreeMap<
+        String,
+        std::collections::BTreeMap<String, PluginValue>,
+    >,
+    /// The jobs the host keeps for plugins, going on now (ADR 0044): by
+    /// plugin, then name, each with its progress.
+    #[serde(default)]
+    pub jobs: Vec<heiko_ui_plugin::JobInfo>,
+}
+
+impl Catalog {
+    /// `plugin`'s settings in `scope`: the repository's own copy when it
+    /// has one, else the value everywhere.
+    pub fn settings_in(
+        &self,
+        plugin: &str,
+        scope: Option<&str>,
+    ) -> Option<&PluginValue> {
+        scope
+            .and_then(|repo| self.repo_plugin_settings.get(repo)?.get(plugin))
+            .or_else(|| self.plugin_settings.get(plugin))
+    }
+
+    /// Whether `repo` keeps its own copy of `plugin`'s settings.
+    pub fn has_own_settings(&self, repo: &str, plugin: &str) -> bool {
+        self.repo_plugin_settings
+            .get(repo)
+            .is_some_and(|plugins| plugins.contains_key(plugin))
+    }
+}
+
+impl Catalog {
+    /// What labels call the forge: its name, or `the forge` when no
+    /// plugin fills its slot.
+    pub fn forge_name(&self) -> &str {
+        self.forge.as_deref().unwrap_or("the forge")
+    }
+
+    pub fn repo(&self, name: &str) -> Option<&Repo> {
+        self.repos.iter().find(|repo| repo.name == name)
+    }
+
+    pub fn repo_mut(&mut self, name: &str) -> Option<&mut Repo> {
+        self.repos.iter_mut().find(|repo| repo.name == name)
+    }
+
+    /// The person's repositories, in the sidebar's order: heiko's own are
+    /// left out.
+    pub fn listed(&self) -> impl Iterator<Item = &Repo> {
+        self.repos.iter().filter(|repo| repo.kind.is_none())
+    }
+
+    /// Whether `name` is one of the person's repositories.
+    pub fn is_listed(&self, name: &str) -> bool {
+        self.repo(name).is_some_and(|repo| repo.kind.is_none())
+    }
+
+    /// The repositories of the kind `kind` (`RepoKind`), such as the
+    /// agents' (ADR 0037), by name.
+    pub fn of_kind(&self, kind: &str) -> impl Iterator<Item = &Repo> {
+        let mut agents: Vec<&Repo> = self
+            .repos
+            .iter()
+            .filter(|repo| repo.kind.as_deref() == Some(kind))
+            .collect();
+        agents.sort_by(|a, b| a.name.cmp(&b.name));
+        agents.into_iter()
+    }
+
+    /// The plugins heiko has built in: every one but the person's own.
+    pub fn built_in(&self) -> impl Iterator<Item = &PluginInfo> {
+        self.plugins
+            .iter()
+            .filter(|plugin| plugin.group != heiko_ui_plugin::Group::Yours)
+    }
+
+    /// The plugin that keeps the person's own plugins, each an entry of
+    /// it.
+    pub fn yours(&self) -> Option<&PluginInfo> {
+        self.plugins
+            .iter()
+            .find(|plugin| plugin.group == heiko_ui_plugin::Group::Yours)
+    }
+
+    /// How many of the person's plugins need them: a version to allow,
+    /// tests to fix, one that does not load. A note on the entry says
+    /// which.
+    pub fn yours_need_you(&self) -> usize {
+        self.yours().map_or(0, |yours| {
+            yours
+                .entries
+                .iter()
+                .filter(|entry| entry.note.is_some())
+                .count()
+        })
+    }
+}
+
+/// A repository runs work on: its memory and its plugins' data belong
+/// to it alone.
+/// A slot, and the plugins that can fill it, in its order.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct SlotInfo {
+    pub name: String,
+    pub candidates: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct Repo {
+    /// Its own id, which a move or a new name keeps: what a page or the
+    /// phone keys on.
+    #[serde(default)]
+    pub id: heiko_ui_plugin::RepoId,
+    /// What the sidebar calls it; unique in the catalog.
+    pub name: String,
+    /// Where its clone is.
+    pub path: String,
+    /// Its main chat, which every other chat in it forks from and which
+    /// cannot be closed.
+    #[serde(default)]
+    pub main: Option<heiko_agent::tool::RunId>,
+    /// Each plugin's data for the repository, by plugin
+    /// (`UiPlugin::repo_data`).
+    #[serde(default)]
+    pub plugins: std::collections::BTreeMap<String, PluginValue>,
+    /// How many of trunk's changes the forge does not have yet: what the
+    /// main chat would push (ADR 0023). Zero for a repository that did
+    /// not come from the forge.
+    #[serde(default)]
+    pub unpushed: u32,
+    /// Trunk's branch, which `origin/<trunk>` names on the forge.
+    #[serde(default)]
+    pub trunk: Option<String>,
+    /// The kind of heiko's own repository it is, as a plugin names it,
+    /// like the plugins repository (ADR 0027) or an agent's (ADR 0037):
+    /// runs work in it, but the sidebar's Repositories, search and
+    /// pickers do not list it.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// The model and effort its conversations go to unless the person
+    /// picks others, when a plugin sets them: an agent's own (ADR 0037).
+    #[serde(default)]
+    pub model: Option<crate::models::ModelChoice>,
+}
+
+/// The kinds of heiko's own repositories, as plugins name them
+/// (`RepoKind::kind`).
+impl Repo {
+    pub fn new(name: impl Into<String>, path: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            path: path.into(),
+            ..Self::default()
+        }
+    }
+
+    /// The letter on the repository's mark.
+    pub fn letter(&self) -> String {
+        self.name
+            .chars()
+            .find(|c| c.is_alphanumeric())
+            .map_or("?".into(), |c| c.to_lowercase().to_string())
+    }
+}
+
+/// Where the host's runs work, for the status bar.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ProjectStatus {
+    /// No host, or one that says nothing.
+    #[default]
+    Unknown,
+    /// The clone named this is being made a project.
+    Importing(String),
+    /// The repository named this is taking in new commits from the forge.
+    Updating(String),
+    /// The clone named this could not be made a project; runs cannot
+    /// start in it.
+    Failed(String),
+}
+
+pub use heiko_ui_plugin::Seam;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PluginInfo {
+    pub name: String,
+    pub description: String,
+    /// What it declares it reaches (ADR 0045).
+    #[serde(default)]
+    pub reach: heiko_ui_plugin::Reach,
+    /// What the plugin cost over the store's recent window.
+    pub spend: f64,
+    /// The page that explains its work, for a plugin with its UI (ADR
+    /// 0017).
+    #[serde(default)]
+    pub page: Option<heiko_ui_plugin::Link>,
+    /// Where the Plugins screen lists it (ADR 0029).
+    #[serde(default)]
+    pub group: heiko_ui_plugin::Group,
+    #[serde(default)]
+    pub note: Option<heiko_ui_plugin::Note>,
+    /// Entries of its own, listed beside it.
+    #[serde(default)]
+    pub entries: Vec<heiko_ui_plugin::CatalogEntry>,
+    /// Whether it draws a settings pane.
+    #[serde(default)]
+    pub settings: bool,
+    /// Whether it has its UI, which a phone draws as the computer builds
+    /// it (ADR 0046).
+    #[serde(default)]
+    pub ui: bool,
+    /// Whether its context rewrites keep the transcript.
+    #[serde(default)]
+    pub rewrites_keep_transcript: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct StoreInfo {
+    pub path: String,
+    pub size: String,
+    /// A query the history screen offers to run.
+    pub sample_query: String,
+}

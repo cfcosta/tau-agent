@@ -1,8 +1,8 @@
 # Fast compaction
 
-`tau-fast-compaction` (`plugins/tau-fast-compaction`) keeps a run's
+`heiko-fast-compaction` (`plugins/heiko-fast-compaction`) keeps a run's
 context lean with Jev, TypeSafe's System One model, in two stages. It is
-a Luau plugin tau comes with (ADR 0050): `src/` holds the rules,
+a Luau plugin heiko comes with (ADR 0050): `src/` holds the rules,
 and `src/plugin.luau` the hooks and what it draws. It never summarizes: what stays is verbatim, and what goes is archived or
 can be re-run. When pruning cannot free enough, summarizing compaction
 takes over.
@@ -17,22 +17,22 @@ History pruning is a port of
 [`joelhooks/pi-fast-jev-compaction`](https://github.com/joelhooks/pi-fast-jev-compaction),
 itself built on
 [`tamaratran/fast-jev-compaction`](https://github.com/tamaratran/fast-jev-compaction),
-onto tau's context seam ([plugins.md](plugins.md)). Output pruning, the
+onto heiko's context seam ([plugins.md](plugins.md)). Output pruning, the
 partitioned history and the token estimate come from
 [`tamaratran/jev-pruner`](https://github.com/tamaratran/jev-pruner). All
 three are MIT; the notices are in the crate's `THIRD_PARTY_NOTICES.md`.
 
 ## Using it
 
-tau-luau-plugins runs it first of the compactions, before the tree and
-tau-compaction, as tau comes with them. Context plugins are offered the
+heiko-luau-plugins runs it first of the compactions, before the tree and
+heiko-compaction, as heiko comes with them. Context plugins are offered the
 context in order, and the first that rewrites wins: when pruning
 declines, the next one can take the turn. It needs a TypeSafe key: the
 run's Jev. Without one it does nothing, and its status line says so.
 
 An agent of its own adds it with `Active::built_in` in a
-`LuauPlugins`, with a Jev, before tau-compaction. `with_archive` names
-the archive directory; tau's is `archive` in the repository's data
+`LuauPlugins`, with a Jev, before heiko-compaction. `with_archive` names
+the archive directory; heiko's is `archive` in the repository's data
 directory, and the default is the temporary directory.
 
 ## Output pruning
@@ -56,7 +56,7 @@ the transcript the model had seen when it made the call
   history read.
 - An output holding a NUL byte or an image is left as it is.
 - An output over 256 KiB is left as it is: the hook gets only its
-  first 256 KiB, marked cut, and pruning needs it whole. tau's
+  first 256 KiB, marked cut, and pruning needs it whole. heiko's
   `exec_command` returns at most 50 KB, so this only stops a tool that
   returns more.
 
@@ -117,7 +117,7 @@ before and after, whether the result was replaced, the archive, and
 what Jev cost (`cost`, also charged to the run). The state is stored
 with the run, so an interface shows it again when it reloads the run
 from history. The plugin's view puts a pruned output on its call's card
-(`calls[id].cut`): tau-ui shows it as two tabs, the terminal and the
+(`calls[id].cut`): heiko-ui shows it as two tabs, the terminal and the
 text the model saw ([terminal.md](terminal.md)), with the lines kept and
 the tokens before and after. The ledger page adds up what pruned
 outputs saved.
@@ -142,7 +142,7 @@ and is written to the plugin's log. The run goes on.
 
 ### Cost
 
-- Every Jev request is charged to the run, under tau-luau-plugins,
+- Every Jev request is charged to the run, under heiko-luau-plugins,
   including the answered ones of a pruning that then failed.
 - Pruning at `after_tool_result` changes only the result being added, so the
   next request is still a delta
@@ -158,7 +158,7 @@ and is written to the plugin's log. The run goes on.
 
 ### Evaluation
 
-`crates/evals/tau-output-pruning-eval` measures whether output pruning keeps the
+`crates/evals/heiko-output-pruning-eval` measures whether output pruning keeps the
 lines a task needs. Each workload is a conversation that ends in one
 long command output, generated from a seed with synthetic noise (cargo,
 npm, pip, pytest, bundler and upload logs; no network), with **needles**:
@@ -175,10 +175,10 @@ lines the task needs, each in the output exactly once.
 | `multi-needle`        | three failing tests far apart                                                                   |
 | `earlier-requirement` | a checksum only an earlier `read` of a large runbook asks for, so the history comes in segments |
 
-The runner drives the real plugin, its Luau loaded as tau loads it,
+The runner drives the real plugin, its Luau loaded as heiko loads it,
 through the agent loop, as the app does: a scripted model makes the
 workload's calls, fake tools answer, and the fake `exec_command` cuts
-its output to the tail like tau's (or, with `--whole`, returns every
+its output to the tail like heiko's (or, with `--whole`, returns every
 output whole; one over 256 KiB is then left whole, see "Which
 outputs"). It reads each output's stats from the plugin's state, and
 measures layout and tokens with its own copy of the rules. Pruning sees only the text
@@ -199,7 +199,7 @@ records:
   the same answers.
 
 ```sh
-TYPESAFE_API_KEY=… cargo run -p tau-output-pruning-eval -- \
+TYPESAFE_API_KEY=… cargo run -p heiko-output-pruning-eval -- \
   --seeds 3 --budget-usd 0.5 --json results.json
 ```
 
@@ -247,7 +247,7 @@ floor, then the question's shared guidance moved into the `context`
   diagnostic and result lines and their neighbors by pattern; sorts
   commands into categories with guidance for Jev; tells Jev each
   chunk's information category; and shrinks oversized kept chunks line
-  by line. tau leaves all of that to Jev and the structural safeguards;
+  by line. heiko leaves all of that to Jev and the structural safeguards;
   only the binary check remains.
 - **Any failure keeps the output whole,** where jev-pruner retries with
   half the state on `max_tokens_exceeded`.
@@ -319,7 +319,7 @@ floor, then the question's shared guidance moved into the `context`
 6. **Merges** the decisions into the run's ledger. A call's decision
    only escalates: keep, then drop the result, then drop the call.
 7. **Applies** the ledger to the transcript: the calls it drops, and
-   the results it cuts. tau drops an assistant message whose calls all
+   the results it cuts. heiko drops an assistant message whose calls all
    went and which has no text left. Everything else stays as it was, in
    order.
 8. **Rewrites** the context only if the pruned transcript is at least
@@ -333,7 +333,7 @@ floor, then the question's shared guidance moved into the `context`
 
 ### Cost
 
-- Every Jev request is charged to the run, under tau-luau-plugins, at
+- Every Jev request is charged to the run, under heiko-luau-plugins, at
   $0.042 per million input tokens, so it counts toward the run's limits
   and cost. A request that was answered is charged even when another
   failed.
@@ -356,7 +356,7 @@ the context.
 
 ### Storage and forks
 
-A rewrite is stored as a `context` entry by `tau-luau-plugins`,
+A rewrite is stored as a `context` entry by `heiko-luau-plugins`,
 pointing at the messages it kept and followed by the ones it cut
 ([storage.md](storage.md)). The entry's details are the ledger, with
 the archive of each cut result, and the pass's stats: calls, pinned,
@@ -380,11 +380,11 @@ dropped`, and the cut output's tabs;
 ### Where it differs from pi
 
 - **Once, not every turn.** pi re-applies its ledger to the context of
-  every request. tau stores the pruned transcript once, because each
+  every request. heiko stores the pruned transcript once, because each
   rewrite costs a full resend.
 - **Only a saving worth a resend.** pi applies any saving and leaves
   its reduction threshold to the choice between itself and summary
-  compaction. tau declines below the threshold.
+  compaction. heiko declines below the threshold.
 - **The cooldown is a share of the window.** pi waits a fixed 8,000
   tokens. Each rewrite costs a full resend, and on a large window a
   long run grows 8,000 tokens in a few turns, so pi's cooldown let it
@@ -396,7 +396,7 @@ dropped`, and the cut output's tabs;
   pi drops every such message.
 - **The history is never abridged.** pi shrinks a history that does not
   fit: shorter inputs, abridged and collapsed texts, compacted calls,
-  messages left out. tau partitions it, as jev-pruner does.
+  messages left out. heiko partitions it, as jev-pruner does.
 - **A cut result names its archive,** where pi tells the model to
   re-run the tool, which can be slow or have side effects.
 - **No settings file or command.** Its settings are on the Plugins
@@ -410,7 +410,7 @@ where it lands 2–18% above the true count: a word of ASCII letters is
 one token per six letters, rounded up; a digit half a token; any other
 character that is not a space nine tenths of a token, per UTF-16 unit.
 A state or a set of questions (`estimate.state_tokens`) counts another
-half token per digit. tau counts in exact tenths and rounds up once,
+half token per digit. heiko counts in exact tenths and rounds up once,
 where the original sums floats: ten punctuation characters are 9
 tokens here, 10 there. The output gate uses the plain estimate; every
 budget a state or request must fit uses the state estimate.

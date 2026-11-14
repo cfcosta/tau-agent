@@ -1,11 +1,11 @@
 -- A stop check: a run that edited files says which tests it ran before
 -- it stops.
-local tau = require("tau")
-local ui = tau.ui
+local heiko = require("heiko")
+local ui = heiko.ui
 
 local EDITS = { write = true, edit = true }
 
-return tau.plugin {
+return heiko.plugin {
 	turn_end = function(turn, model)
 		for _, call in ipairs(turn.calls) do
 			if EDITS[call.name] and call.ok then
@@ -15,8 +15,8 @@ return tau.plugin {
 	end,
 	before_stop = function(stop, model)
 		if model.edited and not stop.text:lower():find("test") then
-			tau.log("asked for the tests on turn " .. tostring(stop.turn))
-			return tau.continue("You changed files: say which tests you ran, and how they went.")
+			heiko.log("asked for the tests on turn " .. tostring(stop.turn))
+			return heiko.continue("You changed files: say which tests you ran, and how they went.")
 		end
 	end,
 	view = function(model)

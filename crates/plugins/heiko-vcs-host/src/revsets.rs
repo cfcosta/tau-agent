@@ -1,0 +1,240 @@
+//! Revsets from the jj config, parsed and resolved as jj-cli 0.46.0 does
+//! (`cli_util.rs`'s `WorkspaceCommandEnvironment`, `revset_util.rs`):
+//! with the person's `revset-aliases` and `fileset-aliases`, their email
+//! for `mine()`, the commit time jj would use for dates, and the
+//! workspace for `@`. What `git.private-commits` and `immutable_heads()`
+//! name. Runs only inside a job (ADR 0028).
+//!
+//! Ported from jj-cli, under the Apache License 2.0
+//! (`THIRD_PARTY_NOTICES.md`).
+
+use std::{borrow::Cow, collections::HashMap, path::Path, sync::Arc};
+
+use jiff::Zoned;
+use jj_lib::{
+    fileset::FilesetAliasesMap,
+    git::REMOTE_NAME_FOR_LOCAL_GIT_REPO,
+    ref_name::{RemoteName, WorkspaceName, WorkspaceNameBuf},
+    repo::Repo,
+    revset::{
+        self,
+        ResolvedRevsetExpression,
+        Revset,
+        RevsetAliasesMap,
+        RevsetDiagnostics,
+        RevsetExpression,
+        RevsetExtensions,
+        RevsetParseContext,
+        RevsetWorkspaceContext,
+        SymbolResolver,
+        UserRevsetExpression,
+    },
+    settings::UserSettings,
+    ui_path::RepoPathUiConverter,
+};
+
+use crate::error::VcsError;
+
+/// What a revset from the config is parsed and resolved with.
+pub(crate) struct ConfigRevsets {
+    aliases: RevsetAliasesMap,
+    fileset_aliases: FilesetAliasesMap,
+    extensions: RevsetExtensions,
+    user_email: String,
+    now: Zoned,
+    path_converter: RepoPathUiConverter,
+    workspace_name: WorkspaceNameBuf,
+}
+
+impl ConfigRevsets {
+    /// For the workspace `workspace_name` at `workspace_root`, under
+    /// `settings`.
+    pub(crate) fn new(
+        settings: &UserSettings,
+        workspace_root: &Path,
+        workspace_name: &WorkspaceName,
+    ) -> Result<Self, VcsError> {
+        // jj's commit time, `debug.commit-timestamp` when set: what
+        // `after:` and `before:` dates count from.
+        let now = settings
+            .commit_timestamp()
+            .and_then(|timestamp| timestamp.to_zoned().ok())
+            .unwrap_or_else(Zoned::now);
+        Ok(Self {
+            aliases: crate::config::aliases(
+                settings.config(),
+                "revset-aliases",
+            )?,
+            fileset_aliases: crate::config::aliases(
+                settings.config(),
+                "fileset-aliases",
+            )?,
+            extensions: RevsetExtensions::default(),
+            user_email: settings.user_email().to_owned(),
+            now,
+            path_converter: RepoPathUiConverter::Fs {
+                cwd: workspace_root.to_owned(),
+                base: workspace_root.to_owned(),
+            },
+            workspace_name: workspace_name.to_owned(),
+        })
+    }
+
+    fn context<'a>(
+        &'a self,
+        aliases: &'a RevsetAliasesMap,
+    ) -> RevsetParseContext<'a> {
+        RevsetParseContext {
+            aliases_map: aliases,
+            local_variables: HashMap::new(),
+            user_email: &self.user_email,
+            current_time: self.now.clone(),
+            // heiko's repositories are all Git-backed.
+            default_ignored_remote: Some(REMOTE_NAME_FOR_LOCAL_GIT_REPO),
+            fileset_aliases_map: &self.fileset_aliases,
+            extensions: &self.extensions,
+            workspace: Some(RevsetWorkspaceContext {
+                path_converter: &self.path_converter,
+                workspace_name: &self.workspace_name,
+            }),
+        }
+    }
+
+    /// The revset the config's `name` holds, parsed for `repo`.
+    pub(crate) fn setting(
+        &self,
+        repo: &dyn Repo,
+        settings: &UserSettings,
+        name: &'static str,
+    ) -> Result<(String, Arc<UserRevsetExpression>), VcsError> {
+        let text = settings.get_string(name)?;
+        let expression = self.parse(repo, name, &text)?;
+        Ok((text, expression))
+    }
+
+    /// The heads of the immutable commits in `repo`: `immutable_heads()`
+    /// and the root (jj-cli's `parse_immutable_heads_expression`).
+    pub(crate) fn immutable_heads(
+        &self,
+        repo: &dyn Repo,
+    ) -> Result<Arc<UserRevsetExpression>, VcsError> {
+        let name = "revset-aliases.immutable_heads()";
+        let (_, _, text, _) = self
+            .aliases
+            .get_function("immutable_heads", 0)
+            .ok_or_else(|| VcsError::ConfigRevset {
+            name: name.to_owned(),
+            error: "it is not defined".to_owned(),
+        })?;
+        let text = text.clone();
+        Ok(self
+            .parse(repo, name, &text)?
+            .union(&RevsetExpression::root()))
+    }
+
+    /// `text`, the revset the config's `name` holds, parsed for `repo`.
+    pub(crate) fn parse(
+        &self,
+        repo: &dyn Repo,
+        name: &str,
+        text: &str,
+    ) -> Result<Arc<UserRevsetExpression>, VcsError> {
+        let aliases = self.aliases_in(repo);
+        // jj prints the diagnostics as warnings; heiko has no one to show
+        // them to.
+        let mut diagnostics = RevsetDiagnostics::new();
+        revset::parse(&mut diagnostics, text, &self.context(&aliases)).map_err(
+            |error| VcsError::ConfigRevset {
+                name: name.to_owned(),
+                error: error.to_string(),
+            },
+        )
+    }
+
+    /// The aliases a revset is parsed with in `repo`: the config's, but
+    /// with `trunk()` as `root()` when the config's `trunk()` names
+    /// something `repo` lacks, as a bookmark it does not have (jj-cli's
+    /// `load_from_workspace`, with `try_resolve_trunk_alias`). jj warns
+    /// that it fell back, and hints at `jj config edit --repo`; heiko has
+    /// no one to warn. A `trunk()` that does not parse is left as it
+    /// is, for the revset that calls it to fail on, as jj leaves it.
+    fn aliases_in(&self, repo: &dyn Repo) -> Cow<'_, RevsetAliasesMap> {
+        let Some((_, _, text, _)) = self.aliases.get_function("trunk", 0)
+        else {
+            return Cow::Borrowed(&self.aliases);
+        };
+        let context = self.context(&self.aliases);
+        let Ok(trunk) =
+            revset::parse(&mut RevsetDiagnostics::new(), text, &context)
+        else {
+            return Cow::Borrowed(&self.aliases);
+        };
+        let resolver =
+            SymbolResolver::new(repo, self.extensions.symbol_resolvers());
+        if trunk.resolve_user_expression(repo, &resolver).is_ok() {
+            return Cow::Borrowed(&self.aliases);
+        }
+        let mut aliases = self.aliases.clone();
+        aliases
+            .insert("trunk()", "root()", None)
+            .expect("`trunk()` is a valid declaration");
+        Cow::Owned(aliases)
+    }
+
+    /// `expression`'s symbols resolved in `repo`.
+    pub(crate) fn resolve(
+        &self,
+        repo: &dyn Repo,
+        name: &str,
+        expression: &Arc<UserRevsetExpression>,
+    ) -> Result<Arc<ResolvedRevsetExpression>, VcsError> {
+        let resolver =
+            SymbolResolver::new(repo, self.extensions.symbol_resolvers());
+        expression
+            .resolve_user_expression(repo, &resolver)
+            // The expression alone, as jj-cli's `RevsetExpressionEvaluator::
+            // resolve` keeps it: the repositories an `at_operation()` brings
+            // in are left out.
+            .map(|resolved| resolved.into_inner().0)
+            .map_err(|error| VcsError::ConfigRevset {
+                name: name.to_owned(),
+                error: error.to_string(),
+            })
+    }
+
+    /// `expression`'s commits in `repo`, as jj-cli 0.46's
+    /// `RevsetExpressionEvaluator::evaluate` finds them: with the
+    /// repositories an `at_operation()` brings in, so one naming an
+    /// operation off `repo`'s line (a concurrent one, or one never
+    /// published) sees that operation's commits. [`Self::resolve`] leaves
+    /// them out, as jj's `resolve` does, where jj does.
+    pub(crate) fn evaluate(
+        &self,
+        repo: &dyn Repo,
+        name: &str,
+        expression: &Arc<UserRevsetExpression>,
+    ) -> Result<Box<dyn Revset>, VcsError> {
+        let resolver =
+            SymbolResolver::new(repo, self.extensions.symbol_resolvers());
+        let resolved = expression
+            .resolve_user_expression(repo, &resolver)
+            .map_err(|error| VcsError::ConfigRevset {
+                name: name.to_owned(),
+                error: error.to_string(),
+            })?;
+        Ok(resolved.evaluate()?)
+    }
+}
+
+/// The remote's bookmarks' targets: what it already has, as the last
+/// fetch or push left it.
+pub(crate) fn remote_heads(
+    repo: &dyn Repo,
+    remote: &RemoteName,
+) -> Vec<jj_lib::backend::CommitId> {
+    repo.view()
+        .remote_bookmarks(remote)
+        .flat_map(|(_, remote_ref)| remote_ref.target.present_adds())
+        .cloned()
+        .collect()
+}

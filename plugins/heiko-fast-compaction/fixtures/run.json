@@ -1,0 +1,731 @@
+[
+  {
+    "state": {
+      "on": true
+    },
+    "view": {
+      "calls": {},
+      "notes": {},
+      "page": [
+        {
+          "piece": "empty",
+          "text": "heiko-fast-compaction has not pruned the context of this run yet."
+        }
+      ],
+      "status": {
+        "detail": null,
+        "piece": "status",
+        "text": "pruning large outputs · watching the window",
+        "tone": "neutral"
+      }
+    }
+  },
+  {
+    "state": {
+      "on": true,
+      "outputs": [
+        {
+          "archive": "/home/you/.local/share/heiko/repos/heiko-agent-3f2a91c0/archive/heiko-output-41822-1790716482-0.txt",
+          "call_id": "c7",
+          "chunks": 241,
+          "cost": 0.0006,
+          "dropped_lines": 4598,
+          "kept": 11,
+          "lines": 4810,
+          "pruned": true,
+          "requests": 2,
+          "segments": 1,
+          "tokens_after": 1100,
+          "tokens_before": 14200
+        }
+      ]
+    },
+    "view": {
+      "calls": {
+        "c7": {
+          "cut": {
+            "archive": "/home/you/.local/share/heiko/repos/heiko-agent-3f2a91c0/archive/heiko-output-41822-1790716482-0.txt",
+            "cost": 0.0006,
+            "kept": 212,
+            "lines": 4810,
+            "tokens_after": 1100,
+            "tokens_before": 14200
+          }
+        }
+      },
+      "notes": {},
+      "page": [
+        {
+          "piece": "empty",
+          "text": "heiko-fast-compaction has not pruned the context of this run yet."
+        }
+      ],
+      "status": {
+        "detail": null,
+        "piece": "status",
+        "text": "pruning large outputs · watching the window",
+        "tone": "neutral"
+      }
+    }
+  },
+  {
+    "state": {
+      "decisions": [
+        {
+          "action": "keep",
+          "call_id": "c2",
+          "keep_call": 0.64,
+          "keep_result": 0.22,
+          "tool": "grep"
+        },
+        {
+          "action": "drop_result",
+          "call_id": "c3",
+          "keep_call": 0.71,
+          "keep_result": 0.18,
+          "tool": "read"
+        },
+        {
+          "action": "keep",
+          "call_id": "c5",
+          "keep_call": 0.94,
+          "keep_result": 0.88,
+          "tool": "edit"
+        },
+        {
+          "action": "keep",
+          "call_id": "c6",
+          "keep_call": 0.18,
+          "keep_result": 0.04,
+          "tool": "exec_command"
+        },
+        {
+          "action": "keep",
+          "call_id": "c7",
+          "keep_call": 0.62,
+          "keep_result": 0.03,
+          "tool": "exec_command"
+        },
+        {
+          "action": "drop_result",
+          "call_id": "c8",
+          "keep_call": 0.52,
+          "keep_result": 0.09,
+          "tool": "read"
+        },
+        {
+          "action": "drop_result",
+          "call_id": "c9",
+          "keep_call": 0.58,
+          "keep_result": 0.11,
+          "tool": "read"
+        }
+      ],
+      "last_pass": 172000,
+      "ledger": [
+        {
+          "call_id": "c1",
+          "decision": "pinned",
+          "input": "{\"id\":\"n-0388\",\"title\":\"Retry policy honors server hints\"}",
+          "matters": null,
+          "tokens": 40,
+          "tool": "memory_read",
+          "verbatim": null
+        },
+        {
+          "call_id": "c1a",
+          "decision": "pinned",
+          "input": "{\"path\":\"crates/heiko-ai/src\"}",
+          "matters": null,
+          "tokens": 90,
+          "tool": "ls",
+          "verbatim": null
+        },
+        {
+          "call_id": "c2",
+          "decision": "keep",
+          "input": "{\"path\":\"crates/heiko-ai/src\",\"pattern\":\"retry_after|RetryPolicy\"}",
+          "matters": 0.64,
+          "tokens": 120,
+          "tool": "grep",
+          "verbatim": 0.22
+        },
+        {
+          "call_id": "c3",
+          "decision": "drop_result",
+          "input": "{\"path\":\"crates/heiko-ai/src/retry.rs\"}",
+          "matters": 0.71,
+          "tokens": 3100,
+          "tool": "read",
+          "verbatim": 0.18
+        },
+        {
+          "call_id": "c4",
+          "decision": "pinned",
+          "input": "{\"edits\":[{\"newText\":\"retry_after\",\"oldText\":\"delay\"}],\"path\":\"crates/heiko-ai/src/retry.rs\"}",
+          "matters": null,
+          "tokens": 210,
+          "tool": "edit",
+          "verbatim": null
+        },
+        {
+          "call_id": "c5",
+          "decision": "keep",
+          "input": "{\"edits\":[{\"newText\":\"server_hint\",\"oldText\":\"backoff\"}],\"path\":\"crates/heiko-ai/src/retry.rs\"}",
+          "matters": 0.94,
+          "tokens": 640,
+          "tool": "edit",
+          "verbatim": 0.88
+        },
+        {
+          "call_id": "c5t",
+          "decision": "pinned",
+          "input": "{\"cmd\":\"cargo nextest run -p heiko-ai\"}",
+          "matters": null,
+          "tokens": 1900,
+          "tool": "exec_command",
+          "verbatim": null
+        },
+        {
+          "call_id": "c6",
+          "decision": "keep",
+          "input": "{\"cmd\":\"rm -rf target/debug/incremental\"}",
+          "matters": 0.18,
+          "tokens": 20,
+          "tool": "exec_command",
+          "verbatim": 0.04
+        },
+        {
+          "call_id": "c7",
+          "decision": "keep",
+          "input": "{\"cmd\":\"cargo nextest run --workspace\"}",
+          "matters": 0.62,
+          "tokens": 1100,
+          "tool": "exec_command",
+          "verbatim": 0.03
+        },
+        {
+          "call_id": "c8",
+          "decision": "drop_result",
+          "input": "{\"path\":\"crates/heiko-ai/src/client.rs\"}",
+          "matters": 0.52,
+          "tokens": 7600,
+          "tool": "read",
+          "verbatim": 0.09
+        },
+        {
+          "call_id": "c9",
+          "decision": "drop_result",
+          "input": "{\"path\":\"crates/heiko-testing/src/fake_openai.rs\"}",
+          "matters": 0.58,
+          "tokens": 5000,
+          "tool": "read",
+          "verbatim": 0.11
+        }
+      ],
+      "on": true,
+      "outputs": [
+        {
+          "archive": "/home/you/.local/share/heiko/repos/heiko-agent-3f2a91c0/archive/heiko-output-41822-1790716482-0.txt",
+          "call_id": "c7",
+          "chunks": 241,
+          "cost": 0.0006,
+          "dropped_lines": 4598,
+          "kept": 11,
+          "lines": 4810,
+          "pruned": true,
+          "requests": 2,
+          "segments": 1,
+          "tokens_after": 1100,
+          "tokens_before": 14200
+        }
+      ],
+      "passes": [
+        {
+          "after": 81000,
+          "before": 172000,
+          "calls_dropped": 0,
+          "detail": "7 calls judged in 1 Jev request · 3 results cut, 0 calls dropped · −53% · Jev read 18k tokens of history, whole · $0.0011",
+          "reduction_ratio": 0.53,
+          "results_dropped": 3,
+          "window": 272000
+        }
+      ]
+    },
+    "view": {
+      "calls": {
+        "c3": {
+          "badge": {
+            "piece": "badge",
+            "text": "result dropped",
+            "tone": "neutral"
+          },
+          "dropped": "result"
+        },
+        "c7": {
+          "cut": {
+            "archive": "/home/you/.local/share/heiko/repos/heiko-agent-3f2a91c0/archive/heiko-output-41822-1790716482-0.txt",
+            "cost": 0.0006,
+            "kept": 212,
+            "lines": 4810,
+            "tokens_after": 1100,
+            "tokens_before": 14200
+          }
+        },
+        "c8": {
+          "badge": {
+            "piece": "badge",
+            "text": "result dropped",
+            "tone": "neutral"
+          },
+          "dropped": "result"
+        },
+        "c9": {
+          "badge": {
+            "piece": "badge",
+            "text": "result dropped",
+            "tone": "neutral"
+          },
+          "dropped": "result"
+        }
+      },
+      "inspector": {
+        "children": [
+          {
+            "piece": "text",
+            "text": "8 kept by heiko-fast-compaction."
+          },
+          {
+            "label": "Ledger",
+            "piece": "link",
+            "to": {
+              "page": "luau-plugins",
+              "params": {
+                "entry": "heiko-fast-compaction"
+              },
+              "plugin": "heiko-luau-plugins"
+            }
+          }
+        ],
+        "piece": "row"
+      },
+      "notes": {
+        "pass-1": {
+          "children": [
+            {
+              "children": [
+                {
+                  "name": "plug",
+                  "piece": "icon",
+                  "tone": "info"
+                },
+                {
+                  "piece": "mono",
+                  "text": "heiko-fast-compaction"
+                },
+                {
+                  "piece": "text",
+                  "text": "pruned 91k tokens: 172k to 81k"
+                },
+                {
+                  "label": "Ledger",
+                  "piece": "link",
+                  "to": {
+                    "page": "luau-plugins",
+                    "params": {
+                      "entry": "heiko-fast-compaction"
+                    },
+                    "plugin": "heiko-luau-plugins"
+                  }
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "piece": "mono",
+              "text": "7 calls judged in 1 Jev request · 3 results cut, 0 calls dropped · −53% · Jev read 18k tokens of history, whole · $0.0011"
+            },
+            {
+              "piece": "text",
+              "text": "The next request resends the pruned transcript once, then turns are deltas again."
+            }
+          ],
+          "piece": "stack"
+        }
+      },
+      "page": [
+        {
+          "piece": "heading",
+          "text": "Pruned 91k tokens of this run's tool history"
+        },
+        {
+          "piece": "text",
+          "text": "7 calls judged in 1 Jev request · 3 results cut, 0 calls dropped · −53% · Jev read 18k tokens of history, whole · $0.0011. Decisions only escalate: keep, then drop the result, then drop the call. Forks inherit this ledger."
+        },
+        {
+          "label": "Before · 172k",
+          "piece": "progress",
+          "share": 0.6323529411764706
+        },
+        {
+          "label": "After · 81k",
+          "piece": "progress",
+          "share": 0.2977941176470588
+        },
+        {
+          "piece": "text",
+          "text": "Window 272k. Pruning starts at 60%."
+        },
+        {
+          "piece": "rule"
+        },
+        {
+          "piece": "rows",
+          "rows": [
+            {
+              "key": "plugin",
+              "value": "heiko-fast-compaction"
+            },
+            {
+              "key": "pinned",
+              "value": "4"
+            },
+            {
+              "key": "kept",
+              "value": "4"
+            },
+            {
+              "key": "result dropped",
+              "value": "3"
+            },
+            {
+              "key": "call dropped",
+              "value": "0"
+            },
+            {
+              "key": "next request",
+              "value": "1 full resend"
+            },
+            {
+              "key": "outputs pruned",
+              "value": "1 · −13k tokens"
+            }
+          ]
+        },
+        {
+          "piece": "heading",
+          "text": "Ledger"
+        },
+        {
+          "head": ["Tool", "Input", "Size", "Still matters", "Verbatim", "Decision"],
+          "piece": "table",
+          "rows": [
+            [
+              {
+                "piece": "mono",
+                "text": "memory_read"
+              },
+              {
+                "piece": "mono",
+                "text": "{\"id\":\"n-0388\",\"title\":\"Retry policy honors server hints\"}"
+              },
+              {
+                "piece": "mono",
+                "text": "40"
+              },
+              {
+                "piece": "mono",
+                "text": "·"
+              },
+              {
+                "piece": "mono",
+                "text": "·"
+              },
+              {
+                "piece": "badge",
+                "text": "pinned",
+                "tone": "neutral"
+              }
+            ],
+            [
+              {
+                "piece": "mono",
+                "text": "ls"
+              },
+              {
+                "piece": "mono",
+                "text": "{\"path\":\"crates/heiko-ai/src\"}"
+              },
+              {
+                "piece": "mono",
+                "text": "90"
+              },
+              {
+                "piece": "mono",
+                "text": "·"
+              },
+              {
+                "piece": "mono",
+                "text": "·"
+              },
+              {
+                "piece": "badge",
+                "text": "pinned",
+                "tone": "neutral"
+              }
+            ],
+            [
+              {
+                "piece": "mono",
+                "text": "grep"
+              },
+              {
+                "piece": "mono",
+                "text": "{\"path\":\"crates/heiko-ai/src\",\"pattern\":\"retry_after|RetryPolicy\"}"
+              },
+              {
+                "piece": "mono",
+                "text": "120"
+              },
+              {
+                "piece": "mono",
+                "text": "0.64"
+              },
+              {
+                "piece": "mono",
+                "text": "0.22"
+              },
+              {
+                "piece": "badge",
+                "text": "keep",
+                "tone": "neutral"
+              }
+            ],
+            [
+              {
+                "piece": "mono",
+                "text": "read"
+              },
+              {
+                "piece": "mono",
+                "text": "{\"path\":\"crates/heiko-ai/src/retry.rs\"}"
+              },
+              {
+                "piece": "mono",
+                "text": "3k"
+              },
+              {
+                "piece": "mono",
+                "text": "0.71"
+              },
+              {
+                "piece": "mono",
+                "text": "0.18"
+              },
+              {
+                "piece": "badge",
+                "text": "drop result",
+                "tone": "info"
+              }
+            ],
+            [
+              {
+                "piece": "mono",
+                "text": "edit"
+              },
+              {
+                "piece": "mono",
+                "text": "{\"edits\":[{\"newText\":\"retry_after\",\"oldText\":\"delay\"}],\"path\":\"crates/heiko-ai/src/retry.rs\"}"
+              },
+              {
+                "piece": "mono",
+                "text": "210"
+              },
+              {
+                "piece": "mono",
+                "text": "·"
+              },
+              {
+                "piece": "mono",
+                "text": "·"
+              },
+              {
+                "piece": "badge",
+                "text": "pinned",
+                "tone": "neutral"
+              }
+            ],
+            [
+              {
+                "piece": "mono",
+                "text": "edit"
+              },
+              {
+                "piece": "mono",
+                "text": "{\"edits\":[{\"newText\":\"server_hint\",\"oldText\":\"backoff\"}],\"path\":\"crates/heiko-ai/src/retry.rs\"}"
+              },
+              {
+                "piece": "mono",
+                "text": "640"
+              },
+              {
+                "piece": "mono",
+                "text": "0.94"
+              },
+              {
+                "piece": "mono",
+                "text": "0.88"
+              },
+              {
+                "piece": "badge",
+                "text": "keep",
+                "tone": "neutral"
+              }
+            ],
+            [
+              {
+                "piece": "mono",
+                "text": "exec_command"
+              },
+              {
+                "piece": "mono",
+                "text": "{\"cmd\":\"cargo nextest run -p heiko-ai\"}"
+              },
+              {
+                "piece": "mono",
+                "text": "1k"
+              },
+              {
+                "piece": "mono",
+                "text": "·"
+              },
+              {
+                "piece": "mono",
+                "text": "·"
+              },
+              {
+                "piece": "badge",
+                "text": "pinned",
+                "tone": "neutral"
+              }
+            ],
+            [
+              {
+                "piece": "mono",
+                "text": "exec_command"
+              },
+              {
+                "piece": "mono",
+                "text": "{\"cmd\":\"rm -rf target/debug/incremental\"}"
+              },
+              {
+                "piece": "mono",
+                "text": "20"
+              },
+              {
+                "piece": "mono",
+                "text": "0.18"
+              },
+              {
+                "piece": "mono",
+                "text": "0.04"
+              },
+              {
+                "piece": "badge",
+                "text": "keep",
+                "tone": "neutral"
+              }
+            ],
+            [
+              {
+                "piece": "mono",
+                "text": "exec_command"
+              },
+              {
+                "piece": "mono",
+                "text": "{\"cmd\":\"cargo nextest run --workspace\"}"
+              },
+              {
+                "piece": "mono",
+                "text": "1k"
+              },
+              {
+                "piece": "mono",
+                "text": "0.62"
+              },
+              {
+                "piece": "mono",
+                "text": "0.03"
+              },
+              {
+                "piece": "badge",
+                "text": "keep",
+                "tone": "neutral"
+              }
+            ],
+            [
+              {
+                "piece": "mono",
+                "text": "read"
+              },
+              {
+                "piece": "mono",
+                "text": "{\"path\":\"crates/heiko-ai/src/client.rs\"}"
+              },
+              {
+                "piece": "mono",
+                "text": "7k"
+              },
+              {
+                "piece": "mono",
+                "text": "0.52"
+              },
+              {
+                "piece": "mono",
+                "text": "0.09"
+              },
+              {
+                "piece": "badge",
+                "text": "drop result",
+                "tone": "info"
+              }
+            ],
+            [
+              {
+                "piece": "mono",
+                "text": "read"
+              },
+              {
+                "piece": "mono",
+                "text": "{\"path\":\"crates/heiko-testing/src/fake_openai.rs\"}"
+              },
+              {
+                "piece": "mono",
+                "text": "5k"
+              },
+              {
+                "piece": "mono",
+                "text": "0.58"
+              },
+              {
+                "piece": "mono",
+                "text": "0.11"
+              },
+              {
+                "piece": "badge",
+                "text": "drop result",
+                "tone": "info"
+              }
+            ]
+          ]
+        }
+      ],
+      "status": {
+        "detail": null,
+        "piece": "status",
+        "text": "3 pruned · −53%",
+        "tone": "neutral"
+      }
+    }
+  }
+]

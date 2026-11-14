@@ -1,6 +1,6 @@
 # Testing
 
-This document sets the testing strategy for tau-agent and the quality bar
+This document sets the testing strategy for heiko-agent and the quality bar
 every test must meet. It covers:
 
 - the rules that make a test worth keeping;
@@ -50,20 +50,20 @@ every test must meet. It covers:
 | ------------------------------ | --------------------------------------------------------------------- |
 | `hegeltest` (lib name `hegel`) | Property-based tests: generators, shrinking, stateful model tests     |
 | `cargo nextest`                | Test runner, locally and in CI                                        |
-| `tau-testing`                  | `ScriptedModel`, `FakeOpenAi`, shared generators, async glue          |
-| `tau_ui_plugin::testing`       | Feature `testing`: `FakeRun`, `run_ctx`, `fold`, `RepoValues`         |
+| `heiko-testing`                  | `ScriptedModel`, `FakeOpenAi`, shared generators, async glue          |
+| `heiko_ui_plugin::testing`       | Feature `testing`: `FakeRun`, `run_ctx`, `fold`, `RepoValues`         |
 | `tokio::time::pause`           | Deterministic time for retries, timeouts, idle timers and rotation    |
 | `turmoil`                      | Deterministic simulated network and clock for the transport tests     |
-| `tempfile`                     | Filesystem fixtures for `tau-tools-host`                              |
+| `tempfile`                     | Filesystem fixtures for `heiko-tools-host`                              |
 | `cargo mutants`                | Test strength on the core modules                                     |
 | `cargo sqlx prepare --check`   | The committed `.sqlx/` metadata matches the queries                   |
 | `trybuild`                     | Compile-fail tests for the public API                                 |
-| `cargo bench`                  | Benchmarks: `tau-ai` `transport` and `input`, `tau-tools-host` `grep` |
+| `cargo bench`                  | Benchmarks: `heiko-ai` `transport` and `input`, `heiko-tools-host` `grep` |
 
 All of these are in the dev shell, except the crates, which come
 through Cargo. `hegeltest` is declared once in
 `[workspace.dependencies]`. It is a dev-dependency of every crate that
-has tests, and a normal dependency of `tau-testing`, which exports the
+has tests, and a normal dependency of `heiko-testing`, which exports the
 shared generators.
 
 Hegel is used rather than `proptest` because it shrinks through
@@ -77,15 +77,15 @@ Three benchmarks measure throughput and cost. Each is a plain `main` (no
 harness) that takes its sizes from the environment and prints its
 results:
 
-- `cargo bench -p tau-ai --bench transport`: many concurrent sessions
+- `cargo bench -p heiko-ai --bench transport`: many concurrent sessions
   against an in-process server on in-memory streams, each growing its
   transcript turn by turn. It reports turns per second, turn latency
   percentiles, and the server's count of full and delta requests.
   `RUNS`, `TURNS`, `PAYLOAD`, `DELTAS` and `THINK_MS` set the load.
-- `cargo bench -p tau-ai --bench input`: what building a request's
+- `cargo bench -p heiko-ai --bench input`: what building a request's
   input costs as one run's transcript grows, sized by `TURNS` and
   `PAYLOAD`.
-- `cargo bench -p tau-tools-host --bench grep`: the `grep` tool on a
+- `cargo bench -p heiko-tools-host --bench grep`: the `grep` tool on a
   generated tree, sized by `FILES` and `FILE_KB`.
 
 None runs in CI; run them before and after a change on the hot path.
@@ -97,8 +97,8 @@ None runs in CI; run them before and after a change on the hot path.
 | Property  | Pure logic: `ws::proto`, conversions, parsers, schema rewrites, truncation, cut points | Hegel; `tests/` for public APIs, `#[cfg(test)]` for private code  |
 | Model     | Stateful components: WebSocket pool and lanes, the store, the agent loop               | `#[hegel::state_machine]` against a simple in-memory model        |
 | Transport | The `ws::io` driver: pool, lanes and recovery over a WebSocket                         | turmoil simulation with `FakeOpenAi`; Hegel draws the faults      |
-| Scripted  | Workflow behaviour: typed results, sub-agents, forks, limits, plugins                  | `ScriptedModel` + `tau_store_sqlite::memory()`, generated scripts |
-| Live      | Sign-in, request shapes and prompt caching against the real endpoint                   | `tau-ai`'s `chatgpt_probe` and `cache_probe` examples, by hand    |
+| Scripted  | Workflow behaviour: typed results, sub-agents, forks, limits, plugins                  | `ScriptedModel` + `heiko_store_sqlite::memory()`, generated scripts |
+| Live      | Sign-in, request shapes and prompt caching against the real endpoint                   | `heiko-ai`'s `chatgpt_probe` and `cache_probe` examples, by hand    |
 | API shape | Misuse of the public API does not compile                                              | `trybuild` compile-fail cases                                     |
 | Mutation  | Strength of the tests on the delta rule, the loop and the store                        | `cargo mutants`                                                   |
 
@@ -141,7 +141,7 @@ use hegel::{TestCase, generators as gs};
 /// Delta rule: the server's view after a delta equals a full resend.
 #[hegel::test(test_cases = 500)]
 fn delta_reconstructs_full_input(tc: TestCase) {
-    let turns = tc.draw(tau_testing::generators::lane_history());
+    let turns = tc.draw(heiko_testing::generators::lane_history());
     // ...
 }
 ```
@@ -160,7 +160,7 @@ fn delta_reconstructs_full_input(tc: TestCase) {
 | Cheap pure function                    | 500               |
 | Default                                | 100 (Hegel's own) |
 | Model test, or one that touches SQLite | 50–100            |
-| Filesystem (`tau-tools`)               | 50                |
+| Filesystem (`heiko-tools`)               | 50                |
 | Nightly variant                        | from `hegel.toml` |
 
 A nightly variant is a second test with the same body,
@@ -178,14 +178,14 @@ own.
 
 ### Generators
 
-- **Shared generators live in `tau_testing::generators`.** Messages,
+- **Shared generators live in `heiko_testing::generators`.** Messages,
   transcripts, tool calls, JSON schemas, `response.*` event streams and
   lane histories are needed by several crates. Write each one once, as a
   `#[hegel::composite]` function.
-- **Mind the dependency cycle.** `tau-testing` depends on `tau-ai`. A
-  `#[cfg(test)]` module inside `tau-ai` that uses `tau-testing` would see
-  two copies of `tau-ai`'s types, and the code would not compile. So
-  properties in `tau-ai` (and in `tau-agent`, for the same reason) that
+- **Mind the dependency cycle.** `heiko-testing` depends on `heiko-ai`. A
+  `#[cfg(test)]` module inside `heiko-ai` that uses `heiko-testing` would see
+  two copies of `heiko-ai`'s types, and the code would not compile. So
+  properties in `heiko-ai` (and in `heiko-agent`, for the same reason) that
   use shared generators go in the crate's `tests/` directory, and they
   test the public API. Properties of private helpers stay in
   `#[cfg(test)]` modules with local generators.
@@ -240,12 +240,12 @@ Hegel test bodies are synchronous. Drive async code on a current-thread
 runtime with paused time:
 
 ```rust
-tau_testing::block_on(async {
+heiko_testing::block_on(async {
     // tokio::time::sleep advances instantly; no real waiting.
 });
 ```
 
-`tau_testing::block_on` builds
+`heiko_testing::block_on` builds
 `tokio::runtime::Builder::new_current_thread().enable_all().start_paused(true)`.
 A paused current-thread runtime makes the order of tasks and timers
 repeatable, so a failure replays exactly.
@@ -267,7 +267,7 @@ stay deterministic because they never read the clock and every
 timestamp is written by SQLite and never asserted on.
 
 Loop tests do run a store under paused time, and
-`tau_store_sqlite::memory()` sets no timeouts so nothing fires
+`heiko_store_sqlite::memory()` sets no timeouts so nothing fires
 spuriously. The clock still jumps while a write waits: the pool's
 acquire deadline is a pending timer, so an idle runtime moves time to
 it. A run's elapsed time is therefore meaningless under paused time, and
@@ -333,7 +333,7 @@ loop:
 - An explicit test case has no `event()`, so a property that calls
   `tc.event` cannot carry one. Move the body into a helper and run the
   regression once through `hegel::Hegel::new(..)` with
-  `Settings::new().test_cases(1)`, as `tau-vcs-host`'s `turns_model.rs`
+  `Settings::new().test_cases(1)`, as `heiko-vcs-host`'s `turns_model.rs`
   does, or drop the events.
 - `#[hegel::reproduce_failure("…")]` is for local debugging only. The
   blob depends on the Hegel version, so never commit it.
@@ -362,7 +362,7 @@ Each crate's properties are listed below, with the oracle for each.
 Implement a property in the same milestone as the code it covers. The
 list is a floor, not a ceiling.
 
-### `tau-ai`
+### `heiko-ai`
 
 | Property                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Oracle       |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
@@ -396,7 +396,7 @@ The delta rule is the riskiest code in the project. Its model test must
 also run in the nightly tier and under `cargo mutants`
 (`scripts/mutants.sh`).
 
-### `tau-agent`
+### `heiko-agent`
 
 | Property                                                                                                                                                                                                                              | Oracle       |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
@@ -434,14 +434,14 @@ also run in the nightly tier and under `cargo mutants`
 | Arguments changed by `before_tool` are validated again; invalid ones yield an error result and the tool never runs                                                                                                                    | Model        |
 | Limits: a run ends with `StopReason::Limit` if and only if a limit was exceeded after some turn, and child usage counts                                                                                                               | Model        |
 | A fork's transcript equals the parent's transcript up to the checkpoint, followed by the fork's own messages                                                                                                                          | Model        |
-| (`tau-compaction`, Luau) Compaction cut point never falls between a tool call and its result, and never on a tool result                                                                                                              | Invariant    |
+| (`heiko-compaction`, Luau) Compaction cut point never falls between a tool call and its result, and never on a tool result                                                                                                              | Invariant    |
 | The kept suffix holds at least `keep_recent_tokens`, unless the whole transcript holds fewer or snapping past an oversized tool result moved the cut                                                                                  | Invariant    |
 | The token estimate never decreases when a message is appended                                                                                                                                                                         | Invariant    |
 | With no reported usage anywhere, the estimate is `chars / 4` over every message                                                                                                                                                       | Differential |
 | A summary that stops with `length` or `error`, or that calls a tool, fails compaction and writes nothing                                                                                                                              | Model        |
 | Repeated compactions: a second compaction runs only when the kept messages no longer fit, and summarizes messages the first one kept once they leave the recent window                                                                | Model        |
 
-### `tau-store-sqlite`
+### `heiko-store-sqlite`
 
 | Property                                                                                                                                                    | Oracle       |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
@@ -453,10 +453,10 @@ also run in the nightly tier and under `cargo mutants`
 | Loop and store together: a cancel or a write failure between tool completion and persistence leaves no partial turn                                         | Model        |
 | Message bodies round-trip through the `body` column unchanged                                                                                               | Round trip   |
 
-Store tests use `tau_store_sqlite::memory()`. Each Hegel case opens a new
+Store tests use `heiko_store_sqlite::memory()`. Each Hegel case opens a new
 store, so cases do not share state.
 
-### `tau-tools`
+### `heiko-tools`
 
 | Property                                                                                                                                                                                                                                                      | Oracle       |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
@@ -490,9 +490,9 @@ next call; dropping the processes kills them; the store keeps at most 64;
 the raw bytes stream in `details.term`; output over the limit is cut to
 its last lines. With a launcher, its words and variables reach the
 command, a held command starts once answered, and a cancel ends the wait.
-`tau-terminal` tests an interactive command's input.
+`heiko-terminal` tests an interactive command's input.
 
-### `tau-terminal`
+### `heiko-terminal`
 
 | Property                                                                                                                 | Oracle     |
 | ------------------------------------------------------------------------------------------------------------------------ | ---------- |
@@ -511,13 +511,13 @@ Every string in the error table of [`tools.md`](tools.md#error-strings)
 has an example test. Tests that rely on `chmod` skip themselves when
 running as root, because root ignores file modes.
 
-### `tau-ui-plugin`
+### `heiko-ui-plugin`
 
 | Property                                                                                                                                                                                                                      | Oracle |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
 | `declare::the_order_keeps_every_edge_whatever_order_plugins_came_in`: for any acyclic set of `after` edges, the registry's order keeps every edge, holds each plugin once, and is the same whatever order the plugins came in | Model  |
 
-### `tau-remote`
+### `heiko-remote`
 
 | Property                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Oracle |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
@@ -531,11 +531,11 @@ mode accepts what it predicts the code does today and counts it; the
 `#[ignore]`d regressions at the end of the file run it strictly;
 the CRDT sync of ADR 0047 fixes them.
 
-### `tau-ui`
+### `heiko-ui`
 
 | Property                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Oracle |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| `plugins_model.rs` (state machine): tau's plugins and three probes, a computer and one or two phones over the real feed and outbox. Clicks, sections, drafts, a goal, pages, the repository menu, picking who fills a slot two plugins can fill, phones dropping and coming back, and restarts. Each click reaches the plugin that drew it; each slot is filled by the person's pick, else the first in its declared order, in any registration order, on the host and on every device, and after a restart; views are built only for phones connected now; a restart from the stored records and saved UI state changes nothing; each plugin's part of a point is the same alone; the computer builds what it draws, and once everything arrives every phone shows what the computer shows and draws the trees it builds; the probes' buttons lie inside the window at their own width | Model  |
+| `plugins_model.rs` (state machine): heiko's plugins and three probes, a computer and one or two phones over the real feed and outbox. Clicks, sections, drafts, a goal, pages, the repository menu, picking who fills a slot two plugins can fill, phones dropping and coming back, and restarts. Each click reaches the plugin that drew it; each slot is filled by the person's pick, else the first in its declared order, in any registration order, on the host and on every device, and after a restart; views are built only for phones connected now; a restart from the stored records and saved UI state changes nothing; each plugin's part of a point is the same alone; the computer builds what it draws, and once everything arrives every phone shows what the computer shows and draws the trees it builds; the probes' buttons lie inside the window at their own width | Model  |
 
 It runs in about 6 s; its nightly twin (`nightly_slow`, 40 steps) in
 about 17 minutes. The layout check reads gpui's debug bounds in the test
@@ -544,7 +544,7 @@ window, so it needs no GPU; the window draws a frame before each read.
 `phone_model.rs` (state machine) is the phone's own state: the real
 phone `Workspace` and `remote::connect`, with its credentials directory
 kept across restarts, against two real computers (`Workspace`
-and tau-phones' server over loopback TLS), each behind a proxy that stands
+and heiko-phones' server over loopback TLS), each behind a proxy that stands
 for the network. Rules: pair from the screens that offer it (how a
 phone goes from one computer to another, or back), pair and close
 before the credentials are kept, revoke, move the computer, give it a
@@ -566,7 +566,7 @@ certificate is said so.
 ## ScriptedModel
 
 `ScriptedModel` is ported from pi's faux provider
-(`packages/ai/src/providers/faux.ts`). It implements `tau_ai::Llm`, and
+(`packages/ai/src/providers/faux.ts`). It implements `heiko_ai::Llm`, and
 replays scripted turns:
 
 ```rust
@@ -586,7 +586,7 @@ let llm = ScriptedModel::new()
   - a dropped connection;
   - `failure(message, class)`, a failure with words of its own and a
     retry class, for one whose message does not say what it is.
-- **Generated scripts.** `tau_testing::generators::script()` draws a
+- **Generated scripts.** `heiko_testing::generators::script()` draws a
   whole script: turn count, tool calls per turn, tool outcomes and
   delays, steering points and a cancel point. The loop's model tests are
   built on it.
@@ -600,9 +600,9 @@ let llm = ScriptedModel::new()
 
 ## Fake OpenAI server
 
-`tau_testing::FakeOpenAi` is a turmoil host that speaks the Responses
+`heiko_testing::FakeOpenAi` is a turmoil host that speaks the Responses
 WebSocket protocol, over plain `ws://` on the simulated network. For
-tests that run tau on a real runtime, such as the host's, `listen()`
+tests that run heiko on a real runtime, such as the host's, `listen()`
 serves it on a local TCP port from a thread of its own, and
 `LocalConnector` reaches it.
 `ScriptedModel` replaces the whole `Llm`; `FakeOpenAi` replaces only the
@@ -630,7 +630,7 @@ ladder run. TLS is not simulated; the live probes cover it.
   input the turn would have sent without continuation.
 - **Limits.** It enforces 16 in-flight responses per connection (a
   request past that is refused and recorded as a violation, which a
-  correct client never causes). tau sends no `stream_id`, so the fake
+  correct client never causes). heiko sends no `stream_id`, so the fake
   tracks no named lanes. On turmoil's clock it closes a connection at
   60 minutes. `Reply::Delay` holds a reply back while the connection
   keeps reading, so responses on different connections overlap.
@@ -652,21 +652,21 @@ sockets in individual tests.
 
 ## Live probes
 
-There are no live tests. tau-ai's live checks are two examples, run by
+There are no live tests. heiko-ai's live checks are two examples, run by
 hand against `api.openai.com` with a saved ChatGPT sign-in with plan
 usage. They check what no fake can: that the server accepts our
 requests, and what it caches.
 
 - `chatgpt_probe` signs in and out, lists accounts and models, and sends
   plain and tool-calling requests over HTTP and the WebSocket:
-  `cargo run -p tau-ai --example chatgpt_probe -- sign-in`, then
+  `cargo run -p heiko-ai --example chatgpt_probe -- sign-in`, then
   `-- accounts`, `-- models`, `-- http`, `-- ws` and the rest its doc
   comment lists.
 - `cache_probe` measures which ways of sending a conversation read the
-  prompt cache: `cargo run -p tau-ai --example cache_probe -- --cases`,
+  prompt cache: `cargo run -p heiko-ai --example cache_probe -- --cases`,
   or `--variants`, `--fork`, `--shared` and `--handoff`.
 - **Credentials** come only from the saved sign-in in
-  `$XDG_CONFIG_HOME/tau/chatgpt/` (`tau_ai::chatgpt::Store`), never
+  `$XDG_CONFIG_HOME/heiko/chatgpt/` (`heiko_ai::chatgpt::Store`), never
   from an API key ([0012](../decisions/0012-chatgpt-sign-in-only.md)).
   Neither prints a token of the sign-in.
 - They print what they see, and a person reads it. Neither runs in
@@ -701,7 +701,7 @@ Seed the suite with these cases from pi at `2b0a123`:
 
 ## sqlx in tests
 
-- `tau_store_sqlite::memory()` runs the migrations on `sqlite::memory:`.
+- `heiko_store_sqlite::memory()` runs the migrations on `sqlite::memory:`.
 - The query macros check against the committed `.sqlx/` metadata, so
   tests need no `DATABASE_URL`.
 - CI runs `cargo sqlx prepare --check`.
@@ -711,12 +711,12 @@ Seed the suite with these cases from pi at `2b0a123`:
 `scripts/mutants.sh` runs `cargo mutants` on the modules where a
 silent bug costs the most:
 
-- `tau-ai`: the delta rule, the lane state and the event processor;
-- `tau-agent`: the loop, plugins, runs (typed results, forks,
+- `heiko-ai`: the delta rule, the lane state and the event processor;
+- `heiko-agent`: the loop, plugins, runs (typed results, forks,
   sub-agents), coercion and the strict schema rewrite;
-- `tau-jev`: answer checking;
-- `tau-store-sqlite`: the append and transcript queries;
-- `tau-tools-host`: `edit`, which rewrites files, and truncation.
+- `heiko-jev`: answer checking;
+- `heiko-store-sqlite`: the append and transcript queries;
+- `heiko-tools-host`: `edit`, which rewrites files, and truncation.
 
 A surviving mutant means a behaviour no test checks. Either add the
 missing assertion, or record why the mutant is equivalent in
@@ -750,20 +750,20 @@ each `tests/*.rs` as a module, and the crate's `Cargo.toml` turns
 `autotests` off and declares that one `[[test]]`. Each test binary links
 the whole dependency graph, GPUI or jj-lib among it, so linking one per
 file was most of what building the tests cost: rebuilding them all
-after a change to tau-ai went from 205 s to 115 s on one machine.
+after a change to heiko-ai went from 205 s to 115 s on one machine.
 
 - A new test file gets a `mod` line in `tests/main.rs`; with `autotests`
   off it is not built otherwise.
-  `tau-built-in-tests`' `every_test_file_is_in_its_crates_one_binary`
+  `heiko-built-in-tests`' `every_test_file_is_in_its_crates_one_binary`
   fails on a file left out.
 - Helpers in `tests/common/` or `tests/support/` are declared once, in
   `tests/main.rs`; a test file reaches them with `use crate::common;`.
-- A test with `harness = false`, such as tau-mcp-host's `stdio`, keeps a
-  `[[test]]` of its own. `tau-built-in-tests`' `packages` is one: it
+- A test with `harness = false`, such as heiko-mcp-host's `stdio`, keeps a
+  `[[test]]` of its own. `heiko-built-in-tests`' `packages` is one: it
   lists a test a built-in plugin, so nextest runs them at once.
 - nextest still runs each test in a process of its own, so tests in one
   binary share no globals. A plain `cargo test` runs them as threads of
-  one process, which tau-ui's do not survive: the Nix package's check
+  one process, which heiko-ui's do not survive: the Nix package's check
   runs nextest too (`useNextest`).
 
 ## CI tiers
@@ -773,7 +773,7 @@ after a change to tau-ai went from 205 s to 115 s on one machine.
 | Check   | every push | `nix fmt` check, `cargo clippy --all-targets -D warnings`, `cargo nextest run --release --profile ci` (all but the model tests), `cargo sqlx prepare --check`, `cargo deny check` |
 | Nightly | once a day | `cargo nextest run --release --profile models` (the model tests), then `cargo nextest run --release --run-ignored only` (nightly properties)                                      |
 
-The model tests are the tests in `*_model` modules, and in tau-vcs-host's
+The model tests are the tests in `*_model` modules, and in heiko-vcs-host's
 `model`: `.config/nextest.toml` names them in the `ci` and `models`
 profiles. A new model test goes in a module so named, a `tests/*_model.rs`
 file, or both filters gain it. Locally, a plain
@@ -841,7 +841,7 @@ running them, which is why each crate builds its tests as one binary
 - Fixtures generated at test time and never committed. A fixture that
   is not in the repository cannot catch a regression.
 - Copying a fake or a helper into each test file. Shared fakes live in
-  `tau-testing`, and a plugin's UI fakes in `tau_ui_plugin::testing`:
+  `heiko-testing`, and a plugin's UI fakes in `heiko_ui_plugin::testing`:
   `FakeRun` (the run a fold reaches), `run_ctx`, `fold` (a body through
   the registry, as the interface folds it) and `RepoValues`.
 - One test that checks many unrelated rules. When it fails, the name

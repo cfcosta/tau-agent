@@ -8,7 +8,7 @@
 
 ## Context
 
-0027 kept tau's plugins repository out of the person's sight: the
+0027 kept heiko's plugins repository out of the person's sight: the
 sidebar, search and new runs passed it by, and its chats were listed
 only on the Luau plugins page, under the Plugins screen's "Yours"
 group. Since 0034 those chats land by themselves and go on, so they are
@@ -24,7 +24,7 @@ ones need nothing.
   - its row opens the plugins built in, and its chevron folds the tree;
   - **Built in** opens the Plugins screen, which lists every plugin but
     the person's own, with a link to theirs;
-  - **Yours, in tau-plugins** opens the person's own plugins' page;
+  - **Yours, in heiko-plugins** opens the person's own plugins' page;
   - the plugins repository's chats follow, drawn as a repository's are
     (its main chat, the chats under it);
   - **Write a plugin** opens a new run's composer with `/plugin ` in it.
@@ -59,4 +59,4 @@ ones need nothing.
 - The Plugins screen no longer has a Yours group; the inspector sends a
   run's Luau plugins to their page instead of opening their settings in
   place.
-- The fold of Plugins is the window's, not saved: it opens with tau.
+- The fold of Plugins is the window's, not saved: it opens with heiko.

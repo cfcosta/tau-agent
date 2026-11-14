@@ -1,0 +1,4 @@
+name = "heiko-skills"
+version = "0.1.0"
+description = "Instructions the agent loads when a task calls for them: your skills, and those heiko ships"
+entry = "src/plugin.luau"

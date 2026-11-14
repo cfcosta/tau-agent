@@ -1,12 +1,12 @@
-# tau
+# heiko
 
-tau is a coding agent that runs on your Linux desktop and that you can
+heiko is a coding agent that runs on your Linux desktop and that you can
 also steer from an Android phone. It works in your GitHub repositories:
 each chat gets its own jj workspace, the model commits its own work, and
 that work lands as stacked changes you can push to GitHub. It runs on
 your ChatGPT plan through Sign in with ChatGPT, so there are no API keys.
 
-![A chat in tau: the transcript with its tool cards, beside the repositories and their chats](docs/screenshots/run.png)
+![A chat in heiko: the transcript with its tool cards, beside the repositories and their chats](docs/screenshots/run.png)
 
 ## A tour
 
@@ -87,7 +87,7 @@ itself.
 
 ### On your phone
 
-The phone runs no agent. It pairs with the tau on your computer by QR
+The phone runs no agent. It pairs with the heiko on your computer by QR
 code, over your LAN or a VPN such as Tailscale, and shows and steers the
 same runs with the same screens.
 
@@ -103,10 +103,10 @@ same runs with the same screens.
 
 ### Plugins
 
-Most of tau is plugins. Each has a half every screen draws (the phone
+Most of heiko is plugins. Each has a half every screen draws (the phone
 links it) and a half on the computer that does the work, and each has
 its settings in a pane on the Plugins page. You can write your own in
-Luau: `/plugin` and what it should do, in any chat. tau keeps them in a
+Luau: `/plugin` and what it should do, in any chat. heiko keeps them in a
 repository of its own, tests them, and loads each change once it lands.
 
 <p>
@@ -151,7 +151,7 @@ What the built-in plugins add:
 - **direnv.** Runs the agent's commands in the repository's direnv
   environment, once you allow it.
 
-  ![tau asking whether to load a repository's .envrc](docs/screenshots/direnv.png)
+  ![heiko asking whether to load a repository's .envrc](docs/screenshots/direnv.png)
 
 - **Skills.** Instructions from `~/.agents/skills`, which the model
   loads when a task calls for one.
@@ -191,7 +191,7 @@ search reaches any run, chat or action.
 - Linux, on x86_64 or aarch64. Building the phone app also needs
   x86_64.
 - A ChatGPT plan that allows use through Sign in with ChatGPT.
-- A GitHub account. tau works only in repositories cloned from GitHub.
+- A GitHub account. heiko works only in repositories cloned from GitHub.
 - For the plugins that ask Jev: `TYPESAFE_API_KEY` in the environment.
 - `git` on `PATH`, since pushes go through it. The Nix package brings
   its own.
@@ -202,21 +202,21 @@ From a checkout:
 
 ```sh
 nix run                                  # the packaged app
-cargo run --release -p tau               # the same, inside `nix develop`
+cargo run --release -p heiko               # the same, inside `nix develop`
 ```
 
-tau is not one file: it reads its Luau plugins at startup from
-`share/tau/plugins` beside the binary, or from `plugins/` in the checkout it
-was built from, or from `TAU_PLUGINS_DIR` (ADR 0051). Without them it starts
-no agents, and says why. `tau-plugin test plugins/tau-goal` runs one's tests
-with nothing to compile, and `tau-plugin check` loads them all (ADR 0053).
+heiko is not one file: it reads its Luau plugins at startup from
+`share/heiko/plugins` beside the binary, or from `plugins/` in the checkout it
+was built from, or from `HEIKO_PLUGINS_DIR` (ADR 0051). Without them it starts
+no agents, and says why. `heiko-plugin test plugins/heiko-goal` runs one's tests
+with nothing to compile, and `heiko-plugin check` loads them all (ADR 0053).
 
-On first start, tau asks you to sign in with ChatGPT and with GitHub.
+On first start, heiko asks you to sign in with ChatGPT and with GitHub.
 After that, "Add repository" picks a repository from GitHub to clone.
 
 <p>
   <img src="docs/screenshots/welcome.png" alt="The first screen of onboarding" width="49%">
-  <img src="docs/screenshots/model.png" alt="Connecting tau to ChatGPT" width="49%">
+  <img src="docs/screenshots/model.png" alt="Connecting heiko to ChatGPT" width="49%">
 </p>
 
 `--model <id>` picks the model (gpt-6.1-sol by default), and
@@ -224,37 +224,37 @@ After that, "Add repository" picks a repository from GitHub to clone.
 scripted session with no sign-in and no agent:
 
 ```sh
-cargo run --release -p tau -- --demo
-cargo run --release -p tau -- --demo --phone         # the phone layout
-cargo run --release -p tau -- --demo --open canvas   # one screen
+cargo run --release -p heiko -- --demo
+cargo run --release -p heiko -- --demo --phone         # the phone layout
+cargo run --release -p heiko -- --demo --open canvas   # one screen
 ```
 
-[crates/tau/README.md](crates/tau/README.md) lists every flag. The
+[crates/heiko/README.md](crates/heiko/README.md) lists every flag. The
 screenshots here come from the demo: `scripts/readme-screenshots.sh`
 takes them again.
 
 ### On a phone
 
 ```sh
-nix build .#tau-phone-apk      # result/tau-phone-debug.apk
-nix run .#tau-phone-install    # installs it on the phone adb sees
+nix build .#heiko-phone-apk      # result/heiko-phone-debug.apk
+nix run .#heiko-phone-install    # installs it on the phone adb sees
 ```
 
 Turn on "Allow phones" on the computer's Phones screen, then scan the QR
-code it shows from the phone. [crates/tau-phone/README.md](crates/tau-phone/README.md)
+code it shows from the phone. [crates/heiko-phone/README.md](crates/heiko-phone/README.md)
 has the details, including how to build without Nix.
 
-### Where tau keeps things
+### Where heiko keeps things
 
 | Path                       | What                                              |
 | -------------------------- | ------------------------------------------------- |
-| `~/.local/share/tau/repos` | The clones, with a jj workspace per chat          |
-| `~/.local/share/tau/`      | The run store, uploads, and the plugins' own data |
-| `~/.config/tau/`           | Sign-ins, model choices and interface settings    |
+| `~/.local/share/heiko/repos` | The clones, with a jj workspace per chat          |
+| `~/.local/share/heiko/`      | The run store, uploads, and the plugins' own data |
+| `~/.config/heiko/`           | Sign-ins, model choices and interface settings    |
 | `~/.agents/skills`         | Your skills, shared with other agents             |
 
 These follow `$XDG_DATA_HOME` and `$XDG_CONFIG_HOME` when they're set.
-[crates/tau-ui/README.md](crates/tau-ui/README.md) has the full list.
+[crates/heiko-ui/README.md](crates/heiko-ui/README.md) has the full list.
 
 ## Development
 
@@ -264,7 +264,7 @@ terminal need.
 
 ```sh
 nix develop
-cargo run --release -p tau
+cargo run --release -p heiko
 cargo nextest run --release    # the tests: no sign-in or network needed
 ```
 
@@ -276,15 +276,15 @@ fake OpenAI, ChatGPT and GitHub servers. The evaluations under
 
 | Layer         | Crates                                                                                |
 | ------------- | ------------------------------------------------------------------------------------- |
-| The app       | `tau` (desktop), `tau-phone` (Android)                                                |
-| The interface | `tau-ui-remote` (every screen, shared by desktop and phone), `tau-ui-kit` (the look)  |
-| The host      | `tau-ui`: runs agents, clones, lands, pushes, notifies, serves phones                 |
-| Plugins       | `crates/plugins/`: `tau-<name>` for what screens draw, `tau-<name>-host` for the work |
-| Plugin seams  | `tau-ui-plugin`: `UiPlugin`, `HostHalf`, extension points                             |
-| Phones        | `tau-remote`: pairing, the TLS identity, the wire                                     |
-| The agent     | `tau-agent` (the loop, tools, plugins), `tau-ai` (OpenAI over WebSocket)              |
-| Storage       | `tau-store`, `tau-store-sqlite`, `tau-artifacts`                                      |
-| Support       | `tau-terminal` (command output in a real terminal), `tau-testing`                     |
+| The app       | `heiko` (desktop), `heiko-phone` (Android)                                                |
+| The interface | `heiko-ui-remote` (every screen, shared by desktop and phone), `heiko-ui-kit` (the look)  |
+| The host      | `heiko-ui`: runs agents, clones, lands, pushes, notifies, serves phones                 |
+| Plugins       | `crates/plugins/`: `heiko-<name>` for what screens draw, `heiko-<name>-host` for the work |
+| Plugin seams  | `heiko-ui-plugin`: `UiPlugin`, `HostHalf`, extension points                             |
+| Phones        | `heiko-remote`: pairing, the TLS identity, the wire                                     |
+| The agent     | `heiko-agent` (the loop, tools, plugins), `heiko-ai` (OpenAI over WebSocket)              |
+| Storage       | `heiko-store`, `heiko-store-sqlite`, `heiko-artifacts`                                      |
+| Support       | `heiko-terminal` (command output in a real terminal), `heiko-testing`                     |
 
 Each crate has a README. [docs/architecture.md](docs/architecture.md)
 covers how the crates connect, [docs/decisions/](docs/decisions/) records
@@ -297,10 +297,10 @@ Codex's unified exec.
 
 ## Status
 
-tau is in active development and has no release yet.
+heiko is in active development and has no release yet.
 
 ## License
 
-tau is under the [MIT license](LICENSE). Parts of it come from pi and
+heiko is under the [MIT license](LICENSE). Parts of it come from pi and
 other projects, under their own licenses:
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists them.

@@ -1,0 +1,4 @@
+name = "heiko-notify"
+version = "0.1.0"
+description = "Notices on the desktop while heiko is in the background"
+entry = "src/plugin.luau"

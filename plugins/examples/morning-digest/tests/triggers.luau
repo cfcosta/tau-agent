@@ -1,5 +1,5 @@
-local tau = require("tau")
-local t = tau.test
+local heiko = require("heiko")
+local t = heiko.test
 
 t.case("it wakes on weekday mornings", function()
   local triggers = t.agent({}):describe().triggers

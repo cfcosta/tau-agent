@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# Refreshes crates/tau-ai/data/models-dev-openai.json from models.dev.
+# Refreshes crates/heiko-ai/data/models-dev-openai.json from models.dev.
 #
 # Ported from pi's `packages/ai/scripts/generate-models.ts` (checkout at
 # 2b0a123): that script fetches https://models.dev/api.json, walks
 # `data.openai.models`, and keeps every model regardless of `tool_call`
 # (the `tool_call === true` filter and the
 # `MODELS_DEV_OPENAI_UNSUPPORTED_MODEL_IDS` exclusion are applied later,
-# in Rust, by `tau_ai::model`) so that a refresh can never silently drop
-# a model tau-ai's build-time filter should have seen.
+# in Rust, by `heiko_ai::model`) so that a refresh can never silently drop
+# a model heiko-ai's build-time filter should have seen.
 #
 # Usage: bash scripts/update-openai-models.sh
 set -euo pipefail
 
 script_path="$(realpath -- "${BASH_SOURCE[0]}")"
 root_dir="$(dirname -- "$(dirname -- "$script_path")")"
-out_file="$root_dir/crates/tau-ai/data/models-dev-openai.json"
+out_file="$root_dir/crates/heiko-ai/data/models-dev-openai.json"
 source_url="https://models.dev/api.json"
 fetched_date="$(date -u +%Y-%m-%d)"
 
@@ -24,7 +24,7 @@ trap 'rm -f "$tmp_file"' EXIT
 echo "Fetching $source_url ..." >&2
 curl --fail --silent --show-error --location "$source_url" -o "$tmp_file"
 
-# Reduce every OpenAI model to the fields tau_ai::model reads (mirrors the
+# Reduce every OpenAI model to the fields heiko_ai::model reads (mirrors the
 # fields generate-models.ts reads off `ModelsDevModel`: `tool_call`,
 # `reasoning`, `modalities.input`, `cost.{input,output,cache_read,
 # cache_write}`, `limit.{context,output}`), and sort by id so the vendored

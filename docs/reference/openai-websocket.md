@@ -8,11 +8,11 @@ on 2026-09-26. Re-check it before M1 starts; the mode is recent.
 
 - **Endpoint:** `wss://api.openai.com/v1/responses`.
 - **Authentication:** `Authorization: Bearer <token>`, sent on the
-  upgrade request. tau's token is always a ChatGPT plan's access token
+  upgrade request. heiko's token is always a ChatGPT plan's access token
   from Sign in with ChatGPT ([`chatgpt-sign-in.md`](chatgpt-sign-in.md)),
-  refreshed before each connection. tau takes no API key
+  refreshed before each connection. heiko takes no API key
   ([0012](../decisions/0012-chatgpt-sign-in-only.md)).
-- **Lifetime:** at most 60 minutes per connection. tau-agent rotates at
+- **Lifetime:** at most 60 minutes per connection. heiko-agent rotates at
   55 minutes, which is the same margin pi uses.
 
 ## Client message
@@ -22,12 +22,12 @@ Responses create body, with these differences:
 
 - **Forbidden fields:** `stream` and `background`.
 - **`stream_id`** is optional: 1–256 characters from `[A-Za-z0-9_.-]`.
-  Omit it to use the default lane. tau never sends it: the plan route
+  Omit it to use the default lane. heiko never sends it: the plan route
   may not take it, so each run uses the default lane of a connection
   of its own.
 - **`previous_response_id`** continues from a response the connection
   still holds.
-- **`store`:** tau-agent always sends `false`.
+- **`store`:** heiko-agent always sends `false`.
 - **`generate: false`** runs a warm-up: it prepares state and returns a
   response id without producing output.
 
@@ -57,7 +57,7 @@ Streaming events use the same `response.*` types as the SSE transport:
   `response.incomplete`
 
 Events on a named lane carry its `stream_id`, and events on the default
-lane omit it. tau uses only the default lane, so a frame belongs to the
+lane omit it. heiko uses only the default lane, so a frame belongs to the
 run of the connection it came on. Errors look like this:
 
 ```json
@@ -71,18 +71,18 @@ run of the connection it came on. Errors look like this:
 
 ## Limits and lanes
 
-| Limit                              | Value                                              | tau-agent behaviour                                                                                                      |
+| Limit                              | Value                                              | heiko-agent behaviour                                                                                                      |
 | ---------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | In-flight responses per connection | 16, across all lanes                               | One response in flight per connection. A run's lane takes a connection by conversation affinity (see "Connection pool"). |
-| Named `stream_id`s per connection  | 32 (the default lane doesn't count)                | Not reached: tau sends no `stream_id`, so `websocket_stream_limit_reached` never comes and has no handling.              |
+| Named `stream_id`s per connection  | 32 (the default lane doesn't count)                | Not reached: heiko sends no `stream_id`, so `websocket_stream_limit_reached` never comes and has no handling.              |
 | Ordering                           | FIFO within one `stream_id`; lanes run in parallel | One run = one lane, on one connection at a time. Parallel runs never queue behind each other.                            |
 | Connection age                     | 60 min                                             | The pool rotates at 55 min. The error is `websocket_connection_limit_reached`.                                           |
 
 ## Connection pool
 
-`tau_ai::ws::proto::pool`. A lane is one run's requests. It belongs to
+`heiko_ai::ws::proto::pool`. A lane is one run's requests. It belongs to
 a conversation, a path of work, given as an `Affinity`: the path (in
-tau, the run id, which is also the `prompt_cache_key`) and, for a fork
+heiko, the run id, which is also the `prompt_cache_key`) and, for a fork
 whose first response has not completed, the parent's path. A
 connection remembers the path it serves, the path it served before,
 and the continuation its last lane left.
@@ -118,7 +118,7 @@ connection leave an idle lane without a connection until it sends.
 
 On this route the prompt cache lives on the connection. Measured on
 2026-10-03 with gpt-5.5 and a ChatGPT token, prompts of about 4k
-tokens, with `crates/tau-ai/examples/cache_probe.rs`:
+tokens, with `crates/heiko-ai/examples/cache_probe.rs`:
 
 | Request                                                                  | Cached                                   |
 | ------------------------------------------------------------------------ | ---------------------------------------- |
@@ -141,17 +141,17 @@ read 85% of it again when they resent it. An idle connection keeps its
 cache as long as it lives, so a conversation's cache lapses when its
 connection rotates, 55 minutes after it opened.
 `OpenAi::cache_lapse` says when that is for a conversation none of
-whose lanes holds a connection; tau-ui compacts a long idle chat just
+whose lanes holds a connection; heiko-ui compacts a long idle chat just
 before ([compaction.md](compaction.md), "Idle compaction").
 
 - A connection continues only from its most recent response:
   `previous_response_id` of an older one fails with
   `previous_response_not_found`.
-- `prompt_cache_key` does not route to a cache on this route; tau sends
+- `prompt_cache_key` does not route to a cache on this route; heiko sends
   it (each run's path) all the same.
-- So tau keeps a conversation on its connection (see "Connection
+- So heiko keeps a conversation on its connection (see "Connection
   pool"), gives every run of a repository the same tools and
-  instructions, and keeps a long conversation's effort (tau-reasoning,
+  instructions, and keeps a long conversation's effort (heiko-reasoning,
   [plugins.md](plugins.md)). See
   [ADR 0022](../decisions/0022-the-prompt-cache-follows-the-connection.md).
 
@@ -238,8 +238,8 @@ Codex sends its newer models' requests as Responses Lite
 (`use_responses_lite` in `codex-rs/models-manager/models.json`), and on
 those it stops a response the person steered past with
 `response.interrupt` (its instant interrupt,
-`codex-rs/core/src/session/turn.rs`). tau does the same for the plan
-families from 5.6 on (`tau_ai::model::is_lite`: gpt-6-astra,
+`codex-rs/core/src/session/turn.rs`). heiko does the same for the plan
+families from 5.6 on (`heiko_ai::model::is_lite`: gpt-6-astra,
 gpt-6.1-sol, gpt-6-sol, gpt-6-luna, gpt-5.6-sol/terra/luna; not
 gpt-5.5).
 
@@ -249,8 +249,8 @@ gpt-5.5).
   `reasoning.context: "all_turns"`, and `parallel_tool_calls: false`.
   Codex also moves its instructions and tools into the input (a
   developer message, and an `additional_tools` item with a `functions`
-  namespace); the server takes tau's `instructions` and top-level
-  `tools` as they are, so tau keeps them. Function calls come back and
+  namespace); the server takes heiko's `instructions` and top-level
+  `tools` as they are, so heiko keeps them. Function calls come back and
   go back as on a plain request, with no `namespace`.
 - **The interrupt.**
   `{"type":"response.interrupt","response_id":…,"mode":"discard_partial_items"}`
@@ -261,11 +261,11 @@ gpt-5.5).
   response keeps its finished items and reports its usage, and a
   continuation from it works. A gpt-5.6 model takes Lite requests but
   answers `response.interrupt.failed` (`interrupt_not_supported`) and
-  streams to the end: tau then closes the connection, as without Lite.
+  streams to the end: heiko then closes the connection, as without Lite.
   A plain request's interrupt fails the same way.
 
 Measured on a ChatGPT plan, 2026-10-09, with raw-WebSocket probes. The
-`steer` command of `crates/tau-ai/examples/chatgpt_probe.rs` runs tau's
+`steer` command of `crates/heiko-ai/examples/chatgpt_probe.rs` runs heiko's
 own client through a cut: on gpt-6.1-sol the next answer began 1.6 s
 after the cut on the same connection; on gpt-5.6-sol and gpt-5.5 it
 began 2.1 to 2.5 s after, on a second connection. Before, it waited for
@@ -321,7 +321,7 @@ setup. It is optional and set per agent.
 - A warm-up's usage counts toward the run. A failed warm-up is ignored,
   and the first turn goes in full.
 
-## Things pi does that tau-agent keeps
+## Things pi does that heiko-agent keeps
 
 - It requests `reasoning.encrypted_content`, so full resends can replay
   reasoning when `store` is `false`.

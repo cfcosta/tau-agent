@@ -1,9 +1,9 @@
 -- A slot filler: writes each run's title from its first sentence, with
 -- no model.
-local tau = require("tau")
+local heiko = require("heiko")
 
-return tau.plugin {
-	fills = { "tau.title" },
+return heiko.plugin {
+	fills = { "heiko.title" },
 	title = function(run)
 		local task = string.match(run.task, "^%s*(.-)%s*$")
 		local first = string.match(task, "^[^%.!?\n]+")

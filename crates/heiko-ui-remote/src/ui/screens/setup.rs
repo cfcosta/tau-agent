@@ -1,0 +1,2217 @@
+//! Onboarding, in the handshake style: heiko's tile and the service it
+//! connects to, joined by a line whose look says how the connection
+//! stands, under a bar with the stages: heiko's three, and plugins' steps
+//! around the repositories. Faint rings and a glow sit
+//! behind the handshake, amber while acting, green once connected and
+//! red when blocked. On a phone the same screens stack, with smaller
+//! tiles and full-width buttons.
+//!
+//! It moves as the prototype does (see [`crate::motion`]): the rings
+//! breathe, the line drifts, carries a comet while waiting and draws
+//! itself green once connected; the handshake shrinks and rises between
+//! steps; each screen's words rise into place. Every change follows a
+//! change of state, never a timer.
+
+use std::time::Duration;
+
+use gpui::{
+    Animation,
+    AnimationExt as _,
+    AnyElement,
+    App,
+    BoxShadow,
+    Context,
+    Div,
+    Focusable as _,
+    Hsla,
+    SharedString,
+    Transformation,
+    Window,
+    div,
+    linear_color_stop,
+    linear_gradient,
+    prelude::*,
+    px,
+    radians,
+    relative,
+    rems,
+    size as area,
+    svg,
+};
+use heiko_ui_plugin::points::{LinkState, SetupLink};
+
+use crate::{
+    assets::{Brand, Icon},
+    motion::{
+        Frame,
+        Link,
+        Mood,
+        Scale,
+        Scene,
+        Segment,
+        Service,
+        SetupMotion,
+        after,
+        breath,
+        curve,
+        entrance,
+        lerp,
+        loop_of,
+        mix,
+        pop,
+    },
+    setup::{CloneState, SetupStep, Stage},
+    theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
+    ui::{Material as _, bar, icon, icon_button, link, mono},
+    workspace::Workspace,
+};
+
+/// The waiting dot's halo, when the comet does not run; the dot is half
+/// as wide.
+const HALO: f32 = 24.;
+
+/// The top bar's height, the same on a desktop and a phone.
+const TOP_BAR: f32 = 56.;
+
+/// The comet's length and thickness.
+const COMET: (f32, f32) = (70., 8.);
+
+/// How big the handshake is and where it sits.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Size {
+    tile: f32,
+    line: f32,
+    /// From the top bar to the tiles' top.
+    top: f32,
+}
+
+impl Size {
+    fn of(scale: Scale, compact: bool) -> Self {
+        match (scale, compact) {
+            (Scale::Big, false) => Self {
+                tile: 112.,
+                line: 250.,
+                top: 140.,
+            },
+            (Scale::Big, true) => Self {
+                tile: 64.,
+                line: 96.,
+                top: 28.,
+            },
+            (Scale::Small, false) => Self {
+                tile: 72.,
+                line: 170.,
+                top: 40.,
+            },
+            (Scale::Small, true) => Self {
+                tile: 52.,
+                line: 80.,
+                top: 24.,
+            },
+        }
+    }
+
+    fn between(from: Self, to: Self, t: f32) -> Self {
+        Self {
+            tile: lerp(from.tile, to.tile, t),
+            line: lerp(from.line, to.line, t),
+            top: lerp(from.top, to.top, t),
+        }
+    }
+
+    /// The handshake's middle, from the window's top.
+    fn center(self) -> f32 {
+        TOP_BAR + self.top + self.tile / 2.
+    }
+}
+
+/// Where the welcome's picture centers, from the window's top.
+const WELCOME_CENTER: f32 = TOP_BAR + 196.;
+
+// What the frame shows.
+
+/// The handshake's other side, the line and the rings for `step`, as
+/// onboarding stands, with the step bar's `stages`.
+fn frame(ws: &Workspace, step: SetupStep, stages: &[Stage]) -> Frame {
+    let (state, mood, link, service, scale) = match step {
+        SetupStep::Welcome => {
+            (0, Mood::Acting, Link::Idle, Service::None, Scale::Big)
+        }
+        SetupStep::Repos => (
+            0,
+            Mood::Acting,
+            Link::Connected,
+            Service::Repos,
+            Scale::Small,
+        ),
+        SetupStep::Plugin { .. } => match plugin_link(ws, step) {
+            // A step that connects heiko to a service: the provider's
+            // sign-in, drawn big as it stands.
+            Some(link) => {
+                let (state, mood, link) = match link.state {
+                    LinkState::Idle => (0, Mood::Acting, Link::Idle),
+                    LinkState::Waiting => (1, Mood::Acting, Link::Waiting),
+                    LinkState::Connected => (2, Mood::Done, Link::Connected),
+                    LinkState::Declined => (3, Mood::Acting, Link::Declined),
+                    LinkState::Blocked => (4, Mood::Refused, Link::Blocked),
+                    LinkState::Failed => (5, Mood::Acting, Link::Idle),
+                };
+                (state, mood, link, Service::Provider, Scale::Big)
+            }
+            None => (
+                0,
+                Mood::Acting,
+                Link::Connected,
+                Service::Plugin,
+                Scale::Small,
+            ),
+        },
+        SetupStep::Ready => (
+            0,
+            Mood::Acting,
+            Link::Connected,
+            Service::FirstRun,
+            Scale::Small,
+        ),
+    };
+    let stage = step.stage(stages);
+    let segments = (0..stages.len())
+        .map(|n| match stage {
+            Some(stage) if n < stage => Segment::Done,
+            Some(stage) if n == stage => Segment::Current,
+            _ => Segment::Ahead,
+        })
+        .collect();
+    Frame {
+        scene: Scene { step, state },
+        mood,
+        link,
+        service,
+        scale,
+        segments,
+    }
+}
+
+/// How the link of `step`, a plugin's, stands, when the step connects
+/// heiko to a service (`SetupView::link`).
+fn plugin_link(ws: &Workspace, step: SetupStep) -> Option<SetupLink> {
+    ws.plugin_setup_steps()
+        .into_iter()
+        .find_map(|(found, view)| (found == step).then_some(view.link))
+        .flatten()
+}
+
+/// Records what this frame of onboarding shows, before it is drawn, so
+/// that what changed animates.
+pub fn observe(
+    ws: &mut Workspace,
+    step: SetupStep,
+    window: &Window,
+    cx: &mut App,
+) {
+    let stages = ws.setup_stages();
+    let frame = frame(ws, step, &stages);
+    let composing = ws.first_task.read(cx).focus_handle(cx).is_focused(window);
+    let clones: Vec<(String, u32, bool)> = ws
+        .setup
+        .clones
+        .iter()
+        .map(|clone| match &clone.state {
+            CloneState::Cloning { share, .. } => (
+                clone.name.clone(),
+                (share.clamp(0., 1.) * 1000.) as u32,
+                false,
+            ),
+            CloneState::Ready => (clone.name.clone(), 1000, true),
+            CloneState::Failed(_) => (clone.name.clone(), 1000, false),
+        })
+        .collect();
+    let reduce = ws.reduce_motion() || cx.reduce_motion();
+    let motion = &mut ws.setup_motion;
+    motion.observe(frame);
+    motion.composing.observe(composing);
+    motion.observe_clones(
+        clones
+            .iter()
+            .map(|(name, share, ready)| (name.as_str(), *share, *ready)),
+    );
+    motion.active = window.is_window_active();
+    motion.reduce = reduce;
+}
+
+/// What the handshake's animations need to know, all copied so that an
+/// animation can redraw it.
+#[derive(Debug, Clone, Copy)]
+struct Beat {
+    link: Link,
+    link_from: Link,
+    link_epoch: u64,
+    /// The link changed to what it is, rather than being so from the
+    /// start.
+    link_changed: bool,
+    service: Service,
+    service_epoch: u64,
+    service_changed: bool,
+    loops: bool,
+    reduce: bool,
+}
+
+impl Beat {
+    fn of(motion: &SetupMotion) -> Self {
+        Self {
+            link: motion.link.current,
+            link_from: motion.link.previous,
+            link_epoch: motion.link.epoch,
+            link_changed: motion.link.changed(),
+            service: motion.service.current,
+            service_epoch: motion.service.epoch,
+            service_changed: motion.service.changed(),
+            loops: motion.loops(),
+            reduce: motion.reduce,
+        }
+    }
+}
+
+pub fn render(
+    ws: &Workspace,
+    step: SetupStep,
+    compact: bool,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> AnyElement {
+    let motion = &ws.setup_motion;
+    let stages = ws.setup_stages();
+    let body = match step {
+        SetupStep::Welcome => welcome(ws, compact, t, cx),
+        SetupStep::Repos => repos(ws, compact, t, cx),
+        SetupStep::Plugin { plugin, step } => {
+            plugin_step(ws, plugin, step, compact, t, cx)
+        }
+        SetupStep::Ready => ready(ws, compact, t, cx),
+    };
+    div()
+        .size_full()
+        .relative()
+        .overflow_hidden()
+        .flex()
+        .flex_col()
+        .bg(t.setup.ground)
+        .text_color(t.text)
+        .typeset(Type::BODY)
+        .child(backdrop(motion, step, compact, t))
+        .child(top_bar(ws, step, &stages, compact, t, cx))
+        .child(
+            div()
+                .id("setup-body")
+                .flex_1()
+                .min_h(rems(0.))
+                .overflow_y_scroll()
+                .child(
+                    body.w_full()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .px(sp(if compact { 4. } else { 6. }))
+                        .pb(sp(if compact { 8. } else { 12. })),
+                ),
+        )
+        .into_any_element()
+}
+
+// The scene.
+
+fn mood_color(mood: Mood, t: &Theme) -> Hsla {
+    match mood {
+        Mood::Acting => t.accent,
+        Mood::Done => t.green,
+        Mood::Refused => t.red,
+    }
+}
+
+/// The rings and the glow in one mood's color. The rings breathe, out of
+/// step, while loops run. Radial gradients are not in GPUI: the glow is
+/// a soft shadow around a circle.
+fn ring_set(
+    set: &'static str,
+    mood: Mood,
+    scale: f32,
+    loops: bool,
+    t: &Theme,
+) -> Div {
+    let look = &t.setup;
+    let color = mood_color(mood, t);
+    let glow = 200. * scale;
+    let strength = match mood {
+        Mood::Refused => look.glow_alpha * 0.8,
+        Mood::Done => look.glow_alpha * 1.2,
+        Mood::Acting => look.glow_alpha,
+    };
+    let rings = look
+        .ring_radii
+        .iter()
+        .zip(look.ring_alphas)
+        .enumerate()
+        .map(move |(n, (radius, alpha))| {
+            let r = radius * scale;
+            let ring = div()
+                .absolute()
+                .left(rems((-r) / 16.))
+                .top(rems((-r) / 16.))
+                .size(rems((2. * r) / 16.))
+                .rounded(rems((r) / 16.))
+                .border_1()
+                .border_color(color.opacity(alpha));
+            if !loops {
+                return ring.into_any_element();
+            }
+            // Each ring a fifth of a breath ahead of the one inside it.
+            ring.with_animation(
+                SharedString::from(format!("ring-{set}-{n}")),
+                loop_of(7000, n as f32 * 0.2),
+                move |ring, phase| {
+                    let v = breath(phase);
+                    let r = r * (1. + 0.018 * v);
+                    ring.left(rems((-r) / 16.))
+                        .top(rems((-r) / 16.))
+                        .size(rems((2. * r) / 16.))
+                        .rounded(rems((r) / 16.))
+                        .opacity(1. - 0.28 * v)
+                },
+            )
+            .into_any_element()
+        });
+    div()
+        .absolute()
+        .size(rems(0.))
+        .child(
+            div()
+                .absolute()
+                .left(rems((-glow / 2.) / 16.))
+                .top(rems((-glow / 2.) / 16.))
+                .size(rems((glow) / 16.))
+                // A real radius: shadows do not round with `FULL`.
+                .rounded(rems((glow / 2.) / 16.))
+                .shadow(vec![
+                    BoxShadow::new(px(0.), px(0.), color.opacity(strength))
+                        .blur_radius(px(glow))
+                        .spread_radius(px(glow * 0.35)),
+                ]),
+        )
+        .children(rings)
+}
+
+/// The rings and the glow, centered on the handshake. A new mood cross-
+/// fades them; a new size moves them with the handshake; a connection
+/// sends one green ring rippling out.
+fn backdrop(
+    motion: &SetupMotion,
+    step: SetupStep,
+    compact: bool,
+    t: &Theme,
+) -> Div {
+    let scale = if compact { t.setup.compact_scale } else { 1. };
+    let loops = motion.loops();
+    let center_of = |scale: Scale| {
+        if step == SetupStep::Welcome && !compact {
+            WELCOME_CENTER
+        } else {
+            Size::of(scale, compact).center()
+        }
+    };
+    let (from, to) = (
+        center_of(motion.scale.previous),
+        center_of(motion.scale.current),
+    );
+    let mood = &motion.mood;
+    let now = ring_set("now", mood.current, scale, loops, t);
+    let mut anchor = div()
+        .absolute()
+        .left(relative(0.5))
+        .size(rems(0.))
+        .when(mood.within(800), |anchor| {
+            anchor.child(
+                ring_set("was", mood.previous, scale, loops, t).with_animation(
+                    SharedString::from(format!("mood-out-{}", mood.epoch)),
+                    after(0, 800, curve::ease_in_out()),
+                    |set, e| set.opacity(1. - e),
+                ),
+            )
+        })
+        .child(if mood.changed() {
+            now.with_animation(
+                SharedString::from(format!("mood-in-{}", mood.epoch)),
+                after(0, 800, curve::ease_in_out()),
+                |set, e| set.opacity(e),
+            )
+            .into_any_element()
+        } else {
+            now.into_any_element()
+        });
+    let link = &motion.link;
+    if link.current == Link::Connected
+        && link.changed()
+        && !motion.reduce
+        && link.within(1500)
+    {
+        let green = t.green;
+        let r = 150. * scale;
+        anchor = anchor.child(
+            div()
+                .absolute()
+                .border(rems(0.125))
+                .border_color(green.opacity(0.8))
+                .with_animation(
+                    SharedString::from(format!("ripple-{}", link.epoch)),
+                    Animation::new(Duration::from_millis(1400)),
+                    move |ring, t| {
+                        let ms = t * 1400.;
+                        if ms < 300. {
+                            return ring.opacity(0.);
+                        }
+                        let e = curve::ripple()((ms - 300.) / 1100.);
+                        let r = r * lerp(0.35, 1.7, e);
+                        ring.left(rems((-r) / 16.))
+                            .top(rems((-r) / 16.))
+                            .size(rems((2. * r) / 16.))
+                            .rounded(rems((r) / 16.))
+                            .opacity(0.75 * (1. - e))
+                    },
+                ),
+        );
+    }
+    let layer = div().absolute().left_0().top_0().size_full();
+    if motion.scale.changed() && from != to && !motion.reduce {
+        layer.child(anchor.with_animation(
+            SharedString::from(format!("scene-move-{}", motion.scale.epoch)),
+            after(0, 550, curve::settle()),
+            move |anchor, e| anchor.top(rems((lerp(from, to, e)) / 16.)),
+        ))
+    } else {
+        layer.child(anchor.top(rems((to) / 16.)))
+    }
+}
+
+/// heiko, the stages as segments (done green, current amber), and where
+/// you are. A segment whose state changed fills left to right in its new
+/// color. A phone shows the segments without their names.
+fn top_bar(
+    ws: &Workspace,
+    step: SetupStep,
+    stages: &[Stage],
+    compact: bool,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Div {
+    let look = &t.setup;
+    let motion = &ws.setup_motion;
+    let segments = &motion.segments;
+    let color = |segment: Segment| match segment {
+        Segment::Done => t.green,
+        Segment::Current => t.accent,
+        Segment::Ahead => look.track,
+    };
+    let label = |segment: Segment| {
+        if segment == Segment::Ahead {
+            look.idle
+        } else {
+            t.dim
+        }
+    };
+    let width = if compact { 28. } else { 64. };
+    let reduce = motion.reduce;
+    let segment = |segments: &[Segment], n: usize| {
+        segments.get(n).copied().unwrap_or(Segment::Ahead)
+    };
+    let items = stages.iter().enumerate().map(|(n, stage)| {
+        let name = stage.name.clone();
+        let (was, now) = (
+            segment(&segments.previous, n),
+            segment(&segments.current, n),
+        );
+        let (base, fill) = (color(was), color(now));
+        let (from_label, to_label) = (label(was), label(now));
+        let item = move |share: f32, fade: f32, label: Hsla| {
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(sp(1.75))
+                .child(
+                    div()
+                        .relative()
+                        .w(rems((width) / 16.))
+                        .h(rems(0.1875))
+                        .rounded(radius::HAIRLINE)
+                        .overflow_hidden()
+                        .bg(base)
+                        .child(
+                            div()
+                                .absolute()
+                                .left_0()
+                                .top_0()
+                                .h_full()
+                                .w(relative(share))
+                                .bg(fill.opacity(fill.a * fade)),
+                        ),
+                )
+                .when(!compact, |item| {
+                    item.child(mono(name.clone(), Type::MICRO, label))
+                })
+        };
+        if was == now {
+            return item(1., 1., to_label).into_any_element();
+        }
+        div()
+            .with_animation(
+                SharedString::from(format!("segment-{n}-{}", segments.epoch)),
+                after(if reduce { 0 } else { 200 }, 450, curve::settle()),
+                move |slot, e| {
+                    // Reduced, the new color fades in over the old.
+                    let (share, fade) = if reduce { (1., e) } else { (e, 1.) };
+                    slot.child(item(share, fade, mix(from_label, to_label, e)))
+                },
+            )
+            .into_any_element()
+    });
+    let place = match step.stage(stages) {
+        None => "welcome".to_owned(),
+        Some(stage) if compact => {
+            format!("{} · {}/{}", stages[stage].name, stage + 1, stages.len())
+        }
+        Some(stage) => format!("{} / {}", stage + 1, stages.len()),
+    };
+    let side = if compact { 96. } else { 140. };
+    div()
+        .h(rems((TOP_BAR) / 16.))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_between()
+        .px(sp(if compact { 3. } else { 7. }))
+        .child(
+            div()
+                .w(rems((side) / 16.))
+                .flex()
+                .items_center()
+                .gap(sp(2.5))
+                .when(ws.can_go_back() && compact, |row| {
+                    row.child(
+                        icon_button("task-back", Icon::Back, 36., t)
+                            .on_click(cx.listener(|ws, _, _, cx| ws.back(cx))),
+                    )
+                })
+                .child(heiko_tile(22., t))
+                .when(!compact, |row| {
+                    row.child(mono("heiko · setup", Type::CAPTION, look.faint))
+                }),
+        )
+        .child(
+            div()
+                .flex()
+                .items_start()
+                .gap(sp(if compact { 1.5 } else { 2.5 }))
+                .when(!compact, |row| row.pt(sp(3.)))
+                .children(items),
+        )
+        .child(div().w(rems((side) / 16.)).flex().justify_end().child(mono(
+            place,
+            Type::CAPTION,
+            look.faint,
+        )))
+}
+
+// The handshake.
+
+/// heiko's tile: τ on amber, softly lit.
+fn heiko_tile(size: f32, t: &Theme) -> Div {
+    let lit = size >= 48.;
+    div()
+        .size(rems((size) / 16.))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(rems((size * 30. / 112.) / 16.))
+        .accent_key(t)
+        .text_color(t.setup.on_light)
+        .typeset(Type::HERO.sized(size * 58. / 112.).weighted(weight::STRONG))
+        .when(lit, |tile| {
+            tile.shadow(vec![
+                BoxShadow::new(px(0.), px(2.), gpui::white().opacity(0.4))
+                    .inset(),
+                BoxShadow::new(px(0.), px(-3.), t.depth.accent_edge).inset(),
+                BoxShadow::new(px(0.), px(0.), t.accent.opacity(0.08))
+                    .spread_radius(px((size / 11.).max(6.))),
+                BoxShadow::new(px(0.), px(24.), t.accent.opacity(0.22))
+                    .blur_radius(px(60.)),
+            ])
+        })
+        .child("τ")
+}
+
+/// A company's mark, from its own artwork when it was built in; else a
+/// plain outlined circle holding its place. See [`Brand`]. `turn` is in
+/// radians, for an icon swapping in.
+fn brand_mark(
+    brand: Brand,
+    size: f32,
+    color: Hsla,
+    turn: f32,
+    t: &Theme,
+) -> AnyElement {
+    match brand.svg() {
+        Some(_) => svg()
+            .path(brand.path())
+            .size(rems((size) / 16.))
+            .flex_shrink_0()
+            .text_color(color)
+            .with_transformation(Transformation::rotate(radians(turn)))
+            .into_any_element(),
+        None => div()
+            .size(rems((size) / 16.))
+            .flex_shrink_0()
+            .rounded(rems((size / 2.) / 16.))
+            .border(rems(0.09375))
+            .border_color(t.setup.faint)
+            .into_any_element(),
+    }
+}
+
+/// What stands for `service` in its tile, `tile` wide, at `scale` and
+/// turned by `turn` radians.
+fn service_icon(
+    service: Service,
+    tile: f32,
+    scale: f32,
+    turn: f32,
+    t: &Theme,
+) -> AnyElement {
+    let glyph = |glyph: Icon, share: f32| {
+        svg()
+            .path(glyph.path())
+            .size(rems((tile * share) / 16.))
+            .flex_shrink_0()
+            .text_color(t.text_soft)
+            .with_transformation(
+                Transformation::scale(area(scale, scale))
+                    .with_rotation(radians(turn)),
+            )
+            .into_any_element()
+    };
+    match service {
+        Service::Provider | Service::None => {
+            brand_mark(Brand::ChatGpt, tile * 0.57 * scale, t.text, turn, t)
+        }
+        Service::Repos => glyph(Icon::Repo, 0.42),
+        Service::Plugin => glyph(Icon::Plug, 0.42),
+        Service::FirstRun => glyph(Icon::Runs, 0.42),
+    }
+}
+
+/// The other side's tile, edged by how the link stands. It breathes with
+/// the comet while heiko waits on it, and its icon swaps in when the
+/// service changes.
+fn service_tile(size: f32, beat: Beat, t: &Theme) -> AnyElement {
+    let look = &t.setup;
+    let edge = match beat.link {
+        Link::Waiting | Link::Declined => t.accent_border,
+        Link::Connected if beat.service == Service::Provider => look.green_edge,
+        Link::Blocked => t.red_border,
+        _ => t.border,
+    };
+    let inner = if beat.service_changed && !beat.reduce {
+        let (service, tile, theme) = (beat.service, size, t.clone());
+        div()
+            .with_animation(
+                SharedString::from(format!("swap-{}", beat.service_epoch)),
+                Animation::new(Duration::from_millis(560)),
+                move |slot, t| {
+                    let ms = t * 560.;
+                    if ms < 180. {
+                        return slot.opacity(0.);
+                    }
+                    let e = curve::swap()((ms - 180.) / 380.);
+                    slot.opacity(e.clamp(0., 1.)).child(service_icon(
+                        service,
+                        tile,
+                        lerp(0.7, 1., e),
+                        lerp(-8., 0., e).to_radians(),
+                        &theme,
+                    ))
+                },
+            )
+            .into_any_element()
+    } else {
+        service_icon(beat.service, size, 1., 0., t)
+    };
+    let radius = size * 30. / 112.;
+    let tile = div()
+        .size(rems((size) / 16.))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(rems((radius) / 16.))
+        .bevel(look.surface_top, look.tile, t)
+        .border_1()
+        .border_color(edge)
+        .child(inner);
+    if beat.link != Link::Waiting || !beat.loops {
+        return tile.into_any_element();
+    }
+    let (quiet, lit, glow) = (t.border, look.waiting_edge, t.accent);
+    tile.with_animation(
+        "service-breath",
+        loop_of(1400, 0.),
+        move |tile, phase| {
+            let v = breath(phase);
+            tile.border_color(mix(quiet, lit, v)).shadow(vec![
+                BoxShadow::new(px(0.), px(0.), glow.opacity(0.07 * v))
+                    .spread_radius(px(6. * v)),
+            ])
+        },
+    )
+    .into_any_element()
+}
+
+/// Dashes 4 px long every 10 px, as the prototype's CSS draws them,
+/// `offset` px along toward the service.
+fn dash_row(line: f32, offset: f32, alpha: f32, t: &Theme) -> Div {
+    let count = (line / 10.).ceil() as usize + 2;
+    div()
+        .absolute()
+        .top_0()
+        .left(rems((offset - 10.) / 16.))
+        .flex()
+        .gap(sp(1.5))
+        .children((0..count).map(|_| {
+            div()
+                .w(rems(0.25))
+                .h(rems(0.125))
+                .flex_shrink_0()
+                .bg(t.accent.opacity(alpha))
+        }))
+}
+
+/// The dashes, clipped to the line; drifting while loops run.
+fn dashes(line: f32, alpha: f32, drift: bool, t: &Theme) -> AnyElement {
+    let track = div()
+        .absolute()
+        .left_0()
+        .top_0()
+        .w(rems((line) / 16.))
+        .h(rems(0.125))
+        .overflow_hidden();
+    if !drift {
+        return track
+            .child(dash_row(line, 10., alpha, t))
+            .into_any_element();
+    }
+    let theme = t.clone();
+    track
+        .with_animation("dash-drift", loop_of(1100, 0.), move |track, phase| {
+            // 20 px a loop: two dashes' worth.
+            track.child(dash_row(line, (phase * 20.) % 10., alpha, &theme))
+        })
+        .into_any_element()
+}
+
+/// The comet: a glowing streak with a fading tail, from τ to the service
+/// every 1.4 s.
+fn comet(line: f32, t: &Theme) -> AnyElement {
+    let amber = t.accent;
+    let (length, thick) = COMET;
+    div()
+        .absolute()
+        .top_0()
+        .w(rems((length) / 16.))
+        .h(rems((thick) / 16.))
+        .rounded(rems((thick / 2.) / 16.))
+        .bg(linear_gradient(
+            90.,
+            linear_color_stop(amber.opacity(0.), 0.),
+            linear_color_stop(amber.opacity(0.9), 1.),
+        ))
+        .shadow(vec![
+            BoxShadow::new(px(0.), px(0.), amber.opacity(0.8))
+                .blur_radius(px(16.)),
+        ])
+        .with_animation("comet", loop_of(1400, 0.), move |comet, t| {
+            let x = lerp(-length, line, curve::travel()(t));
+            let shown = if t < 0.15 {
+                t / 0.15
+            } else if t > 0.85 {
+                (1. - t) / 0.15
+            } else {
+                1.
+            };
+            comet.left(rems((x) / 16.)).opacity(shown)
+        })
+        .into_any_element()
+}
+
+/// The ✓, !, or ✕ in the middle of the line. It pops when the link just
+/// changed to it.
+fn medallion(size: Size, beat: Beat, color: Hsla, t: &Theme) -> AnyElement {
+    let side = if size.tile < 100. { 32. } else { 40. };
+    let ground = t.setup.ground;
+    let link = beat.link;
+    let build = move |scale: f32| {
+        let side = side * scale;
+        let mark = match link {
+            Link::Connected => icon(Icon::Check, IconSize(18. * scale), color)
+                .into_any_element(),
+            Link::Declined => div()
+                .typeset(
+                    Type::HEADING.sized(20. * scale).weighted(weight::STRONG),
+                )
+                .text_color(color)
+                .child("!")
+                .into_any_element(),
+            _ => icon(Icon::Close, IconSize(18. * scale), color)
+                .into_any_element(),
+        };
+        div()
+            .size(rems((side) / 16.))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(rems((side / 2.) / 16.))
+            .bg(ground)
+            .border(rems(0.125))
+            .border_color(color)
+            .child(mark)
+    };
+    if !beat.link_changed {
+        return build(1.).into_any_element();
+    }
+    let reduce = beat.reduce;
+    // The connection pops after the line has drawn; a refusal sooner.
+    let delay = if link == Link::Connected { 260. } else { 180. };
+    div()
+        .size(rems((side) / 16.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .with_animation(
+            SharedString::from(format!("medal-{}", beat.link_epoch)),
+            Animation::new(Duration::from_millis(700)),
+            move |slot, t| {
+                let ms = t * 700.;
+                if reduce {
+                    return slot.opacity((ms / 200.).min(1.)).child(build(1.));
+                }
+                if ms < delay {
+                    return slot.opacity(0.);
+                }
+                let (scale, shown) =
+                    pop(((ms - delay) / 420.).min(1.), &curve::pop());
+                slot.opacity(shown).child(build(scale))
+            },
+        )
+        .into_any_element()
+}
+
+/// The words over and under the line.
+type Words = (Option<SharedString>, Option<SharedString>);
+
+/// The line between the tiles, with a word above it and one under it.
+fn line(size: Size, beat: Beat, words: Words, t: &Theme) -> Div {
+    let look = &t.setup;
+    let link = beat.link;
+    let (color, below_color) = match link {
+        Link::Idle => (t.accent, look.faint),
+        Link::Waiting | Link::Declined => (t.accent, t.accent),
+        Link::Connected => (t.green, t.green),
+        Link::Blocked => (t.red, t.red),
+    };
+    let fresh = beat.link_changed && !beat.reduce;
+    let middle = size.tile / 2.;
+    // A layer the width of the line, 2 px high, on its middle.
+    let rail = || {
+        div()
+            .absolute()
+            .left_0()
+            .top(rems((middle - 1.) / 16.))
+            .w(rems((size.line) / 16.))
+            .h(rems(0.125))
+    };
+    let track = div()
+        .w(rems((size.line) / 16.))
+        .h(rems((size.tile) / 16.))
+        .flex_shrink_0()
+        .relative()
+        .flex()
+        .items_center()
+        .justify_center();
+    let track = match link {
+        Link::Idle => {
+            track.child(rail().child(dashes(size.line, 0.55, beat.loops, t)))
+        }
+        Link::Waiting => {
+            let track =
+                track.child(rail().child(dashes(size.line, 0.28, false, t)));
+            if beat.loops {
+                track.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .top(rems((middle - COMET.1 / 2.) / 16.))
+                        .w(rems((size.line) / 16.))
+                        .h(rems((COMET.1) / 16.))
+                        .child(comet(size.line, t)),
+                )
+            } else {
+                // Still: a lit dot in its halo.
+                track.child(
+                    div()
+                        .size(rems((HALO) / 16.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(rems((HALO / 2.) / 16.))
+                        .bg(t.accent.opacity(0.18))
+                        .child(
+                            div()
+                                .size(rems((HALO / 2.) / 16.))
+                                .rounded(rems((HALO / 4.) / 16.))
+                                .bg(t.accent)
+                                .shadow(vec![
+                                    BoxShadow::new(
+                                        px(0.),
+                                        px(0.),
+                                        t.accent.opacity(0.9),
+                                    )
+                                    .blur_radius(px(22.)),
+                                ]),
+                        ),
+                )
+            }
+        }
+        Link::Connected => {
+            let green = t.green;
+            let solid = move |share: f32| {
+                div()
+                    .absolute()
+                    .left_0()
+                    .top_0()
+                    .w(relative(share))
+                    .h(rems(0.125))
+                    .bg(green)
+                    .shadow(vec![
+                        BoxShadow::new(px(0.), px(0.), green.opacity(0.55))
+                            .blur_radius(px(18.)),
+                    ])
+            };
+            let drawn = if fresh {
+                rail()
+                    .with_animation(
+                        SharedString::from(format!("draw-{}", beat.link_epoch)),
+                        after(0, 300, curve::settle()),
+                        move |rail, e| rail.child(solid(e)),
+                    )
+                    .into_any_element()
+            } else {
+                rail().child(solid(1.)).into_any_element()
+            };
+            track.child(drawn).child(medallion(size, beat, color, t))
+        }
+        Link::Declined | Link::Blocked => {
+            // Broken: the halves pull apart; a refusal wider.
+            let rest = if link == Link::Declined { 0.38 } else { 0.34 };
+            let halves = move |rail: Div, share: f32| {
+                rail.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .top_0()
+                        .w(relative(share))
+                        .h(rems(0.125))
+                        .bg(color.opacity(0.8)),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .right_0()
+                        .top_0()
+                        .w(relative(share))
+                        .h(rems(0.125))
+                        .bg(color.opacity(0.25)),
+                )
+            };
+            let broken = if fresh {
+                rail()
+                    .with_animation(
+                        SharedString::from(format!(
+                            "break-{}",
+                            beat.link_epoch
+                        )),
+                        after(0, 400, curve::settle()),
+                        move |rail, e| halves(rail, lerp(0.5, rest, e)),
+                    )
+                    .into_any_element()
+            } else {
+                halves(rail(), rest).into_any_element()
+            };
+            // Declined while waiting: the comet stops halfway and fades.
+            let stopped = (fresh
+                && link == Link::Declined
+                && beat.link_from == Link::Waiting)
+                .then(|| {
+                    let amber = t.accent;
+                    let (length, thick) = COMET;
+                    div()
+                        .absolute()
+                        .top(rems((middle - thick / 2.) / 16.))
+                        .left(rems((size.line / 2. - length) / 16.))
+                        .w(rems((length) / 16.))
+                        .h(rems((thick) / 16.))
+                        .rounded(rems((thick / 2.) / 16.))
+                        .bg(linear_gradient(
+                            90.,
+                            linear_color_stop(amber.opacity(0.), 0.),
+                            linear_color_stop(amber.opacity(0.9), 1.),
+                        ))
+                        .with_animation(
+                            SharedString::from(format!(
+                                "halt-{}",
+                                beat.link_epoch
+                            )),
+                            after(0, 450, curve::settle()),
+                            |comet, e| comet.opacity(1. - e),
+                        )
+                });
+            track
+                .child(broken)
+                .children(stopped)
+                .child(medallion(size, beat, color, t))
+        }
+    };
+    let inset = if size.tile < 100. { 4. } else { 16. };
+    let word = |text: SharedString, color: Hsla| {
+        div()
+            .absolute()
+            .left_0()
+            .right_0()
+            .flex()
+            .justify_center()
+            .child(mono(text, Type::MICRO, color))
+    };
+    let below = words.1.map(|text| {
+        let word = word(text, below_color).bottom(rems((inset) / 16.));
+        if fresh && link == Link::Connected {
+            word.with_animation(
+                SharedString::from(format!("linkword-{}", beat.link_epoch)),
+                after(500, 320, curve::rise()),
+                move |word, e| {
+                    word.opacity(e).bottom(rems((inset + 12. * (1. - e)) / 16.))
+                },
+            )
+            .into_any_element()
+        } else {
+            word.into_any_element()
+        }
+    });
+    track
+        .when_some(words.0, |track, text| {
+            track.child(word(text, t.dim).top(rems((inset) / 16.)))
+        })
+        .children(below)
+}
+
+/// τ, the line and the other side, at `size`.
+fn handshake_at(size: Size, beat: Beat, words: Words, t: &Theme) -> Div {
+    div()
+        .pt(rems((size.top) / 16.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(heiko_tile(size.tile, t))
+        .child(line(size, beat, words, t))
+        .child(service_tile(size.tile, beat, t))
+}
+
+/// The handshake. It is the same from step to step: moving between a
+/// big one and a small one, it shrinks or grows and slides into place.
+fn handshake(
+    ws: &Workspace,
+    words: Words,
+    compact: bool,
+    t: &Theme,
+) -> AnyElement {
+    let motion = &ws.setup_motion;
+    let beat = Beat::of(motion);
+    let (from, to) = (
+        Size::of(motion.scale.previous, compact),
+        Size::of(motion.scale.current, compact),
+    );
+    if !motion.scale.changed() || from == to || motion.reduce {
+        return handshake_at(to, beat, words, t).into_any_element();
+    }
+    let theme = t.clone();
+    div()
+        .with_animation(
+            SharedString::from(format!("handshake-{}", motion.scale.epoch)),
+            after(0, 550, curve::settle()),
+            move |slot, e| {
+                slot.child(handshake_at(
+                    Size::between(from, to, e),
+                    beat,
+                    words.clone(),
+                    &theme,
+                ))
+            },
+        )
+        .into_any_element()
+}
+
+// Entrances.
+
+/// `element`, rising 12 px into place and fading in, `delay` ms after
+/// its screen appears; reduced, a plain fade.
+fn rise(
+    motion: &SetupMotion,
+    key: &str,
+    delay: u64,
+    element: impl IntoElement,
+) -> AnyElement {
+    let reduce = motion.reduce;
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .items_center()
+        .child(element)
+        .with_animation(
+            SharedString::from(format!("rise-{}-{key}", motion.scene.epoch)),
+            entrance(delay, reduce),
+            move |slot, e| {
+                let slot = slot.opacity(e.clamp(0., 1.));
+                if reduce {
+                    slot
+                } else {
+                    slot.relative().top(rems((12. * (1. - e)) / 16.))
+                }
+            },
+        )
+        .into_any_element()
+}
+
+// Words.
+
+/// The headline and the sentence under it, centered, rising in turn.
+fn headline(
+    motion: &SetupMotion,
+    delay: u64,
+    (title, sub): (&str, &str),
+    style: Type,
+    width: f32,
+    compact: bool,
+    t: &Theme,
+) -> Div {
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(sp(3.5))
+        .text_center()
+        .child(rise(
+            motion,
+            "title",
+            delay,
+            div()
+                .typeset(if compact {
+                    Type::DISPLAY.weighted(weight::EMPHASIS)
+                } else {
+                    style
+                })
+                .leading(1.1)
+                .text_color(t.setup.light)
+                .child(title.to_owned()),
+        ))
+        .child(rise(
+            motion,
+            "sub",
+            delay + 40,
+            div()
+                .max_w(rems((width) / 16.))
+                .typeset(if compact { Type::BODY } else { Type::SUBTITLE })
+                .leading(1.6)
+                .text_color(t.muted)
+                .child(sub.to_owned()),
+        ))
+}
+
+fn footnote(text: impl Into<SharedString>, t: &Theme) -> Div {
+    div()
+        .text_center()
+        .typeset(Type::SMALL)
+        .text_color(t.setup.faint)
+        .child(text.into())
+}
+
+// Buttons.
+
+/// The main action, light on the dark ground.
+fn light_button(
+    label: impl Into<SharedString>,
+    leading: Option<AnyElement>,
+    arrow: bool,
+    compact: bool,
+    t: &Theme,
+) -> Div {
+    let look = &t.setup;
+    div()
+        .h(rems(3.25))
+        .when(compact, |button| button.w_full())
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap(sp(2.5))
+        .px(sp(6.))
+        .flex_shrink_0()
+        .rounded(radius::CARD)
+        .bevel(look.light, look.light_foot, t)
+        .text_color(look.on_light)
+        .typeset(Type::LEAD.weighted(weight::STRONG))
+        .cursor_pointer()
+        .hover(|style| style.opacity(0.92))
+        .shadow(vec![
+            BoxShadow::new(px(0.), px(1.), gpui::white()).inset(),
+            BoxShadow::new(px(0.), px(-2.), gpui::black().opacity(0.12))
+                .inset(),
+            BoxShadow::new(px(0.), px(2.), gpui::black().opacity(0.5))
+                .blur_radius(px(3.)),
+            BoxShadow::new(px(0.), px(12.), gpui::black().opacity(0.35))
+                .blur_radius(px(32.)),
+        ])
+        .children(leading)
+        .child(label.into())
+        .when(arrow, |button| {
+            button.child(icon(Icon::Arrow, IconSize::LARGE, look.on_light))
+        })
+}
+
+/// Words that act, without a box.
+fn text_button(label: impl Into<SharedString>, t: &Theme) -> Div {
+    div()
+        .h(rems(2.5))
+        .flex()
+        .items_center()
+        .justify_center()
+        .px(sp(1.5))
+        .typeset(Type::BODY)
+        .text_color(t.muted)
+        .cursor_pointer()
+        .hover(|style| style.text_color(t.text))
+        .child(label.into())
+}
+
+/// A row of actions, or a column of them on a phone.
+fn actions(compact: bool) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap(sp(3.))
+        .when(compact, |row| row.w_full().flex_col().gap(sp(2.)))
+        .when(!compact, |row| row.flex_wrap())
+}
+
+/// A card on the ground, see-through to the rings.
+fn glass(t: &Theme) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .rounded(radius::TILE)
+        .bg(t.setup.glass)
+        .lifted(t)
+        .border_1()
+        .border_color(t.setup.surface_border)
+}
+
+// The screens.
+
+fn welcome(
+    ws: &Workspace,
+    compact: bool,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Div {
+    let motion = &ws.setup_motion;
+    let steps = [
+        ("Connect a model", "Sign in to what your runs go to."),
+        (
+            "Sign in where your code is",
+            "Plugins ask what they need, such as a sign-in to clone from.",
+        ),
+        (
+            "Pick repositories",
+            "Cloned into heiko's storage, versioned with jj.",
+        ),
+    ];
+    let cards = steps.into_iter().enumerate().map(|(n, (name, detail))| {
+        glass(t)
+            .when(compact, |card| card.w_full())
+            .when(!compact, |card| card.w(rems(15.625)))
+            .gap(sp(1.5))
+            .px(sp(4.5))
+            .py(sp(4.))
+            .child(mono(format!("0{}", n + 1), Type::MICRO, t.accent))
+            .child(
+                div()
+                    .typeset(Type::BODY.weighted(weight::EMPHASIS))
+                    .text_color(t.text)
+                    .child(name),
+            )
+            .child(
+                div()
+                    .typeset(Type::SMALL)
+                    .leading(1.5)
+                    .text_color(t.dim)
+                    .child(detail),
+            )
+    });
+    let hero = if compact {
+        let size = Size::of(Scale::Big, true);
+        div()
+            .pt(rems((size.top) / 16.))
+            .child(heiko_tile(size.tile + 8., t))
+    } else {
+        orbit(t)
+    };
+    div()
+        .child(hero)
+        .child(
+            headline(
+                motion,
+                0,
+                (
+                    "Coding agents on your repositories",
+                    "heiko runs agents on the repositories you choose. Every \
+                     turn is a change you can go back to, fork or compare.",
+                ),
+                Type::HERO_LARGE,
+                560.,
+                compact,
+                t,
+            )
+            .mt(sp(if compact { 8. } else { 18. })),
+        )
+        .child(
+            div()
+                .mt(sp(if compact { 7. } else { 9. }))
+                .w_full()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(sp(5.5))
+                .child(rise(
+                    motion,
+                    "cards",
+                    80,
+                    div()
+                        .flex()
+                        .justify_center()
+                        .gap(sp(3.5))
+                        .when(compact, |row| {
+                            row.w_full().flex_col().gap(sp(2.5))
+                        })
+                        .children(cards),
+                ))
+                .child(rise(
+                    motion,
+                    "actions",
+                    120,
+                    actions(compact).child(
+                        div()
+                            .id("get-started")
+                            .when(compact, |button| button.w_full())
+                            .child(light_button(
+                                "Get started",
+                                None,
+                                true,
+                                compact,
+                                t,
+                            ))
+                            .on_click(cx.listener(|ws, _, _, cx| {
+                                ws.start_setup_steps(cx)
+                            })),
+                    ),
+                ))
+                .child(rise(
+                    motion,
+                    "note",
+                    160,
+                    footnote(
+                        format!(
+                            "Takes about a minute · tokens stay in {}, \
+                             readable only by you",
+                            ws.setup.config
+                        ),
+                        t,
+                    ),
+                )),
+        )
+}
+
+/// The welcome's picture: τ in the middle, and what it connects to
+/// around it.
+fn orbit(t: &Theme) -> Div {
+    const R: f32 = 190.;
+    const UP: f32 = 160.;
+    const SAT: f32 = 72.;
+    let (cx, cy) = (R + SAT / 2., UP + SAT / 2.);
+    let faint = t.accent.opacity(0.05);
+    let strong = t.accent.opacity(0.45);
+    let sat = |x: f32, y: f32, inner: AnyElement, label: &'static str| {
+        div()
+            .absolute()
+            .left(rems((x - 60.) / 16.))
+            .top(rems((y - SAT / 2.) / 16.))
+            .w(rems(7.5))
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(sp(2.5))
+            .child(
+                div()
+                    .size(rems((SAT) / 16.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(rems((SAT * 30. / 112.) / 16.))
+                    .bevel(t.setup.surface_top, t.setup.tile, t)
+                    .border_1()
+                    .border_color(t.border)
+                    .child(inner),
+            )
+            .child(mono(label, Type::MICRO, t.dim))
+    };
+    div()
+        .relative()
+        .w(rems((2. * R + SAT) / 16.))
+        .h(rems((cy + 64.) / 16.))
+        // The spokes.
+        .child(
+            div()
+                .absolute()
+                .left(rems((cx - R) / 16.))
+                .top(rems((cy) / 16.))
+                .w(rems((2. * R) / 16.))
+                .h(rems(0.0625))
+                .flex()
+                .child(div().w(relative(0.5)).h_full().bg(linear_gradient(
+                    90.,
+                    linear_color_stop(faint, 0.),
+                    linear_color_stop(strong, 1.),
+                )))
+                .child(div().w(relative(0.5)).h_full().bg(linear_gradient(
+                    90.,
+                    linear_color_stop(strong, 0.),
+                    linear_color_stop(faint, 1.),
+                ))),
+        )
+        .child(
+            div()
+                .absolute()
+                .left(rems((cx) / 16.))
+                .top(rems((cy - UP) / 16.))
+                .w(rems(0.0625))
+                .h(rems((UP) / 16.))
+                .bg(linear_gradient(
+                    180.,
+                    linear_color_stop(faint, 0.),
+                    linear_color_stop(strong, 1.),
+                )),
+        )
+        .child(sat(
+            cx - R,
+            cy,
+            icon(Icon::Plug, IconSize(32.), t.text_soft).into_any_element(),
+            "02 · plugins",
+        ))
+        .child(sat(
+            cx,
+            cy - UP,
+            icon(Icon::Repo, IconSize(32.), t.text_soft).into_any_element(),
+            "03 · repositories",
+        ))
+        .child(sat(
+            cx + R,
+            cy,
+            brand_mark(Brand::ChatGpt, 40., t.text, 0., t),
+            "01 · your plan",
+        ))
+        .child(
+            div()
+                .absolute()
+                .left(rems((cx - 60.) / 16.))
+                .top(rems((cy - 60.) / 16.))
+                .child(heiko_tile(120., t)),
+        )
+}
+
+/// A checkbox: 18 px, a little smaller while empty, filling with a small
+/// bounce.
+fn tick_box(name: &str, checked: bool, reduce: bool, t: &Theme) -> AnyElement {
+    const SIDE: f32 = 18.;
+    let (ink, floor, theme) = (t.setup.on_light, t.setup.field, t.clone());
+    let build = move |scale: f32| {
+        let tile = div()
+            .size(rems((SIDE * scale) / 16.))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(radius::TAG);
+        if checked {
+            tile.accent_key(&theme).child(icon(
+                Icon::Check,
+                IconSize::SMALL,
+                ink,
+            ))
+        } else {
+            tile.sunk(floor, &theme)
+        }
+    };
+    let slot = div()
+        .size(rems((SIDE) / 16.))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center();
+    if !checked {
+        return slot.child(build(0.92)).into_any_element();
+    }
+    if reduce {
+        return slot.child(build(1.)).into_any_element();
+    }
+    slot.with_animation(
+        SharedString::from(format!("tick-{name}")),
+        after(0, 180, curve::bounce()),
+        move |slot, e| slot.child(build(lerp(0.92, 1., e))),
+    )
+    .into_any_element()
+}
+
+fn repos(
+    ws: &Workspace,
+    compact: bool,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Div {
+    let motion = &ws.setup_motion;
+    let look = &t.setup;
+    let filter = ws.repo_filter.read(cx).text().to_owned();
+    // The most recently pushed first, twenty of them until expanded.
+    let (shown, hidden) = ws.setup.shown(&filter, ws.repos_expanded);
+    let rows: Vec<_> = shown
+        .into_iter()
+        .enumerate()
+        .map(|(n, repo)| {
+            let name = repo.name.clone();
+            let row = div()
+                .id(("repo", n))
+                .w_full()
+                .flex()
+                .items_center()
+                .gap(sp(3.5))
+                .px(sp(4.5))
+                .py(sp(3.))
+                .when(n > 0, |row| row.border_t_1().border_color(look.divider))
+                .cursor_pointer()
+                .when(repo.selected, |row| row.bg(t.accent.opacity(0.05)))
+                .hover(|style| style.bg(t.accent.opacity(0.03)))
+                .child(tick_box(&repo.name, repo.selected, motion.reduce, t))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(rems(0.))
+                        .flex()
+                        .flex_col()
+                        .gap(sp(0.5))
+                        .child(mono(repo.name.clone(), Type::SMALL, t.text))
+                        .when(!repo.description.is_empty(), |col| {
+                            col.child(
+                                div()
+                                    .typeset(Type::CAPTION)
+                                    .text_color(t.dim)
+                                    .child(repo.description.clone()),
+                            )
+                        }),
+                )
+                .child(mono(repo.branch.clone(), Type::CAPTION, look.faint))
+                .on_click(
+                    cx.listener(move |ws, _, _, cx| ws.toggle_repo(&name, cx)),
+                );
+            // The rows slide in one after another.
+            rise(
+                motion,
+                &format!("row-{}", repo.name),
+                460 + 50 * n.min(10) as u64,
+                row,
+            )
+        })
+        .collect();
+    let count = ws.setup.selected().count();
+    let panel =
+        glass(t)
+            .w_full()
+            .max_w(rems(40.))
+            .rounded(radius::BUBBLE)
+            .overflow_hidden()
+            .shadow(vec![
+                BoxShadow::new(px(0.), px(30.), gpui::black().opacity(0.45))
+                    .blur_radius(px(80.)),
+            ])
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(sp(2.5))
+                    .h(rems(2.875))
+                    .px(sp(4.5))
+                    .border_b_1()
+                    .border_color(look.surface_border)
+                    .child(icon(Icon::Search, IconSize::MEDIUM, t.dim))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(rems(0.))
+                            .child(ws.repo_filter.clone()),
+                    )
+                    .child(mono(
+                        format!("{} repositories", ws.setup.repos.len()),
+                        Type::CAPTION,
+                        look.faint,
+                    )),
+            )
+            .children(rows)
+            .when(hidden > 0 || ws.repos_expanded, |panel| {
+                let label = if ws.repos_expanded {
+                    "Show fewer".to_owned()
+                } else if hidden == 1 {
+                    "Show 1 more".to_owned()
+                } else {
+                    format!("Show {hidden} more")
+                };
+                panel.child(
+                    div()
+                        .id("repos-more")
+                        .w_full()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .py(sp(3.))
+                        .border_t_1()
+                        .border_color(look.divider)
+                        .cursor_pointer()
+                        .hover(|style| style.bg(t.accent.opacity(0.03)))
+                        .child(link(label, t))
+                        .on_click(cx.listener(|ws, _, _, cx| {
+                            ws.toggle_repos_expanded(cx)
+                        })),
+                )
+            });
+    div()
+        .child(handshake(ws, (None, None), compact, t))
+        .child(
+            headline(
+                motion,
+                300,
+                (
+                    "Pick repositories",
+                    "heiko clones each into its own storage, as a jj \
+                     repository. Runs work there, never in your checkouts.",
+                ),
+                Type::HERO_SMALL,
+                620.,
+                compact,
+                t,
+            )
+            .mt(sp(if compact { 6. } else { 10. })),
+        )
+        .child(
+            div()
+                .mt(sp(if compact { 6. } else { 8. }))
+                .w_full()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(sp(5.))
+                .child(rise(motion, "panel", 400, panel))
+                .child(rise(
+                    motion,
+                    "actions",
+                    800,
+                    actions(compact).gap(sp(4.)).child(
+                        div()
+                            .id("clone")
+                            .when(compact, |button| button.w_full())
+                            .child(
+                                light_button(
+                                    match count {
+                                        0 => "Pick a repository".to_owned(),
+                                        1 => "Clone 1 repository".to_owned(),
+                                        n => format!("Clone {n} repositories"),
+                                    },
+                                    None,
+                                    count > 0,
+                                    compact,
+                                    t,
+                                )
+                                .when(count == 0, |button| button.opacity(0.5)),
+                            )
+                            .on_click(cx.listener(move |ws, _, _, cx| {
+                                if count > 0 {
+                                    ws.clone_selected(cx)
+                                }
+                            })),
+                    ),
+                ))
+                .child(footnote(
+                    format!(
+                        "Cloned into {} · every turn of a run is a commit \
+                         you can go back to, fork from, or compare",
+                        ws.setup.storage
+                    ),
+                    t,
+                )),
+        )
+}
+
+/// A plugin's step: its headline and what it draws under it, and a way
+/// past it, which heiko draws.
+/// The widest a plugin's step gets, in rems: two columns of choices.
+const STEP_WIDTH: f32 = 70.;
+
+fn plugin_step(
+    ws: &Workspace,
+    plugin: &'static str,
+    step: &'static str,
+    compact: bool,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Div {
+    let motion = &ws.setup_motion;
+    let this = SetupStep::Plugin { plugin, step };
+    let view = ws
+        .plugin_setup_steps()
+        .into_iter()
+        .find_map(|(found, view)| (found == this).then_some(view));
+    let required = view.as_ref().is_some_and(|view| view.required);
+    let words: Words = view
+        .as_ref()
+        .and_then(|view| view.link.as_ref())
+        .map_or((None, None), |link| {
+            (
+                link.above.clone().map(SharedString::from),
+                link.below.clone().map(SharedString::from),
+            )
+        });
+    let skip = div()
+        .id("setup-skip")
+        .debug_selector(|| "setup-skip".to_owned())
+        .child(text_button(
+            if view.is_some() {
+                "Skip for now"
+            } else {
+                "Continue"
+            },
+            t,
+        ))
+        .on_click(cx.listener(move |ws, _, _, cx| {
+            ws.plugin_setup_step_done(plugin, cx)
+        }));
+    let screen = div().child(handshake(ws, words, compact, t));
+    let reads = crate::plugins::registry()
+        .get(plugin)
+        .map_or(&[][..], |erased| erased.reads());
+    // What the plugin says it reads outside repositories.
+    let reach =
+        (!reads.is_empty()).then(|| {
+            div()
+                .debug_selector(|| "setup-reach".to_owned())
+                .w_full()
+                .max_w(rems(STEP_WIDTH))
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(sp(1.5))
+                .typeset(Type::CAPTION)
+                .text_color(t.setup.faint)
+                .child("Reads outside your repositories:")
+                .children(reads.iter().map(|path| {
+                    mono(path.clone(), Type::CAPTION, t.setup.soft)
+                }))
+        });
+    let Some(view) = view else {
+        // The step has nothing to ask any more: only the way on.
+        return screen.child(
+            div()
+                .mt(sp(if compact { 6. } else { 10. }))
+                .w_full()
+                .flex()
+                .justify_center()
+                .child(skip),
+        );
+    };
+    screen
+        .child(
+            headline(
+                motion,
+                300,
+                (&view.heading, &view.detail),
+                Type::HERO_SMALL,
+                620.,
+                compact,
+                t,
+            )
+            .mt(sp(if compact { 6. } else { 10. })),
+        )
+        .child(
+            div()
+                .mt(sp(if compact { 6. } else { 8. }))
+                .w_full()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(sp(5.))
+                .child(rise(
+                    motion,
+                    &format!("{plugin}-{step}"),
+                    400,
+                    div().w_full().max_w(rems(STEP_WIDTH)).child(
+                        ws.plugin_tree(
+                            plugin,
+                            &format!("{plugin}-setup-{step}"),
+                            &view.body,
+                            crate::plugins::Origin::default(),
+                            cx,
+                        ),
+                    ),
+                ))
+                .children(reach.map(|reach| rise(motion, "reach", 600, reach)))
+                .when(!required, |body| {
+                    body.child(rise(motion, "skip", 800, skip))
+                }),
+        )
+}
+
+/// A clone's progress bar: it follows the clone's real progress, easing
+/// to each new share, with a sheen running along it while it clones.
+fn clone_bar(
+    name: &str,
+    motion: &SetupMotion,
+    color: Hsla,
+    cloning: bool,
+    t: &Theme,
+) -> AnyElement {
+    let track = t.setup.divider;
+    let Some(tracked) = motion.clones.get(name) else {
+        return bar(1., 4., color, track).into_any_element();
+    };
+    let (from, to) = (
+        tracked.previous.0 as f32 / 1000.,
+        tracked.current.0 as f32 / 1000.,
+    );
+    let sheen = cloning && motion.loops();
+    let light = t.setup.light;
+    let build = move |share: f32| {
+        div()
+            .relative()
+            .h(rems(0.25))
+            .w_full()
+            .rounded(radius::FULL)
+            .bg(track)
+            .child(
+                div()
+                    .relative()
+                    .h_full()
+                    .w(relative(share.clamp(0., 1.)))
+                    .rounded(radius::FULL)
+                    .overflow_hidden()
+                    .bg(color)
+                    .when(sheen, |fill| {
+                        fill.child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .h_full()
+                                .w(relative(0.3))
+                                .bg(linear_gradient(
+                                    90.,
+                                    linear_color_stop(light.opacity(0.), 0.),
+                                    linear_color_stop(light.opacity(0.45), 1.),
+                                ))
+                                .with_animation(
+                                    "sheen",
+                                    loop_of(1600, 0.),
+                                    |sheen, p| {
+                                        sheen.left(relative(p * 1.3 - 0.3))
+                                    },
+                                ),
+                        )
+                    }),
+            )
+    };
+    if from == to || motion.reduce {
+        return build(to).into_any_element();
+    }
+    div()
+        .w_full()
+        .with_animation(
+            SharedString::from(format!("bar-{name}-{}", tracked.epoch)),
+            after(0, 400, curve::settle()),
+            move |slot, e| slot.child(build(lerp(from, to, e))),
+        )
+        .into_any_element()
+}
+
+fn ready(
+    ws: &Workspace,
+    compact: bool,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Div {
+    let motion = &ws.setup_motion;
+    let look = &t.setup;
+    let clones = ws.setup.clones.iter().map(|clone| {
+        let (state, color, cloning) = match &clone.state {
+            CloneState::Cloning { share, detail } => (
+                if detail.is_empty() {
+                    format!("cloning · {:.0}%", share * 100.)
+                } else {
+                    format!("cloning · {detail}")
+                },
+                t.accent,
+                true,
+            ),
+            CloneState::Ready => ("ready".to_owned(), t.green, false),
+            CloneState::Failed(error) => (error.clone(), t.red, false),
+        };
+        let card = glass(t)
+            .when(compact, |card| card.w_full())
+            .when(!compact, |card| card.w(rems(18.75)))
+            .gap(sp(2.5))
+            .px(sp(4.))
+            .py(sp(3.5))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(sp(2.5))
+                    .child(
+                        mono(clone.name.clone(), Type::SMALL, t.text)
+                            .min_w(rems(0.)),
+                    )
+                    .child(mono(state, Type::CAPTION, color).flex_shrink_0()),
+            )
+            .child(clone_bar(&clone.name, motion, color, cloning, t));
+        // Done: the card flashes green, once.
+        let finished = motion.clones.get(&clone.name).filter(|tracked| {
+            tracked.current.1 && !tracked.previous.1 && !motion.reduce
+        });
+        match finished {
+            Some(tracked) => {
+                let (green, glass, edge) =
+                    (t.green, look.glass, look.surface_border);
+                card.with_animation(
+                    SharedString::from(format!(
+                        "done-{}-{}",
+                        clone.name, tracked.epoch
+                    )),
+                    after(0, 900, curve::ease_in_out()),
+                    move |card, e| {
+                        card.border_color(mix(green, edge, e)).bg(mix(
+                            green.opacity(0.14),
+                            glass,
+                            e,
+                        ))
+                    },
+                )
+                .into_any_element()
+            }
+            None => card.into_any_element(),
+        }
+    });
+    let repo = ws
+        .setup
+        .clones
+        .first()
+        .map(|clone| clone.name.clone())
+        .unwrap_or_else(|| ws.name.clone());
+    let chip = |text: String| {
+        mono(text, Type::CAPTION, t.text_soft)
+            .px(sp(2.5))
+            .py(sp(1.5))
+            .rounded(radius::BOX)
+            .bg(t.panel)
+    };
+    let models = &ws.catalog().models;
+    let model = models
+        .access
+        .signed_in
+        .then(|| models.default_for("coder").model);
+    let on_plan = model.is_some();
+    // The ring grows while the field has the keyboard.
+    let ring = |focused: bool| if focused { 7. } else { 4. };
+    let composing = &motion.composing;
+    let (ring_from, ring_to) =
+        (ring(composing.previous), ring(composing.current));
+    let (amber, shade) = (t.accent, gpui::black());
+    let halo = move |spread: f32| {
+        vec![
+            BoxShadow::new(
+                px(0.),
+                px(0.),
+                amber.opacity(0.012 * spread + 0.03),
+            )
+            .spread_radius(px(spread)),
+            BoxShadow::new(px(0.), px(30.), shade.opacity(0.5))
+                .blur_radius(px(80.)),
+        ]
+    };
+    let composer = div()
+        .w_full()
+        .max_w(rems(45.))
+        .flex()
+        .flex_col()
+        .rounded(radius::SHEET)
+        .sunk(look.field, t)
+        .border_1()
+        .border_color(t.border_strong)
+        .shadow(halo(ring_to))
+        .child(
+            div()
+                .h(rems((if compact { 88. } else { 108. }) / 16.))
+                .px(sp(5.))
+                .py(sp(4.5))
+                .typeset(Type::SUBTITLE)
+                .leading(1.55)
+                .child(ws.first_task.clone()),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(sp(2.5))
+                .pl(sp(4.))
+                .pr(sp(3.))
+                .pt(sp(2.5))
+                .pb(sp(3.))
+                .child(chip(repo))
+                .child(chip(model.unwrap_or_else(|| "no model yet".to_owned())))
+                .when(on_plan, |row| {
+                    // What runs use, as the provider says it.
+                    row.child(
+                        div().typeset(Type::CAPTION).text_color(t.green).child(
+                            format!(
+                                "· on your {}",
+                                ws.catalog().models.access.label
+                            ),
+                        ),
+                    )
+                })
+                .child(div().flex_1())
+                .child(
+                    div()
+                        .id("first-run")
+                        .when(compact, |button| button.w_full())
+                        .h(rems(2.625))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .gap(sp(2.))
+                        .px(sp(4.5))
+                        .rounded(radius::LARGE)
+                        .bg(t.accent)
+                        .text_color(look.on_light)
+                        .typeset(Type::BODY.weighted(weight::STRONG))
+                        .cursor_pointer()
+                        .hover(|style| style.opacity(0.9))
+                        .child("Start run")
+                        .child(icon(
+                            Icon::Arrow,
+                            IconSize::LARGE,
+                            look.on_light,
+                        ))
+                        .on_click(
+                            cx.listener(|ws, _, _, cx| ws.start_first_run(cx)),
+                        ),
+                ),
+        );
+    let composer = if composing.changed() && !motion.reduce {
+        composer
+            .with_animation(
+                SharedString::from(format!("focus-{}", composing.epoch)),
+                after(0, 250, curve::settle()),
+                move |composer, e| {
+                    composer.shadow(halo(lerp(ring_from, ring_to, e)))
+                },
+            )
+            .into_any_element()
+    } else {
+        composer.into_any_element()
+    };
+    div()
+        .child(handshake(ws, (None, None), compact, t))
+        .child(
+            headline(
+                motion,
+                300,
+                (
+                    "Start your first run",
+                    "Describe a task. heiko works on a new change in the \
+                     repository; open a pull request when you like the \
+                     result.",
+                ),
+                Type::HERO_SMALL,
+                620.,
+                compact,
+                t,
+            )
+            .mt(sp(if compact { 6. } else { 10. })),
+        )
+        .child(
+            div()
+                .mt(sp(if compact { 6. } else { 8. }))
+                .w_full()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(sp(5.5))
+                .when(!ws.setup.clones.is_empty(), |col| {
+                    col.child(rise(
+                        motion,
+                        "clones",
+                        380,
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .justify_center()
+                            .gap(sp(3.5))
+                            .when(compact, |row| {
+                                row.w_full().flex_col().gap(sp(2.5))
+                            })
+                            .children(clones),
+                    ))
+                })
+                .child(rise(motion, "composer", 440, composer))
+                .child(rise(
+                    motion,
+                    "note",
+                    500,
+                    footnote(
+                        "⏎ to start · every turn is a commit you can go back \
+                         to, fork from, or compare",
+                        t,
+                    ),
+                )),
+        )
+}

@@ -1,0 +1,58 @@
+[package]
+autotests = false
+name = "heiko-vcs-host"
+description = "Version-control tools for heiko agents, backed by jj-lib: heiko-vcs's host half."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+etcetera.workspace = true
+async-trait.workspace = true
+futures-util.workspace = true
+# Clones over HTTPS without the git binary. reqwest brings rustls,
+# with the ring provider tokio-rustls already builds. `status` lists a
+# local repository's uncommitted files before it is added.
+gix = { workspace = true, features = [
+  "blocking-http-transport-reqwest",
+  "blocking-network-client",
+  "status",
+] }
+tokio-rustls.workspace = true
+jiff.workspace = true
+jj-lib.workspace = true
+pollster.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+similar.workspace = true
+heiko-agent.workspace = true
+thiserror.workspace = true
+heiko-ai.workspace = true
+heiko-ui-plugin.workspace = true
+heiko-vcs.workspace = true
+tokio = { workspace = true, features = ["rt", "sync"] }
+uuid.workspace = true
+whoami.workspace = true
+
+[dev-dependencies]
+# jj-lib's `test` signing backend, for signing on push.
+jj-lib = { workspace = true, features = ["testing"] }
+heiko-store-sqlite.workspace = true
+heiko-ui-plugin = { workspace = true, features = ["testing"] }
+hegeltest.workspace = true
+heiko-tools-host.workspace = true
+serde_json.workspace = true
+heiko-store.workspace = true
+heiko-testing.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

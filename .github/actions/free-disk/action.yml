@@ -1,9 +1,9 @@
 # A hosted runner starts with about 14 GB free on /, where the nix
 # store and the target directory both go; a build of the workspace
-# with GPUI and its tests needs more. This drops the toolchains tau
+# with GPUI and its tests needs more. This drops the toolchains heiko
 # never uses, before nix is installed.
 name: Free disk space
-description: Remove the runner's preinstalled toolchains that tau does not use.
+description: Remove the runner's preinstalled toolchains that heiko does not use.
 
 runs:
   using: composite

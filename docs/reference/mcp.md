@@ -1,15 +1,15 @@
-# MCP servers (`tau-mcp`)
+# MCP servers (`heiko-mcp`)
 
-- Status: built in `crates/plugins/tau-mcp-host` (`tau-mcp-host`),
-  with its interface in `crates/plugins/tau-mcp`: `McpUi`, a `UiPlugin`
-  ([0017](../decisions/0017-plugins-bring-their-ui.md)) that tau-ui
+- Status: built in `crates/plugins/heiko-mcp-host` (`heiko-mcp-host`),
+  with its interface in `crates/plugins/heiko-mcp`: `McpUi`, a `UiPlugin`
+  ([0017](../decisions/0017-plugins-bring-their-ui.md)) that heiko-ui
   registers ("The interface"). Decided in
   [0018](../decisions/0018-codemode-and-mcp.md). Where the build
   differs from the first design, this page says so; the differences
   are listed in "Deviations".
 - Date: 2026-10-01
 
-`tau-mcp` connects to MCP servers and adds their tools to the agent,
+`heiko-mcp` connects to MCP servers and adds their tools to the agent,
 with their resources as three tools and their prompts as composer
 commands. HTTP servers that ask sign in with OAuth ("Signing in").
 By default the model sees them like any other tool, and Codemode
@@ -24,27 +24,27 @@ scripts can call them too. It follows pi's MCP extension
 
 In order, a later entry replacing an earlier one with the same name:
 
-1. the user's file, `~/.config/tau/mcp.json`;
-2. the servers added on the plugin's page in tau-ui, saved as the
+1. the user's file, `~/.config/heiko/mcp.json`;
+2. the servers added on the plugin's page in heiko-ui, saved as the
    plugin's settings. The page refuses a name the user's file already
    has;
-3. the repository's file, `<repository>/.tau/mcp.json`.
+3. the repository's file, `<repository>/.heiko/mcp.json`.
 
 A repository's server connects only once the user approves it on the
 plugin's page. The approval is saved in the plugin's settings with a
 hash of the entry, so a commit that changes the entry asks again: the
-SHA-256, in hex, of the name, a NUL and the entry as tau prints it
+SHA-256, in hex, of the name, a NUL and the entry as heiko prints it
 (defaults left out), so reformatting the file does not ask again. The
 settings are
 `{ "mcpServers": { ... }, "approvedRepoServers": [hash], "disabledServers": { ... } }`.
 Until approved, a repository server is reported as pending and not
 connected.
-pi reads a project's file only when the project is trusted; tau asks
+pi reads a project's file only when the project is trusted; heiko asks
 per server.
 
 An agent's repository (ADR 0037) is one no person attends, as the
 plugins that keep such repositories tell the host
-(`tau_ui_plugin::Unattended`): its servers connect without approval,
+(`heiko_ui_plugin::Unattended`): its servers connect without approval,
 and its stdio servers start in its sandbox (`RepoLauncher`) whether a
 run or a poll asks for them. Without a sandbox (no `bwrap`, or one that
 cannot make a sandbox here) they do not start at all, and the server
@@ -59,7 +59,7 @@ settings keep the names it turned off:
 {
   "disabledServers": {
     "user": ["linear"],
-    "repos": { "/home/me/src/tau": ["git", "db"] }
+    "repos": { "/home/me/src/heiko": ["git", "db"] }
   }
 }
 ```
@@ -67,7 +67,7 @@ settings keep the names it turned off:
 - `user`: the user's servers (the user's file's and the settings')
   turned off in every repository. It does not reach a repository's own
   server of the same name.
-- `repos`: per repository, keyed by its directory as tau lists it, the
+- `repos`: per repository, keyed by its directory as heiko lists it, the
   servers turned off there: its own, or the user's in it alone. A name
   stays listed after its server goes, and holds again if a server of
   that name comes back. A repository left with none is dropped.
@@ -114,7 +114,7 @@ The common `mcpServers` shape:
   the repository. `~/` is expanded in `command`, `args` and `cwd`.
   A server of a repository's scope starts through the launcher a run
   in it gave the pool (`RepoLauncher`, the plugins' environment, such
-  as tau-direnv's), asked for the main workspace; its `env` comes after
+  as heiko-direnv's), asked for the main workspace; its `env` comes after
   the launcher's ([environment.md](environment.md)).
 - **HTTP** (`url`, and `type` absent, `"http"` or `"streamable-http"`):
   `url` (http or https), `headers`, and `oauth`, how to sign in
@@ -122,7 +122,7 @@ The common `mcpServers` shape:
 - `type: "sse"` is refused: "SSE servers are not supported; use the
   server's streamable HTTP endpoint".
 - `env`, `headers` and `oauth.clientSecret` values expand `${VAR}`
-  from tau's environment. A
+  from heiko's environment. A
   variable that is not set fails that server, naming the variable:
   "the environment variable `X` is not set". `NAME` is a letter or
   `_`, then letters, digits and `_`; any other `${` is left as it is.
@@ -139,7 +139,7 @@ The common `mcpServers` shape:
 
 - **Owned by the agent.** The plugin holds one connection per enabled
   server, shared by every run, and closes them when it is dropped. In
-  tau-ui the host keeps them: the user's servers once for every
+  heiko-ui the host keeps them: the user's servers once for every
   repository, a repository's own per repository ("The interface").
 - **Started in the background** when the plugin is built. The plugin
   does not wait for them, except as below.
@@ -160,7 +160,7 @@ The common `mcpServers` shape:
 - **Lists:** `tools/list` with every page. On
   `notifications/tools/list_changed` the server's tools are listed
   again. On 2026-07-28 that notification comes only through
-  `subscriptions/listen`, which tau opens when the server says its tool
+  `subscriptions/listen`, which heiko opens when the server says its tool
   list changes; on 2025-11-25 it is a plain notification. A
   disconnected server keeps its last tools, so a call to one connects
   again. A server whose capabilities offer resources gets its resources
@@ -178,11 +178,11 @@ The common `mcpServers` shape:
   Without this, every call to such a server after its restart waited
   out its timeout.
 - **A server that restarted** under a live HTTP connection forgot
-  everything tau told it. tau takes it as the connection lost and found
+  everything heiko told it. heiko takes it as the connection lost and found
   again: when rmcp starts a new session (above), when a stream of
   messages in the session is refused (404 or 400; a ping then finds out),
   or, on 2026-07-28, when a `subscriptions/listen` ends though the
-  connection did not, tau lists the tools, resources and prompts again,
+  connection did not, heiko lists the tools, resources and prompts again,
   listens for list changes again, and subscribes every watched resource
   again on the session, so watches go on and their owners do nothing.
   One the server refuses now ends its watches. It starts once no request
@@ -192,24 +192,24 @@ The common `mcpServers` shape:
 - **Stdio close:** rmcp's `cancel()`, then the child's process group
   gets SIGTERM and, after 2 s, SIGKILL.
 - **Roots:** the repository's directory, as a `file://` URI, when the
-  plugin has one. In tau-ui a user server shared by every repository
+  plugin has one. In heiko-ui a user server shared by every repository
   has none; give it a relative `cwd` (`"."`) to run it per repository,
   with the repository as its root.
 - **Server logs** (`notifications/message`) and a stdio server's
-  stderr go to `tracing`, target `tau_mcp::server`: tau has no log of
+  stderr go to `tracing`, target `heiko_mcp::server`: heiko has no log of
   its own yet, so the host subscribes to see them, with
   `auth::secrets_filter()` ("Signing in", "Logs").
-- **HTTP** uses tau's TLS: reqwest with rustls, `ring` and the webpki
+- **HTTP** uses heiko's TLS: reqwest with rustls, `ring` and the webpki
   roots, as Jev does, with no redirects (so headers never reach another
   host).
 
 ## Signing in
 
 OAuth applies to an HTTP server whose entry sends no `Authorization`
-header, when tau has a configuration directory to keep the sign-in in.
+header, when heiko has a configuration directory to keep the sign-in in.
 It follows pi (`extensions/mcp`, [research](../research/pi-codemode.md))
 and the MCP authorization spec; the protocol is rmcp's `auth` module
-(discovery, registration, PKCE, refreshing, scopes), and tau adds the
+(discovery, registration, PKCE, refreshing, scopes), and heiko adds the
 loopback, the checks on the callback, the grants file and its own HTTP
 (rustls, `ring`, the webpki roots).
 
@@ -224,7 +224,7 @@ loopback, the checks on the callback, the grants file and its own HTTP
     "callbackPort": 53682,
     "callbackUrl": "http://localhost:53682/callback",
     "scope": "read write",
-    "clientName": "tau on my laptop",
+    "clientName": "heiko on my laptop",
     "authServerMetadataUrl": "https://auth.example.com/.well-known/oauth-authorization-server"
   }
 }
@@ -248,7 +248,7 @@ for the scopes the server names.
   resource metadata's, then the authorization server's
   `scopes_supported`; `offline_access` is added when the authorization
   server offers it.
-- `clientName`: a registered client's name, `tau` by default.
+- `clientName`: a registered client's name, `heiko` by default.
 - `authServerMetadataUrl`: the authorization server's metadata, when
   discovery from the server cannot find it.
 - The block is refused with an `Authorization` header, a secret without
@@ -331,8 +331,8 @@ not revoked at the authorization server.
 
 ### The grants file
 
-`~/.config/tau/mcp-auth.json` (`TokenStore`), owner-only (0600, its
-directory 0700 when tau makes it), written whole through a temporary
+`~/.config/heiko/mcp-auth.json` (`TokenStore`), owner-only (0600, its
+directory 0700 when heiko makes it), written whole through a temporary
 file and a rename under `mcp-auth.json.lock`; refreshes hold
 `mcp-auth.json.refresh.lock`. One grant per server URL and configured
 client id (`GrantKey`):
@@ -379,7 +379,7 @@ rmcp 3.9's sign-in code logs, at debug level, the authorization code
 the targets `rmcp::transport::auth` and `rmcp::transport::common::auth`
 (`auth::SECRET_TARGETS`). Two things keep them out:
 
-- tau runs the code exchange with no subscriber
+- heiko runs the code exchange with no subscriber
   (`WithSubscriber::with_subscriber(NoSubscriber)`), so those lines reach
   none, global or scoped, whatever its filter.
 - Every host that sets up a subscriber adds `auth::secrets_filter()`, a
@@ -388,14 +388,14 @@ the targets `rmcp::transport::auth` and `rmcp::transport::common::auth`
   filter, nor a user's `RUST_LOG`, can widen. For an `EnvFilter`, the
   same as directives is `auth::LOG_DIRECTIVES`
   (`rmcp::transport::auth=info,rmcp::transport::common::auth=info`),
-  added last. tau sets up no subscriber today (not tau-ui, not the
+  added last. heiko sets up no subscriber today (not heiko-ui, not the
   examples, not the tests but the one below); one that is added must
   carry the filter.
 
 ```rust
 use tracing_subscriber::layer::SubscriberExt as _;
 let subscriber = tracing_subscriber::registry()
-    .with(tau_mcp_host::auth::secrets_filter())
+    .with(heiko_mcp_host::auth::secrets_filter())
     .with(tracing_subscriber::fmt::layer());
 ```
 
@@ -434,7 +434,7 @@ result does not depend on order. A server's namespace is
   `ALL_TOOLS`, up to the call's timeout.
 - **Withdrawn tools** fail with "Tool mcp__x__y is no longer offered by
   server x".
-- **The wait is Codemode's.** tau-mcp's tool source implements
+- **The wait is Codemode's.** heiko-mcp's tool source implements
   `ToolSource::ready`: it waits for the named servers (by namespace or
   name), or all, to finish connecting, and connects a named one that
   dropped or failed. Codemode decides which servers a script names.
@@ -445,7 +445,7 @@ result does not depend on order. A server's namespace is
   `MCP tool <tool> from server <server>`. The server's `instructions`
   never go into a description.
 - **Parameters:** the tool's `inputSchema`, with `type: "object"` and
-  `properties: {}` added if missing. Validation is tau-agent's.
+  `properties: {}` added if missing. Validation is heiko-agent's.
 - **Output schema:** a `CallToolResult` wrapper,
   `{ content, structuredContent?: <the tool's outputSchema>, isError }`,
   so Codemode renders `CallToolResult<T>`.
@@ -459,7 +459,7 @@ result does not depend on order. A server's namespace is
 - **Progress** notifications become `ToolUpdate`s: the message and
   `(progress/total)` as text, `{ progress, total, message }` as
   details. Every notification the server sent before its result
-  reaches the run, in order, before the call ends: tau routes progress
+  reaches the run, in order, before the call ends: heiko routes progress
   as the transport receives it, because rmcp hands notifications to
   their handler in tasks of their own that may run after the result.
   Updates after the result are dropped.
@@ -475,14 +475,14 @@ result does not depend on order. A server's namespace is
     the title its `title`, else its `name`, each part but the hint
     left out when missing;
   - an embedded text resource as its text; an embedded binary one
-    saved to a 0600 file `$TMPDIR/tau-mcp-<hex>.<ext>`, as
+    saved to a 0600 file `$TMPDIR/heiko-mcp-<hex>.<ext>`, as
     `[Resource <uri> (<mime>) saved to <path>]`; audio the same way;
   - with no content blocks, `structuredContent` as pretty JSON;
   - text over 5,000 tokens (about 20 KB, four characters a token, all
     text blocks together) merged into one block and cut in the middle,
     half kept from each end, at character boundaries, in Codemode's
-    format (`tau_agent::output`), the full text written to
-    `$TMPDIR/tau-mcp-<hex>.txt`; images follow it;
+    format (`heiko_agent::output`), the full text written to
+    `$TMPDIR/heiko-mcp-<hex>.txt`; images follow it;
   - `isError` makes the call fail; with no text, it says
     `MCP tool <server>/<tool> returned an error`.
 - **For scripts:** `ToolOutput::structured` holds the whole
@@ -522,7 +522,7 @@ server's.
 - **MCP apps** are left out everywhere: a resource or template whose
   URI starts `ui://` or whose type is `text/html;profile=mcp-app` (case
   and spaces aside) is not listed, its contents are dropped from a
-  read, and reading a `ui://` URI fails. tau shows no MCP apps.
+  read, and reading a `ui://` URI fails. heiko shows no MCP apps.
 
 ### Subscriptions
 
@@ -558,7 +558,7 @@ An agent's `mcp` trigger (ADR 0037) watches one resource:
   subscribes on the new session; the watcher reads the resource again,
   since a change may have come in between.
 - Outside any run, host halves reach watches and reads through the
-  `OutsideResources` service (`tau-ui-plugin`), which tau-mcp-host
+  `OutsideResources` service (`heiko-ui-plugin`), which heiko-mcp-host
   offers.
 
 ## Prompts
@@ -605,13 +605,13 @@ find their tools with search_tools()`. A server's description is its
 entry's, else the first line of its instructions; without either the
 line ends at the exposure. Every enabled server that is not `hidden`
 is listed, connected or not. The block is fixed for the run. pi
-appends a new block when servers change mid-session; tau shows the
+appends a new block when servers change mid-session; heiko shows the
 change from the next run.
 
 ## The interface
 
-`McpUi` (`src/ui/`) is the plugin with its UI. tau-ui registers it
-before tau-codemode, whose `start` lists the run's tools after tau-mcp
+`McpUi` (`src/ui/`) is the plugin with its UI. heiko-ui registers it
+before heiko-codemode, whose `start` lists the run's tools after heiko-mcp
 added the direct ones.
 
 ### On the host
@@ -626,7 +626,7 @@ added the direct ones.
   repository while the others keep the shared one. So does a user
   server the repository turned off for itself.
 - **One plugin per scope.** A scope is a repository (the user's file,
-  the settings and its `.tau/mcp.json`), or the user's servers alone.
+  the settings and its `.heiko/mcp.json`), or the user's servers alone.
   The host keeps an `McpPlugin` per scope over the connections it uses,
   built the first time a run in the repository starts, or Connect on
   the page asks for it; building it starts the connections it uses
@@ -639,7 +639,7 @@ added the direct ones.
   in a repository uses the same connections.
 - **Rebuilt incrementally.** Each time a scope is used (a run starts,
   the catalog is drawn, an action runs) its servers are read again: the
-  user's file from tau's config directory, the settings, the
+  user's file from heiko's config directory, the settings, the
   repository's file. When the merged servers, errors or pending
   approvals differ from what its plugin was built from, the plugin is
   built again over the pools, which compare each server's entry, as
@@ -687,7 +687,7 @@ or, without a repository, the user's and the settings' alone.
   title and type, a template's URI template, a prompt's command and
   arguments, each with its description's first line.
 - **Waiting for approval:** each repository server not yet approved,
-  with its whole entry as tau prints it, and Approve.
+  with its whole entry as heiko prints it, and Approve.
 - **Skipped entries**, each with where and why.
 - **Actions**, sent to the host half as JSON (`Act`):
   - `approve { repo, server, hash }` saves `hash` in
@@ -696,7 +696,7 @@ or, without a repository, the user's and the settings' alone.
   - `add { name, entry }` adds a server to the settings: refused for a
     name the user's file has (valid entry or not), one already added, a
     name whose namespace another takes, or an entry that does not parse.
-    The entry is saved as tau prints it, defaults left out;
+    The entry is saved as heiko prints it, defaults left out;
   - `edit { name, entry }` and `remove { name }`, for the servers the
     page added only;
   - `enable { repo, name, enabled }` for any server of that repository,
@@ -741,17 +741,17 @@ or, without a repository, the user's and the settings' alone.
   result: `structuredContent` as pretty JSON when the details carry it,
   else the text, at most 40 lines. A failed call is red with the
   result's first line. Calls a codemode script made are rows of its
-  card, as tau-ui folds nested calls there.
+  card, as heiko-ui folds nested calls there.
 
 ## The crates
 
 The plugin is two crates
-([0030](../decisions/0030-host-halves-are-crates.md)). `tau-mcp`, the
-interface half, has no tau-agent or rmcp dependency, so a phone can draw
+([0030](../decisions/0030-host-halves-are-crates.md)). `heiko-mcp`, the
+interface half, has no heiko-agent or rmcp dependency, so a phone can draw
 the page and the cards:
 
 - `config`: `McpConfig::parse`/`to_json`, `merge`, `Sources::load`
-  (`<user dir>/mcp.json`, the settings, `<repo>/.tau/mcp.json`),
+  (`<user dir>/mcp.json`, the settings, `<repo>/.heiko/mcp.json`),
   `Sources::disable`, `Read`, `Settings`, `Disabled`, `Off`,
   `repo_key`, `PendingApproval`, `expand_vars`, `expand_home`,
   `exposure_of`, `ServerConfig::per_repo`, `OAuthConfig`,
@@ -765,7 +765,7 @@ the page and the cards:
   `ToolRow`, `PendingRow`), `Act`, `server_entry`, `summary`,
   `summary_with_sign_in`; `ui::page` and `ui::card`.
 
-`tau-mcp-host`, the host half, connects to the servers:
+`heiko-mcp-host`, the host half, connects to the servers:
 
 - `auth`: `begin`, `SignIn` (`url`, `redirect_uri`, `finish`),
   `SignInRequest`, `TokenStore` (`get`, `put`, `update`, `sign_out`,
@@ -786,17 +786,17 @@ the page and the cards:
   `ToolInfo`, `CallFailure`, `Environment`. Only its private `client`
   module touches rmcp.
 - `resources`: `ResourceTool`, `Kind`, `exposure`, `is_app`.
-- `prompts`: `Prompt`, `prompts`, `prompt_text`, and tau-mcp's
+- `prompts`: `Prompt`, `prompts`, `prompt_text`, and heiko-mcp's
   `prompts` again.
-- `McpHost`, the host half tau-ui registers; its `Host` (with
+- `McpHost`, the host half heiko-ui registers; its `Host` (with
   `sign_in`, `sign_out`, `token_store`); `apply` (what a page's `Act`
   does to the settings); `RunServers`.
 - `tool::McpTool`; `McpPlugin` and `McpPluginBuilder`:
 
 ```rust
 let mcp = McpPlugin::builder()
-    .user_dir(config_dir)        // ~/.config/tau
-    .repo(repository)            // .tau/mcp.json, cwd, roots
+    .user_dir(config_dir)        // ~/.config/heiko
+    .repo(repository)            // .heiko/mcp.json, cwd, roots
     .settings(settings)          // the page's servers and approvals
     .build();                    // starts connecting; needs a runtime
 let agent = Agent::new(llm).plugin(mcp.clone());
@@ -820,13 +820,13 @@ server after the files and settings: an in-process one through
 
 ## Against real servers
 
-`crates/plugins/tau-mcp-host/examples/live.rs` checks tau-mcp and
-tau-codemode
+`crates/plugins/heiko-mcp-host/examples/live.rs` checks heiko-mcp and
+heiko-codemode
 against real MCP servers. Node, uv and git come from nixpkgs:
 
 ```sh
 nix shell nixpkgs#nodejs nixpkgs#uv nixpkgs#git -c \
-  cargo run -p tau-mcp-host --example live -- [--model gpt-5.6-luna]
+  cargo run -p heiko-mcp-host --example live -- [--model gpt-5.6-luna]
 ```
 
 It writes a temporary `mcp.json` and repository (never the user's
@@ -855,8 +855,8 @@ on three servers in `parallel`, `search_tools` and `describe_namespace`
 on the real catalog, an `isError` result returned and an image passed
 on; a killed stdio server and a restarted HTTP server reached again on
 the next call; and closing the plugin ends every server process. With
-`--model`, it runs the agent on the signed-in ChatGPT account (tau's
-`~/.config/tau/chatgpt`) for at most 6 turns, and checks the model made
+`--model`, it runs the agent on the signed-in ChatGPT account (heiko's
+`~/.config/heiko/chatgpt`) for at most 6 turns, and checks the model made
 a direct MCP call and a codemode script that called MCP tools (about
 $0.002 with `gpt-5.6-luna`).
 
@@ -870,14 +870,14 @@ rmcp's fallback from `server/discover` to `initialize`.
 From the design above, as first written:
 
 - **Pools on the host.** The design had the agent own the connections;
-  tau-ui's host keeps a pool shared by every repository for the user's
+  heiko-ui's host keeps a pool shared by every repository for the user's
   servers and one per repository for the rest, and a plugin per
   repository over them. A user server with a relative `cwd` runs per
   repository; a shared one gets no roots.
 - **No file watching.** The files are read again whenever a scope is
   used, not watched.
 - **Details carry the structured result**, at most 20 KB of it as
-  JSON, for the card: tau-ui keeps a call's text and details, not its
+  JSON, for the card: heiko-ui keeps a call's text and details, not its
   structured output.
 - **A legacy fallback rmcp lacks:** a second connection with
   `initialize` for servers that know `server/discover` but offer only
@@ -885,7 +885,7 @@ From the design above, as first written:
 - **HTTP status from text.** rmcp hands a failed HTTP response on as
   `HTTP <status>: <body>` only, so the retry rule reads the status from
   it. It must be checked when rmcp moves.
-- **Logs go to `tracing`**, not a log file: tau has none yet.
+- **Logs go to `tracing`**, not a log file: heiko has none yet.
 - **Connect timeout** of 30 s, which the design did not have.
 - **Programmatic servers** (`McpPluginBuilder::server`,
   `Transport::Stream`), for embedding and tests.
@@ -901,7 +901,7 @@ From the design above, as first written:
 - **Prompts fill the composer** rather than being sent: their text comes
   from a server, so the person reads it first.
 - **Signing in waits for the user.** pi signs in from its `/mcp`
-  command; tau never opens a browser on its own, and a run's call to a
+  command; heiko never opens a browser on its own, and a run's call to a
   server that waits fails at once.
 - **A registered client is reused** only on its port and with the same
   issuer; otherwise sign-in registers again.
@@ -919,7 +919,7 @@ From the design above, as first written:
 - **Names, as properties:** every name matches `^[A-Za-z0-9_]{1,64}$`;
   distinct (server, tool) pairs get distinct names; the names do not
   depend on the order tools are listed.
-- **Results, as properties:** the cut is `tau_agent::output`'s, whose
+- **Results, as properties:** the cut is `heiko_agent::output`'s, whose
   tests keep a prefix and a suffix within the budget and the whole text
   in the spill file; text under it is unchanged.
 - **Against a server:** an in-process rmcp server (rmcp's `server`
@@ -939,19 +939,19 @@ From the design above, as first written:
 - **The lifecycle, as a state machine** (`tests/lifecycle_model.rs`):
   against a model of the in-process server, over a duplex stream on the
   paused clock and over streamable HTTP (rmcp's server under hyper, on a
-  loopback port), on both protocols: tau connects, the server drops,
+  loopback port), on both protocols: heiko connects, the server drops,
   restarts (over HTTP forgetting its sessions, then answering 404 or the
-  TypeScript SDK's 400), tau starts the session again, also while a
-  connect is under way (it connects again), tau closes the connection,
+  TypeScript SDK's 400), heiko starts the session again, also while a
+  connect is under way (it connects again), heiko closes the connection,
   sometimes while a connect is under way (it stays closed, a call
   dials nothing, and it is then opened anew), the server
   changes its tools and resources, calls run side by side with progress,
   and resources are watched, unwatched and watched again at once. After
   each step: a waiter that sees `Connected` reads the new tool list
-  through the plugin; tau's lists are the server's; the resources tau
+  through the plugin; heiko's lists are the server's; the resources heiko
   subscribes are the server's; every call returns once, its progress all
   before its result, in order; and the connection's watchers saw every
-  change. It found that tau did not hear of an HTTP server's restart,
+  change. It found that heiko did not hear of an HTTP server's restart,
   so the restarted server's list changes and the watches taken before
   it were lost; the shrunk cases are kept, on both protocols.
 - **Resources and prompts** (`tests/resources.rs`, `tests/prompts.rs`):

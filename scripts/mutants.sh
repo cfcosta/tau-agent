@@ -11,18 +11,18 @@
 # behind for later builds.
 unset CARGO_TARGET_DIR
 exec cargo mutants --workspace --test-tool nextest \
-  --file crates/tau-ai/src/ws/proto/continuation.rs \
-  --file crates/tau-ai/src/ws/proto/lane.rs \
-  --file crates/tau-ai/src/ws/proto/pool.rs \
-  --file crates/tau-ai/src/responses/input.rs \
-  --file crates/tau-ai/src/event.rs \
-  --file crates/tau-agent/src/runner.rs \
-  --file crates/tau-agent/src/plugin.rs \
-  --file crates/tau-agent/src/agent.rs \
-  --file crates/tau-agent/src/validation.rs \
-  --file crates/tau-agent/src/schema.rs \
-  --file crates/plugins/tau-jev/src/lib.rs \
-  --file crates/plugins/tau-tools-host/src/edit.rs \
-  --file crates/plugins/tau-tools-host/src/truncate.rs \
-  --file crates/tau-store-sqlite/src/lib.rs \
+  --file crates/heiko-ai/src/ws/proto/continuation.rs \
+  --file crates/heiko-ai/src/ws/proto/lane.rs \
+  --file crates/heiko-ai/src/ws/proto/pool.rs \
+  --file crates/heiko-ai/src/responses/input.rs \
+  --file crates/heiko-ai/src/event.rs \
+  --file crates/heiko-agent/src/runner.rs \
+  --file crates/heiko-agent/src/plugin.rs \
+  --file crates/heiko-agent/src/agent.rs \
+  --file crates/heiko-agent/src/validation.rs \
+  --file crates/heiko-agent/src/schema.rs \
+  --file crates/plugins/heiko-jev/src/lib.rs \
+  --file crates/plugins/heiko-tools-host/src/edit.rs \
+  --file crates/plugins/heiko-tools-host/src/truncate.rs \
+  --file crates/heiko-store-sqlite/src/lib.rs \
   "$@"

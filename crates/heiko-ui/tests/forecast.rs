@@ -1,0 +1,225 @@
+//! Landing forecasts through the real host and the workspace: a fork
+//! that finishes gets one in the background, and it follows its
+//! parent's head. Every chat forks its repository's main chat, so a
+//! chat that lands moves main, and the other chat's forecast changes
+//! with it.
+
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0028)"
+)]
+
+use std::time::Duration;
+
+use gpui::{Entity, TestAppContext, VisualTestContext};
+use serde_json::json;
+use heiko_agent::tool::RunId;
+use heiko_testing::{git::git, scripted::ScriptedModel};
+use heiko_ui::{
+    accounts::Credentials,
+    host::{Host, HostConfig},
+};
+use heiko_ui_remote::{
+    Workspace,
+    attention::{Attention, Forecast},
+    catalog::Catalog,
+    workspace::WorkspaceEvent,
+};
+use heiko_vcs_host::{Identity, Project};
+
+use crate::common::LuauSettings as _;
+
+/// Runs GPUI until `done` holds, while runs work on the host's threads:
+/// for a minute at most, since landing works real repositories and a full
+/// test run loads the machine.
+fn until(
+    cx: &mut VisualTestContext,
+    what: &str,
+    mut done: impl FnMut(&mut VisualTestContext) -> bool,
+) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        cx.run_until_parked();
+        if done(cx) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for {what}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn start(
+    workspace: &Entity<Workspace>,
+    cx: &mut VisualTestContext,
+    prompt: &str,
+) -> RunId {
+    let before = workspace.read_with(cx, |ws, _| ws.runs().len());
+    workspace.update(cx, |ws, cx| {
+        // A chat forked from main, as "New run" asks for once main
+        // was talked to; on an untouched main the composer goes to main.
+        cx.emit(WorkspaceEvent::NewRun {
+            prompt: prompt.to_owned(),
+            model: ws.next_model().clone(),
+            repo: ws.selected_repo().unwrap_or_default().to_owned(),
+            images: Vec::new(),
+        });
+    });
+    until(cx, "the run to start", |cx| {
+        workspace.read_with(cx, |ws, _| ws.runs().len() > before)
+    });
+    workspace.read_with(cx, |ws, _| ws.runs()[0].id.clone())
+}
+
+fn forecast(
+    workspace: &Entity<Workspace>,
+    cx: &mut VisualTestContext,
+    run: &RunId,
+) -> Option<Forecast> {
+    workspace.read_with(cx, |ws, _| ws.run(run)?.forecast.clone())
+}
+
+#[gpui::test]
+fn a_finished_fork_is_forecast_again_when_main_moves(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let src = tempfile::tempdir().unwrap();
+    git(src.path(), &["init", "--quiet"]);
+    std::fs::write(src.path().join("README.md"), "hello\n").unwrap();
+    git(src.path(), &["add", "README.md"]);
+    git(src.path(), &["commit", "--quiet", "-m", "first"]);
+    let repos = tempfile::tempdir().unwrap();
+    let project = heiko_vcs_host::ProjectRepo::import(
+        src.path().to_str().unwrap(),
+        repos.path().join("p"),
+        Identity::default(),
+    )
+    .map(Project::from)
+    .unwrap();
+
+    let readme = |text: &str| json!({ "path": "README.md", "content": text });
+    let commit = |message: &str| json!({ "message": message });
+    // Two chats change the same line.
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("write", readme("one\n")))
+        .turn(|t| t.tool_call("vcs_commit", commit("docs: one")))
+        .turn(|t| t.text("one is done"))
+        .turn(|t| t.tool_call("write", readme("two\n")))
+        .turn(|t| t.tool_call("vcs_commit", commit("docs: two")))
+        .turn(|t| t.text("two is done"));
+
+    cx.update(heiko_ui_remote::init);
+    let window = cx.add_window(|window, cx| {
+        Workspace::new("heiko", Vec::new(), Catalog::default(), window, cx)
+    });
+    let workspace = window.root(cx).unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(heiko_store_sqlite::memory()).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let config = HostConfig {
+        credentials: Credentials::new(dir.path().join("config")),
+        model: Some("gpt-5.5".into()),
+        store: dir.path().join("unused.db"),
+        repos: dir.path().join("repos"),
+        settings: dir.path().join("models.json"),
+        repo_list: dir.path().join("repos.json"),
+        home: None,
+        services: Default::default(),
+    };
+    let agent = heiko_agent::agent::Agent::new(llm.clone()).name("coder");
+    let (host, events) = Host::with_agent(runtime, agent, store, config);
+    // Memory's pass after each run asks the model once more: these
+    // scripts answer only the requests they write.
+    let host = host.with_luau_settings(
+        heiko_luau_plugins::names::MEMORY,
+        serde_json::json!({ "after_each_run": false }),
+    );
+    let host = host.with_repository(
+        "hello",
+        std::sync::Arc::new(heiko_vcs_host::JjRepository::new(
+            project.clone(),
+            Identity::default(),
+        )),
+    );
+    cx.update(|_, cx| host.attach(&workspace, events, cx));
+    // The host shows its catalog and history from its runtime, a moment
+    // after.
+    until(&mut cx, "the host's catalog and history", |cx| {
+        workspace.read_with(cx, |ws, _| {
+            !ws.catalog().repos.is_empty() && !ws.runs().is_empty()
+        })
+    });
+
+    // The first chat finishes: in the background, it is ready to land
+    // its one change.
+    let one = start(&workspace, &mut cx, "write one");
+    until(&mut cx, "the first chat's forecast", |cx| {
+        forecast(&workspace, cx, &one).is_some()
+    });
+    assert_eq!(
+        forecast(&workspace, &mut cx, &one),
+        Some(Forecast {
+            changes: 1,
+            conflicts: Vec::new()
+        })
+    );
+    workspace.update(&mut cx, |ws, _| {
+        let view = ws.run(&one).unwrap().clone();
+        assert_eq!(ws.attention(&view), Attention::ReadyToLand { changes: 1 });
+    });
+
+    // The second changes the same line, and lands first: main moves,
+    // and the first chat would now conflict.
+    let two = start(&workspace, &mut cx, "write two");
+    until(&mut cx, "the second chat's forecast", |cx| {
+        forecast(&workspace, cx, &two).is_some()
+    });
+    workspace.update(&mut cx, |ws, cx| ws.land(&two, cx));
+    until(&mut cx, "the second chat to land", |cx| {
+        workspace.read_with(cx, |ws, _| ws.is_closed(&two))
+    });
+    until(
+        &mut cx,
+        "the first chat's forecast after main moved",
+        |cx| {
+            forecast(&workspace, cx, &one)
+                .is_some_and(|forecast| !forecast.conflicts.is_empty())
+        },
+    );
+    assert_eq!(
+        forecast(&workspace, &mut cx, &one),
+        Some(Forecast {
+            changes: 1,
+            conflicts: vec!["README.md".into()]
+        })
+    );
+    workspace.update(&mut cx, |ws, _| {
+        let view = ws.run(&one).unwrap().clone();
+        assert_eq!(
+            ws.attention(&view),
+            Attention::WouldConflict {
+                files: vec!["README.md".into()]
+            }
+        );
+        // The repository counts the one chat that needs the person.
+        assert_eq!(ws.need_you("hello"), 1);
+    });
+    // Forecasting changed nothing: main has the second chat's line.
+    let trunk = project.blocking().trunk().unwrap();
+    assert_eq!(
+        project
+            .blocking()
+            .file_at(&trunk, "README.md")
+            .unwrap()
+            .unwrap()
+            .0,
+        b"two\n"
+    );
+    llm.assert_exhausted();
+}

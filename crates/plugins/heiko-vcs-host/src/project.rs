@@ -1,0 +1,2358 @@
+//! [`ProjectRepo`]: a repository heiko owns, with a jj workspace per run
+//! (`docs/reference/vcs.md`, "Projects").
+//!
+//! A project lives in a directory of its own, usually under
+//! `$XDG_DATA_HOME/heiko/repos/`:
+//!
+//! - `main/`: the jj repository, colocated with its Git store as
+//!   `jj git init --colocate` makes one (`main/.git` beside `main/.jj`),
+//!   so `jj` and `git` both work in it. Upstream's branches are
+//!   remote-tracking branches there (`<branch>@origin` to jj), and the
+//!   bookmarks go out as Git's branches (`crate::colocate`). It is the
+//!   main chat's workspace, named [`MAIN_WORKSPACE`]: jj's `default`
+//!   workspace is never heiko's;
+//! - `runs/<name>/`: one jj workspace per run, each on its own commit,
+//!   and a Git worktree of `main/.git` (`crate::worktree`).
+//!
+//! [`Layout`] says where each is. Runs never touch the user's own
+//! checkout. A local repository ([`Layout::local`]) is the person's
+//! folder instead, set up in place (`ProjectRepo::setup_local`), with
+//! the main chat's workspace and the runs' in heiko's data directory.
+//! [`ProjectRepo`]'s functions block; async code reaches them through
+//! [`Project`], which runs each job in `spawn_blocking`, one at a time
+//! per repository (ADR 0028).
+
+#![allow(
+    clippy::disallowed_methods,
+    reason = "runs only inside a job in spawn_blocking (ADR 0028)"
+)]
+
+use std::{
+    collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
+use jj_lib::{
+    backend::{ChangeId, CommitId},
+    commit::Commit,
+    default_backend_factories::{
+        default_backend_factories,
+        default_working_copy_factories,
+    },
+    git::{GitImportOptions, import_refs},
+    matchers::EverythingMatcher,
+    object_id::ObjectId as _,
+    ref_name::{RefName, RemoteName, WorkspaceName, WorkspaceNameBuf},
+    repo::{ReadonlyRepo, Repo as _},
+    settings::UserSettings,
+    workspace::Workspace,
+};
+use pollster::block_on;
+use heiko_ui_plugin::vcs::{FileChange, FileDiff, Link, StackChange, Updated};
+
+use crate::{
+    clone::{CloneError, Head, ORIGIN_HEAD, TRACKING},
+    error::VcsError,
+    vcs::{Identity, Vcs},
+};
+
+mod push;
+
+pub use push::REMOTE;
+
+/// How many operations back [`ProjectRepo::landed`] looks for a landing.
+pub const LANDING_LOOKBACK: usize = 1000;
+
+/// The name of the workspace a repository's main chat works in, unless
+/// the repository has a workspace of that name already
+/// ([`main_workspace_name`]). Runs get workspaces of their own.
+pub const MAIN_WORKSPACE: &str = "heiko-main";
+
+/// The name for the main chat's workspace in a repository where `taken`
+/// says which names its workspaces have: [`MAIN_WORKSPACE`], else
+/// `heiko-main-<n>` with the smallest `n` from 2 that is free.
+pub fn main_workspace_name(taken: impl Fn(&str) -> bool) -> String {
+    if !taken(MAIN_WORKSPACE) {
+        return MAIN_WORKSPACE.to_owned();
+    }
+    (2_u64..)
+        .map(|n| format!("{MAIN_WORKSPACE}-{n}"))
+        .find(|name| !taken(name))
+        .expect("some number is free")
+}
+
+/// Where a project keeps its repository and its workspaces
+/// (`docs/reference/vcs.md`, "Projects").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Layout {
+    /// The repository's directory: `.jj`, with the repository itself in
+    /// `.jj/repo`, beside its Git store, `.git`.
+    pub repo_root: PathBuf,
+    /// Where run workspaces are, each in the directory named after it.
+    pub runs_dir: PathBuf,
+    /// The main chat's workspace's name.
+    pub main_workspace: String,
+    /// The main chat's workspace's directory.
+    pub main_dir: PathBuf,
+    /// Whether the repository is the person's own folder, worked in
+    /// where it is (ADR 0043): its `default` workspace is theirs, and
+    /// heiko never moves Git's `HEAD` or index there.
+    pub local: bool,
+}
+
+impl Layout {
+    /// A repository heiko owns at `root`, as a clone, an import or
+    /// [`ProjectRepo::init`] makes it: `main/` is the repository and the
+    /// main chat's workspace, `main_workspace`, and `runs/` holds the
+    /// runs' workspaces.
+    pub fn of_clone(root: &Path, main_workspace: impl Into<String>) -> Self {
+        let main = root.join("main");
+        Self {
+            repo_root: main.clone(),
+            runs_dir: root.join("runs"),
+            main_workspace: main_workspace.into(),
+            main_dir: main,
+            local: false,
+        }
+    }
+
+    /// The person's repository at `folder`, worked in where it is (ADR
+    /// 0043): the main chat's workspace at `main_dir` and the runs' under
+    /// `runs_dir`, both outside the folder, in heiko's data directory. The
+    /// main chat's workspace's name is [`MAIN_WORKSPACE`] until setting
+    /// the repository up picks one ([`ProjectRepo::setup_local`]) or
+    /// opening it reads the one it picked ([`ProjectRepo::open_local`]).
+    pub fn local(
+        folder: impl Into<PathBuf>,
+        main_dir: impl Into<PathBuf>,
+        runs_dir: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            repo_root: folder.into(),
+            runs_dir: runs_dir.into(),
+            main_workspace: MAIN_WORKSPACE.to_owned(),
+            main_dir: main_dir.into(),
+            local: true,
+        }
+    }
+
+    /// The repository's `.jj/repo`.
+    pub fn repo_path(&self) -> PathBuf {
+        self.repo_root.join(".jj").join("repo")
+    }
+
+    /// The Git store, colocated with the repository.
+    pub fn git_dir(&self) -> PathBuf {
+        self.repo_root.join(".git")
+    }
+
+    /// Where workspace `name` is: the main chat's directory for its
+    /// workspace, else a run's under the runs directory, whether or not
+    /// it exists.
+    pub fn workspace_dir(&self, name: &str) -> PathBuf {
+        if name == self.main_workspace {
+            return self.main_dir.clone();
+        }
+        self.runs_dir.join(name)
+    }
+}
+
+/// A repository heiko owns. Cheap to clone.
+#[derive(Clone)]
+pub struct ProjectRepo {
+    inner: Arc<Inner>,
+}
+
+/// A project, for async code: each job on it runs in tokio's
+/// `spawn_blocking`, after the jobs on the same repository that asked
+/// before it (ADR 0028). Cheap to clone; every handle on one repository,
+/// however it was made, shares its turn.
+#[derive(Clone)]
+pub struct Project {
+    repo: ProjectRepo,
+    turn: Arc<tokio::sync::Mutex<()>>,
+}
+
+impl std::fmt::Debug for Project {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.repo.fmt(f)
+    }
+}
+
+impl From<ProjectRepo> for Project {
+    fn from(repo: ProjectRepo) -> Self {
+        let turn = turn_of(repo.root());
+        Self { repo, turn }
+    }
+}
+
+impl Project {
+    /// Opens the project at `root`. See [`ProjectRepo::open`].
+    pub async fn open(
+        root: impl Into<PathBuf>,
+        identity: Identity,
+    ) -> Result<Self, VcsError> {
+        let root = root.into();
+        Self::make(move || ProjectRepo::open(root, identity)).await
+    }
+
+    /// Makes a project from a local repository. See
+    /// [`ProjectRepo::import`].
+    pub async fn import(
+        source: impl Into<String>,
+        root: impl Into<PathBuf>,
+        identity: Identity,
+    ) -> Result<Self, VcsError> {
+        let (source, root) = (source.into(), root.into());
+        Self::make(move || ProjectRepo::import(&source, root, identity)).await
+    }
+
+    /// Makes a project by cloning a remote. See [`ProjectRepo::clone`].
+    pub async fn clone(
+        url: impl Into<String>,
+        token: Option<String>,
+        root: impl Into<PathBuf>,
+        identity: Identity,
+    ) -> Result<Self, VcsError> {
+        let (url, root) = (url.into(), root.into());
+        Self::make(move || {
+            ProjectRepo::clone(&url, token.as_deref(), root, identity)
+        })
+        .await
+    }
+
+    /// Opens the project at `root`, or makes it there. See
+    /// [`ProjectRepo::open_or_import`].
+    pub async fn open_or_import(
+        source: impl Into<String>,
+        root: impl Into<PathBuf>,
+        identity: Identity,
+    ) -> Result<Self, VcsError> {
+        let (source, root) = (source.into(), root.into());
+        Self::make(move || ProjectRepo::open_or_import(&source, root, identity))
+            .await
+    }
+
+    /// Opens the project at `root`, or makes an empty one there. See
+    /// [`ProjectRepo::open_or_init`].
+    pub async fn open_or_init(
+        root: impl Into<PathBuf>,
+        identity: Identity,
+        files: Vec<(String, String)>,
+    ) -> Result<Self, VcsError> {
+        let root = root.into();
+        Self::make(move || ProjectRepo::open_or_init(root, identity, &files))
+            .await
+    }
+
+    /// Sets jj up in the person's folder, in place. See
+    /// [`ProjectRepo::setup_local`].
+    pub async fn setup_local(
+        found: crate::local::Found,
+        layout: Layout,
+        identity: Identity,
+        mut progress: impl FnMut(crate::local::Step) -> std::ops::ControlFlow<()>
+        + Send
+        + 'static,
+    ) -> Result<Self, VcsError> {
+        Self::make(move || {
+            ProjectRepo::setup_local(&found, layout, identity, &mut progress)
+        })
+        .await
+    }
+
+    /// Opens a local repository set up before. See
+    /// [`ProjectRepo::open_local`].
+    pub async fn open_local(
+        layout: Layout,
+        identity: Identity,
+    ) -> Result<Self, VcsError> {
+        Self::make(move || ProjectRepo::open_local(layout, identity)).await
+    }
+
+    async fn make(
+        open: impl FnOnce() -> Result<ProjectRepo, VcsError> + Send + 'static,
+    ) -> Result<Self, VcsError> {
+        tokio::task::spawn_blocking(open)
+            .await
+            .unwrap_or_else(|error| {
+                std::panic::resume_unwind(error.into_panic())
+            })
+            .map(Self::from)
+    }
+
+    /// Runs `job` on the repository once the jobs before it are done, on
+    /// tokio's blocking pool, and gives back what it returned. A job that
+    /// panics panics here too.
+    pub async fn run<T: Send + 'static>(
+        &self,
+        job: impl FnOnce(&ProjectRepo) -> T + Send + 'static,
+    ) -> T {
+        let turn = self.turn.clone().lock_owned().await;
+        let repo = self.repo.clone();
+        tokio::task::spawn_blocking(move || {
+            let _turn = turn;
+            job(&repo)
+        })
+        .await
+        .unwrap_or_else(|error| std::panic::resume_unwind(error.into_panic()))
+    }
+
+    /// The repository, to call synchronously, without waiting for the
+    /// jobs on it: for tests, which are synchronous, and disallowed
+    /// elsewhere by `clippy.toml`.
+    pub fn blocking(&self) -> &ProjectRepo {
+        &self.repo
+    }
+
+    /// The project's directory.
+    pub fn root(&self) -> &Path {
+        self.repo.root()
+    }
+
+    /// Where run `name`'s workspace lives, whether or not it exists.
+    pub fn workspace_dir(&self, name: &str) -> PathBuf {
+        self.repo.workspace_dir(name)
+    }
+
+    /// The name of the main chat's workspace.
+    pub fn main_workspace(&self) -> &str {
+        self.repo.main_workspace()
+    }
+
+    /// The main chat's workspace's directory.
+    pub fn main_dir(&self) -> &Path {
+        self.repo.main_dir()
+    }
+}
+
+/// The turn every handle on the repository at `root` shares.
+fn turn_of(root: &Path) -> Arc<tokio::sync::Mutex<()>> {
+    static TURNS: std::sync::LazyLock<
+        std::sync::Mutex<
+            HashMap<PathBuf, std::sync::Weak<tokio::sync::Mutex<()>>>,
+        >,
+    > = std::sync::LazyLock::new(Default::default);
+    let root =
+        std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let mut turns = TURNS.lock().expect("not poisoned");
+    turns.retain(|_, turn| turn.strong_count() > 0);
+    if let Some(turn) = turns.get(&root).and_then(std::sync::Weak::upgrade) {
+        return turn;
+    }
+    let turn = Arc::new(tokio::sync::Mutex::new(()));
+    turns.insert(root, Arc::downgrade(&turn));
+    turn
+}
+
+struct Inner {
+    root: PathBuf,
+    layout: Layout,
+    identity: Identity,
+    settings: UserSettings,
+    /// A local repository's trunk branch, as its setup chose it
+    /// (`local::State::trunk`).
+    trunk: Option<String>,
+}
+
+impl std::fmt::Debug for ProjectRepo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProjectRepo")
+            .field("root", &self.inner.root)
+            .finish()
+    }
+}
+
+impl ProjectRepo {
+    /// Whether `root` holds a project.
+    pub fn exists(root: &Path) -> bool {
+        crate::workspace_init::is_made(
+            &Layout::of_clone(root, MAIN_WORKSPACE).repo_root,
+        )
+    }
+
+    /// Opens the project at `root`, or makes it there from the local
+    /// repository at `source` when there is none.
+    pub fn open_or_import(
+        source: &str,
+        root: impl Into<PathBuf>,
+        identity: Identity,
+    ) -> Result<Self, VcsError> {
+        let root = root.into();
+        if Self::exists(&root) {
+            return Self::open(root, identity);
+        }
+        Self::import(source, root, identity)
+    }
+
+    /// Opens the project at `root`, or makes an empty one there, with
+    /// `files` in its first commit on `main`: a repository of heiko's own,
+    /// such as the plugins repository (ADR 0027).
+    pub fn open_or_init(
+        root: impl Into<PathBuf>,
+        identity: Identity,
+        files: &[(String, String)],
+    ) -> Result<Self, VcsError> {
+        let root = root.into();
+        if Self::exists(&root) {
+            return Self::open(root, identity);
+        }
+        Self::init(root, identity, files)
+    }
+
+    /// Makes a project at `root` (which must not hold one) with a
+    /// colocated Git store of its own, and `files` in a first commit
+    /// that `main` names. The checkout holds them, with an empty working
+    /// copy on top.
+    pub fn init(
+        root: impl Into<PathBuf>,
+        identity: Identity,
+        files: &[(String, String)],
+    ) -> Result<Self, VcsError> {
+        use jj_lib::{
+            backend::{CopyId, TreeValue},
+            merged_tree_builder::MergedTreeBuilder,
+            op_store::RefTarget,
+            repo_path::RepoPathBuf,
+        };
+        let project = Self::new(root.into(), identity)?;
+        let main = project.inner.layout.main_dir.clone();
+        // A `main/` with no whole repository is what a make that died
+        // part way left.
+        if main.exists() {
+            std::fs::remove_dir_all(&main).map_err(|source| {
+                VcsError::Delete {
+                    path: main.clone(),
+                    source,
+                }
+            })?;
+        }
+        std::fs::create_dir_all(&main).map_err(|source| VcsError::Create {
+            path: main.clone(),
+            source,
+        })?;
+        let name = WorkspaceNameBuf::from(project.main_workspace());
+        let (begun, repo) = crate::workspace_init::begin_repo(
+            &project.inner.settings,
+            &main,
+            crate::workspace_init::GitStore::Colocated,
+        )
+        .map_err(VcsError::MakeRepo)?;
+        crate::colocate::ignore_jj_dir(&main)?;
+        begun.list(&repo, &name).map_err(VcsError::MakeRepo)?;
+        let lock = project.lock()?;
+        let git = lock.git()?;
+        let mut tx = repo.start_transaction();
+        let store = tx.repo().store().clone();
+        let mut tree = MergedTreeBuilder::new(store.empty_merged_tree());
+        for (path, text) in files {
+            let path =
+                RepoPathBuf::from_relative_path(path).map_err(|error| {
+                    VcsError::Create {
+                        path: path.into(),
+                        source: std::io::Error::other(error.to_string()),
+                    }
+                })?;
+            let id = block_on(store.write_file(&path, &mut text.as_bytes()))?;
+            tree.set_or_remove(
+                path,
+                Some(TreeValue::File {
+                    id,
+                    executable: false,
+                    copy_id: CopyId::placeholder(),
+                }),
+            );
+        }
+        let tree = block_on(tree.write_tree())?;
+        let first = block_on(
+            tx.repo_mut()
+                .new_commit(vec![store.root_commit_id().clone()], tree)
+                .set_description("heiko: start the repository")
+                .write(),
+        )?;
+        tx.repo_mut().set_local_bookmark_target(
+            RefName::new("main"),
+            RefTarget::normal(first.id().clone()),
+        );
+        let wc = block_on(tx.repo_mut().check_out(name.clone(), &first))?;
+        block_on(tx.repo_mut().rebase_descendants())?;
+        let repo = crate::colocate::commit_in(
+            tx,
+            "make the repository",
+            &git,
+            &name,
+            &main,
+        )?;
+        let mut workspace =
+            begun.finish(&repo, name).map_err(VcsError::MakeRepo)?;
+        block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
+            .map_err(VcsError::CheckOut)?;
+        made(&main)?;
+        Ok(project)
+    }
+
+    /// Every file under the folder `prefix` at `commit` (a full id in
+    /// hex), by its path from the repository's root, with its content.
+    /// Empty when the commit has no such folder.
+    pub fn files_under(
+        &self,
+        commit: &str,
+        prefix: &str,
+    ) -> Result<Vec<(String, Vec<u8>)>, VcsError> {
+        let repo = self.git()?;
+        let id =
+            gix::ObjectId::from_hex(commit.as_bytes()).map_err(|source| {
+                VcsError::BadCommitHex {
+                    commit: commit.to_owned(),
+                    source,
+                }
+            })?;
+        let commit = repo.find_object(id)?.try_into_commit()?;
+        let mut tree = commit.tree()?;
+        let prefix = prefix.trim_matches('/');
+        let start = if prefix.is_empty() {
+            tree
+        } else {
+            let Some(entry) = tree.peel_to_entry_by_path(prefix)? else {
+                return Ok(Vec::new());
+            };
+            if !entry.mode().is_tree() {
+                return Ok(Vec::new());
+            }
+            entry.object()?.try_into_tree()?
+        };
+        let mut found = Vec::new();
+        let mut folders = vec![(prefix.to_owned(), start)];
+        while let Some((at, folder)) = folders.pop() {
+            for entry in folder.iter() {
+                let entry = entry.map_err(|error| {
+                    VcsError::GitTree(at.clone(), error.to_string())
+                })?;
+                let name = entry.filename().to_string();
+                let path = if at.is_empty() {
+                    name
+                } else {
+                    format!("{at}/{name}")
+                };
+                let object = entry.object()?;
+                if entry.mode().is_tree() {
+                    folders.push((path, object.try_into_tree()?));
+                } else if entry.mode().is_blob() {
+                    found.push((path, object.detach().data));
+                }
+            }
+        }
+        found.sort();
+        Ok(found)
+    }
+
+    /// Opens the project at `root`, with each run's workspace made a
+    /// whole Git worktree where it is not one (`Self::link_worktree`),
+    /// and runs' heads that were bookmarks moved to their refs
+    /// (`Self::move_run_heads`). Only a clone has those: a local
+    /// repository's `heiko/*` branches are the person's, so
+    /// [`Self::open_local`] leaves them alone.
+    pub fn open(
+        root: impl Into<PathBuf>,
+        identity: Identity,
+    ) -> Result<Self, VcsError> {
+        let root = root.into();
+        if !Self::exists(&root) {
+            return Err(VcsError::NoProject(root));
+        }
+        let mut project = Self::new(root, identity)?;
+        if project.name_main_workspace()? {
+            // Opened again, to load the workspace by its new name.
+            project = Self::new(
+                project.inner.root.clone(),
+                project.inner.identity.clone(),
+            )?;
+        }
+        project.move_run_heads()?;
+        // At best: a workspace that cannot be mended now (one whose
+        // making died before its working copy) does not keep the
+        // project shut; its next use tries again, and says why.
+        for name in project.workspaces()? {
+            let _ = project.link_worktree(&name);
+        }
+        Ok(project)
+    }
+
+    /// Sets jj up in the person's Git repository that `found` describes
+    /// (`local::inspect`), where it is, colocated, as `jj git init
+    /// --colocate` does there, but leaving Git's `HEAD` and index as they
+    /// are (ADR 0043, `docs/reference/vcs.md`, "Setting up a local
+    /// repository"); a colocated jj repository of the person's is kept as
+    /// it is. `layout` ([`Layout::local`]) says where the main chat's
+    /// workspace, made here as a Git worktree, and the runs' go.
+    /// `progress` hears of each step before it starts, and stops the
+    /// setup by breaking. All or nothing: a setup that fails or is
+    /// stopped takes away what it added.
+    pub fn setup_local(
+        found: &crate::local::Found,
+        mut layout: Layout,
+        identity: Identity,
+        progress: &mut dyn FnMut(
+            crate::local::Step,
+        ) -> std::ops::ControlFlow<()>,
+    ) -> Result<Self, VcsError> {
+        layout.main_workspace =
+            crate::local::setup(found, &layout, &identity, progress)?;
+        Self::with_layout(layout.repo_root.clone(), layout, identity)
+    }
+
+    /// Opens the local repository `layout` ([`Layout::local`]) names, set
+    /// up before ([`Self::setup_local`]), with the main chat's workspace
+    /// heiko's state names, and each of heiko's workspaces made a whole Git
+    /// worktree where it is not one (`Self::link_worktree`).
+    pub fn open_local(
+        mut layout: Layout,
+        identity: Identity,
+    ) -> Result<Self, VcsError> {
+        let state = crate::local::State::read(&layout.repo_root)?
+            .ok_or_else(|| VcsError::NotSetUp(layout.repo_root.clone()))?;
+        layout.main_workspace = state.main_workspace;
+        let project =
+            Self::with_layout(layout.repo_root.clone(), layout, identity)?;
+        let main = project.main_workspace().to_owned();
+        // At best, as `Self::open` mends them.
+        for name in std::iter::once(main).chain(project.workspaces()?) {
+            let _ = project.link_worktree(&name);
+        }
+        Ok(project)
+    }
+
+    /// Makes a project at `root` (which must not hold one) from a copy of
+    /// the local repository at `source`, as if cloned from it: its
+    /// branches become remote-tracking branches, imported as bookmarks
+    /// that track them, and `origin` names the source. Needs no `git`:
+    /// the object files are shared, not cloned.
+    pub fn import(
+        source: &str,
+        root: impl Into<PathBuf>,
+        identity: Identity,
+    ) -> Result<Self, VcsError> {
+        let source = Path::new(source);
+        let from = source_git_dir(source)
+            .ok_or_else(|| VcsError::NotGitRepo(source.to_owned()))?;
+        let origin =
+            std::fs::canonicalize(source).unwrap_or_else(|_| source.to_owned());
+        Self::make_with(root.into(), identity, |git_dir| {
+            copy_git_store(&from, git_dir).map_err(|error| {
+                VcsError::CopyGitStore {
+                    path: source.to_owned(),
+                    source: error,
+                }
+            })?;
+            Ok(origin.to_string_lossy().into_owned())
+        })
+    }
+
+    /// Makes a project at `root` (which must not hold one) by fetching
+    /// every branch and tag of `url`, as `jj git clone --colocate` does:
+    /// the branches become remote-tracking branches, imported as
+    /// bookmarks that track them, and the repository's `trunk()` names
+    /// the default branch. A `token` answers the server's request
+    /// for credentials, and is not written into the repository. Blocks
+    /// until the fetch is over. On failure `root` is removed.
+    pub fn clone(
+        url: &str,
+        token: Option<&str>,
+        root: impl Into<PathBuf>,
+        identity: Identity,
+    ) -> Result<Self, VcsError> {
+        let root = root.into();
+        let made = Self::make_with(root.clone(), identity, |git_dir| {
+            let repo = crate::clone::open(git_dir).map_err(|source| {
+                CloneError::Open {
+                    path: git_dir.to_owned(),
+                    source,
+                }
+            })?;
+            crate::clone::fetch(&repo, url, token).map_err(|source| {
+                CloneError::Clone {
+                    url: url.to_owned(),
+                    source: Box::new(source),
+                }
+            })?;
+            Ok(url.to_owned())
+        });
+        if made.is_err() {
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        made
+    }
+
+    /// Makes a project at `root`, which holds none: a Git repository in
+    /// `main/`, which `fill` fills with upstream's objects and refs and
+    /// whose `origin` it names, then the jj repository on it, with
+    /// upstream's branches imported and its `trunk()` in the
+    /// repository's config. On failure `main/` is removed.
+    fn make_with(
+        root: PathBuf,
+        identity: Identity,
+        fill: impl FnOnce(&Path) -> Result<String, VcsError>,
+    ) -> Result<Self, VcsError> {
+        let project = Self::new(root, identity)?;
+        let main = project.inner.layout.main_dir.clone();
+        let made = (|| {
+            // A `main/` with no jj repository is what a make that died
+            // part way left.
+            if main.exists() {
+                std::fs::remove_dir_all(&main).map_err(|source| {
+                    VcsError::Delete {
+                        path: main.clone(),
+                        source,
+                    }
+                })?;
+            }
+            std::fs::create_dir_all(&main).map_err(|source| {
+                VcsError::Create {
+                    path: main.clone(),
+                    source,
+                }
+            })?;
+            gix::init(&main).map_err(|error| VcsError::Create {
+                path: main.clone(),
+                source: std::io::Error::other(error.to_string()),
+            })?;
+            let git_dir = project.git_dir();
+            let origin = fill(&git_dir)?;
+            crate::clone::set_remote(&git_dir, &origin).map_err(|error| {
+                VcsError::Create {
+                    path: git_dir.clone(),
+                    source: std::io::Error::other(error.to_string()),
+                }
+            })?;
+            let (begun, repo) = crate::workspace_init::begin_repo(
+                &project.inner.settings,
+                &main,
+                crate::workspace_init::GitStore::External(&git_dir),
+            )
+            .map_err(VcsError::MakeRepo)?;
+            crate::colocate::ignore_jj_dir(&main)?;
+            let name = WorkspaceNameBuf::from(project.main_workspace());
+            begun.list(&repo, &name).map_err(VcsError::MakeRepo)?;
+            let lock = project.lock()?;
+            let git = lock.git()?;
+            let mut tx = repo.start_transaction();
+            // The main workspace, on an empty commit on the root, as
+            // jj-lib's own operation would add it.
+            block_on(
+                tx.repo_mut()
+                    .check_out(name.clone(), &repo.store().root_commit()),
+            )?;
+            block_on(import_refs(tx.repo_mut(), &import_options(true)))
+                .map_err(VcsError::ImportBranches)?;
+            let repo =
+                crate::colocate::commit_in(tx, "import", &git, &name, &main)?;
+            begun.finish(&repo, name).map_err(VcsError::MakeRepo)?;
+            project.write_trunk_alias(&repo)?;
+            made(&main)
+        })();
+        if let Err(error) = made {
+            let _ = std::fs::remove_dir_all(&main);
+            return Err(error);
+        }
+        // The settings it was made with were read before the repository
+        // had a config of its own.
+        Self::new(project.inner.root.clone(), project.inner.identity.clone())
+    }
+
+    /// Sets the repository's `trunk()` to the default branch on
+    /// `origin`, as `jj git clone` does (jj-cli 0.46.0's
+    /// `write_repo_presets`): when `origin/HEAD` names a branch the clone
+    /// has, so that jj's `trunk()` and `immutable_heads()` know a default
+    /// branch other than `main`, `master` or `trunk`.
+    fn write_trunk_alias(&self, repo: &ReadonlyRepo) -> Result<(), VcsError> {
+        let Some(name) = self.default_branch() else {
+            return Ok(());
+        };
+        let symbol =
+            RefName::new(&name).to_remote_symbol(RemoteName::new(REMOTE));
+        if repo.view().get_remote_bookmark(symbol).is_absent() {
+            return Ok(());
+        }
+        crate::config::write_repo_trunk(
+            &self.inner.identity.env,
+            &self.inner.layout.repo_path(),
+            &symbol.to_string(),
+        )
+    }
+
+    /// The project at `root`, with the jj config its main workspace
+    /// loads, which need not exist yet. Its main workspace's name is the
+    /// one its working copy has, or [`MAIN_WORKSPACE`] for one to make.
+    /// Blocks.
+    fn new(root: PathBuf, identity: Identity) -> Result<Self, VcsError> {
+        let layout = Layout::of_clone(&root, MAIN_WORKSPACE);
+        Self::with_layout(root, layout, identity)
+    }
+
+    /// The project at `root` laid out as `layout` says, with the jj
+    /// config its main workspace loads, and that workspace's name when
+    /// it exists. Blocks.
+    fn with_layout(
+        root: PathBuf,
+        mut layout: Layout,
+        identity: Identity,
+    ) -> Result<Self, VcsError> {
+        let settings = crate::config::settings(
+            &identity,
+            &layout.main_dir,
+            &layout.repo_path(),
+        )?;
+        if layout.main_dir.join(".jj").is_dir()
+            && let Ok(main) = load_workspace(&settings, &layout.main_dir)
+        {
+            layout.main_workspace = main.workspace_name().as_str().to_owned();
+        }
+        let trunk = if layout.local {
+            crate::local::State::read(&layout.repo_root)?
+                .and_then(|state| state.trunk)
+        } else {
+            None
+        };
+        Ok(Self {
+            inner: Arc::new(Inner {
+                root,
+                layout,
+                identity,
+                settings,
+                trunk,
+            }),
+        })
+    }
+
+    /// Brings in what changed at the source since the project was made
+    /// or last updated: new commits, and branches where the source has
+    /// them now. Trunk follows a remote's or a bare repository's new
+    /// default branch, but not a checkout's checked-out branch. Runs keep their workspaces and commits; new runs start
+    /// from the new trunk. Returns the trunk before and after.
+    pub fn update(&self, from: UpdateFrom<'_>) -> Result<Updated, VcsError> {
+        let lock = self.lock()?;
+        let before = self.trunk()?;
+        let git_dir = self.git_dir();
+        match from {
+            UpdateFrom::Checkout(source) => update_git_store(source, &git_dir)?,
+            UpdateFrom::Remote { url, token } => {
+                crate::clone::fetch_into(&git_dir, url, token)?
+            }
+        }
+        let git = lock.git()?;
+        let repo = self.load()?;
+        let mut tx = repo.start_transaction();
+        let upstream = upstream_targets(tx.repo().view());
+        block_on(import_refs(tx.repo_mut(), &import_options(false)))
+            .map_err(VcsError::ImportBranches)?;
+        take_upstream(&mut tx, upstream);
+        crate::colocate::commit(tx, "update", &git)?;
+        Ok(Updated {
+            before,
+            after: self.trunk()?,
+        })
+    }
+
+    /// A file's content at `commit` (a full id in hex), and whether it
+    /// is executable; `None` when the commit has no file there.
+    pub fn file_at(
+        &self,
+        commit: &str,
+        path: &str,
+    ) -> Result<Option<(Vec<u8>, bool)>, VcsError> {
+        let repo = self.git()?;
+        let id =
+            gix::ObjectId::from_hex(commit.as_bytes()).map_err(|source| {
+                VcsError::BadCommitHex {
+                    commit: commit.to_owned(),
+                    source,
+                }
+            })?;
+        let commit = repo.find_object(id)?.try_into_commit()?;
+        let mut tree = commit.tree()?;
+        let Some(entry) = tree.peel_to_entry_by_path(path)? else {
+            return Ok(None);
+        };
+        let mode = entry.mode();
+        if !mode.is_blob_or_symlink() {
+            return Ok(None);
+        }
+        let data = entry.object()?.detach().data;
+        Ok(Some((data, mode.is_executable())))
+    }
+
+    /// The first parent of `commit`, if it has one.
+    pub fn parent_of(&self, commit: &str) -> Result<Option<String>, VcsError> {
+        let repo = self.git()?;
+        let id =
+            gix::ObjectId::from_hex(commit.as_bytes()).map_err(|source| {
+                VcsError::BadCommitHex {
+                    commit: commit.to_owned(),
+                    source,
+                }
+            })?;
+        let commit = repo.find_object(id)?.try_into_commit()?;
+        Ok(commit.parent_ids().next().map(|id| id.to_string()))
+    }
+
+    /// The description of `commit` (a full id in hex): its message.
+    pub fn description_of(&self, commit: &str) -> Result<String, VcsError> {
+        let repo = self.git()?;
+        let id =
+            gix::ObjectId::from_hex(commit.as_bytes()).map_err(|source| {
+                VcsError::BadCommitHex {
+                    commit: commit.to_owned(),
+                    source,
+                }
+            })?;
+        let commit = repo.find_object(id)?.try_into_commit()?;
+        Ok(String::from_utf8_lossy(commit.message_raw_sloppy()).into_owned())
+    }
+
+    /// The source's default branch, as `origin/HEAD` names it.
+    pub fn default_branch(&self) -> Option<String> {
+        let repo = self.git().ok()?;
+        let head = repo.try_find_reference(ORIGIN_HEAD).ok()??;
+        let target = head.target().try_name()?.as_bstr().to_string();
+        target.strip_prefix(TRACKING).map(str::to_owned)
+    }
+
+    /// The Git store, colocated with the repository.
+    pub(crate) fn git_dir(&self) -> PathBuf {
+        self.inner.layout.git_dir()
+    }
+
+    fn git(&self) -> Result<gix::Repository, VcsError> {
+        crate::clone::open(&self.git_dir()).map_err(|source| {
+            VcsError::NoGitStore {
+                root: self.inner.root.clone(),
+                source,
+            }
+        })
+    }
+
+    /// The project's directory.
+    pub fn root(&self) -> &Path {
+        &self.inner.root
+    }
+
+    /// Where run `name`'s workspace is: the main chat's directory for
+    /// [`Self::main_workspace`].
+    pub fn workspace_dir(&self, name: &str) -> PathBuf {
+        self.inner.layout.workspace_dir(name)
+    }
+
+    /// Where the project keeps its repository and workspaces.
+    pub fn layout(&self) -> &Layout {
+        &self.inner.layout
+    }
+
+    /// The name of the main chat's workspace.
+    pub fn main_workspace(&self) -> &str {
+        &self.inner.layout.main_workspace
+    }
+
+    /// The main chat's workspace's directory.
+    pub fn main_dir(&self) -> &Path {
+        &self.inner.layout.main_dir
+    }
+
+    /// The commit new runs start from: trunk's bookmark
+    /// (`Self::trunk_name`), or the root commit of an empty repository. A
+    /// full commit id, in hex.
+    pub fn trunk(&self) -> Result<String, VcsError> {
+        let repo = self.load()?;
+        let id = self
+            .trunk_bookmark(&repo)
+            .map(|(_, id)| id)
+            .unwrap_or_else(|| repo.store().root_commit_id().clone());
+        Ok(id.hex())
+    }
+
+    /// The name of trunk's bookmark: in a local repository the branch
+    /// its setup chose, else the default branch, else `main`, `master` or
+    /// `trunk`, whichever is set; the first of those two, else `main`,
+    /// when none is.
+    pub fn trunk_name(&self) -> Result<String, VcsError> {
+        let repo = self.load()?;
+        Ok(self
+            .trunk_bookmark(&repo)
+            .map(|(name, _)| name)
+            .unwrap_or_else(|| {
+                self.inner
+                    .trunk
+                    .clone()
+                    .or_else(|| self.default_branch())
+                    .unwrap_or_else(|| "main".to_owned())
+            }))
+    }
+
+    /// Trunk's bookmark and the commit it names: the branch a local
+    /// repository's setup chose, else the default branch, else `main`,
+    /// `master` or `trunk`.
+    fn trunk_bookmark(
+        &self,
+        repo: &ReadonlyRepo,
+    ) -> Option<(String, CommitId)> {
+        let view = repo.view();
+        self.inner
+            .trunk
+            .clone()
+            .into_iter()
+            .chain(self.default_branch())
+            .chain(["main", "master", "trunk"].map(str::to_owned))
+            .find_map(|name| {
+                let id = view
+                    .get_local_bookmark(RefName::new(&name))
+                    .as_normal()
+                    .cloned()?;
+                Some((name, id))
+            })
+    }
+
+    /// The changes `head` (a full commit id in hex) has that trunk lacks,
+    /// oldest first: a run's stack, as a pull request replays it.
+    pub fn stack(&self, head: &str) -> Result<Vec<StackChange>, VcsError> {
+        let repo = self.load()?;
+        let head = commit(&repo, head)?;
+        let trunk =
+            CommitId::try_from_hex(self.trunk()?).ok_or(VcsError::NotHex)?;
+        range(&repo, head.id(), Some(&trunk))
+    }
+
+    /// The changes `head` has that `base` lacks (both full commit ids in
+    /// hex), oldest first: a sub-agent's own work, from the commit it
+    /// started on.
+    pub fn changes_between(
+        &self,
+        base: &str,
+        head: &str,
+    ) -> Result<Vec<StackChange>, VcsError> {
+        let repo = self.load()?;
+        let head = commit(&repo, head)?;
+        let base = CommitId::try_from_hex(base).ok_or(VcsError::NotHex)?;
+        range(&repo, head.id(), Some(&base))
+    }
+
+    /// Makes a fork's workspace from `snapshot`, a turn's snapshot of
+    /// another run's `@` (ADR 0014): a new change with the snapshot's
+    /// files, uncommitted, on the snapshot's parent as it is now. A
+    /// landing may have restacked that parent since; its new files and
+    /// the turn's work are then merged. When the parent's change is a
+    /// workspace's working copy now (a run undid the commit), the fork
+    /// starts on that parent's parent instead, with the turn's files.
+    /// Opens the workspace as it is if it exists already, its Git
+    /// worktree made whole first (`Self::link_worktree`).
+    pub fn add_workspace_from_snapshot(
+        &self,
+        name: &str,
+        snapshot: &str,
+    ) -> Result<Vcs, VcsError> {
+        let dir = self.workspace_dir(name);
+        if crate::workspace_init::is_made(&dir) {
+            self.link_worktree(name)?;
+            return Vcs::open_in_job(dir, self.inner.identity.clone());
+        }
+        clear_unmade(&dir)?;
+        std::fs::create_dir_all(&dir).map_err(|source| VcsError::Create {
+            path: dir.clone(),
+            source,
+        })?;
+        let lock = self.lock()?;
+        let git = lock.git()?;
+        let main = self.main()?;
+        let repo = self.load_to_write(&git)?;
+        crate::worktree::link(&self.git_dir(), &dir, name, None)?;
+        let begun =
+            crate::workspace_init::begin_workspace(&dir, main.repo_path())
+                .map_err(VcsError::AddWorkspace)?;
+        let turn = commit(&repo, snapshot)?;
+        let then = turn.parent_ids().first().ok_or(VcsError::NoParent)?;
+        let mut then = repo.store().get_commit(then)?;
+        // An undo can take the parent's change back into a run's `@`, or
+        // abandon it. The fork must not stand on another workspace's
+        // working copy, so it starts on the nearest ancestor that is not
+        // one, with the turn's files: an undone commit's description is
+        // not the fork's. An abandoned parent is stood on as it was,
+        // unless its own parent's change is a working copy: the hidden
+        // commit would bring that change back beside the working copy,
+        // and the next snapshot would leave the fork stale.
+        let working_copies: Vec<&CommitId> =
+            repo.view().wc_commit_ids().values().collect();
+        let is_wc = |commit: &Commit| -> Result<bool, VcsError> {
+            Ok(visible(repo.as_ref(), commit)?
+                .is_some_and(|now| working_copies.contains(&now.id())))
+        };
+        let now = loop {
+            let up = |then: &Commit| -> Result<Commit, VcsError> {
+                let up = then.parent_ids().first().ok_or(VcsError::NoParent)?;
+                Ok(repo.store().get_commit(up)?)
+            };
+            match visible(repo.as_ref(), &then)? {
+                Some(now) if !working_copies.contains(&now.id()) => break now,
+                Some(_) => then = up(&then)?,
+                None => {
+                    let parent = up(&then)?;
+                    if is_wc(&parent)?
+                        || unsafe_to_stand(
+                            repo.as_ref(),
+                            &then,
+                            &working_copies,
+                        )?
+                    {
+                        then = parent;
+                    } else {
+                        break then.clone();
+                    }
+                }
+            }
+        };
+        let tree = if now.id() == then.id() {
+            turn.tree()
+        } else {
+            block_on(jj_lib::merged_tree::MergedTree::merge(
+                jj_lib::merge::Merge::from_vec(vec![
+                    (now.tree(), "the parent now".to_owned()),
+                    (then.tree(), "the parent then".to_owned()),
+                    (turn.tree(), "the turn".to_owned()),
+                ]),
+            ))?
+        };
+        let mut tx = repo.start_transaction();
+        let wc = block_on(
+            tx.repo_mut()
+                .new_commit(vec![now.id().clone()], tree)
+                .write(),
+        )?;
+        block_on(tx.repo_mut().edit(WorkspaceNameBuf::from(name), &wc))?;
+        block_on(tx.repo_mut().rebase_descendants())?;
+        let repo = crate::colocate::commit_in(
+            tx,
+            format!("add workspace {name}"),
+            &git,
+            WorkspaceName::new(name),
+            &dir,
+        )?;
+        let mut workspace = begun
+            .finish(&repo, WorkspaceNameBuf::from(name))
+            .map_err(VcsError::AddWorkspace)?;
+        block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
+            .map_err(VcsError::CheckOut)?;
+        crate::colocate::ignore_jj_dir(&dir)?;
+        made(&dir)?;
+        drop(git);
+        drop(lock);
+        // Made with the main workspace's config, as `jj workspace add`
+        // does; opened again with its own.
+        drop(workspace);
+        Vcs::open_in_job(dir, self.inner.identity.clone())
+    }
+
+    /// `links` with each `commit_id` moved to where its change is now.
+    /// A change keeps its id when it is rewritten (a restack, a
+    /// describe), so the stored commit may be hidden while its change
+    /// lives on. A change no longer visible anywhere (abandoned) keeps
+    /// its last known commit; a divergent one is an error, since its
+    /// change id names more than one commit.
+    pub fn current(
+        &self,
+        links: impl IntoIterator<Item = Link>,
+    ) -> Result<Vec<Link>, VcsError> {
+        let repo = self.load()?;
+        links
+            .into_iter()
+            .map(|mut link| {
+                // A turn's snapshot is that very commit: `@` has moved on
+                // under the same change id.
+                if link.snapshot {
+                    return Ok(link);
+                }
+                let change = ChangeId::try_from_reverse_hex(&link.change_id)
+                    .ok_or_else(|| {
+                        VcsError::NotChangeId(link.change_id.clone())
+                    })?;
+                let visible: Vec<CommitId> =
+                    match block_on(repo.resolve_change_id(&change))? {
+                        Some(targets) => targets
+                            .visible_with_offsets()
+                            .map(|(_, id)| id.clone())
+                            .collect(),
+                        None => Vec::new(),
+                    };
+                match visible.as_slice() {
+                    [] => {}
+                    [id] => link.commit_id = id.hex(),
+                    _ => {
+                        return Err(VcsError::DivergentTurn {
+                            change: link.change_id.clone(),
+                            turn: link.turn,
+                        });
+                    }
+                }
+                Ok(link)
+            })
+            .collect()
+    }
+
+    /// The commit the local bookmark `name` points at, as a full commit
+    /// id in hex. `None` when there is no such bookmark, or it has
+    /// conflicting targets.
+    pub fn bookmark(&self, name: &str) -> Result<Option<String>, VcsError> {
+        let repo = self.load()?;
+        Ok(repo
+            .view()
+            .get_local_bookmark(RefName::new(name))
+            .as_normal()
+            .map(|id| id.hex()))
+    }
+
+    /// The paths `commit` (a full commit id in hex) holds in conflict, in
+    /// path order.
+    pub fn conflicts(&self, commit: &str) -> Result<Vec<String>, VcsError> {
+        let repo = self.load()?;
+        Ok(crate::ops::conflict_paths(
+            &self::commit(&repo, commit)?.tree(),
+        ))
+    }
+
+    /// Whether `ancestor` is `descendant` or one of its ancestors. Both
+    /// are full commit ids in hex.
+    pub fn is_ancestor(
+        &self,
+        ancestor: &str,
+        descendant: &str,
+    ) -> Result<bool, VcsError> {
+        let repo = self.load()?;
+        let id = |hex: &str| {
+            CommitId::try_from_hex(hex)
+                .ok_or_else(|| VcsError::NotCommitId(hex.to_owned()))
+        };
+        Ok(block_on(
+            repo.index().is_ancestor(&id(ancestor)?, &id(descendant)?),
+        )?)
+    }
+
+    /// Abandons what `head` has that `keep` lacks (both full commit ids
+    /// in hex): a dropped child run's own changes. Returns how many
+    /// commits went. The operation log keeps them.
+    pub fn abandon_between(
+        &self,
+        keep: &str,
+        head: &str,
+    ) -> Result<usize, VcsError> {
+        self.abandon_beyond(&[keep], head)
+    }
+
+    /// Abandons what `head` has that none of `keeps` has (all full
+    /// commit ids in hex). Returns how many commits went.
+    pub fn abandon_beyond(
+        &self,
+        keeps: &[&str],
+        head: &str,
+    ) -> Result<usize, VcsError> {
+        use futures_util::StreamExt as _;
+        use jj_lib::revset::ResolvedRevsetExpression;
+
+        let repo_lock = self.lock()?;
+        let git = repo_lock.git()?;
+        let repo = self.load_to_write(&git)?;
+        let id = |hex: &str| {
+            CommitId::try_from_hex(hex)
+                .ok_or_else(|| VcsError::NotCommitId(hex.to_owned()))
+        };
+        let keeps = keeps
+            .iter()
+            .map(|keep| id(keep))
+            .collect::<Result<Vec<_>, _>>()?;
+        let ids: Vec<CommitId> = {
+            let revset = ResolvedRevsetExpression::commit(id(head)?)
+                .ancestors()
+                .minus(&ResolvedRevsetExpression::commits(keeps).ancestors())
+                .evaluate(repo.as_ref())?;
+            block_on(revset.stream().collect::<Vec<_>>())
+                .into_iter()
+                .collect::<Result<_, _>>()?
+        };
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let mut tx = repo.start_transaction();
+        for id in &ids {
+            let commit = repo.store().get_commit(id)?;
+            tx.repo_mut().record_abandoned_commit(&commit);
+        }
+        block_on(tx.repo_mut().rebase_descendants())?;
+        crate::colocate::commit(
+            tx,
+            format!("abandon {} changes", ids.len()),
+            &git,
+        )?;
+        Ok(ids.len())
+    }
+
+    /// What the landing of the child whose head was `child_head` (a
+    /// full commit id in hex, as given to `Vcs::land`) did, if one was
+    /// confirmed: read back from its operation, which records it, so a
+    /// host that closed between the landing and recording it can finish.
+    /// Looks back over the newest [`LANDING_LOOKBACK`] operations.
+    pub fn landed(
+        &self,
+        child_head: &str,
+    ) -> Result<Option<crate::Landing>, VcsError> {
+        let repo = self.load()?;
+        let mut op = repo.operation().clone();
+        for _ in 0..LANDING_LOOKBACK {
+            if let Some(record) = op
+                .metadata()
+                .attributes
+                .get(crate::session::LANDING_ATTRIBUTE)
+                .and_then(|text| {
+                    serde_json::from_str::<serde_json::Value>(text).ok()
+                })
+                && record["child_head"] == child_head
+                && let Ok(landing) =
+                    serde_json::from_value(record["landing"].clone())
+            {
+                return Ok(Some(landing));
+            }
+            // Concurrent operations merge into one: follow the first.
+            match block_on(op.parents())?.into_iter().next() {
+                Some(parent) => op = parent,
+                None => break,
+            }
+        }
+        Ok(None)
+    }
+
+    /// The local bookmarks whose names start with `prefix`, sorted.
+    pub fn bookmarks(&self, prefix: &str) -> Result<Vec<String>, VcsError> {
+        let repo = self.load()?;
+        let mut names: Vec<String> = repo
+            .view()
+            .local_bookmarks()
+            .map(|(name, _)| name.as_str().to_owned())
+            .filter(|name| name.starts_with(prefix))
+            .collect();
+        names.sort();
+        Ok(names)
+    }
+
+    /// The working-copy commit of workspace `name`, as a full commit id
+    /// in hex, if the workspace exists.
+    pub fn workspace_head(
+        &self,
+        name: &str,
+    ) -> Result<Option<String>, VcsError> {
+        let repo = self.load()?;
+        Ok(repo
+            .view()
+            .get_wc_commit_id(&WorkspaceNameBuf::from(name))
+            .map(|id| id.hex()))
+    }
+
+    /// Removes the local bookmark `name`, if there is one. The commits it
+    /// named stay.
+    pub fn remove_bookmark(&self, name: &str) -> Result<(), VcsError> {
+        let repo_lock = self.lock()?;
+        let repo = self.load()?;
+        let name = RefName::new(name);
+        if repo.view().get_local_bookmark(name).is_absent() {
+            return Ok(());
+        }
+        let mut tx = repo.start_transaction();
+        tx.repo_mut().set_local_bookmark_target(
+            name,
+            jj_lib::op_store::RefTarget::absent(),
+        );
+        crate::colocate::commit(
+            tx,
+            format!("remove bookmark {}", name.as_str()),
+            &repo_lock.git()?,
+        )?;
+        Ok(())
+    }
+
+    /// Puts `files` (paths under `folder`, with their bytes) in place of
+    /// what trunk holds under `folder`, in a commit on top of trunk
+    /// described `description`, and moves trunk to it: a landing with no
+    /// workspace, as `heiko-plugin install` makes one (ADR 0053). Gives
+    /// trunk's commit after, a full id in hex; a folder that already
+    /// holds `files` commits nothing.
+    pub fn commit_folder_on_trunk(
+        &self,
+        folder: &str,
+        files: &[(String, Vec<u8>)],
+        description: &str,
+    ) -> Result<String, VcsError> {
+        use jj_lib::{
+            backend::{CopyId, TreeValue},
+            merged_tree_builder::MergedTreeBuilder,
+            op_store::RefTarget,
+            repo_path::RepoPathBuf,
+        };
+        let folder = folder.trim_matches('/');
+        let repo_lock = self.lock()?;
+        let repo = self.load()?;
+        let (name, trunk) = self.trunk_bookmark(&repo).ok_or_else(|| {
+            VcsError::NoCommit(self.trunk_name().unwrap_or_default())
+        })?;
+        let mut given: Vec<(String, Vec<u8>)> = files
+            .iter()
+            .map(|(path, bytes)| (format!("{folder}/{path}"), bytes.clone()))
+            .collect();
+        given.sort();
+        let held = self.files_under(&trunk.hex(), folder)?;
+        if held == given {
+            return Ok(trunk.hex());
+        }
+        let path_of = |path: &str| {
+            RepoPathBuf::from_relative_path(path).map_err(|error| {
+                VcsError::Create {
+                    path: path.into(),
+                    source: std::io::Error::other(error.to_string()),
+                }
+            })
+        };
+        let parent = repo.store().get_commit(&trunk)?;
+        let mut tx = repo.start_transaction();
+        let store = tx.repo().store().clone();
+        let mut tree = MergedTreeBuilder::new(parent.tree());
+        for (path, _) in &held {
+            tree.set_or_remove(path_of(path)?, None);
+        }
+        for (path, bytes) in &given {
+            let id = block_on(
+                store.write_file(&path_of(path)?, &mut bytes.as_slice()),
+            )?;
+            tree.set_or_remove(
+                path_of(path)?,
+                Some(TreeValue::File {
+                    id,
+                    executable: false,
+                    copy_id: CopyId::placeholder(),
+                }),
+            );
+        }
+        let tree = block_on(tree.write_tree())?;
+        let commit = block_on(
+            tx.repo_mut()
+                .new_commit(vec![trunk], tree)
+                .set_description(description)
+                .write(),
+        )?;
+        tx.repo_mut().set_local_bookmark_target(
+            RefName::new(&name),
+            RefTarget::normal(commit.id().clone()),
+        );
+        crate::colocate::commit(tx, description, &repo_lock.git()?)?;
+        Ok(commit.id().hex())
+    }
+
+    /// Makes run `name`'s workspace, on a new empty commit on top of
+    /// `base` (a full commit id in hex), with `base`'s files checked out,
+    /// and opens it. When `base` was rewritten, the workspace starts on
+    /// the commit its change names now. Opens it as it is if it exists
+    /// already, its Git worktree made whole first
+    /// (`Self::link_worktree`).
+    pub fn add_workspace(
+        &self,
+        name: &str,
+        base: &str,
+    ) -> Result<Vcs, VcsError> {
+        let dir = self.workspace_dir(name);
+        if crate::workspace_init::is_made(&dir) {
+            self.link_worktree(name)?;
+            return Vcs::open_in_job(dir, self.inner.identity.clone());
+        }
+        clear_unmade(&dir)?;
+        std::fs::create_dir_all(&dir).map_err(|source| VcsError::Create {
+            path: dir.clone(),
+            source,
+        })?;
+        let lock = self.lock()?;
+        let git = lock.git()?;
+        let main = self.main()?;
+        let repo = self.load_to_write(&git)?;
+        // Before the workspace, as `jj workspace add` makes it, so the
+        // operation that adds it points the worktree's `HEAD` at `base`.
+        crate::worktree::link(&self.git_dir(), &dir, name, None)?;
+        let begun =
+            crate::workspace_init::begin_workspace(&dir, main.repo_path())
+                .map_err(VcsError::AddWorkspace)?;
+        // Where `base`'s change is now: a catch-up may have rewritten it
+        // since the caller read it, and checking out the old commit would
+        // bring it back beside the new one, a divergent change.
+        let base = commit(&repo, base)?;
+        let base = visible(repo.as_ref(), &base)?.unwrap_or(base);
+        let mut tx = repo.start_transaction();
+        let wc = block_on(
+            tx.repo_mut().check_out(WorkspaceNameBuf::from(name), &base),
+        )?;
+        // A workspace made again after a crash leaves the commit it had.
+        block_on(tx.repo_mut().rebase_descendants())?;
+        let repo = crate::colocate::commit_in(
+            tx,
+            format!("add workspace {name}"),
+            &git,
+            WorkspaceName::new(name),
+            &dir,
+        )?;
+        let mut workspace = begun
+            .finish(&repo, WorkspaceNameBuf::from(name))
+            .map_err(VcsError::AddWorkspace)?;
+        block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
+            .map_err(VcsError::CheckOut)?;
+        crate::colocate::ignore_jj_dir(&dir)?;
+        made(&dir)?;
+        drop(git);
+        drop(lock);
+        // Made with the main workspace's config, as `jj workspace add`
+        // does; opened again with its own.
+        drop(workspace);
+        Vcs::open_in_job(dir, self.inner.identity.clone())
+    }
+
+    /// Removes run `name`'s workspace, as `jj workspace remove` does: jj
+    /// forgets it, the workspace store drops it, its Git worktree goes
+    /// (`crate::worktree::unlink`, never another's), and its directory
+    /// is deleted. Its commits stay in the repository. Only a run's
+    /// workspace goes: the main chat's stays, and so does one heiko did
+    /// not make ([`Self::workspaces`]), and the directory of a workspace
+    /// the person put where a run's would be. A removal cut off part way
+    /// is finished by the next.
+    pub fn forget_workspace(&self, name: &str) -> Result<(), VcsError> {
+        if name == self.main_workspace() {
+            return Ok(());
+        }
+        let lock = self.lock()?;
+        let git = lock.git()?;
+        let repo = self.load_to_write(&git)?;
+        let store = repo.loader().workspace_store().clone();
+        let dir = self.workspace_dir(name);
+        let name_buf = WorkspaceNameBuf::from(name);
+        let mut someone_elses = false;
+        for other in repo.view().wc_commit_ids().keys() {
+            let here = is_at(store.get_workspace_path(other)?, &dir);
+            if *other == name_buf && !here {
+                // The person's, wherever it is.
+                return Ok(());
+            }
+            someone_elses |= here && *other != name_buf;
+        }
+        if repo.view().get_wc_commit_id(&name_buf).is_some() {
+            // Its run's ref is its head once it is gone.
+            self.settle_heads()?;
+            let mut tx = repo.start_transaction();
+            block_on(tx.repo_mut().remove_workspace(&name_buf))?;
+            block_on(tx.repo_mut().rebase_descendants())?;
+            crate::colocate::commit(
+                tx,
+                format!("forget workspace {name}"),
+                &git,
+            )?;
+        }
+        if is_at(store.get_workspace_path(&name_buf)?, &dir) {
+            store.forget(&[&name_buf])?;
+        }
+        if !someone_elses {
+            crate::worktree::unlink(&self.git_dir(), &dir)?;
+        }
+        drop(git);
+        drop(lock);
+        if dir.exists() && !someone_elses {
+            std::fs::remove_dir_all(&dir).map_err(|source| {
+                VcsError::Delete {
+                    path: dir.clone(),
+                    source,
+                }
+            })?;
+        }
+        Ok(())
+    }
+
+    /// How the files differ from commit `from` to commit `to` (full hex
+    /// ids): one entry per changed file, in path order, with its line
+    /// counts and its unified diff.
+    pub fn diff(
+        &self,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<FileDiff>, VcsError> {
+        let repo = self.load()?;
+        let from = commit(&repo, from)?.tree();
+        let to = commit(&repo, to)?.tree();
+        let (text, changes) = crate::diff::unified(
+            repo.as_ref(),
+            &self.inner.settings,
+            &from,
+            &to,
+            &EverythingMatcher,
+        )?;
+        Ok(split_files(&text, changes))
+    }
+
+    /// The names of the workspaces runs have, sorted: those heiko made,
+    /// each in its directory under the runs directory, as the workspace
+    /// store has it. The main chat's is not one, nor is any the person
+    /// made, wherever it is.
+    pub fn workspaces(&self) -> Result<Vec<String>, VcsError> {
+        let repo = self.load()?;
+        let store = repo.loader().workspace_store();
+        let mut names = Vec::new();
+        for name in repo.view().wc_commit_ids().keys() {
+            let name = name.as_str();
+            if name != self.main_workspace()
+                && is_at(
+                    store.get_workspace_path(WorkspaceName::new(name))?,
+                    &self.workspace_dir(name),
+                )
+            {
+                names.push(name.to_owned());
+            }
+        }
+        names.sort();
+        Ok(names)
+    }
+
+    /// Makes the main chat's workspace heiko's own in a project made
+    /// before it had one, where it was jj's `default` workspace: renames
+    /// it to [`main_workspace_name`]'s, as jj-cli 0.46.0's `jj workspace
+    /// rename` does, in the workspace store, the view (one operation,
+    /// `heiko: name the main chat's workspace`) and its working copy,
+    /// under the working copy's lock. Its working-copy commit, its files
+    /// and Git's `HEAD` and index in `main/` stay as they are, and so
+    /// does `.jj/heiko-moved-onto`. Each step is skipped once done, so a
+    /// rename cut off part way is finished by the next open; it applies
+    /// while the main directory's working copy is `default`'s. Returns
+    /// whether the name changed since `self` read it, by this rename or
+    /// another process's.
+    fn name_main_workspace(&self) -> Result<bool, VcsError> {
+        let old = WorkspaceName::DEFAULT;
+        if self.main_workspace() != old.as_str() {
+            return Ok(false);
+        }
+        let lock = self.lock()?;
+        let git = lock.git()?;
+        // Read again under the lock: another process may have done it.
+        let mut main = self.main()?;
+        if main.workspace_name() != old {
+            return Ok(true);
+        }
+        let repo = block_on(main.repo_loader().load_at_head(None))?;
+        let store = repo.loader().workspace_store().clone();
+        let dir = self.main_dir().to_owned();
+        let view = repo.view();
+        let name = if view.get_wc_commit_id(old).is_some() {
+            WorkspaceNameBuf::from(main_workspace_name(|name| {
+                view.get_wc_commit_id(WorkspaceName::new(name)).is_some()
+            }))
+        } else {
+            // The view has the new name already: the store gave it to
+            // this directory first.
+            let mut named = None;
+            for name in view.wc_commit_ids().keys() {
+                if is_at(store.get_workspace_path(name)?, &dir) {
+                    named = Some(name.clone());
+                }
+            }
+            named.ok_or(VcsError::NoWorkingCopy)?
+        };
+        let mut locked = block_on(main.start_working_copy_mutation())?;
+        if !is_at(store.get_workspace_path(&name)?, &dir) {
+            if store.get_workspace_path(old)?.is_some() {
+                store.rename(old, &name)?;
+            } else {
+                store.add(&name, &dir)?;
+            }
+        }
+        let op = if view.get_wc_commit_id(old).is_some() {
+            let mut tx = repo.start_transaction();
+            tx.repo_mut().rename_workspace(old, name.clone())?;
+            crate::colocate::commit(tx, "name the main chat's workspace", &git)?
+                .op_id()
+                .clone()
+        } else {
+            locked.locked_wc().old_operation_id().clone()
+        };
+        locked.locked_wc().rename_workspace(name);
+        block_on(locked.finish(op))?;
+        Ok(true)
+    }
+
+    /// Makes run `name`'s workspace a whole Git worktree of the
+    /// project's Git store again, when it is not one: a workspace made
+    /// before runs had worktrees, or one whose making was cut off, or
+    /// whose worktree the person pruned (`crate::worktree`). Git's
+    /// `HEAD` and index there then follow the files the workspace has
+    /// checked out, its working copy's commit, which a stale workspace
+    /// has from before the operation that made it stale: in one
+    /// operation, `heiko: reset git head`, when the view's record of that
+    /// `HEAD` changes. Does nothing for a whole worktree, a workspace
+    /// whose folder is gone, or one in the Git store's own working tree:
+    /// the main chat's in a clone, the person's `default` in a local
+    /// repository, whose main chat's workspace is a worktree too.
+    fn link_worktree(&self, name: &str) -> Result<(), VcsError> {
+        let dir = self.workspace_dir(name);
+        let common = self.git_dir();
+        if crate::colocate::same_dir(&dir, &self.inner.layout.repo_root)
+            || !dir.join(".jj").is_dir()
+            || crate::worktree::is_linked(&common, &dir)
+        {
+            return Ok(());
+        }
+        let lock = self.lock()?;
+        let git = lock.git()?;
+        let workspace =
+            load_workspace(&self.inner.settings, &dir).map_err(|source| {
+                VcsError::NoWorkspace {
+                    root: dir.clone(),
+                    source,
+                }
+            })?;
+        let name = workspace.workspace_name().to_owned();
+        let loader = workspace.repo_loader();
+        let repo = block_on(loader.load_at_head(None))?;
+        let checked_out = block_on(
+            loader.load_operation(workspace.working_copy().operation_id()),
+        )?;
+        let checked_out = block_on(loader.load_at(&checked_out))?;
+        let wc = checked_out
+            .view()
+            .get_wc_commit_id(&name)
+            .or_else(|| repo.view().get_wc_commit_id(&name))
+            .ok_or(VcsError::NoWorkingCopy)?;
+        let wc = repo.store().get_commit(wc)?;
+        let parent = wc.parent_ids().first().ok_or(VcsError::NoParent)?;
+        let head =
+            (parent != repo.store().root_commit_id()).then(|| parent.hex());
+        crate::worktree::link(&common, &dir, name.as_str(), head.as_deref())?;
+        crate::colocate::reset(&repo, &name, &dir, &wc, &git)?;
+        crate::colocate::ignore_jj_dir(&dir)
+    }
+
+    fn main(&self) -> Result<Workspace, VcsError> {
+        load_workspace(&self.inner.settings, self.main_dir()).map_err(
+            |source| VcsError::ProjectLoad {
+                root: self.inner.root.clone(),
+                source,
+            },
+        )
+    }
+
+    /// The repository's lock, which every write takes
+    /// (`crate::lock`). Reads load the repository at its newest
+    /// operation and need none.
+    pub(crate) fn lock(&self) -> Result<crate::lock::RepoLock, VcsError> {
+        crate::lock::lock_repo(&self.inner.layout.repo_path())
+    }
+
+    pub(crate) fn load(&self) -> Result<Arc<ReadonlyRepo>, VcsError> {
+        let main = self.main()?;
+        Ok(block_on(main.repo_loader().load_at_head(None))?)
+    }
+
+    /// The repository at its newest operation, for a write under `git`,
+    /// jj-cli's Git import/export lock. In a local repository Git's refs
+    /// are imported first, in an operation of their own when they
+    /// changed anything (`heiko: import git refs`), so the write starts
+    /// from what the person did with `git` alone (ADR 0043).
+    fn load_to_write(
+        &self,
+        git: &crate::lock::GitLock,
+    ) -> Result<Arc<ReadonlyRepo>, VcsError> {
+        let repo = self.load()?;
+        if !self.inner.layout.local {
+            return Ok(repo);
+        }
+        let settings = &self.inner.settings;
+        let options = crate::colocate::import_options(settings)?;
+        let revsets = crate::revsets::ConfigRevsets::new(
+            settings,
+            self.main_dir(),
+            WorkspaceName::new(self.main_workspace()),
+        )?;
+        let immutable = crate::session::Immutable::of(repo.as_ref(), &revsets)?
+            .expression();
+        let mut tx = repo.start_transaction();
+        crate::colocate::import_git(&mut tx, &options, &immutable, git)?;
+        if !tx.repo().has_changes() {
+            return Ok(repo);
+        }
+        crate::colocate::commit(tx, "import git refs", git)
+    }
+}
+
+/// The workspace at `dir`, loaded with `settings`.
+fn load_workspace(
+    settings: &UserSettings,
+    dir: &Path,
+) -> Result<Workspace, jj_lib::workspace::WorkspaceLoadError> {
+    jj_lib::workspace::WorkspaceLoaderFactory::create(
+        &jj_lib::workspace::DefaultWorkspaceLoaderFactory,
+        dir,
+    )?
+    .load(
+        settings,
+        &default_backend_factories(),
+        &default_working_copy_factories(),
+    )
+}
+
+/// Whether `recorded`, a workspace's path as the workspace store has it,
+/// is `dir`.
+fn is_at(recorded: Option<PathBuf>, dir: &Path) -> bool {
+    recorded.is_some_and(|path| crate::colocate::same_dir(&path, dir))
+}
+
+/// Where [`ProjectRepo::update`] brings changes from.
+#[derive(Debug, Clone, Copy)]
+pub enum UpdateFrom<'a> {
+    /// The local repository the project was imported from.
+    Checkout(&'a Path),
+    /// A remote, over HTTPS, with a token if it needs one.
+    Remote {
+        url: &'a str,
+        token: Option<&'a str>,
+    },
+}
+
+/// Splits a multi-file diff into its files, in the order `changes` lists
+/// them, and counts each file's lines.
+fn split_files(text: &str, changes: Vec<FileChange>) -> Vec<FileDiff> {
+    let mut sections: Vec<&str> = Vec::new();
+    let mut start = None;
+    for (at, _) in text.match_indices("diff --git a/") {
+        if at == 0 || text.as_bytes()[at - 1] == b'\n' {
+            if let Some(begin) = start {
+                sections.push(&text[begin..at]);
+            }
+            start = Some(at);
+        }
+    }
+    if let Some(begin) = start {
+        sections.push(&text[begin..]);
+    }
+    changes
+        .into_iter()
+        .zip(
+            sections
+                .into_iter()
+                .map(Some)
+                .chain(std::iter::repeat(None)),
+        )
+        .map(|(change, section)| {
+            let text = section.unwrap_or_default().to_owned();
+            // The `---`/`+++` header lines come before the first hunk;
+            // in a hunk, `---` is a removed line that starts with `--`.
+            let hunks = text.find("\n@@").map_or("", |at| &text[at + 1..]);
+            let (mut added, mut removed) = (0, 0);
+            for line in hunks.lines() {
+                if line.starts_with('+') {
+                    added += 1;
+                } else if line.starts_with('-') {
+                    removed += 1;
+                }
+            }
+            FileDiff {
+                path: change.path,
+                kind: change.kind,
+                added,
+                removed,
+                text,
+            }
+        })
+        .collect()
+}
+
+/// How a project imports upstream's refs: each remote-tracking branch
+/// tracked, so its bookmark follows it, and, at the first import,
+/// commits no ref reaches abandoned.
+fn import_options(abandon_unreachable_commits: bool) -> GitImportOptions {
+    GitImportOptions {
+        abandon_unreachable_commits,
+        record_synthetic_predecessors: false,
+        remote_auto_track_bookmarks: HashMap::from([(
+            RemoteName::new(REMOTE).to_owned(),
+            jj_lib::str_util::StringMatcher::all(),
+        )]),
+    }
+}
+
+/// The branches the source has, as the last import left them, with
+/// where each points.
+fn upstream_targets(
+    view: &jj_lib::view::View,
+) -> HashMap<String, jj_lib::op_store::RefTarget> {
+    view.remote_bookmarks(RemoteName::new(REMOTE))
+        .map(|(name, remote)| (name.as_str().to_owned(), remote.target.clone()))
+        .collect()
+}
+
+/// Points every bookmark the source moved, made or deleted since the
+/// last import where the source has it now, and any the import left
+/// with two targets. The main chat moves trunk here (ADR 0015) while
+/// upstream moves it there, or renames or deletes the branch: once
+/// upstream moves it too, it takes upstream's side, even when the main
+/// chat's commits sit on top of upstream's new commit, where jj would
+/// keep the main chat's. The main chat's commits stay on its `@`, and go
+/// onto trunk when it catches up (`Vcs::move_onto`). `before` is the
+/// source's bookmarks before the import.
+fn take_upstream(
+    tx: &mut jj_lib::transaction::Transaction,
+    before: HashMap<String, jj_lib::op_store::RefTarget>,
+) {
+    let after = upstream_targets(tx.repo().view());
+    let names: HashSet<&String> = before.keys().chain(after.keys()).collect();
+    let absent = jj_lib::op_store::RefTarget::absent();
+    for name in names {
+        let then = before.get(name).unwrap_or(&absent);
+        let now = after.get(name).unwrap_or(&absent);
+        let ref_name = RefName::new(name);
+        let local = tx.repo().view().get_local_bookmark(ref_name);
+        if then != now || !local.is_resolved() {
+            tx.repo_mut()
+                .set_local_bookmark_target(ref_name, now.clone());
+        }
+    }
+}
+
+/// Whether a fork must not stand on the hidden `commit`. A commit made
+/// visible brings its hidden ancestors with it, up to the first visible
+/// one, and a fork there would:
+/// - give a working copy (an undo's restored `@`) a divergent twin, when
+///   one of those hidden commits is an older version of it;
+/// - stand on another workspace's working copy, when that first visible
+///   ancestor is one: its next snapshot would rebase the fork with it.
+fn unsafe_to_stand(
+    repo: &ReadonlyRepo,
+    commit: &Commit,
+    working_copies: &[&CommitId],
+) -> Result<bool, VcsError> {
+    let mut at = commit.clone();
+    loop {
+        let visible: Vec<CommitId> =
+            match block_on(repo.resolve_change_id(at.change_id()))? {
+                Some(targets) => targets
+                    .visible_with_offsets()
+                    .map(|(_, id)| id.clone())
+                    .collect(),
+                None => Vec::new(),
+            };
+        if visible.contains(at.id()) {
+            // The first visible ancestor: what the hidden ones stand on.
+            return Ok(working_copies.contains(&at.id()));
+        }
+        if visible.iter().any(|id| working_copies.contains(&id)) {
+            return Ok(true);
+        }
+        let Some(parent) = at.parent_ids().first() else {
+            return Ok(false);
+        };
+        at = repo.store().get_commit(parent)?;
+    }
+}
+
+/// The visible commit `commit`'s change names now: itself, or what it
+/// was rewritten into. None when the change is gone.
+fn visible(
+    repo: &ReadonlyRepo,
+    commit: &Commit,
+) -> Result<Option<Commit>, VcsError> {
+    let Some(targets) = block_on(repo.resolve_change_id(commit.change_id()))?
+    else {
+        return Ok(None);
+    };
+    let ids: Vec<CommitId> = targets
+        .visible_with_offsets()
+        .map(|(_, id)| id.clone())
+        .collect();
+    match ids.as_slice() {
+        [id] => Ok(Some(repo.store().get_commit(id)?)),
+        _ => Ok(None),
+    }
+}
+
+/// The changes `head` has that `base` lacks (all of its ancestors when
+/// `None`), oldest first.
+fn range(
+    repo: &Arc<ReadonlyRepo>,
+    head: &CommitId,
+    base: Option<&CommitId>,
+) -> Result<Vec<StackChange>, VcsError> {
+    use futures_util::StreamExt as _;
+    use jj_lib::revset::ResolvedRevsetExpression;
+
+    let ids: Vec<CommitId> = {
+        let base = match base {
+            Some(base) => ResolvedRevsetExpression::commit(base.clone()),
+            None => ResolvedRevsetExpression::root(),
+        };
+        let revset = ResolvedRevsetExpression::commit(head.clone())
+            .ancestors()
+            .minus(&base.ancestors())
+            .evaluate(repo.as_ref())?;
+        block_on(revset.stream().collect::<Vec<_>>())
+            .into_iter()
+            .collect::<Result<_, _>>()?
+    };
+    ids.iter()
+        .rev()
+        .map(|id| {
+            let commit = repo.store().get_commit(id)?;
+            Ok(StackChange {
+                commit_id: id.hex(),
+                change_id: commit.change_id().reverse_hex(),
+                description: commit.description().to_owned(),
+                conflict: commit.has_conflict(),
+            })
+        })
+        .collect()
+}
+
+/// The commit a full hex id names.
+fn commit(repo: &Arc<ReadonlyRepo>, hex: &str) -> Result<Commit, VcsError> {
+    let id = CommitId::try_from_hex(hex.trim())
+        .ok_or_else(|| VcsError::NotCommitId(hex.to_owned()))?;
+    repo.store()
+        .get_commit(&id)
+        .map_err(|source| VcsError::MissingCommit {
+            hex: hex.to_owned(),
+            source,
+        })
+}
+
+/// Fills the new Git store at `into` from the Git directory `from`:
+/// the object files hard-linked (copied across file systems), and the
+/// branches, tags, `HEAD` and `shallow` as [`copy_upstream_refs`] takes
+/// them. Objects never change once written, so sharing them is safe.
+fn copy_git_store(from: &Path, into: &Path) -> std::io::Result<()> {
+    copy_tree(&from.join("objects"), &into.join("objects"), true)?;
+    copy_upstream_refs(from, into, true)
+}
+
+/// Brings a store filled by [`copy_git_store`] up to date with its
+/// source: the objects it lacks (object files never change, so the ones
+/// it has are kept), and the source's branches and tags. A checkout's
+/// `HEAD` names the branch checked out in it, not its default one, so
+/// the store keeps the `origin/HEAD` it had from the import; a bare
+/// repository's is its default branch, and comes along.
+fn update_git_store(source: &Path, into: &Path) -> Result<(), VcsError> {
+    let git_dir = source_git_dir(source)
+        .ok_or_else(|| VcsError::NoLongerGitRepo(source.to_owned()))?;
+    (|| -> std::io::Result<()> {
+        add_missing(&git_dir.join("objects"), &into.join("objects"))?;
+        copy_upstream_refs(&git_dir, into, git_dir == source)
+    })()
+    .map_err(|error| VcsError::UpdateGitStore {
+        path: source.to_owned(),
+        source: error,
+    })
+}
+
+/// Makes the remote-tracking branches and tags of the store at `into`
+/// the branches and tags of the Git directory `from`, as a fetch from
+/// it would: those `from` lacks go. With `head`, `origin/HEAD` names the
+/// branch `from`'s `HEAD` does. `shallow`, the commits of a shallow
+/// clone whose parents it lacks, comes too; a stale one would cut
+/// history short, so it goes when `from` has none.
+fn copy_upstream_refs(
+    from: &Path,
+    into: &Path,
+    head: bool,
+) -> std::io::Result<()> {
+    use gix::{
+        bstr::BString,
+        refs::{
+            Target,
+            transaction::{Change, LogChange, PreviousValue, RefEdit},
+        },
+    };
+    let other = |error: &dyn std::fmt::Display| {
+        std::io::Error::other(error.to_string())
+    };
+    let source = gix::open(from).map_err(|error| other(&error))?;
+    let target = crate::clone::open(into).map_err(|error| other(&error))?;
+    let mut edits = Vec::new();
+    let mut upstream = |prefix: &str,
+                        into_prefix: &str|
+     -> std::io::Result<HashSet<BString>> {
+        let mut names = HashSet::new();
+        let references = source.references().map_err(|error| other(&error))?;
+        for reference in
+            references.prefixed(prefix).map_err(|error| other(&error))?
+        {
+            let reference = reference.map_err(|error| other(&error))?;
+            let Some(id) = reference.target().try_id().map(ToOwned::to_owned)
+            else {
+                continue;
+            };
+            let short = &reference.name().as_bstr()[prefix.len()..];
+            let mut name = BString::from(into_prefix);
+            name.extend_from_slice(short);
+            edits.push(RefEdit {
+                change: Change::Update {
+                    log: LogChange::default(),
+                    expected: PreviousValue::Any,
+                    new: Target::Object(id),
+                },
+                name: name.try_into().map_err(|error| other(&error))?,
+                deref: false,
+            });
+            names.insert(short.into());
+        }
+        Ok(names)
+    };
+    let branches = upstream("refs/heads/", TRACKING)?;
+    let tags = upstream("refs/tags/", "refs/tags/")?;
+    target
+        .edit_references(edits)
+        .map_err(|error| other(&error))?;
+    let head = if head {
+        match source.head_name().map_err(|error| other(&error))? {
+            Some(name) => Head::of(name.as_bstr()),
+            None => Head::Detached,
+        }
+    } else {
+        Head::Keep
+    };
+    crate::clone::mirror(&target, &branches, &tags, head)
+        .map_err(|error| other(&error))?;
+    let shallow = from.join("shallow");
+    if shallow.is_file() {
+        std::fs::copy(&shallow, into.join("shallow"))?;
+    } else if into.join("shallow").is_file() {
+        std::fs::remove_file(into.join("shallow"))?;
+    }
+    Ok(())
+}
+
+/// Links (or copies) the files under `from` that `into` lacks.
+fn add_missing(from: &Path, into: &Path) -> std::io::Result<()> {
+    if !from.is_dir() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(into)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let target = into.join(entry.file_name());
+        if is_dir(&entry)? {
+            add_missing(&entry.path(), &target)?;
+        } else if !target.exists() {
+            link_or_copy(&entry, &target)?;
+        }
+    }
+    Ok(())
+}
+
+/// The directory holding a repository's objects and refs: `.git` of a
+/// checkout, the common directory of a linked worktree, or the
+/// repository itself when it is bare.
+fn source_git_dir(source: &Path) -> Option<PathBuf> {
+    let dot_git = source.join(".git");
+    let dir = if dot_git.is_dir() {
+        dot_git
+    } else if dot_git.is_file() {
+        // A linked worktree: `gitdir: <path>`, whose `commondir` names
+        // the repository the worktree belongs to.
+        let text = std::fs::read_to_string(&dot_git).ok()?;
+        let pointed =
+            PathBuf::from(text.trim().strip_prefix("gitdir:")?.trim());
+        let pointed = if pointed.is_absolute() {
+            pointed
+        } else {
+            source.join(pointed)
+        };
+        match std::fs::read_to_string(pointed.join("commondir")) {
+            Ok(common) => pointed.join(common.trim()),
+            Err(_) => pointed,
+        }
+    } else {
+        source.to_owned()
+    };
+    (dir.join("objects").is_dir() && dir.join("HEAD").is_file()).then_some(dir)
+}
+
+/// Copies the files under `from` to `into`, hard-linking them when
+/// `link` is set and the file system allows it.
+fn copy_tree(from: &Path, into: &Path, link: bool) -> std::io::Result<()> {
+    if !from.is_dir() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(into)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let target = into.join(entry.file_name());
+        if is_dir(&entry)? {
+            copy_tree(&entry.path(), &target, link)?;
+        } else if link {
+            link_or_copy(&entry, &target)?;
+        } else {
+            copy(&entry, &target)?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether `entry` is a directory; one that went away is not.
+fn is_dir(entry: &std::fs::DirEntry) -> std::io::Result<bool> {
+    match entry.file_type() {
+        Ok(kind) => Ok(kind.is_dir()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+/// Hard-links `entry`, an object file, to `target`, or copies it when
+/// linking fails. A `target` that exists already is kept: jj may have
+/// written the same object meanwhile, and an object's name is its
+/// content's hash.
+fn link_or_copy(
+    entry: &std::fs::DirEntry,
+    target: &Path,
+) -> std::io::Result<()> {
+    if skipped(entry) {
+        return Ok(());
+    }
+    match std::fs::hard_link(entry.path(), target) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            Ok(())
+        }
+        Err(_) => match copy(entry, target) {
+            Err(_) if target.exists() => Ok(()),
+            copied => copied,
+        },
+    }
+}
+
+/// Copies `entry` to `target`. Git may be working in the store as it is
+/// copied, as background maintenance does after a commit: its lock
+/// files are skipped, and a file that goes away before it is copied was
+/// one of git's own temporary files.
+fn copy(entry: &std::fs::DirEntry, target: &Path) -> std::io::Result<()> {
+    if skipped(entry) {
+        return Ok(());
+    }
+    match std::fs::copy(entry.path(), target) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+/// Git's lock files, which belong to whatever git process holds them.
+fn skipped(entry: &std::fs::DirEntry) -> bool {
+    entry.file_name().to_string_lossy().ends_with(".lock")
+}
+
+/// Marks the workspace at `root` whole ([`crate::workspace_init::made`]).
+fn made(root: &Path) -> Result<(), VcsError> {
+    crate::workspace_init::made(root).map_err(|source| VcsError::Create {
+        path: root.join(".jj"),
+        source,
+    })
+}
+
+/// Takes away a run's workspace at `dir` that a crash cut off as it was
+/// made, so it is made again: it holds nothing of the run's yet.
+fn clear_unmade(dir: &Path) -> Result<(), VcsError> {
+    if !crate::workspace_init::unfinished(dir) {
+        return Ok(());
+    }
+    std::fs::remove_dir_all(dir).map_err(|source| VcsError::Delete {
+        path: dir.to_owned(),
+        source,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use heiko_testing::git::git;
+
+    use super::*;
+    use crate::config::JjEnv;
+
+    /// The settings a clone hands back are the ones it wrote: its
+    /// `trunk()` names the default branch, so a push or a landing from
+    /// the main workspace reads it too, not only a later open.
+    #[test]
+    fn a_clones_settings_hold_the_trunk_it_wrote() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let bare = root.join("origin.git");
+        std::fs::create_dir_all(&bare).unwrap();
+        git(&bare, &["init", "--quiet", "--bare"]);
+        let work = root.join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        git(&work, &["init", "--quiet"]);
+        git(
+            &work,
+            &["commit", "--quiet", "--allow-empty", "-m", "first"],
+        );
+        git(
+            &work,
+            &["push", "--quiet", bare.to_str().unwrap(), "HEAD:develop"],
+        );
+        git(&bare, &["symbolic-ref", "HEAD", "refs/heads/develop"]);
+        std::fs::create_dir_all(root.join("config/jj")).unwrap();
+        let identity = Identity {
+            env: JjEnv {
+                config_dir: Some(root.join("config")),
+                ..JjEnv::default()
+            },
+            ..Identity::default()
+        };
+        let url = format!("file://{}", bare.display());
+        let project =
+            ProjectRepo::clone(&url, None, root.join("p"), identity).unwrap();
+        let trunk = project
+            .inner
+            .settings
+            .get_string(["revset-aliases", "trunk()"])
+            .unwrap();
+        assert_eq!(trunk, "develop@origin");
+    }
+
+    /// Git's lock files are left out of a copy of its store: they belong
+    /// to a git process that may be working in the source.
+    #[test]
+    fn a_copy_leaves_out_git_lock_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("from");
+        std::fs::create_dir_all(from.join("ab")).unwrap();
+        std::fs::write(from.join("ab").join("cdef"), "object").unwrap();
+        std::fs::write(from.join("maintenance.lock"), "").unwrap();
+        let into = dir.path().join("into");
+        copy_tree(&from, &into, true).unwrap();
+        assert!(into.join("ab").join("cdef").exists());
+        assert!(!into.join("maintenance.lock").exists());
+        let again = dir.path().join("again");
+        add_missing(&from, &again).unwrap();
+        assert!(!again.join("maintenance.lock").exists());
+    }
+
+    /// An update links in the objects its copy lacks while jj may write
+    /// objects into the same store: a chat's commit can write a file
+    /// upstream has too. An object that appears between the check and
+    /// the link is the same object, since its name is its content's
+    /// hash, and is kept.
+    #[test]
+    fn an_object_written_meanwhile_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("from");
+        std::fs::create_dir_all(&from).unwrap();
+        std::fs::write(from.join("cdef"), "object").unwrap();
+        let into = dir.path().join("into");
+        std::fs::create_dir_all(&into).unwrap();
+        let target = into.join("cdef");
+        std::fs::write(&target, "object").unwrap();
+        // Object files are read-only, as git and jj write them.
+        let mut mode = std::fs::metadata(&target).unwrap().permissions();
+        mode.set_readonly(true);
+        std::fs::set_permissions(&target, mode).unwrap();
+        let entry = std::fs::read_dir(&from).unwrap().next().unwrap().unwrap();
+        link_or_copy(&entry, &target).unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "object");
+    }
+}

@@ -1,15 +1,15 @@
 # What needs the person
 
 With several chats going, the sidebar says which need the person, and
-tau notifies the desktop while its window is not focused. Code:
-`tau_ui_remote::attention`, `tau-ui`'s `host/forecast.rs` and
+heiko notifies the desktop while its window is not focused. Code:
+`heiko_ui_remote::attention`, `heiko-ui`'s `host/forecast.rs` and
 `notify.rs`.
 
 ## A chat's state
 
 `Attention::of(&Facts)` is the one place a chat's state is decided.
 `Workspace::attention` gathers the facts: the run's status and turn
-(`RunStatus::Interrupted` for a run tau's closing cut off), what a
+(`RunStatus::Interrupted` for a run heiko's closing cut off), what a
 plugin holds it for (`points::ASKS`), the landing forecast
 (`RunView::forecast`), how it ended for good (`RunView::ending`:
 landed or dropped), its place in its main chat's landing queue
@@ -25,7 +25,7 @@ card). Each state has its icon and a line under the title:
 | `Asks`            | Asks you a question                                              | blue  | live, and a plugin waits on an answer     |
 | `Working`         | Working · turn N                                                 | muted | live                                      |
 | `ConflictsOnMain` | Conflicts on main · N files                                      | red   | a main chat a turn left conflicts on      |
-| `Interrupted`     | Interrupted · tau closed                                         | muted | it was going when tau closed              |
+| `Interrupted`     | Interrupted · heiko closed                                         | muted | it was going when heiko closed              |
 | `Failed`          | (none; the red warning)                                          | red   | it stopped with an error                  |
 | `Queued`          | Queued · lands after main's turn, or Queued · needs confirmation | amber | it waits in its main chat's landing queue |
 | `WouldConflict`   | Would conflict in N files                                        | red   | a stopped fork whose landing conflicts    |
@@ -66,28 +66,28 @@ open forks get new forecasts, so a forecast follows main's head.
 
 ## Notifications
 
-`tau_ui::notify` notifies while tau's window is not focused:
+`heiko_ui::notify` notifies while heiko's window is not focused:
 
 | Kind              | Title                       | Body                                            |
 | ----------------- | --------------------------- | ----------------------------------------------- |
 | `Asks`            | `<chat> asks you`           | the question                                    |
 | `ReadyToLand`     | `<chat> is ready to land`   | `N changes on <parent> · <repo>`                |
-| `ConflictsOnMain` | Conflicts are still on main | `tau's turn left conflicts in N files · <repo>` |
+| `ConflictsOnMain` | Conflicts are still on main | `heiko's turn left conflicts in N files · <repo>` |
 | `Failed`          | `<chat> failed`             | `The run stopped with an error · <repo>`        |
 
 - `Notifier` sends one notice each time a chat's state turns into one
   of these; a chat seen for the first time gets none, and a turn while
   the window is focused is kept quiet for good.
 - `notify::conflicts_on_main(main, repo, files, cx)` says conflicts
-  left on main. tau-ui's `main` passes it to
+  left on main. heiko-ui's `main` passes it to
   `Host::on_conflicts_on_main` before `attach`, so the host calls it
   each time a turn of main ends with conflicts still on it (ADR 0024).
-- Notices go to the plugin that fills the `tau.notify` slot (ADR 0045),
+- Notices go to the plugin that fills the `heiko.notify` slot (ADR 0045),
   looked up as each goes (`notify::Slotted`, given `Host::slots`), so
-  the person's pick on the Plugins screen counts at once. tau-notify,
+  the person's pick on the Plugins screen counts at once. heiko-notify,
   a Luau plugin, fills it: its `notify` shows each with
-  `ctx.desktop.notice`, which tau-luau-plugins-host sends to the desktop
+  `ctx.desktop.notice`, which heiko-luau-plugins-host sends to the desktop
   through `notify-rust` over zbus (no libdbus), and its setting
   switches them off. Opening one brings
-  tau's window up and opens its chat. With nothing in the slot, no
+  heiko's window up and opens its chat. With nothing in the slot, no
   notice shows.

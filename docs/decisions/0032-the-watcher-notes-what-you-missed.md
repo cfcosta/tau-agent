@@ -1,7 +1,7 @@
 # 0032: The watcher notes what you missed
 
-- Status: accepted. Amends [0017](0017-plugins-bring-their-ui.md): tau-ui
-  declares one more point, `tau.run.composer.band`, a line between the
+- Status: accepted. Amends [0017](0017-plugins-bring-their-ui.md): heiko-ui
+  declares one more point, `heiko.run.composer.band`, a line between the
   transcript and the composer.
 - Date: 2026-10-09
 
@@ -21,7 +21,7 @@ teaches the person to ignore it.
 
 ## Decision
 
-### A plugin, `tau-watcher`, off until switched on
+### A plugin, `heiko-watcher`, off until switched on
 
 - A side request reads the run's whole transcript every 6th step and
   answers `learn: none`, or one note: a line of at most 240 characters, a
@@ -70,14 +70,14 @@ teaches the person to ignore it.
 ### One crate
 
 The host half only builds a prompt and makes a request, so by 0030 it
-stays in the plugin's crate, `tau-watcher`, as `WatcherHost` beside
+stays in the plugin's crate, `heiko-watcher`, as `WatcherHost` beside
 `WatcherUi`, always built. The reply parser, the cadence and the
 seen-list are plain functions of that crate.
 
 ### A point between transcript and composer
 
-`tau.run.composer.band` draws every contribution, in order, in the
-transcript's column above the composer, which stays in place. `tau.run.composer` replaces the composer; this does not.
+`heiko.run.composer.band` draws every contribution, in order, in the
+transcript's column above the composer, which stays in place. `heiko.run.composer` replaces the composer; this does not.
 
 ## Consequences
 

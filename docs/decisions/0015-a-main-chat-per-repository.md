@@ -12,7 +12,7 @@ Sessions then have no shared conversation: every chat starts from
 nothing, and what one chat learned about the repository never reaches
 the next one. Nothing in the sidebar says where the tree starts either.
 
-tau also listed the directory it started in, and let a local path be
+heiko also listed the directory it started in, and let a local path be
 added. Runs in such a repository worked on a copy of the checkout, or
 on the checkout itself when copying failed. That second path breaks
 everything built on projects (forks, landing, snapshots), and a
@@ -22,7 +22,7 @@ checkout has no remote that pull requests and updates can go to.
 
 ### Repositories come from GitHub
 
-- tau lists only repositories cloned from GitHub. The directory tau
+- heiko lists only repositories cloned from GitHub. The directory heiko
   starts in is not listed, and a local path cannot be added: "Add
   repository" opens the GitHub picker.
 - A clone that cannot be made a project is an error. Runs refuse to
@@ -64,7 +64,7 @@ session resolving its conflicts) applies to main.
 
 ## Consequences
 
-- `HostConfig` loses `root`, and tau-ui its `--root` flag. Hosts built
+- `HostConfig` loses `root`, and heiko-ui its `--root` flag. Hosts built
   elsewhere, as in tests, list a project with `Host::with_repo`.
 - `Host::start` forks main; `Host::main_of` makes main the first time.
 - Each chat's context starts with main's whole conversation, so a long

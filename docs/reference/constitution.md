@@ -1,11 +1,11 @@
-# tau-constitution
+# heiko-constitution
 
 Checks a run's tool calls and final answer against rules, asking Jev
 (TypeSafe's System One model) how likely each rule is broken. It is a
-Luau plugin tau comes with (ADR 0050): its code is the Luau in
-`plugins/tau-constitution/` (`src/plugin.luau`, and
+Luau plugin heiko comes with (ADR 0050): its code is the Luau in
+`plugins/heiko-constitution/` (`src/plugin.luau`, and
 `src/rules.luau`, `src/checks.luau`, `src/page.luau`), which
-tau-luau-plugins loads as always active. Design: [plugins.md](plugins.md).
+heiko-luau-plugins loads as always active. Design: [plugins.md](plugins.md).
 
 ## Rules
 
@@ -30,7 +30,7 @@ handled, and the latest calls and answers to try a rule on.
   `continues = 10`.
 - Rules are checked when added or edited, and again when read back from
   the store. Stored rules that do not check fail the run at start, saying
-  why (`tau.fail`): broken rules are never silently ignored. That needs a
+  why (`heiko.fail`): broken rules are never silently ignored. That needs a
   TypeSafe key; without one nothing is checked. None stored is no rules.
 - The plugin reads the rules from the store at every check, so an edit
   applies from the next tool call, in runs already going too.
@@ -39,9 +39,9 @@ handled, and the latest calls and answers to try a rule on.
 
 | Where        | Violation probability       | Result                                                                                                                              |
 | ------------ | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Tool call    | ≥ `block`                   | Refused (`tau.block`). The model gets the rule, quoted, and fixes the call.                                                         |
+| Tool call    | ≥ `block`                   | Refused (`heiko.block`). The model gets the rule, quoted, and fixes the call.                                                         |
 | Tool call    | ≥ `review`                  | Runs, flagged for review.                                                                                                           |
-| Final answer | ≥ `block`                   | Sent back with the rule (`tau.continue`), up to `max_holds` times.                                                                  |
+| Final answer | ≥ `block`                   | Sent back with the rule (`heiko.continue`), up to `max_holds` times.                                                                  |
 | Final answer | ≥ `review`, or past the cap | Stands, flagged.                                                                                                                    |
 | Jev fails    | —                           | `on_error`: `allow` lets the call run or the answer stand; `block` refuses the call, or sends the answer back while holds are left. |
 
@@ -73,7 +73,7 @@ run, so history shows it again:
 - `starting`: what it says before anything is checked: off without a
   key, else how many rules it watches.
 
-## In tau-ui
+## In heiko-ui
 
 - The repository's page (`pages.rules`, its entry under each repository
   in the sidebar with how many rules and what waits for review):
@@ -90,7 +90,7 @@ run, so history shows it again:
     (`cmd.jev`).
   - **Review:** flagged calls and answers, with the rule and the score
     against its thresholds; Looks fine takes one off the queue, and Open
-    in run opens its run (`tau.open_run`). Next to it, what the rules
+    in run opens its run (`heiko.open_run`). Next to it, what the rules
     handled on their own.
   - **Settings:** what happens when Jev cannot answer (`on_error`), and
     how many times one run's answer may be sent back (`max_holds`, 0 to
@@ -99,10 +99,10 @@ run, so history shows it again:
     fail at start until they can (once there is a TypeSafe key). No edit
     can fix them, so the banner offers to remove them, once confirmed, to
     start again.
-  - Without a TypeSafe key the page says so and links to tau-jev's key
+  - Without a TypeSafe key the page says so and links to heiko-jev's key
     page; it knows from `env.run.jev`.
-- Checks need a TypeSafe key, added in tau-jev's section of the Models
-  screen and kept by tau-jev in tau's config directory (`typesafe-key`),
+- Checks need a TypeSafe key, added in heiko-jev's section of the Models
+  screen and kept by heiko-jev in heiko's config directory (`typesafe-key`),
   readable only by the user. Without one, runs are not checked and the
   status line says so.
 - On a call's card (the view's `calls`): a flagged call shows its rule,

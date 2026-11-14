@@ -9,7 +9,7 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    # libghostty-vt, the terminal emulator behind tau-tools' `terminal`
+    # libghostty-vt, the terminal emulator behind heiko-tools' `terminal`
     # feature (docs/decisions/0010-terminal-rendering.md). Pinned at the
     # Ghostty commit that `libghostty-vt-sys` 0.2.2 builds against
     # (GHOSTTY_COMMIT in its build.rs). The two must move together: a
@@ -17,10 +17,10 @@
     # same change. Its own nixpkgs is kept, so its Zig build matches
     # what Ghostty tests.
     ghostty.url = "github:ghostty-org/ghostty/a887df42c56f6de86c0fe6da9c4eeca37931e083";
-    # The jj CLI the tests compare tau-vcs-host with: it must be the
+    # The jj CLI the tests compare heiko-vcs-host with: it must be the
     # version of the jj-lib in Cargo.lock (0.47.0), so the two move
     # together. A nixos-unstable revision whose jujutsu is that version;
-    # only the dev shell uses it, and only through `TAU_TEST_JJ`.
+    # only the dev shell uses it, and only through `HEIKO_TEST_JJ`.
     nixpkgs-jj.url = "github:NixOS/nixpkgs/f9a75f41be3a74eab55d3a7679d34ad6cc0da977";
   };
 
@@ -53,7 +53,7 @@
 
               rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
 
-              # The phone build (docs/decisions/0013-phones-connect-to-a-running-tau.md):
+              # The phone build (docs/decisions/0013-phones-connect-to-a-running-heiko.md):
               # the same toolchain with the Android target, and an Android
               # SDK with the NDK. The SDK is unfree and needs its license
               # accepted, so it gets a nixpkgs of its own, and only the
@@ -88,7 +88,7 @@
                   includeSystemImages = false;
                 }).androidsdk;
 
-              # tau (GPUI) links xcb and xkbcommon, and loads Vulkan,
+              # heiko (GPUI) links xcb and xkbcommon, and loads Vulkan,
               # Wayland and X11 at runtime.
               guiLibs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux (
                 with pkgs;
@@ -134,8 +134,8 @@
                 };
               };
 
-              tau = rustPlatform.buildRustPackage {
-                pname = "tau";
+              heiko = rustPlatform.buildRustPackage {
+                pname = "heiko";
                 version = "0.1.0";
 
                 src = pkgs.lib.fileset.toSource {
@@ -144,7 +144,7 @@
                     ./Cargo.toml
                     ./Cargo.lock
                     ./crates
-                    # tau's Luau plugins (ADR 0051).
+                    # heiko's Luau plugins (ADR 0051).
                     ./plugins
                   ];
                 };
@@ -152,15 +152,15 @@
                 inherit cargoLock;
                 cargoBuildFlags = [
                   "--package"
-                  "tau"
+                  "heiko"
                   "--package"
-                  "tau-plugin"
+                  "heiko-plugin"
                 ];
                 cargoTestFlags = [
                   "--package"
-                  "tau-plugin"
+                  "heiko-plugin"
                   "--package"
-                  "tau-ui"
+                  "heiko-ui"
                 ];
                 # Each test in a process of its own, as everywhere else: a
                 # crate's tests are one binary, and some keep state for
@@ -182,41 +182,41 @@
                 nativeCheckInputs = [ pkgs.git ];
 
                 # The menu entry. It and the icon are named for the
-                # window's app id, `tau-ui`, so the desktop matches the
+                # window's app id, `heiko-ui`, so the desktop matches the
                 # window to them.
                 desktopItems = [
                   (pkgs.makeDesktopItem {
-                    name = "tau-ui";
-                    desktopName = "Tau";
+                    name = "heiko-ui";
+                    desktopName = "Heiko";
                     comment = "Work with coding agents on your repositories";
-                    exec = "tau";
-                    icon = "tau-ui";
+                    exec = "heiko";
+                    icon = "heiko-ui";
                     categories = [ "Development" ];
-                    startupWMClass = "tau-ui";
+                    startupWMClass = "heiko-ui";
                   })
                 ];
 
-                # tau's Luau plugins, which it reads at startup (ADR 0051), and
+                # heiko's Luau plugins, which it reads at startup (ADR 0051), and
                 # the icon, drawn as scalable and at the sizes menus look
                 # for first.
                 postInstall = ''
-                  mkdir -p $out/share/tau
-                  cp -r plugins $out/share/tau/plugins
-                  icon=crates/tau/assets/tau-ui.svg
-                  install -Dm644 $icon $out/share/icons/hicolor/scalable/apps/tau-ui.svg
+                  mkdir -p $out/share/heiko
+                  cp -r plugins $out/share/heiko/plugins
+                  icon=crates/heiko/assets/heiko-ui.svg
+                  install -Dm644 $icon $out/share/icons/hicolor/scalable/apps/heiko-ui.svg
                   for size in 16 24 32 48 64 128 256 512; do
                     dir=$out/share/icons/hicolor/''${size}x''${size}/apps
                     mkdir -p $dir
-                    rsvg-convert -w $size -h $size $icon -o $dir/tau-ui.png
+                    rsvg-convert -w $size -h $size $icon -o $dir/heiko-ui.png
                   done
                 '';
 
                 # GPUI opens Vulkan, Wayland and X11 with dlopen, so the
                 # binary needs them on its library path. jj-lib's push
-                # runs `git`, the one thing tau runs it for (ADR 0023).
+                # runs `git`, the one thing heiko runs it for (ADR 0023).
                 # An agent's commands run in `bwrap` (ADR 0037).
                 postFixup = ''
-                  wrapProgram $out/bin/tau \
+                  wrapProgram $out/bin/heiko \
                     --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath guiLibs} \
                     --prefix PATH : ${
                       pkgs.lib.makeBinPath [
@@ -232,23 +232,23 @@
                 doInstallCheck = true;
                 installCheckPhase = ''
                   runHook preInstallCheck
-                  $out/bin/tau-plugin check
-                  $out/bin/tau-plugin test
-                  test -f $out/share/tau/plugins/tau-goal/fixtures/working.json
-                  test -f $out/share/tau/plugins/examples/word-count/tau.toml
+                  $out/bin/heiko-plugin check
+                  $out/bin/heiko-plugin test
+                  test -f $out/share/heiko/plugins/heiko-goal/fixtures/working.json
+                  test -f $out/share/heiko/plugins/examples/word-count/heiko.toml
                   runHook postInstallCheck
                 '';
 
                 meta = {
-                  description = "A GPUI interface for tau agents";
-                  mainProgram = "tau";
+                  description = "A GPUI interface for heiko agents";
+                  mainProgram = "heiko";
                   platforms = pkgs.lib.platforms.linux;
                 };
               };
 
-              # The phone's packages: `nix build .#tau-phone-apk`. Only on
+              # The phone's packages: `nix build .#heiko-phone-apk`. Only on
               # x86_64-linux, the one host the NDK ships prebuilt for.
-              phone = pkgs.callPackage ./nix/tau-phone.nix {
+              phone = pkgs.callPackage ./nix/heiko-phone.nix {
                 inherit androidRust androidSdk ghosttyVendor;
                 inherit cargoLock;
               };
@@ -266,7 +266,7 @@
                       # Generated by `cargo sqlx prepare`; formatting it causes churn.
                       "crates/*/.sqlx/*"
                       # Written by scripts/update-android-deps.sh.
-                      "crates/tau-phone/android/deps.json"
+                      "crates/heiko-phone/android/deps.json"
                     ];
 
                     formatter = {
@@ -306,7 +306,7 @@
                 pkgs
                 rust
                 system
-                tau
+                heiko
                 ;
             }
           )
@@ -320,18 +320,18 @@
           phone,
           pkgs,
           system,
-          tau,
+          heiko,
           ...
         }:
         pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-          inherit tau;
-          default = tau;
+          inherit heiko;
+          default = heiko;
         }
         // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
-          tau-phone-lib = phone.lib;
-          tau-phone-apk = phone.apk;
+          heiko-phone-lib = phone.lib;
+          heiko-phone-apk = phone.apk;
           # `scripts/update-android-deps.sh` builds and runs it.
-          tau-phone-update-deps = phone.updateDeps;
+          heiko-phone-update-deps = phone.updateDeps;
         }
       );
 
@@ -340,17 +340,17 @@
           phone,
           pkgs,
           system,
-          tau,
+          heiko,
           ...
         }:
         pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           default = {
             type = "app";
-            program = pkgs.lib.getExe tau;
+            program = pkgs.lib.getExe heiko;
           };
         }
         // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
-          tau-phone-install = {
+          heiko-phone-install = {
             type = "app";
             program = pkgs.lib.getExe phone.install;
           };
@@ -380,7 +380,7 @@
               sdk = "${androidSdk}/libexec/android-sdk";
             in
             pkgs.mkShellNoCC {
-              name = "tau-agent-android";
+              name = "heiko-agent-android";
 
               buildInputs = with pkgs; [
                 formatter
@@ -405,9 +405,9 @@
               # patched for Nix.
               GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${sdk}/build-tools/36.0.0/aapt2";
               # Luau is C++, linked against the NDK's `c++_shared`, so
-              # libtau_phone.so needed libc++_shared.so at load time. The
-              # phone links Luau no longer (tau-ui-remote leaves
-              # tau-codemode's host half out); this keeps cargo-ndk
+              # libheiko_phone.so needed libc++_shared.so at load time. The
+              # phone links Luau no longer (heiko-ui-remote leaves
+              # heiko-codemode's host half out); this keeps cargo-ndk
               # copying it into jniLibs until an APK without it is shown
               # to load.
               CARGO_NDK_LINK_LIBCXX_SHARED = "true";
@@ -422,7 +422,7 @@
             };
 
           default = pkgs.mkShell {
-            name = "tau-agent";
+            name = "heiko-agent";
 
             buildInputs =
               with pkgs;
@@ -437,7 +437,7 @@
                 cargo-watch
 
                 curl
-                # tau-direnv's test of the real direnv runs it.
+                # heiko-direnv's test of the real direnv runs it.
                 direnv
                 jq
                 sqlx-cli
@@ -453,11 +453,11 @@
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath guiLibs;
             # What nextest preloads into tests so they skip disk syncs
             # (scripts/no-disk-syncs.sh).
-            TAU_TEST_PRELOAD = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "${pkgs.libeatmydata}/lib/libeatmydata.so";
-            # The jj CLI at jj-lib's version, which tau-vcs-host's tests
-            # compare tau with. Not on `PATH`: the shell's `jj` stays the
+            HEIKO_TEST_PRELOAD = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "${pkgs.libeatmydata}/lib/libeatmydata.so";
+            # The jj CLI at jj-lib's version, which heiko-vcs-host's tests
+            # compare heiko with. Not on `PATH`: the shell's `jj` stays the
             # person's own.
-            TAU_TEST_JJ = "${nixpkgs-jj.legacyPackages.${system}.jujutsu}/bin/jj";
+            HEIKO_TEST_JJ = "${nixpkgs-jj.legacyPackages.${system}.jujutsu}/bin/jj";
           };
         }
       );

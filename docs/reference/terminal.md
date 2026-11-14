@@ -1,7 +1,7 @@
-# tau-terminal: the terminal view
+# heiko-terminal: the terminal view
 
-`tau-terminal` (`crates/tau-terminal`) draws a terminal in any GPUI app. It
-depends on no other tau crate
+`heiko-terminal` (`crates/heiko-terminal`) draws a terminal in any GPUI app. It
+depends on no other heiko crate
 ([0010](../decisions/0010-terminal-rendering.md)). This page covers the
 view and its pure parts. The emulator (`Terminal`) and the runner
 (`Command`) are covered in the crate docs and in
@@ -11,7 +11,7 @@ Try it with the example, which runs a command under a pseudo-terminal
 and shows it:
 
 ```sh
-cargo run -p tau-terminal --example run -- ls -la --color=always
+cargo run -p heiko-terminal --example run -- ls -la --color=always
 ```
 
 ## `TerminalView`
@@ -27,7 +27,7 @@ cargo run -p tau-terminal --example run -- ls -la --color=always
   it. After that, `write` fails with `Error::Frozen`.
 
 ```rust
-use tau_terminal::{TerminalView, ViewOptions, ScrollTo, view};
+use heiko_terminal::{TerminalView, ViewOptions, ScrollTo, view};
 
 view::bind_keys(cx); // once: secondary-c / ctrl-shift-c copy, secondary-a selects all
 
@@ -60,7 +60,7 @@ let old = cx.new(|cx| TerminalView::replay(bytes, options, cx))?;
 scroll, after new rows while the window follows the end, after a
 freeze, or after a change to the visible rows. `TerminalEvent::Selected`
 fires when the selection changes. A host that shows the visible range
-(as tau-ui's strip does) subscribes to these.
+(as heiko-ui's strip does) subscribes to these.
 
 ### `ViewOptions`
 
@@ -134,7 +134,7 @@ These are testable without a window:
 - `Terminal::lines(range)`, `total_rows()`, `history_rows()`: styled
   rows of the whole scrollback. Freezing is built from these.
 
-## In tau-ui: the command card
+## In heiko-ui: the command card
 
 An `exec_command` or `write_stdin` result with `term` details (see [tools.md](tools.md)) is a
 `ToolBody::Terminal(TermOutput)` in the view model (`view.rs`):

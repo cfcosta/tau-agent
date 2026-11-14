@@ -12,7 +12,7 @@ compaction. Today the only extension points are tools and `RunHook`
 the loop.
 
 pi extends its agent with runtime extensions that subscribe to events,
-including a per-turn `context` transform. tau-agent cannot copy that
+including a per-turn `context` transform. heiko-agent cannot copy that
 shape. On the Responses WebSocket, a request continues the previous
 response only while the settings stay the same and the transcript only
 grows, and a view re-applied every turn would break that chain.
@@ -36,7 +36,7 @@ The interfaces are in [`../reference/plugins.md`](../reference/plugins.md).
 - Plugins can do everything the first four need without touching the
   delta rule. Settings are chosen once, and a rewrite costs exactly one
   full resend.
-- `tau-store` gains `context` and `plugin` entry kinds. `compaction`
+- `heiko-store` gains `context` and `plugin` entry kinds. `compaction`
   rows keep loading.
 - `RunHook` stays for simple cases, as an adapter.
 - A plugin cannot change settings mid-run. A workflow that needs that

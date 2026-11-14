@@ -1,0 +1,137 @@
+//! A main chat's crew (ADR 0031): the sub-agents it spawned, as its
+//! chat's tray shows them. Sub-agents are disposable: they live in the
+//! tray while they work and for the round that spawned them, and in the
+//! sidebar only while they work; the sidebar keeps the forks the person
+//! made. History keeps them all.
+
+use std::collections::HashSet;
+
+use heiko_agent::{event::StopReason, tool::RunId};
+
+use crate::{
+    view::{Ending, Item, Origin, RunStatus, RunView},
+    workspace::Workspace,
+};
+
+/// Where a sub-agent in the tray stands.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Standing {
+    /// It works: on its `turn`, its latest tool call `doing`, at `cost`
+    /// so far.
+    Working {
+        turn: u32,
+        doing: Option<String>,
+        cost: f64,
+    },
+    /// It finished and waits in main's queue.
+    WaitingToLand,
+    /// Its `changes` landed on main.
+    Landed { changes: usize },
+    /// It failed, or heiko closed while it ran: its changes were dropped.
+    Failed,
+    /// The person stopped it: its changes were dropped.
+    Stopped,
+}
+
+impl Standing {
+    pub fn is_working(&self) -> bool {
+        matches!(self, Self::Working { .. })
+    }
+}
+
+/// One sub-agent in the tray.
+pub struct Member<'a> {
+    pub run: &'a RunView,
+    pub standing: Standing,
+}
+
+impl Workspace {
+    /// The sub-agents `main` spawned that the tray shows, newest first:
+    /// every one still working, and those of the current round, which
+    /// starts with the person's last message to main. Report turns heiko
+    /// starts do not start a round.
+    pub fn crew<'a>(&'a self, main: &'a RunView) -> Vec<Member<'a>> {
+        let since = main
+            .items
+            .iter()
+            .rposition(|item| matches!(item, Item::User(_)))
+            .map_or(0, |at| at + 1);
+        let round: HashSet<RunId> = main.items[since..]
+            .iter()
+            .filter_map(|item| match item {
+                Item::Tool(card) if card.tool == heiko_ui_plugin::vcs::SPAWN => {
+                    heiko_ui_plugin::vcs::spawned(&card.data)
+                }
+                _ => None,
+            })
+            .collect();
+        self.sub_agents_of(&main.id)
+            .filter(|run| run.status.is_live() || round.contains(&run.id))
+            .map(|run| Member {
+                run,
+                standing: standing(run),
+            })
+            .collect()
+    }
+
+    /// How many of `main`'s sub-agents are working.
+    pub fn working_crew(&self, main: &RunId) -> usize {
+        self.sub_agents_of(main)
+            .filter(|run| run.status.is_live())
+            .count()
+    }
+
+    /// `run`'s sub-agents with a view here, newest first.
+    pub fn sub_agents_of<'a>(
+        &'a self,
+        run: &'a RunId,
+    ) -> impl Iterator<Item = &'a RunView> {
+        self.runs.iter().filter(move |view| {
+            matches!(&view.origin, Origin::SubAgent { parent } if parent == run)
+        })
+    }
+
+    /// The run the sidebar marks for `run`: a sub-agent that ended has
+    /// left the list, and its main chat stands for it; any other run is
+    /// marked itself.
+    pub fn listed_as<'a>(&self, run: &'a RunView) -> &'a RunId {
+        match &run.origin {
+            Origin::SubAgent { parent } if !self.is_listed_sub_agent(run) => {
+                parent
+            }
+            _ => &run.id,
+        }
+    }
+}
+
+/// Where `run`, a sub-agent, stands.
+pub fn standing(run: &RunView) -> Standing {
+    match (&run.ending, &run.status) {
+        (Some(Ending::Landed { changes, .. }), _) => {
+            Standing::Landed { changes: *changes }
+        }
+        (Some(Ending::Dropped), RunStatus::Finished(StopReason::Cancelled)) => {
+            Standing::Stopped
+        }
+        (Some(Ending::Dropped), _) => Standing::Failed,
+        (None, status) if status.is_live() => Standing::Working {
+            turn: run.turn,
+            doing: run.items.iter().rev().find_map(|item| match item {
+                Item::Tool(card) if card.summary.is_empty() => {
+                    Some(card.tool.clone())
+                }
+                Item::Tool(card) => {
+                    Some(format!("{} {}", card.tool, card.summary))
+                }
+                _ => None,
+            }),
+            cost: run.usage.cost,
+        },
+        (
+            None,
+            RunStatus::Finished(StopReason::Stop | StopReason::Limit(_)),
+        ) => Standing::WaitingToLand,
+        (None, RunStatus::Finished(StopReason::Cancelled)) => Standing::Stopped,
+        (None, _) => Standing::Failed,
+    }
+}

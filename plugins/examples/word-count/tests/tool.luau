@@ -1,6 +1,6 @@
-local tau = require("tau")
-local ui = tau.ui
-local t = tau.test
+local heiko = require("heiko")
+local ui = heiko.ui
+local t = heiko.test
 
 -- `tools` fakes what the tool calls: a value, or a function of the
 -- arguments.

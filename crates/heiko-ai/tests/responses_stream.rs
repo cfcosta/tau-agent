@@ -1,0 +1,1145 @@
+//! `response.*` stream processing (`heiko_ai::responses::stream`).
+//!
+//! Frame shapes and known cases are pinned from pi's
+//! `processResponsesStream` (`packages/ai/src/api/openai-responses-shared.ts`)
+//! and its tests, commit `2b0a123`. See `crates/heiko-ai/src/responses/stream.rs`
+//! for the full frame-to-event mapping this module checks, and
+//! `docs/reference/testing.md`'s `heiko-ai` property inventory and "Known
+//! cases" table.
+
+use hegel::{TestCase, generators as gs};
+use serde_json::json;
+use heiko_ai::{
+    event::{Accumulator, AssistantEvent, DoneReason, ErrorReason},
+    message::{AssistantBlock, StopReason, Usage},
+    responses::stream::StreamProcessor,
+    retry::{self, Class, Failure},
+};
+use heiko_testing::openai::{
+    draw_response_frames,
+    interleave_unknown_frames,
+    wire_assistant_message,
+};
+
+/// Runs `frames` through a fresh processor, checking every event against
+/// the [`Accumulator`] grammar as it goes (the "processor output always
+/// satisfies the grammar" property), and returns the accumulator.
+fn run(
+    model: &str,
+    timestamp: u64,
+    frames: &[serde_json::Value],
+) -> Accumulator {
+    let mut processor = StreamProcessor::new(model.to_owned(), timestamp);
+    let mut acc = Accumulator::new();
+    for frame in frames {
+        for event in processor.push(frame) {
+            acc.push(event)
+                .expect("processor output must satisfy the grammar");
+        }
+    }
+    acc
+}
+
+// =============================================================================
+// Round trip and metamorphic properties
+// =============================================================================
+
+/// Event processor: rendering a wire-realistic response as `response.*`
+/// frames (with arbitrary delta splits, and unknown frames sometimes
+/// interleaved) and processing it gives back the response, usage
+/// included and cost zero. `docs/reference/testing.md`'s "Event
+/// processor" row.
+#[hegel::test(test_cases = 500)]
+fn round_trip_wire_realistic_message(tc: TestCase) {
+    let message = tc.draw(wire_assistant_message());
+    let frames = draw_response_frames(&tc, &message);
+    let frames = if tc.draw(gs::booleans()) {
+        interleave_unknown_frames(&tc, frames)
+    } else {
+        frames
+    };
+    let acc = run(&message.model, message.timestamp, &frames);
+    assert!(acc.is_finished());
+    let result = acc.finish().expect("a full stream always terminates");
+    assert_eq!(result, message);
+}
+
+/// Every strict prefix of a valid frame stream, closed instead of
+/// completed, ends in `Error`, never `Done`, and every event along the
+/// way (including the ones `close()` produces) satisfies the
+/// [`Accumulator`] grammar. `docs/reference/testing.md`: "Every strict
+/// prefix of a valid event stream ends in error, never in done."
+///
+/// What was streamed is kept as a prefix of the message: every block but
+/// the last is the message's own, and the last is the message's or a
+/// partial of it. The error is retryable exactly when no block had
+/// started, so nothing but `Start` went out.
+#[hegel::test(test_cases = 500)]
+fn strict_prefix_closed_always_ends_in_error(tc: TestCase) {
+    let message = tc.draw(wire_assistant_message());
+    let frames = draw_response_frames(&tc, &message);
+    // A strict prefix never includes the last (terminal) frame.
+    let cut = tc.draw(gs::integers::<usize>().max_value(frames.len() - 1));
+
+    let mut processor =
+        StreamProcessor::new(message.model.clone(), message.timestamp);
+    let mut acc = Accumulator::new();
+    for frame in &frames[..cut] {
+        for event in processor.push(frame) {
+            acc.push(event)
+                .expect("prefix events must satisfy the grammar");
+        }
+    }
+    assert!(!processor.is_finished());
+    let events = processor.close();
+    for event in events.iter().cloned() {
+        acc.push(event)
+            .expect("close() events must satisfy the grammar");
+    }
+    assert!(processor.is_finished());
+    let result = acc.finish().expect("close() always terminates the stream");
+    assert_eq!(result.stop_reason, StopReason::Error);
+
+    let content = &result.content;
+    assert!(content.len() <= message.content.len(), "{content:?}");
+    if let Some((last, closed)) = content.split_last() {
+        assert_eq!(closed, &message.content[..closed.len()]);
+        let full = &message.content[closed.len()];
+        if last != full {
+            tc.event("cut inside a block");
+            match (last, full) {
+                (AssistantBlock::Text(got), AssistantBlock::Text(full)) => {
+                    assert!(full.text.starts_with(&got.text), "{got:?}");
+                }
+                (
+                    AssistantBlock::Thinking(got),
+                    AssistantBlock::Thinking(full),
+                ) => {
+                    assert!(full.thinking.starts_with(&got.thinking));
+                }
+                (
+                    AssistantBlock::ToolCall(got),
+                    AssistantBlock::ToolCall(full),
+                ) => {
+                    assert_eq!((&got.id, &got.name), (&full.id, &full.name));
+                }
+                _ => panic!("block kind changed: {last:?} vs {full:?}"),
+            }
+        }
+    }
+    let Some(AssistantEvent::Error { class, .. }) = events.last() else {
+        panic!("close() ends in an error");
+    };
+    assert_eq!(
+        *class == Class::Retryable,
+        content.is_empty(),
+        "{class:?} with {} blocks out",
+        content.len()
+    );
+}
+
+/// Frames pushed after the terminal event are ignored: they produce no
+/// events, and `close()` afterward is a no-op too.
+#[hegel::test(test_cases = 500)]
+fn frames_after_terminal_are_ignored(tc: TestCase) {
+    let message = tc.draw(wire_assistant_message());
+    let frames = draw_response_frames(&tc, &message);
+    let mut processor =
+        StreamProcessor::new(message.model.clone(), message.timestamp);
+    for frame in &frames {
+        processor.push(frame);
+    }
+    assert!(processor.is_finished());
+
+    let replay = tc.draw(gs::sampled_from(frames));
+    assert!(processor.push(&replay).is_empty());
+    assert!(processor.close().is_empty());
+}
+
+// =============================================================================
+// Known cases from pi (docs/reference/testing.md, "Known cases", Events row)
+// =============================================================================
+
+/// A stream that ends with no terminal event: `close()` produces the
+/// error heiko-agent's own WebSocket reader raises in this situation.
+/// pi: `openai-responses-terminal-event.test.ts` ("rejects streams that
+/// end before a terminal response event" /
+/// "emits an error final result when the wrapper stream ends before a
+/// terminal response event").
+#[test]
+fn stream_without_terminal_event_closes_as_error() {
+    let frames = vec![
+        json!({ "type": "response.created", "response": { "id": "resp_early_eof" } }),
+        json!({
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": { "type": "reasoning", "id": "rs_early_eof", "summary": [] },
+        }),
+        json!({
+            "type": "response.reasoning_text.delta",
+            "output_index": 0,
+            "delta": "partial reasoning before the stream ends",
+        }),
+    ];
+    let mut processor = StreamProcessor::new("gpt-5-mini".to_owned(), 0);
+    let mut acc = Accumulator::new();
+    for frame in &frames {
+        for event in processor.push(frame) {
+            acc.push(event).unwrap();
+        }
+    }
+    assert!(!processor.is_finished());
+    let closing = processor.close();
+    assert_eq!(closing.len(), 1);
+    assert_eq!(
+        closing[0],
+        AssistantEvent::Error {
+            reason: ErrorReason::Error,
+            message: "WebSocket stream closed before response.completed".into(),
+            usage: Usage::default(),
+            // Output had begun: resending would repeat it.
+            class: Class::Fatal,
+        }
+    );
+    for event in closing {
+        acc.push(event).unwrap();
+    }
+    let result = acc.finish().unwrap();
+    assert_eq!(result.stop_reason, StopReason::Error);
+    assert_eq!(
+        result.error_message.as_deref(),
+        Some("WebSocket stream closed before response.completed")
+    );
+}
+
+/// `response.incomplete` with `max_output_tokens` turns a provisional
+/// stop into `length`. pi: `openai-responses-terminal-event.test.ts`
+/// ("finalizes incomplete terminal events as length stops").
+#[test]
+fn incomplete_max_output_tokens_maps_to_length() {
+    let frames = vec![json!({
+        "type": "response.incomplete",
+        "response": {
+            "id": "resp_incomplete",
+            "status": "incomplete",
+            "incomplete_details": { "reason": "max_output_tokens" },
+            "usage": {
+                "input_tokens": 30,
+                "output_tokens": 12,
+                "total_tokens": 42,
+                "input_tokens_details": { "cached_tokens": 5 },
+            },
+        },
+    })];
+    let mut processor = StreamProcessor::new("gpt-5-mini".to_owned(), 0);
+    let mut acc = Accumulator::new();
+    for frame in &frames {
+        for event in processor.push(frame) {
+            acc.push(event).unwrap();
+        }
+    }
+    let result = acc.finish().unwrap();
+    assert_eq!(result.stop_reason, StopReason::Length);
+    assert_eq!(result.response_id.as_deref(), Some("resp_incomplete"));
+    assert_eq!(
+        result.usage,
+        Usage {
+            input: 25,
+            output: 12,
+            cache_read: 5,
+            cache_write: 0,
+            reasoning: None,
+            total_tokens: 42,
+            cost: Default::default(),
+        }
+    );
+}
+
+/// `response.incomplete` with `content_filter` is a non-retryable error,
+/// not a length stop. pi: `openai-responses-terminal-event.test.ts`
+/// ("finalizes content-filtered incomplete responses as non-retryable
+/// errors").
+#[test]
+fn incomplete_content_filter_maps_to_error() {
+    let frames = vec![json!({
+        "type": "response.incomplete",
+        "response": {
+            "id": "resp_incomplete",
+            "status": "incomplete",
+            "incomplete_details": { "reason": "content_filter" },
+        },
+    })];
+    let mut processor = StreamProcessor::new("gpt-5-mini".to_owned(), 0);
+    let mut acc = Accumulator::new();
+    for frame in &frames {
+        for event in processor.push(frame) {
+            acc.push(event).unwrap();
+        }
+    }
+    assert_eq!(processor.error_code(), None);
+    let result = acc.finish().unwrap();
+    assert_eq!(result.stop_reason, StopReason::Error);
+    assert_eq!(
+        result.error_message.as_deref(),
+        Some("Response incomplete: content_filter")
+    );
+}
+
+/// The internal partial-JSON scratch buffer never reaches the emitted or
+/// persisted tool call: only the fully parsed arguments do. pi:
+/// `openai-responses-partial-json-cleanup.test.ts` ("removes partialJson
+/// from persisted tool-call blocks at output_item.done").
+#[test]
+fn tool_call_scratch_buffer_never_reaches_the_emitted_call() {
+    let frames = vec![
+        json!({
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": {
+                "type": "function_call",
+                "id": "fc_test",
+                "call_id": "call_test",
+                "name": "edit",
+                "arguments": "",
+            },
+        }),
+        json!({
+            "type": "response.function_call_arguments.delta",
+            "output_index": 0,
+            "delta": "{\"path\":\"README.md\"",
+        }),
+        json!({
+            "type": "response.function_call_arguments.delta",
+            "output_index": 0,
+            "delta": ",\"content\":\"updated\"}",
+        }),
+        json!({
+            "type": "response.function_call_arguments.done",
+            "output_index": 0,
+            "arguments": "{\"path\":\"README.md\",\"content\":\"updated\"}",
+        }),
+        json!({
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "item": {
+                "type": "function_call",
+                "id": "fc_test",
+                "call_id": "call_test",
+                "name": "edit",
+                "arguments": "{\"path\":\"README.md\",\"content\":\"updated\"}",
+            },
+        }),
+        json!({
+            "type": "response.completed",
+            "response": { "id": "resp_test", "status": "completed" },
+        }),
+    ];
+    let mut processor = StreamProcessor::new("gpt-5-mini".to_owned(), 0);
+    let mut acc = Accumulator::new();
+    for frame in &frames {
+        for event in processor.push(frame) {
+            acc.push(event).unwrap();
+        }
+    }
+    let result = acc.finish().unwrap();
+    assert_eq!(result.content.len(), 1);
+    let heiko_ai::message::AssistantBlock::ToolCall(call) = &result.content[0]
+    else {
+        panic!("expected a tool call block");
+    };
+    assert_eq!(call.id, "call_test|fc_test");
+    assert_eq!(call.name, "edit");
+    assert_eq!(
+        call.arguments,
+        serde_json::json!({ "path": "README.md", "content": "updated" })
+            .as_object()
+            .unwrap()
+            .clone()
+    );
+    assert_eq!(result.stop_reason, StopReason::ToolUse);
+}
+
+/// A model the plan does not run stops the turn once, fatally, and says
+/// so in words a person reads. The plan route words it as a `detail`
+/// (seen live over HTTP for `gpt-0-nope`); the message and the frame's
+/// top level are read too. The same words about another model are kept
+/// as they came.
+#[test]
+fn a_model_off_the_plan_reads_as_unavailable() {
+    let words = "The 'gpt-0-nope' model is not supported when using Codex \
+                 with a ChatGPT account.";
+    let frames = [
+        json!({"type": "error", "status": 400, "error": {
+            "type": "invalid_request_error", "message": words,
+        }}),
+        json!({"type": "error", "status": 400, "error": {"detail": words}}),
+        json!({"type": "error", "status": 400, "detail": words}),
+        json!({"type": "response.failed", "response": {"error": {
+            "code": "model_not_found", "message": words,
+        }}}),
+    ];
+    for frame in &frames {
+        let mut processor = StreamProcessor::new("gpt-0-nope".to_owned(), 0);
+        let events = processor.push(frame);
+        let [
+            AssistantEvent::Start { .. },
+            AssistantEvent::Error { message, class, .. },
+        ] = events.as_slice()
+        else {
+            panic!("one error for {frame}: {events:?}");
+        };
+        assert_eq!(message, "gpt-0-nope isn't available on your plan");
+        assert_eq!(*class, Class::Fatal, "{frame}");
+    }
+    let mut other = StreamProcessor::new("gpt-6-sol".to_owned(), 0);
+    let events = other.push(&frames[0]);
+    let [_, AssistantEvent::Error { message, .. }] = events.as_slice() else {
+        panic!("one error");
+    };
+    assert_eq!(message, &format!("Error Code unknown: {words}"));
+}
+
+// =============================================================================
+// Golden example
+// =============================================================================
+
+/// A realistic text response, combining pi's message-item shape
+/// (`openai-responses-shared.ts`'s `output_item.added`/`.done` for a
+/// `message` item) with the usage numbers from
+/// `openai-responses-terminal-event.test.ts`'s `createCompletedEvents`
+/// (`input_tokens: 20, output_tokens: 7, cached_tokens: 2,
+/// cache_write_tokens: 3, total_tokens: 27`), checked against the exact
+/// expected event sequence.
+#[test]
+fn golden_text_response() {
+    let frames = vec![
+        json!({ "type": "response.created", "response": { "id": "resp_golden" } }),
+        json!({
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": {
+                "type": "message",
+                "id": "msg_golden",
+                "role": "assistant",
+                "status": "in_progress",
+                "content": [],
+            },
+        }),
+        json!({ "type": "response.output_text.delta", "output_index": 0, "delta": "Hello" }),
+        json!({ "type": "response.output_text.delta", "output_index": 0, "delta": " world" }),
+        json!({
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "item": {
+                "type": "message",
+                "id": "msg_golden",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{ "type": "output_text", "text": "Hello world", "annotations": [] }],
+            },
+        }),
+        json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp_golden",
+                "status": "completed",
+                "usage": {
+                    "input_tokens": 20,
+                    "output_tokens": 7,
+                    "total_tokens": 27,
+                    "input_tokens_details": { "cached_tokens": 2, "cache_write_tokens": 3 },
+                },
+            },
+        }),
+    ];
+
+    let mut processor = StreamProcessor::new("gpt-5-mini".to_owned(), 1234);
+    let mut events = Vec::new();
+    for frame in &frames {
+        events.extend(processor.push(frame));
+    }
+
+    let expected_usage = Usage {
+        input: 15,
+        output: 7,
+        cache_read: 2,
+        cache_write: 3,
+        reasoning: None,
+        total_tokens: 27,
+        cost: Default::default(),
+    };
+    assert_eq!(
+        events,
+        vec![
+            AssistantEvent::Start {
+                model: "gpt-5-mini".into(),
+                response_id: Some("resp_golden".into()),
+                timestamp: 1234,
+            },
+            AssistantEvent::TextStart { index: 0 },
+            AssistantEvent::TextDelta {
+                index: 0,
+                delta: "Hello".into()
+            },
+            AssistantEvent::TextDelta {
+                index: 0,
+                delta: " world".into()
+            },
+            AssistantEvent::TextEnd {
+                index: 0,
+                content: heiko_ai::message::TextContent {
+                    text: "Hello world".into(),
+                    text_signature: Some(
+                        heiko_ai::responses::stream::encode_text_signature_v1(
+                            "msg_golden",
+                            None
+                        )
+                    ),
+                },
+            },
+            AssistantEvent::Done {
+                reason: DoneReason::Stop,
+                usage: expected_usage.clone(),
+                response_id: Some("resp_golden".into()),
+            },
+        ]
+    );
+
+    let mut acc = Accumulator::new();
+    for event in events {
+        acc.push(event).unwrap();
+    }
+    let result = acc.finish().unwrap();
+    assert_eq!(result.stop_reason, StopReason::Stop);
+    assert_eq!(result.usage, expected_usage);
+    assert_eq!(result.response_id.as_deref(), Some("resp_golden"));
+    assert_eq!(processor.response_id(), Some("resp_golden"));
+}
+
+// =============================================================================
+// Exact-event regressions
+//
+// The round-trip property only checks the *final* accumulated message, so
+// it cannot see a spurious or missing intermediate delta event: the
+// authoritative block at `*End` overwrites whatever the deltas showed
+// along the way. These tests assert on `StreamProcessor::push`'s raw
+// output instead, to pin down the streaming behaviour itself.
+// =============================================================================
+
+/// Tool-call argument streaming: an item that already carries partial
+/// `arguments` at `added` gets an immediate delta for them; each
+/// `function_call_arguments.delta` is forwarded; a `.done` only produces
+/// a delta for the *unsent suffix* when its full string actually extends
+/// what streamed, and produces nothing when it does not (pi:
+/// `openai-responses-shared.ts`'s `function_call_arguments.done` handler,
+/// `if (event.arguments.startsWith(previousPartialJson))`).
+#[test]
+fn tool_call_argument_deltas_are_exact() {
+    let mut processor = StreamProcessor::new("gpt-5-mini".to_owned(), 0);
+
+    let added = processor.push(&json!({
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {
+            "type": "function_call",
+            "id": "fc_a",
+            "call_id": "call_a",
+            "name": "search",
+            "arguments": "partial",
+        },
+    }));
+    assert_eq!(
+        added,
+        vec![
+            AssistantEvent::Start {
+                model: "gpt-5-mini".into(),
+                response_id: None,
+                timestamp: 0,
+            },
+            AssistantEvent::ToolCallStart {
+                index: 0,
+                id: "call_a|fc_a".into(),
+                name: "search".into(),
+            },
+            AssistantEvent::ToolCallDelta {
+                index: 0,
+                delta: "partial".into()
+            },
+        ]
+    );
+
+    let delta = processor.push(&json!({
+        "type": "response.function_call_arguments.delta",
+        "output_index": 0,
+        "delta": "-more",
+    }));
+    assert_eq!(
+        delta,
+        vec![AssistantEvent::ToolCallDelta {
+            index: 0,
+            delta: "-more".into()
+        }]
+    );
+
+    // The full string extends "partial-more" by "-x": only that suffix is
+    // sent.
+    let done_extends = processor.push(&json!({
+        "type": "response.function_call_arguments.done",
+        "output_index": 0,
+        "arguments": "partial-more-x",
+    }));
+    assert_eq!(
+        done_extends,
+        vec![AssistantEvent::ToolCallDelta {
+            index: 0,
+            delta: "-x".into()
+        }]
+    );
+
+    // A second `.done` with the exact same string extends nothing: no
+    // delta event, even though the frame type is handled.
+    let done_repeats = processor.push(&json!({
+        "type": "response.function_call_arguments.done",
+        "output_index": 0,
+        "arguments": "partial-more-x",
+    }));
+    assert_eq!(done_repeats, Vec::<AssistantEvent>::new());
+}
+
+/// A function call whose `added` item already carries some `arguments`
+/// streams them at once, as one delta; one whose `arguments` are empty
+/// streams nothing yet (only the empty case comes from real server data,
+/// but no delta may be made up for it).
+#[hegel::test(test_cases = 100)]
+fn an_added_call_streams_the_arguments_it_carries(tc: TestCase) {
+    let arguments = tc.draw(gs::text().max_size(12));
+    let mut processor = StreamProcessor::new("gpt-5-mini".to_owned(), 0);
+    let added = processor.push(&json!({
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {
+            "type": "function_call",
+            "id": "fc_a",
+            "call_id": "call_a",
+            "name": "search",
+            "arguments": arguments,
+        },
+    }));
+    let mut expected = vec![
+        AssistantEvent::Start {
+            model: "gpt-5-mini".into(),
+            response_id: None,
+            timestamp: 0,
+        },
+        AssistantEvent::ToolCallStart {
+            index: 0,
+            id: "call_a|fc_a".into(),
+            name: "search".into(),
+        },
+    ];
+    if !arguments.is_empty() {
+        expected.push(AssistantEvent::ToolCallDelta {
+            index: 0,
+            delta: arguments,
+        });
+    }
+    assert_eq!(added, expected);
+}
+
+/// `response.reasoning_summary_part.done` inserts a `"\n\n"` separator
+/// into the streamed thinking text, both as a delta event and in the
+/// final block (whose `summary` is empty here, so it falls back to the
+/// accumulated text). pi: `openai-responses-shared.ts`'s
+/// `response.reasoning_summary_part.done` handler.
+#[test]
+fn reasoning_summary_part_done_inserts_a_separator() {
+    let mut processor = StreamProcessor::new("gpt-5-mini".to_owned(), 0);
+    let mut events = Vec::new();
+    events.extend(processor.push(&json!({
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": { "type": "reasoning", "id": "rs_x", "summary": [] },
+    })));
+    events.extend(processor.push(&json!({
+        "type": "response.reasoning_summary_text.delta",
+        "output_index": 0,
+        "delta": "hello",
+    })));
+    let part_done = processor.push(&json!({
+        "type": "response.reasoning_summary_part.done",
+        "output_index": 0,
+    }));
+    assert_eq!(
+        part_done,
+        vec![AssistantEvent::ThinkingDelta {
+            index: 0,
+            delta: "\n\n".into()
+        }]
+    );
+    events.extend(part_done);
+    events.extend(processor.push(&json!({
+        "type": "response.reasoning_summary_text.delta",
+        "output_index": 0,
+        "delta": "world",
+    })));
+    events.extend(processor.push(&json!({
+        "type": "response.output_item.done",
+        "output_index": 0,
+        "item": { "type": "reasoning", "id": "rs_x", "summary": [] },
+    })));
+
+    let mut acc = Accumulator::new();
+    for event in events {
+        acc.push(event).unwrap();
+    }
+    let partial = acc.partial().unwrap();
+    let heiko_ai::message::AssistantBlock::Thinking(thinking) =
+        &partial.content[0]
+    else {
+        panic!("expected a thinking block");
+    };
+    assert_eq!(thinking.thinking, "hello\n\nworld");
+}
+
+/// A reasoning item's `summary` array, when present, is what the final
+/// block's text comes from — not the streamed delta text — joined with
+/// `"\n\n"` between parts. pi: `item.summary?.map((s) => s.text).join("\n\n")`
+/// (`openai-responses-shared.ts`'s `output_item.done` reasoning handler).
+#[test]
+fn reasoning_summary_array_wins_over_streamed_text() {
+    let frames = vec![
+        json!({
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": { "type": "reasoning", "id": "rs_y", "summary": [] },
+        }),
+        json!({
+            "type": "response.reasoning_summary_text.delta",
+            "output_index": 0,
+            "delta": "ignored, superseded by the summary array below",
+        }),
+        json!({
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "item": {
+                "type": "reasoning",
+                "id": "rs_y",
+                "summary": [
+                    { "type": "summary_text", "text": "Part A" },
+                    { "type": "summary_text", "text": "Part B" },
+                ],
+            },
+        }),
+    ];
+    let mut processor = StreamProcessor::new("gpt-5-mini".to_owned(), 0);
+    let mut acc = Accumulator::new();
+    for frame in &frames {
+        for event in processor.push(frame) {
+            acc.push(event).unwrap();
+        }
+    }
+    let partial = acc.partial().unwrap();
+    let heiko_ai::message::AssistantBlock::Thinking(thinking) =
+        &partial.content[0]
+    else {
+        panic!("expected a thinking block");
+    };
+    assert_eq!(thinking.thinking, "Part A\n\nPart B");
+}
+
+/// The `output_index` a frame carries is read from the frame itself, not
+/// assumed: blocks whose real `output_index` values are neither 0 nor 1
+/// get content indices in the order they open, and a delta goes to the
+/// block its `output_index` names.
+#[test]
+fn output_index_identifies_independent_slots() {
+    let mut processor = StreamProcessor::new("gpt-5-mini".to_owned(), 0);
+    let first = processor.push(&json!({
+        "type": "response.output_item.added",
+        "output_index": 7,
+        "item": { "type": "message", "id": "msg_a", "content": [] },
+    }));
+    assert!(matches!(
+        first.last(),
+        Some(AssistantEvent::TextStart { index: 0 })
+    ));
+    // A delta for an index with no open block goes nowhere.
+    let stray = processor.push(&json!({
+        "type": "response.output_text.delta",
+        "output_index": 3,
+        "delta": "no",
+    }));
+    assert_eq!(stray, Vec::new());
+    let text_delta = processor.push(&json!({
+        "type": "response.output_text.delta",
+        "output_index": 7,
+        "delta": "hi",
+    }));
+    assert_eq!(
+        text_delta,
+        vec![AssistantEvent::TextDelta {
+            index: 0,
+            delta: "hi".into()
+        }]
+    );
+    processor.push(&json!({
+        "type": "response.output_item.done",
+        "output_index": 7,
+        "item": { "type": "message", "id": "msg_a",
+                  "content": [{ "type": "output_text", "text": "hi" }] },
+    }));
+    let second = processor.push(&json!({
+        "type": "response.output_item.added",
+        "output_index": 3,
+        "item": { "type": "reasoning", "id": "rs_b", "summary": [] },
+    }));
+    assert_eq!(second, vec![AssistantEvent::ThinkingStart { index: 1 }]);
+    let thinking_delta = processor.push(&json!({
+        "type": "response.reasoning_text.delta",
+        "output_index": 3,
+        "delta": "hmm",
+    }));
+    assert_eq!(
+        thinking_delta,
+        vec![AssistantEvent::ThinkingDelta {
+            index: 1,
+            delta: "hmm".into()
+        }]
+    );
+}
+
+/// An item opened while another is still open ends the response with an
+/// error, where its start broke the event grammar: the stream model's
+/// first case.
+#[test]
+fn an_item_opened_over_an_open_one_ends_the_response() {
+    let mut processor = StreamProcessor::new("gpt-5-mini".to_owned(), 0);
+    let events = [
+        json!({
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": { "type": "message", "id": "msg_a", "content": [] },
+        }),
+        json!({
+            "type": "response.output_item.added",
+            "output_index": 1,
+            "item": { "type": "message", "id": "msg_b", "content": [] },
+        }),
+        json!({ "type": "response.output_text.delta", "output_index": 1, "delta": "x" }),
+    ]
+    .iter()
+    .flat_map(|frame| processor.push(frame))
+    .collect::<Vec<_>>();
+    let mut accumulator = Accumulator::new();
+    for event in &events {
+        accumulator.push(event.clone()).unwrap();
+    }
+    assert!(
+        matches!(
+            events.last(),
+            Some(AssistantEvent::Error { message, class: Class::Fatal, .. })
+                if message.contains("while another was still open")
+        ),
+        "{events:?}"
+    );
+    assert!(processor.is_finished());
+}
+
+/// `response.completed`/`response.incomplete` with no `status` field
+/// defensively maps to `Stop` (pi: `if (!status) return { stopReason:
+/// "stop" }`), the same as an explicit `"completed"` — but a `status`
+/// that is neither `"completed"` nor `"incomplete"` is a protocol error,
+/// not silently a success.
+#[test]
+fn terminal_status_absent_is_stop_but_unexpected_status_is_error() {
+    let absent_status = StreamProcessor::new("gpt-5-mini".to_owned(), 0).push(
+        &json!({ "type": "response.completed", "response": { "id": "r1" } }),
+    );
+    assert!(matches!(
+        absent_status.last(),
+        Some(AssistantEvent::Done {
+            reason: DoneReason::Stop,
+            ..
+        })
+    ));
+
+    let unexpected_status = StreamProcessor::new("gpt-5-mini".to_owned(), 0)
+        .push(&json!({
+            "type": "response.completed",
+            "response": { "id": "r2", "status": "some_future_status" },
+        }));
+    match unexpected_status.last() {
+        Some(AssistantEvent::Error { message, .. }) => {
+            assert_eq!(
+                message,
+                "Unexpected response status: some_future_status"
+            );
+        }
+        other => panic!("expected an Error event, got {other:?}"),
+    }
+
+    // A cancelled response is final: resending would not change it.
+    let cancelled = StreamProcessor::new("gpt-5-mini".to_owned(), 0).push(
+        &json!({"type": "response.completed", "response": {"status": "cancelled"}}),
+    );
+    assert!(
+        matches!(
+            cancelled.last(),
+            Some(AssistantEvent::Error {
+                class: Class::Fatal,
+                ..
+            })
+        ),
+        "{cancelled:?}"
+    );
+}
+
+/// The codes and types `retry::classify` knows, as either field, the
+/// codes the lane recovers from, and ones it does not know.
+const ERROR_NAMES: [&str; 15] = [
+    "previous_response_not_found",
+    "websocket_connection_limit_reached",
+    "unsupported_value",
+    "rate_limit_exceeded",
+    "server_error",
+    "context_length_exceeded",
+    "insufficient_quota",
+    "billing_not_active",
+    "billing_hard_limit_reached",
+    "account_deactivated",
+    "invalid_api_key",
+    "api_error",
+    "invalid_request_error",
+    "mystery",
+    "",
+];
+
+/// An `error` frame (its details at the top or nested in `error`, as the
+/// server sends them) or a `response.failed` frame ends in an `Error`
+/// whose class is `retry::classify` of the frame's code, type and (for
+/// an `error` frame) status, whatever those are. With the details at the
+/// top, the type is the frame's own, `error`, which no table names.
+///
+/// The frame's raw code is exposed through `error_code()`, for the lane's
+/// recovery ladder, and the message keeps the code and the server's
+/// words: `Error Code {code}: {message}` for an `error` frame (pi's
+/// wording), `{code}: {message}` for a failed response, with `unknown`
+/// for a missing code and no words (or `no message`) for missing ones.
+#[hegel::test]
+fn failure_frames_are_classified_like_retry_classify(tc: TestCase) {
+    let name = || gs::optional(gs::sampled_from(ERROR_NAMES.to_vec()));
+    let code = tc.draw(name());
+    let kind = tc.draw(name());
+    let status = tc.draw(gs::optional(
+        gs::integers::<u16>().min_value(100).max_value(599),
+    ));
+    let failed = tc.draw(gs::booleans());
+    let nested = tc.draw(gs::booleans());
+    let words = tc.draw(gs::optional(gs::text().max_size(16)));
+
+    let mut details = serde_json::Map::new();
+    if let Some(words) = &words {
+        details.insert("message".into(), json!(words));
+    }
+    if let Some(code) = code {
+        details.insert("code".into(), json!(code));
+    }
+    if let Some(kind) = kind {
+        details.insert("type".into(), json!(kind));
+    }
+    let (frame, kind, status) = if failed {
+        let frame = json!({
+            "type": "response.failed",
+            "response": { "error": details },
+        });
+        // A failed response carries no HTTP status.
+        (frame, kind, None)
+    } else {
+        let (mut frame, kind) = if nested {
+            (json!({ "type": "error", "error": details }), kind)
+        } else {
+            // At the top, the frame's own `type` is the error's type.
+            let mut frame = details;
+            frame.insert("type".into(), json!("error"));
+            (serde_json::Value::Object(frame), Some("error"))
+        };
+        if let Some(status) = status {
+            frame["status"] = json!(status);
+        }
+        (frame, kind, status)
+    };
+    let mut processor = StreamProcessor::new("gpt-5-mini".to_owned(), 0);
+    let events = processor.push(&frame);
+    let Some(AssistantEvent::Error { class, message, .. }) = events.last()
+    else {
+        panic!("expected an error, got {events:?}");
+    };
+    assert_eq!(processor.error_code(), code, "{frame}");
+    let code_text = code.unwrap_or("unknown");
+    let wanted = if failed {
+        format!("{code_text}: {}", words.as_deref().unwrap_or("no message"))
+    } else {
+        format!("Error Code {code_text}: {}", words.as_deref().unwrap_or(""))
+    };
+    assert_eq!(message, &wanted, "{frame}");
+    let expected = retry::classify(&Failure::Api { code, kind, status });
+    assert_eq!(*class, expected, "{frame}");
+}
+
+/// A processor fed frames in any order, against what its events must
+/// say: the frames a server sends, unknown ones among them, in orders
+/// a well-behaved server never sends (deltas before their item, a
+/// second terminal, frames after it, a close at any point).
+struct Phases {
+    processor: StreamProcessor,
+    accumulator: Accumulator,
+    events: Vec<AssistantEvent>,
+    /// The terminal event, once one went out.
+    ended: Option<AssistantEvent>,
+    /// Whether a function call was opened.
+    called: bool,
+}
+
+/// One frame of the drawn vocabulary, at an output index below 3.
+fn phase_frame(tc: &TestCase) -> serde_json::Value {
+    let index = tc.draw(gs::integers::<u64>().max_value(2));
+    match tc.draw(gs::integers::<u8>().max_value(9)) {
+        0 => json!({ "type": "codex.response.metadata", "x": 1 }),
+        1 => {
+            json!({ "type": "response.created", "response": { "id": "resp_1" } })
+        }
+        2 => json!({
+            "type": "response.output_item.added",
+            "output_index": index,
+            "item": { "type": "message", "id": format!("msg_{index}"), "content": [] },
+        }),
+        3 => json!({
+            "type": "response.output_item.added",
+            "output_index": index,
+            "item": {
+                "type": "function_call", "id": format!("fc_{index}"),
+                "call_id": format!("call_{index}"), "name": "f", "arguments": "",
+            },
+        }),
+        4 => {
+            json!({ "type": "response.output_text.delta", "output_index": index, "delta": "a" })
+        }
+        5 => json!({
+            "type": "response.function_call_arguments.delta",
+            "output_index": index, "delta": "{}",
+        }),
+        6 => json!({
+            "type": "response.output_item.done",
+            "output_index": index,
+            "item": { "type": "message", "id": format!("msg_{index}"),
+                      "content": [{ "type": "output_text", "text": "a" }] },
+        }),
+        7 => json!({
+            "type": "response.completed",
+            "response": { "id": "resp_1", "status": tc.draw(gs::sampled_from(vec![
+                "completed", "incomplete", "weird",
+            ])) },
+        }),
+        8 => {
+            json!({ "type": "response.failed", "response": { "error": { "code": "server_error", "message": "x" } } })
+        }
+        _ => {
+            json!({ "type": "error", "error": { "code": "rate_limit_exceeded", "message": "x" } })
+        }
+    }
+}
+
+impl Phases {
+    fn take(&mut self, events: Vec<AssistantEvent>) {
+        for event in events {
+            assert!(self.ended.is_none(), "{event:?} after the terminal event");
+            if matches!(event, AssistantEvent::ToolCallStart { .. }) {
+                self.called = true;
+            }
+            self.accumulator
+                .push(event.clone())
+                .unwrap_or_else(|error| {
+                    panic!("{event:?} broke the grammar: {error:?}")
+                });
+            if matches!(
+                event,
+                AssistantEvent::Done { .. } | AssistantEvent::Error { .. }
+            ) {
+                self.ended = Some(event.clone());
+            }
+            self.events.push(event);
+        }
+    }
+}
+
+#[hegel::state_machine]
+impl Phases {
+    #[rule(weight = 8)]
+    fn frame(&mut self, tc: TestCase) {
+        let frame = phase_frame(&tc);
+        let known = frame["type"] != "codex.response.metadata";
+        let before = self.events.len();
+        let events = self.processor.push(&frame);
+        if !known || self.ended.is_some() {
+            assert!(events.is_empty(), "{frame} gave {events:?}");
+        }
+        self.take(events);
+        if known && before == 0 && self.ended.is_none() {
+            assert!(
+                !self.events.is_empty(),
+                "{frame} did not start the stream"
+            );
+        }
+    }
+
+    #[rule]
+    fn close(&mut self, _tc: TestCase) {
+        let events = self.processor.close();
+        let ended = self.ended.is_some();
+        self.take(events);
+        if !ended {
+            assert!(
+                matches!(self.ended, Some(AssistantEvent::Error { .. })),
+                "a close ends with an error"
+            );
+        }
+    }
+
+    #[invariant]
+    fn the_events_tell_the_phase(&mut self, _tc: TestCase) {
+        let starts = self
+            .events
+            .iter()
+            .filter(|event| matches!(event, AssistantEvent::Start { .. }))
+            .count();
+        assert!(starts <= 1, "{starts} starts");
+        if let Some(first) = self.events.first() {
+            assert!(
+                matches!(first, AssistantEvent::Start { .. }),
+                "{first:?} first"
+            );
+        }
+        assert_eq!(self.processor.is_finished(), self.ended.is_some());
+        if let Some(AssistantEvent::Done { reason, .. }) = &self.ended {
+            assert_eq!(
+                *reason == DoneReason::ToolUse,
+                self.called,
+                "a stop is ToolUse exactly when a call was opened"
+            );
+        }
+    }
+}
+
+/// The phase as a state machine: see [`Phases`].
+#[hegel::test(test_cases = 300)]
+fn the_stream_phase_follows_any_frames(tc: TestCase) {
+    hegel::stateful::machine(Phases {
+        processor: StreamProcessor::new("gpt-5.5".to_owned(), 0),
+        accumulator: Accumulator::new(),
+        events: Vec::new(),
+        ended: None,
+        called: false,
+    })
+    .steps(20)
+    .run(tc);
+}

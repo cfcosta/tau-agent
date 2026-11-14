@@ -1,4 +1,4 @@
-# 0039: Chats wake themselves later: `tau-schedule`
+# 0039: Chats wake themselves later: `heiko-schedule`
 
 - Status: accepted. Builds on [0030](0030-host-halves-are-crates.md)'s host
   halves and the conversations service of
@@ -22,7 +22,7 @@ make one safe to leave running.
 
 ## Decision
 
-- **A built-in plugin, `tau-schedule`**, with a host half (ADR 0030)
+- **A built-in plugin, `heiko-schedule`**, with a host half (ADR 0030)
   and a UI half, listed under Plugins like the others.
 - **Its tools, in every run** but an agent's, whose own `schedule`
   takes their place. A sub-agent has them too, so main, its chats and
@@ -37,7 +37,7 @@ make one safe to leave running.
     name again replaces it.
   - `scheduled {}` lists what the chat has waiting, with the host's
     local time now; `unschedule { name }` cancels one.
-- **Waking.** When one comes due, the chat takes a turn of tau's
+- **Waking.** When one comes due, the chat takes a turn of heiko's
   (`Conversations::wake`, new here), on the model it last ran on, whose
   message is the note:
 
@@ -52,10 +52,10 @@ make one safe to leave running.
   goes. A turn that fails to start is tried again half a minute later.
 
 - **Kept on the host**, in the plugin's directory, one file for all
-  chats, written whole on each change. tau closed when one came due
+  chats, written whole on each change. heiko closed when one came due
   wakes the chat once it starts again; there is no daemon (0037).
   Waking is at least once: a wake-up leaves the file once its turn
-  started, so tau closing between the two wakes the chat once more on
+  started, so heiko closing between the two wakes the chat once more on
   the same note, and none is ever missed.
 - **Shown in the chat's inspector**, under Scheduled: each with its
   name, when, and note, and a way for the person to cancel it.
@@ -68,15 +68,15 @@ make one safe to leave running.
 - **Steering a chat whose turn is going.** `exec_command`'s `notify`
   does this (0038), and it suits a command the turn started. A wake-up
   from hours ago belongs to no turn going; it waits for its own.
-- **Inside tau-agents.** Less code, but every chat would depend on the
+- **Inside heiko-agents.** Less code, but every chat would depend on the
   agents plugin being on.
 
 ## Consequences
 
 - `Conversations` gains `wake(run, text)`, answering `Started`, `Busy`
   or `Gone`; hosts that do not wake chats refuse.
-- The clock, durations and local dates tau-agents kept move to
-  `tau-schedule`, which both use.
+- The clock, durations and local dates heiko-agents kept move to
+  `heiko-schedule`, which both use.
 - A chat can still keep itself going by scheduling again each time it
   wakes. Each wake is a turn the person sees in the chat, and cancels
   from its inspector.

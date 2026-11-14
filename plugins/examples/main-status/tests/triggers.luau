@@ -1,11 +1,11 @@
-local tau = require("tau")
-local t = tau.test
+local heiko = require("heiko")
+local t = heiko.test
 
 t.case("it watches main's status on the ci server", function()
   local triggers = t.agent({}):describe().triggers
   t.equal(triggers[1], {
     name = "main",
-    kind = { kind = "mcp", server = "ci", uri = "ci://tau-agent/main" },
+    kind = { kind = "mcp", server = "ci", uri = "ci://heiko-agent/main" },
   })
 end)
 

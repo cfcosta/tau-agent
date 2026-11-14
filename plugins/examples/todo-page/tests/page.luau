@@ -1,5 +1,5 @@
-local tau = require("tau")
-local t = tau.test
+local heiko = require("heiko")
+local t = heiko.test
 
 t.case("adds what the person types", function()
 	local run = t.run({})

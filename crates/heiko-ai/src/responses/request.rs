@@ -1,0 +1,245 @@
+//! The `response.create` body for one turn.
+//!
+//! Ports the OpenAI subset of pi's `buildParams`
+//! (`packages/ai/src/api/openai-responses.ts:284`) to the WebSocket mode
+//! described in `docs/reference/openai-websocket.md`:
+//!
+//! - `type` is `response.create`, and `stream` and `background` are never
+//!   sent: the WebSocket mode forbids them.
+//! - `store` is always `false`.
+//! - A reasoning model always gets `include: ["reasoning.encrypted_content"]`,
+//!   so a full resend can replay its reasoning. pi only asks for it when a
+//!   reasoning effort is set; without it, a full resend after a lost
+//!   continuation would drop the reasoning.
+//! - `prompt_cache_key` is the run's path ([`Lineage::path`]), cut to 64
+//!   characters, OpenAI's limit.
+//! - A Lite request ([`Settings::lite`]) carries what the server needs to
+//!   take it as Responses Lite, as Codex sends it: the marker in
+//!   `client_metadata`, `reasoning.context: "all_turns"` and
+//!   `parallel_tool_calls: false` (`codex-rs/core/src/client.rs`,
+//!   `build_responses_request`). It keeps `instructions` and top-level
+//!   `tools`, which the server takes as they are.
+//!
+//! Every field except `input` depends only on [`Settings`], so two turns
+//! of one run differ only in `input`. The delta rule depends on that.
+
+use std::sync::Arc;
+
+use serde_json::{Map, Value, json};
+
+use crate::ws::proto::continuation::{Body, Fields};
+
+/// OpenAI's maximum `prompt_cache_key` length, in characters.
+pub const PROMPT_CACHE_KEY_MAX_CHARS: usize = 64;
+
+/// The `client_metadata` key that marks a WebSocket request as Responses
+/// Lite (Codex's `WS_REQUEST_HEADER_RESPONSES_LITE_CLIENT_METADATA_KEY`).
+pub const LITE_MARKER: &str =
+    "ws_request_header_x_openai_internal_codex_responses_lite";
+
+/// A function tool offered to the model.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolDefinition {
+    pub name: String,
+    pub description: String,
+    /// The JSON schema of the arguments, already in the form to send.
+    pub parameters: Value,
+    pub strict: bool,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    None,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
+}
+
+impl ReasoningEffort {
+    /// Every effort, lowest first.
+    pub const ALL: [Self; 7] = [
+        Self::None,
+        Self::Minimal,
+        Self::Low,
+        Self::Medium,
+        Self::High,
+        Self::Xhigh,
+        Self::Max,
+    ];
+
+    /// The effort named `name`, as [`Self::as_str`] spells it.
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|effort| effort.as_str() == name)
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Minimal => "minimal",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Xhigh => "xhigh",
+            Self::Max => "max",
+        }
+    }
+}
+
+/// The conversation a run belongs to, for the prompt cache
+/// (`docs/reference/openai-websocket.md`, "Prompt cache").
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Lineage {
+    /// The run's path of work: its `prompt_cache_key`, and the
+    /// conversation its connection serves. In heiko, the id of the run
+    /// whose conversation it is.
+    pub path: String,
+    /// The path the run forked from, for a fork that has not answered
+    /// yet: its first request may take that path's connection, which
+    /// holds the prefix it inherited.
+    pub parent: Option<String>,
+}
+
+/// Everything about a request except its input, as any provider takes
+/// it (ADR 0045): what the run asks for. Fixed for a run, save the
+/// effort.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Settings {
+    pub model: String,
+    pub instructions: Option<String>,
+    pub tools: Vec<ToolDefinition>,
+    /// The effort to ask for. `None` leaves it to the server.
+    pub reasoning: Option<ReasoningEffort>,
+    /// The `text.format` of a typed run.
+    pub text_format: Option<Value>,
+    /// Optional provider output ceiling. The provider decides how to enforce it.
+    pub max_output_tokens: Option<u32>,
+    /// The run's conversation: sent as `prompt_cache_key`, and the
+    /// connection the run's requests go on.
+    pub lineage: Option<Lineage>,
+}
+
+/// What OpenAI's route needs of a request beyond its [`Settings`], which
+/// the client derives from the model rather than the run asking.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Wire {
+    /// Whether the model reasons; decides `include`.
+    pub reasoning_model: bool,
+    /// Whether requests go as Responses Lite, which lets a response be
+    /// stopped on the server (see [`crate::model::is_lite`]).
+    pub lite: bool,
+    pub service_tier: Option<String>,
+}
+
+impl Wire {
+    /// What the model table says of the settings' model.
+    pub fn of_settings(settings: &Settings) -> Self {
+        Self::of(&settings.model)
+    }
+
+    /// What the model table says of `model`; nothing for a model it
+    /// does not know.
+    pub fn of(model: &str) -> Self {
+        crate::model::find(model).map_or_else(Self::default, |model| Self {
+            reasoning_model: model.reasoning,
+            lite: model.lite,
+            service_tier: None,
+        })
+    }
+}
+
+/// Builds the `response.create` body for `input`, with what the model
+/// table says of the model ([`Wire::of_settings`]).
+pub fn body(settings: &Settings, input: Vec<Value>) -> Body {
+    body_on(settings, &Wire::of_settings(settings), input)
+}
+
+/// [`body`], with `wire` as given.
+pub fn body_on(settings: &Settings, wire: &Wire, input: Vec<Value>) -> Body {
+    Body::new(
+        Arc::new(fields_on(settings, wire)),
+        input.into_iter().map(Arc::new).collect(),
+    )
+}
+
+/// Every field of the `response.create` body but `input`, with what the
+/// model table says of the model.
+pub fn fields(settings: &Settings) -> Fields {
+    fields_on(settings, &Wire::of_settings(settings))
+}
+
+/// Every field of the `response.create` body but `input`. It depends
+/// only on `settings` and `wire`, so a session builds it once.
+pub fn fields_on(settings: &Settings, wire: &Wire) -> Fields {
+    let mut body = Map::new();
+    body.insert("type".into(), json!("response.create"));
+    body.insert("model".into(), json!(settings.model));
+    body.insert("store".into(), json!(false));
+    if let Some(instructions) = &settings.instructions {
+        body.insert("instructions".into(), json!(instructions));
+    }
+    if !settings.tools.is_empty() {
+        let tools: Vec<Value> = settings
+            .tools
+            .iter()
+            .map(|tool| {
+                json!({
+                    "type": "function",
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters,
+                    "strict": tool.strict,
+                })
+            })
+            .collect();
+        body.insert("tools".into(), Value::Array(tools));
+    }
+    let mut reasoning = Map::new();
+    if wire.reasoning_model {
+        if let Some(effort) = settings.reasoning {
+            reasoning.insert("effort".into(), json!(effort.as_str()));
+            reasoning.insert("summary".into(), json!("auto"));
+        }
+        body.insert("include".into(), json!(["reasoning.encrypted_content"]));
+    }
+    if wire.lite {
+        reasoning.insert("context".into(), json!("all_turns"));
+        body.insert("parallel_tool_calls".into(), json!(false));
+        body.insert("client_metadata".into(), json!({ LITE_MARKER: "true" }));
+    }
+    if !reasoning.is_empty() {
+        body.insert("reasoning".into(), Value::Object(reasoning));
+    }
+    if let Some(format) = &settings.text_format {
+        body.insert("text".into(), json!({ "format": format }));
+    }
+    if let Some(max_output_tokens) = settings.max_output_tokens {
+        body.insert("max_output_tokens".into(), json!(max_output_tokens));
+    }
+    if let Some(tier) = &wire.service_tier {
+        body.insert("service_tier".into(), json!(tier));
+    }
+    if let Some(lineage) = &settings.lineage {
+        let clamped: String = lineage
+            .path
+            .chars()
+            .take(PROMPT_CACHE_KEY_MAX_CHARS)
+            .collect();
+        body.insert("prompt_cache_key".into(), json!(clamped));
+    }
+    body
+}

@@ -8,7 +8,7 @@ references describe the shipped APIs. No live provider evaluation was run.
 
 Codemode combines structured tool results, bounded inference, reusable
 Luau modules, and large-data artifacts. It keeps fresh VMs and fixed
-model-visible tool definitions. It does not self-modify Tau's runtime.
+model-visible tool definitions. It does not self-modify Heiko's runtime.
 
 Direct tools keep their text output, error behavior, and display limits.
 Programs receive a separate structured value. A structured error can remain
@@ -181,7 +181,7 @@ missing measurements are null. Changed inputs and independent goldens check
 reuse instead of assuming frozen answers continue to work.
 
 Final validation: 882 tests passed across the seven affected core/evaluation
-crates, with eight existing opt-in tests ignored; 25 `tau-ui` library tests
+crates, with eight existing opt-in tests ignored; 25 `heiko-ui` library tests
 passed. Canonical formatting, affected-crate all-target Clippy, host-disabled
 library Clippy, UI compilation, deterministic/timed offline matrix CLI runs,
 and relative reference links passed. Host-only integration tests are not

@@ -1,11 +1,11 @@
 -- A context rewrite: once a run has made many tool calls, it keeps what
 -- the person said and the last few messages, and says what it left out.
-local tau = require("tau")
+local heiko = require("heiko")
 
 -- The calls a run keeps before older ones go.
 local KEPT = 6
 
-return tau.plugin {
+return heiko.plugin {
 	settings = {
 		schema = { type = "object", properties = { after = { type = "integer", minimum = 1 } } },
 		default = { after = 20 },
@@ -30,7 +30,7 @@ return tau.plugin {
 			end
 		end
 		model.rewrites = (model.rewrites or 0) + 1
-		return tau.rewrite({
+		return heiko.rewrite({
 			keep = keep,
 			insert = {
 				{
@@ -44,7 +44,7 @@ return tau.plugin {
 	-- `view` draws a frozen copy of the model.
 	view = function(model)
 		if model.rewrites then
-			return { status = tau.ui.status("trimmed", tostring(model.rewrites) .. " times") }
+			return { status = heiko.ui.status("trimmed", tostring(model.rewrites) .. " times") }
 		end
 		return {}
 	end,

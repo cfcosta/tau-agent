@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Agents' notes and questions, and an agent at its cap, show as
+         notifications while the phone is connected (ADR 0037); asked
+         for when the first one comes. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- heiko's viewfinder reads the pairing code off the camera's
+         preview; asked for when it first opens. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Pairing can be typed instead, so a phone without a camera still
+         installs heiko. -->
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+
+    <!-- wgpu draws with Vulkan, or GL ES 3.0 where there is none. -->
+    <uses-feature
+        android:name="android.hardware.vulkan.version"
+        android:required="false"
+        android:version="0x00401000"
+    />
+    <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+
+    <application
+        android:allowBackup="false"
+        android:hardwareAccelerated="true"
+        android:label="heiko"
+        android:theme="@android:style/Theme.Material.NoActionBar"
+    >
+        <!-- gpui-pre-mobile's NativeActivity, with an input connection
+             for the on-screen keyboard. -->
+        <activity
+            android:name="dev.gpui.mobile.GpuiInputActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|navigation|uiMode|density"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
+        >
+            <!-- libheiko_phone.so -->
+            <meta-data android:name="android.app.lib_name" android:value="heiko_phone" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <!-- The viewfinder that reads a pairing code. Turning the phone
+             recreates it; CameraX closes the camera with it. -->
+        <activity
+            android:name="dev.cfcosta.heiko.HeikoViewfinder"
+            android:exported="false"
+            android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen"
+        />
+    </application>
+
+</manifest>

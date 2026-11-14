@@ -1,6 +1,6 @@
 # Structured grep output
 
-`tau-tools`' `grep` keeps its current text response for the model and also
+`heiko-tools`' `grep` keeps its current text response for the model and also
 returns structured JSON to callers that use `AgentTool::output_schema`, such
 as `codemode`. The output schema is an object with these required fields:
 

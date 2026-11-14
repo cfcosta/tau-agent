@@ -14,12 +14,12 @@
 
 ## Context
 
-tau has about 25 plugin crates, and still keeps much of what it does
+heiko has about 25 plugin crates, and still keeps much of what it does
 out of them:
 
-- **The host builds plugins' parts.** `tau-tools` and `tau-vcs` are
+- **The host builds plugins' parts.** `heiko-tools` and `heiko-vcs` are
   plugins in name: their `agent_plugins` return nothing, and
-  `tau-ui/src/host.rs` (`agent_for_run`, lines 851–1063) builds their
+  `heiko-ui/src/host.rs` (`agent_for_run`, lines 851–1063) builds their
   tools, the run's jj workspace, `vcs_land` or its refusal, and
   `spawn`. The main chat's prompt names `vcs_commit` and
   `exec_command`.
@@ -29,12 +29,12 @@ out of them:
   titles, idle compaction, AGENTS.md, artifact maintenance, the store's
   SQL box, and the sidebar sections for agents and the plugins
   repository.
-- **Core names plugins.** About 80 places in `tau-ui` and
-  `tau-ui-remote` name a plugin: `tau_vcs` in landing, lanes, pushes
-  and the transcript; `tau-agents` in the sidebar and notices; `tau-ask`
+- **Core names plugins.** About 80 places in `heiko-ui` and
+  `heiko-ui-remote` name a plugin: `heiko_vcs` in landing, lanes, pushes
+  and the transcript; `heiko-agents` in the sidebar and notices; `heiko-ask`
   filtered out of agent runs; the memory plugin's search mode chosen by
   the host; a goal icon in the transcript.
-- **Order is a comment.** `tau-ui-remote/src/plugins.rs` lists plugins
+- **Order is a comment.** `heiko-ui-remote/src/plugins.rs` lists plugins
   by hand, and its comments carry the rules: pruning before summary,
   mcp before codemode. When two plugins want one role, the first to
   answer wins. Nothing says which roles exist or that one plugin fills
@@ -48,9 +48,9 @@ out of them:
   Rust plugins' gpui because it links their crates, and cannot run Luau
   at all.
 
-The person wants tau to be a small kernel with everything else as
-plugins, and wants a plugin they write in tau to do anything a plugin
-compiled into tau does.
+The person wants heiko to be a small kernel with everything else as
+plugins, and wants a plugin they write in heiko to do anything a plugin
+compiled into heiko does.
 
 ## Decision
 
@@ -68,52 +68,52 @@ The kernel is what stays when every plugin is removed:
 - **The plugin machinery:** the registry, the slot table, the
   capability gate, the view-tree renderer and its widgets, record
   folding for live and stored runs.
-- **Defaults for two slots:** the agent loop (`tau-agent`'s runner) and
-  the store interface (`tau-store`'s `Backend`).
+- **Defaults for two slots:** the agent loop (`heiko-agent`'s runner) and
+  the store interface (`heiko-store`'s `Backend`).
 
-The kernel names no plugin. A test in `tau-ui-remote` and `tau-ui`
+The kernel names no plugin. A test in `heiko-ui-remote` and `heiko-ui`
 checks that no non-test source mentions a plugin crate or a plugin's
-record or tool name; the registration list in `tau-plugins` is the one
-place they are named. `tau-ui-remote`'s holds now, with tau-phone's
+record or tool name; the registration list in `heiko-plugins` is the one
+place they are named. `heiko-ui-remote`'s holds now, with heiko-phone's
 sources in it too, and checks that neither links a plugin crate;
-`tau-ui`'s follows the slots.
+`heiko-ui`'s follows the slots.
 
 ### Slots
 
 A **slot** is a role the kernel declares and exactly one plugin fills.
 The kernel calls the slot, never the plugin. Slots are declared in
-`tau-ui-plugin`, so the phone and the desktop see the same table; host
+`heiko-ui-plugin`, so the phone and the desktop see the same table; host
 slots are filled only on the machine that runs agents.
 
 ```rust
-pub struct Slot<T: ?Sized> { /* a name, such as "tau.provider" */ }
+pub struct Slot<T: ?Sized> { /* a name, such as "heiko.provider" */ }
 
-pub const PROVIDER: Slot<dyn Provider> = Slot::new("tau.provider");
-pub const VCS: Slot<dyn Vcs> = Slot::new("tau.vcs");
+pub const PROVIDER: Slot<dyn Provider> = Slot::new("heiko.provider");
+pub const VCS: Slot<dyn Vcs> = Slot::new("heiko.vcs");
 ```
 
 | Slot             | What fills it                                                                   | Default filler                   | When it changes |
 | ---------------- | ------------------------------------------------------------------------------- | -------------------------------- | --------------- |
-| `tau.provider`   | sign-in, model catalog, `Llm`, plan limits and refusals                         | `tau-chatgpt` (OpenAI WebSocket) | per run         |
-| `tau.side-model` | a small model plugins ask (today's `Jev`)                                       | `tau-jev`                        | per call        |
-| `tau.store`      | `Backend`, opened at startup                                                    | `tau-store-sqlite`               | at startup      |
-| `tau.loop`       | drives one run: turns, tool calls, seams, stored writes                         | `tau-agent`'s runner (kernel)    | per run         |
-| `tau.vcs`        | open and clone repositories, a workspace per run, a commit per turn, land, push | `tau-vcs` (jj)                   | per repository  |
-| `tau.compaction` | `rewrite_context`, `start_idle`, idle compaction before the cache lapses        | `tau-compaction-chain` (below)   | per run         |
-| `tau.title`      | a run's title from its first message                                            | `tau-titles`                     | per run         |
-| `tau.notify`     | where notices go when the window is not in front                                | `tau-notify` (desktop)           | at once         |
+| `heiko.provider`   | sign-in, model catalog, `Llm`, plan limits and refusals                         | `heiko-chatgpt` (OpenAI WebSocket) | per run         |
+| `heiko.side-model` | a small model plugins ask (today's `Jev`)                                       | `heiko-jev`                        | per call        |
+| `heiko.store`      | `Backend`, opened at startup                                                    | `heiko-store-sqlite`               | at startup      |
+| `heiko.loop`       | drives one run: turns, tool calls, seams, stored writes                         | `heiko-agent`'s runner (kernel)    | per run         |
+| `heiko.vcs`        | open and clone repositories, a workspace per run, a commit per turn, land, push | `heiko-vcs` (jj)                   | per repository  |
+| `heiko.compaction` | `rewrite_context`, `start_idle`, idle compaction before the cache lapses        | `heiko-compaction-chain` (below)   | per run         |
+| `heiko.title`      | a run's title from its first message                                            | `heiko-titles`                     | per run         |
+| `heiko.notify`     | where notices go when the window is not in front                                | `heiko-notify` (desktop)           | at once         |
 
 - **Filling a slot.** A plugin's declaration says which slots it can
   fill. If one plugin can, it does. If several can, the first in the
   slot's declared order fills it (the order is declared beside the
-  registration list, in `tau-plugins`; the order plugins are registered
+  registration list, in `heiko-plugins`; the order plugins are registered
   in never decides), until the person picks another on the Plugins
   screen. The pick is the interface's state, so phones show it and it
   outlives a restart, and it fills the slot from then on. If none can,
   the kernel's default fills it, or the feature is off and says so (no
   VCS: chats do not land).
 - **Filling a slot needs the person's Allow**, for every plugin that is
-  not compiled into tau (see Capabilities), because a slot reaches
+  not compiled into heiko (see Capabilities), because a slot reaches
   everything its role touches.
 - **A slot is a trait, not a hook list.** Its methods are object-safe
   (`async_trait` or boxed futures, ADR 0028), so the kernel holds
@@ -121,13 +121,13 @@ pub const VCS: Slot<dyn Vcs> = Slot::new("tau.vcs");
   plugin's table.
 - **Compaction keeps its chain.** Today fast pruning, the tree and the
   summary run in order, each declining when it would save too little.
-  The default filler, `tau-compaction-chain`, is that chain as one
-  plugin; a person who wants only the summary picks `tau-compaction`.
+  The default filler, `heiko-compaction-chain`, is that chain as one
+  plugin; a person who wants only the summary picks `heiko-compaction`.
 - **Composition is not a slot.** Roles where every plugin adds
   something stay ordered lists: tools, tool sources, launchers (0025),
   prompt fragments, `before_tool` checks, records and points.
 
-The `Provider` slot leaves the OpenAI shape out of `tau-ai`'s traits:
+The `Provider` slot leaves the OpenAI shape out of `heiko-ai`'s traits:
 `Settings` becomes a neutral type (model, effort, tools, instructions,
 cache key), and the delta rule (0005, 0022) becomes the provider's
 promise: given unchanged settings and a growing transcript, it may
@@ -171,14 +171,14 @@ It **implements**, as it needs:
 | Repositories | repository kinds: list, create, first files, a sidebar section. Replaces `Own::Agent` and `Own::Plugins`                                                                                          |
 | View         | `view(point, cx) -> Node`, for every point                                                                                                                                                        |
 
-`tau-agent` keeps its `Plugin` and `PluginRun` traits for programs that
-use it alone (0001); `tau-ui-plugin`'s interface builds on them.
+`heiko-agent` keeps its `Plugin` and `PluginRun` traits for programs that
+use it alone (0001); `heiko-ui-plugin`'s interface builds on them.
 
 ### One view tree, for every plugin
 
 A plugin's UI is a `Node` tree: plain data, `serde`, the same on the
 desktop and the phone. The kernel's renderer draws it with
-`tau-ui-kit`. No plugin draws gpui. That makes Luau's UI equal to
+`heiko-ui-kit`. No plugin draws gpui. That makes Luau's UI equal to
 Rust's, lets the phone draw every plugin without linking a plugin
 crate's UI, and keeps one look (the design test checks the renderer,
 not every plugin).
@@ -191,8 +191,8 @@ not every plugin).
   several lines, submit).
 - **Widgets.** What a tree cannot describe well is a kernel widget,
   drawn by Rust and placed in a tree by name with its data: `terminal`
-  (`tau-terminal`), `diff` (tau-vcs's diff view moves to the kit),
-  `graph` (tau-memory's), `ticker` (a time that counts, for direnv and
+  (`heiko-terminal`), `diff` (heiko-vcs's diff view moves to the kit),
+  `graph` (heiko-memory's), `ticker` (a time that counts, for direnv and
   run clocks). A new widget is a change to the kernel, like a new point.
 - **Actions.** A button, a link, a submit or a key names an action:
   either a kernel request (`navigate`, `send`, `steer`, `composer`,
@@ -252,8 +252,8 @@ all:
 uses = {
   tools = { "bash" },
   seams = { "before_tool", "after_tool_result", "rewrite_context" },
-  slots = { "tau.title" },
-  services = { "tau-jev" },
+  slots = { "heiko.title" },
+  services = { "heiko-jev" },
   store = "own",          -- "own" | "read" (every run, read-only)
   network = { "api.github.com" },
   secrets = { "github" },
@@ -277,25 +277,25 @@ uses = {
 
 | Feature                                                    | Goes to                                              |
 | ---------------------------------------------------------- | ---------------------------------------------------- |
-| Coding tools, processes, artifacts and their maintenance   | `tau-tools` (run assembly, `jobs`)                   |
-| Run workspaces, commits, `vcs_land`, landing merge, push   | `tau-vcs`, filling `tau.vcs`                         |
-| Landing intent, queue, lanes, conflict turn, startup sweep | kernel, through `tau.vcs`                            |
+| Coding tools, processes, artifacts and their maintenance   | `heiko-tools` (run assembly, `jobs`)                   |
+| Run workspaces, commits, `vcs_land`, landing merge, push   | `heiko-vcs`, filling `heiko.vcs`                         |
+| Landing intent, queue, lanes, conflict turn, startup sweep | kernel, through `heiko.vcs`                            |
 | `spawn` / `wait` and the child factory                     | kernel (sub-agents are lifecycle)                    |
 | Main chat prompt                                           | kernel's text; tools' parts by `prompt(kind)`        |
-| AGENTS.md                                                  | new `tau-instructions`                               |
-| GitHub sign-in, clone, pull requests, push screens, `/pr`  | new `tau-github` (repository kinds, VCS remote)      |
-| ChatGPT sign-in, models screen, plan usage                 | new `tau-chatgpt`, filling `tau.provider`            |
-| Jev key, metering, its Models section                      | `tau-jev` becomes a plugin, filling `tau.side-model` |
-| Idle compaction                                            | `tau.compaction`'s filler                            |
-| Run titles                                                 | new `tau-titles`, filling `tau.title`                |
-| Reasoning timer                                            | `tau-reasoning`                                      |
-| Desktop notices                                            | new `tau-notify`, filling `tau.notify`               |
-| Phones: server, pairing, the phones screen                 | new `tau-phones` (app seams); `Synced` stays         |
-| Onboarding's GitHub and model stages                       | `tau-github`, `tau-chatgpt` (`setup` stages)         |
-| Agents' and plugins repository's sidebar sections          | `tau-agents`, `tau-luau-plugins` (repo kinds)        |
-| The store's SQL box                                        | new `tau-store-query` (`store = "read"`)             |
-| Compare forks' `exec_command` summary                      | tau-tools' `CARD` output                             |
-| The fake "workspace" catalog row                           | tau-vcs's catalog                                    |
+| AGENTS.md                                                  | new `heiko-instructions`                               |
+| GitHub sign-in, clone, pull requests, push screens, `/pr`  | new `heiko-github` (repository kinds, VCS remote)      |
+| ChatGPT sign-in, models screen, plan usage                 | new `heiko-chatgpt`, filling `heiko.provider`            |
+| Jev key, metering, its Models section                      | `heiko-jev` becomes a plugin, filling `heiko.side-model` |
+| Idle compaction                                            | `heiko.compaction`'s filler                            |
+| Run titles                                                 | new `heiko-titles`, filling `heiko.title`                |
+| Reasoning timer                                            | `heiko-reasoning`                                      |
+| Desktop notices                                            | new `heiko-notify`, filling `heiko.notify`               |
+| Phones: server, pairing, the phones screen                 | new `heiko-phones` (app seams); `Synced` stays         |
+| Onboarding's GitHub and model stages                       | `heiko-github`, `heiko-chatgpt` (`setup` stages)         |
+| Agents' and plugins repository's sidebar sections          | `heiko-agents`, `heiko-luau-plugins` (repo kinds)        |
+| The store's SQL box                                        | new `heiko-store-query` (`store = "read"`)             |
+| Compare forks' `exec_command` summary                      | heiko-tools' `CARD` output                             |
+| The fake "workspace" catalog row                           | heiko-vcs's catalog                                    |
 
 ### What Luau gains
 
@@ -319,27 +319,27 @@ largest pieces are:
 
 ## Order of work
 
-Each step lands on main by itself and leaves tau working.
+Each step lands on main by itself and leaves heiko working.
 
 1. **The tree.** Grow the view tree, its renderer, actions and the
    interface's state as data (events, a reducer, saved and sent to
-   phones) in `tau-ui-plugin` and `tau-ui-kit`; move the diff and terminal
+   phones) in `heiko-ui-plugin` and `heiko-ui-kit`; move the diff and terminal
    views into kit widgets. Wire Luau's `note`, `page`, buttons and
    actions to it.
 2. **Rust plugins draw trees.** Move each plugin's UI to trees, smallest
    first: compaction, tree-compaction, schedule, skills, watcher,
    direnv, reasoning, fast-compaction, goal, constitution, mcp, canvas,
-   codemode, memory, agents, vcs, tools, and last tau-ask (the panel that
+   codemode, memory, agents, vcs, tools, and last heiko-ask (the panel that
    replaces the composer, with focus and keys). Then remove
-   `UiPlugin::Ui` and gpui from `tau-ui-plugin`'s plugin-facing API.
+   `UiPlugin::Ui` and gpui from `heiko-ui-plugin`'s plugin-facing API.
 3. **Declarations.** `after` / `before`, `provides` / `uses`,
    capabilities on Rust plugins, the Plugins screen showing reach.
    Delete the hand order in `plugins.rs`.
-   As built: `UiPlugin::declaration` (`tau_ui_plugin::Declaration`)
+   As built: `UiPlugin::declaration` (`heiko_ui_plugin::Declaration`)
    holds `after` / `before` and the plugin's `Reach`: its seams, the
    slots it fills, the services it provides and uses, and the tools,
    store, network, secrets and paths it reaches. The registry orders
-   plugins by it, the rest by name, and panics on a cycle; `tau-plugins`
+   plugins by it, the rest by name, and panics on a cycle; `heiko-plugins`
    lists them in any order. The kernel's gate (`gate::gate`) calls only
    the declared seams of every agent plugin a host half gives; host
    services are offered by name (`Services::offer`, `services::names`)
@@ -350,66 +350,66 @@ Each step lands on main by itself and leaves tau working.
    and `PluginInfo::seams` into its reach. The Seam list grew to every
    hook of `Plugin` and `PluginRun`.
 4. **Run assembly.** `workspace`, `tools` with per-workspace state,
-   `prompt(kind)`; `tau-tools` and `tau-vcs` build their own parts, and
+   `prompt(kind)`; `heiko-tools` and `heiko-vcs` build their own parts, and
    `agent_for_run` shrinks to the kernel's lifecycle.
    As built: the VCS gives a run's workspace (`Repository::run_workspace`,
    `vcs::RunWorkspace`) and `spawn` is the kernel's
-   (`tau_ui_plugin::sub_agents`). `HostHalf::run_tools` builds the tools
-   with per-workspace state (tau-tools' coding tools and their commands
+   (`heiko_ui_plugin::sub_agents`). `HostHalf::run_tools` builds the tools
+   with per-workspace state (heiko-tools' coding tools and their commands
    left running), from the services the host puts in `RunCtx`
    (`WorkspaceDir`, `TurnHooks`, `RunCommands`, `RunWake`, `AgentRepo`);
    `HostHalf::workspace_closed` hears a workspace close; and
    `HostHalf::prompt` gives each plugin's part of the instructions,
    which the host puts between its own first and last sentences.
-   `Repository::as_any` is gone: `tau-ui` names tau-vcs-host only to
-   give tau-vcs its host half, and the person's `Identity`.
+   `Repository::as_any` is gone: `heiko-ui` names heiko-vcs-host only to
+   give heiko-vcs its host half, and the person's `Identity`.
 5. **Slots, the easy ones.** The slot table and the Plugins screen's
-   choice; `tau.title`, `tau.notify`, `tau.store`, `tau.side-model`.
-   As built: `tau.notify` (`tau_ui_plugin::notify`) is filled by
-   tau-notify, the desktop's notifications, whose settings switch them
-   off; the kernel still decides when a notice is due. `tau.title`
-   (`tau_ui_plugin::title`) is filled by tau-titles, one request to the
+   choice; `heiko.title`, `heiko.notify`, `heiko.store`, `heiko.side-model`.
+   As built: `heiko.notify` (`heiko_ui_plugin::notify`) is filled by
+   heiko-notify, the desktop's notifications, whose settings switch them
+   off; the kernel still decides when a notice is due. `heiko.title`
+   (`heiko_ui_plugin::title`) is filled by heiko-titles, one request to the
    person's model booked to the plugin; the kernel keeps the
-   placeholder. `tau.store` (`tau_ui_plugin::store`) is filled by
-   tau-sqlite before any host state is made (`HostHalf::fill_early`),
+   placeholder. `heiko.store` (`heiko_ui_plugin::store`) is filled by
+   heiko-sqlite before any host state is made (`HostHalf::fill_early`),
    and the host opens its store through it. The side model is not a
-   slot: the kernel never calls it, plugins do. tau-jev is a plugin
-   that keeps the TypeSafe key and gives the service `tau.jev` to those
+   slot: the kernel never calls it, plugins do. heiko-jev is a plugin
+   that keeps the TypeSafe key and gives the service `heiko.jev` to those
    that declare it, through `HostHalf::provide` (only services the
    declaration names); its Models section and page take the key, and
    other plugins read whether there is one from its data.
-6. **`tau.vcs`.** A `Vcs` trait the kernel's landing, lanes, queue and
-   sweep call, implemented by `tau-vcs`. Then `tau-github`.
-   As built: `tau_ui_plugin::slots` (`Slot`, `Fills`, offered by
+6. **`heiko.vcs`.** A `Vcs` trait the kernel's landing, lanes, queue and
+   sweep call, implemented by `heiko-vcs`. Then `heiko-github`.
+   As built: `heiko_ui_plugin::slots` (`Slot`, `Fills`, offered by
    `HostHalf::fill`; the person's pick, kept in the UI state under
-   `slots::PICKS`, else the first in `Registry::slot_order`) and `tau_ui_plugin::vcs`'s `Vcs`
+   `slots::PICKS`, else the first in `Registry::slot_order`) and `heiko_ui_plugin::vcs`'s `Vcs`
    (opens a repository) and `Repository` (catch up, conflicts, newest,
-   land, landed, discard, forget, held, sweep). tau-vcs-host's
+   land, landed, discard, forget, held, sweep). heiko-vcs-host's
    `JjVcs`/`JjRepository` fill it; landing, lanes and the startup sweep
    call only it. A run's workspace, sub-agents, push, pull requests and
-   clone went through it in 6b, which also added `tau.forge`
-   (`tau_ui_plugin::forge::Forge`: sign-in state, remotes with their
+   clone went through it in 6b, which also added `heiko.forge`
+   (`heiko_ui_plugin::forge::Forge`: sign-in state, remotes with their
    token, the repository list, pull requests and checks), filled by
-   `tau-github-host`; `tau-github` draws sign-in as a setup step placed
+   `heiko-github-host`; `heiko-github` draws sign-in as a setup step placed
    before Repositories (`SetupAt`) and a Models section.
-7. **`tau.provider`.** A neutral `Settings` and catalog in `tau-ai`;
-   `tau-chatgpt` with sign-in, models and plan usage.
-   As built so far: `tau_ui_plugin::provider` (`PROVIDER`, `Provider`:
+7. **`heiko.provider`.** A neutral `Settings` and catalog in `heiko-ai`;
+   `heiko-chatgpt` with sign-in, models and plan usage.
+   As built so far: `heiko_ui_plugin::provider` (`PROVIDER`, `Provider`:
    its label, the client runs open sessions with, the picker's models,
    the last refusal and when a conversation's cache lapses), filled by
-   tau-chatgpt from the saved sign-ins as each run opens. The host
+   heiko-chatgpt from the saved sign-ins as each run opens. The host
    builds its agent once over `ProviderLlm`, which asks the slot each
    time, and always starts, signed out or in; setup opens while there
-   is no model. tau-chatgpt's sign-in is setup's first step
+   is no model. heiko-chatgpt's sign-in is setup's first step
    (`SetupAt::Model`, `SetupView::required`, its `SetupLink` driving the
    handshake), its accounts a section of the Models screen; it opens
    the browser through `HostCx::open_url`, and a phone cannot ask it
    anything (`Declaration::computer_only`). The kernel's model step,
    `ModelAccess`, its four ChatGPT events and the account list in
    `AccessInfo` went. A run the provider stopped shows as it words it
-   (`Provider::stopped`, `HostUpdate::Stopped`): tau-chatgpt's
+   (`Provider::stopped`, `HostUpdate::Stopped`): heiko-chatgpt's
    `plan_usage` turns the plan's refusal into a title, a message and
-   one action, a page to open or the Models screen. tau-ai's `Settings`
+   one action, a page to open or the Models screen. heiko-ai's `Settings`
    holds what any provider takes; OpenAI's wire fields (whether the
    model reasons, Responses Lite, the service tier) are a `Wire` the
    client derives from the model table. The picker's catalog is the
@@ -418,28 +418,28 @@ Each step lands on main by itself and leaves tau working.
    from them (`Models::fit`, `default_for`, `efforts`); with no model
    named, a run takes the coder's default, the provider's first unless
    the person chose another. `DEFAULT_MODEL` went. The run's context
-   window still comes from tau-ai's table, in the runner and the views.
-8. **`tau.compaction`**, with the chain as its default; idle compaction
+   window still comes from heiko-ai's table, in the runner and the views.
+8. **`heiko.compaction`**, with the chain as its default; idle compaction
    moves into it.
-   As built: `tau_ui_plugin::compaction` (`COMPACTION`, `Compaction`:
-   the plugins whose rewrites run). tau-compaction-chain fills it with
+   As built: `heiko_ui_plugin::compaction` (`COMPACTION`, `Compaction`:
+   the plugins whose rewrites run). heiko-compaction-chain fills it with
    fast pruning, the tree and the summary, in their declared turn, and
-   is the slot's default; tau-compaction fills it with the summary
+   is the slot's default; heiko-compaction fills it with the summary
    alone. The host gives each run the filler's list (`Rewriters`, a
    kernel value), and the gate turns off the rewrite, and the idle
    part, of a plugin that rewrites and is not named. When an idle chat
    compacts is still the kernel's (`idle.rs`).
-9. **App and repository seams.** `tau-phones`, repository kinds for
+9. **App and repository seams.** `heiko-phones`, repository kinds for
    agents and the plugins repository, onboarding stages.
-   As built: what crosses to phones stays the kernel's (`tau_ui::mirror`:
+   As built: what crosses to phones stays the kernel's (`heiko_ui::mirror`:
    `to_phones`, `transient`, `snapshot`, `from_phone`, the views phones
-   asked for), offered to plugins as the service `tau.app`
-   (`tau_ui_plugin::app::App`). It is a service, not an `on_update`
+   asked for), offered to plugins as the service `heiko.app`
+   (`heiko_ui_plugin::app::App`). It is a service, not an `on_update`
    hook: the carrier gives a sink the window calls on its own thread,
    in order, and a snapshot is handed back on that thread too, so no
-   update falls between a snapshot and the feed. tau-phones carries it:
+   update falls between a snapshot and the feed. heiko-phones carries it:
    its host half runs the server, the pairing code and the settings on
-   the host's runtime (`tau_phones::Phones`), and its UI half draws the
+   the host's runtime (`heiko_phones::Phones`), and its UI half draws the
    Phones page (`Node::Qr`, a countdown by `Node::Due`) and an entry in
    the sidebar's Everywhere (`points::EVERYWHERE`). It is
    `computer_only`: what it keeps, the code among it, never goes to a
@@ -447,7 +447,7 @@ Each step lands on main by itself and leaves tau working.
    anything. The kernel's Phones screen, route, state and request went.
    Repository kinds replace `Own`: `Repo.kind` names one, a plugin
    declares those it keeps (`UiPlugin::repo_kinds`,
-   `tau_ui_plugin::kinds::KindHost`: its directory, one repository or
+   `heiko_ui_plugin::kinds::KindHost`: its directory, one repository or
    one per folder, first files, whether its runs are sandboxed and
    which plugins they go without), and the host lists and makes them
    (`Host::list_kinds`, `Conversations::make_repo`). Its place in the
@@ -458,25 +458,25 @@ Each step lands on main by itself and leaves tau working.
 10. **Luau parity.** The binding implements every seam and slot; the
     seam table test; the skill documents all of it, with worked plugins
     for a context rewrite, a slot filler and a page.
-    As built: the seam table (`tau_luau_plugins_host::parity`, checked
+    As built: the seam table (`heiko_luau_plugins_host::parity`, checked
     by `tests/parity.rs` against `Seam::ALL`, `slots::ALL`,
     `points::ALL` and every service) says how a Luau plugin reaches
     each, by the hook the skill names, or why not. Every seam is a
     hook: `tools`, `start` (context and instructions), `before_tool`
-    (with `tau.change`, behind `uses.change_args`), `before_request`
-    (`tau.effort`), `after_tool_result` (`tau.result`), `on_event` (the
+    (with `heiko.change`, behind `uses.change_args`), `before_request`
+    (`heiko.effort`), `after_tool_result` (`heiko.result`), `on_event` (the
     `events` it names), `rewrite_context` (which messages to keep and
     what to insert, the rewrite built in Rust so calls keep their
     results; also an idle run's), `rewritten`, `before_stop`, `run_end`.
-    tau-luau-plugins fills `tau.title`, `tau.notify`, `tau.compaction`
-    and `tau.forge` with stand-ins that ask the active Luau plugin that
-    `fills` it on each call; the person picks tau-luau-plugins for the
-    slot, and tau's own stay the defaults (`slot_order`). `tau.store`,
-    `tau.vcs` and `tau.provider` stay Rust's. Hooks reach the network
+    heiko-luau-plugins fills `heiko.title`, `heiko.notify`, `heiko.compaction`
+    and `heiko.forge` with stand-ins that ask the active Luau plugin that
+    `fills` it on each call; the person picks heiko-luau-plugins for the
+    slot, and heiko's own stay the defaults (`slot_order`). `heiko.store`,
+    `heiko.vcs` and `heiko.provider` stay Rust's. Hooks reach the network
     through `http.request`, only to the hosts `uses.network` names and
     with only the secrets `uses.secrets` names, from the plugin's own
     store the person fills on its settings; the forge's token is read
-    by tau's remote alone. A view draws at a run's banner, inspector,
+    by heiko's remote alone. A view draws at a run's banner, inspector,
     composer band, row and asks, and `nav` puts a plugin's page in the
     sidebar. New reach (a slot, a host, a secret, changed arguments or
     results, `start`, a rewrite) waits for the person's Allow. A hook's
@@ -484,27 +484,27 @@ Each step lands on main by itself and leaves tau working.
     step: a Luau plugin's slash commands (`commands`, run as its
     actions `/name`), its jobs (`jobs`, run through the host's when due,
     their state kept), `infer` in hooks outside a run (the model
-    `uses.model` names, booked to tau-luau-plugins), and a tree's
-    `tau.` actions (send, steer, composer, start, alert, details). Left:
+    `uses.model` names, booked to heiko-luau-plugins), and a tree's
+    `heiko.` actions (send, steer, composer, start, alert, details). Left:
     keys, the points drawn outside a run, the conversations service and
     repository kinds of a Luau plugin's own; a Luau plugin adds to the
     prompt through `start`.
-11. **`tau.loop`**, with the runner's invariant tests run against any
+11. **`heiko.loop`**, with the runner's invariant tests run against any
     filler.
-    As built: `tau_agent::runner::driver::Loop` drives a run once the
+    As built: `heiko_agent::runner::driver::Loop` drives a run once the
     kernel assembled it (tools, plugins started, session opened with its
     lineage) and until its outcome: `run` and `compact_idle`, over a
     `LoopRun` whose steps (`begin`, `turn`, `end`) keep the runner's
     invariants whole, so a filler orders them and decides between them,
     but cannot store, emit or drop a tool call outside them. `Kernel`
-    is tau-agent's runner; an `Agent` drives with it unless given
+    is heiko-agent's runner; an `Agent` drives with it unless given
     another (`Agent::with_loop`), and a run's sub-agents with its
-    agent's. `tau_ui_plugin::loop_::LOOP` is the slot, and the host
+    agent's. `heiko_ui_plugin::loop_::LOOP` is the slot, and the host
     builds its agent over `SlotLoop`, which asks the slot as each run
     starts and takes `Kernel` while nothing fills it: the slot has no
     filler plugin and no order. A filler gets what is left of a run's
     plan, not `RunPlan` itself, which the plugins' starts use up. The
-    runner's model is `tau_agent::testing::loop_model` (the `testing`
+    runner's model is `heiko_agent::testing::loop_model` (the `testing`
     feature): `check(tc, filler, steps)` and `regressions(filler)` run
     it against any loop, and `testing::Stepwise`, a loop put together
     from the steps alone, keeps to it beside `Kernel`. The other run
@@ -512,19 +512,19 @@ Each step lands on main by itself and leaves tau working.
     folding, grouped calls, plugin charges and records, nested calls,
     workflows and sub-agents) drive each case with a loop drawn from
     `testing::fillers`. Luau does not fill it.
-12. **The kernel test**: no non-test source in `tau-ui` or
-    `tau-ui-remote` names a plugin.
-    As built: `crates/tau-ui/tests/kernel.rs` reads every source of
+12. **The kernel test**: no non-test source in `heiko-ui` or
+    `heiko-ui-remote` names a plugin.
+    As built: `crates/heiko-ui/tests/kernel.rs` reads every source of
     both crates, their test modules and comment lines apart, for a
-    plugin crate's path (`tau_skills::`). What still names one is
+    plugin crate's path (`heiko_skills::`). What still names one is
     listed there with why, and the list only shrinks: a new name fails
     the test, and so does a listed one the source dropped. Listed now:
-    only the host halves tau-ui composes (`hosted.rs`), which name every
-    plugin by design, as tau-plugins does the interface's. The app
+    only the host halves heiko-ui composes (`hosted.rs`), which name every
+    plugin by design, as heiko-plugins does the interface's. The app
     gives plugins its identity, skills directory and memory's search as
     services (`HostConfig::services`, `hosted::app_services`); ChatGPT's
-    accounts are tau-chatgpt's alone, pruning artifacts tau-tools', and
-    the demo is a crate of its own (`tau-demo`).
+    accounts are heiko-chatgpt's alone, pruning artifacts heiko-tools', and
+    the demo is a crate of its own (`heiko-demo`).
 
 ## Alternatives considered
 
@@ -538,20 +538,20 @@ Each step lands on main by itself and leaves tau working.
   implicit, conflicts are silent, and the kernel cannot call "the VCS"
   without naming jj.
 - **Slots filled only by Rust plugins.** Safer, but a person could
-  never write their own provider or VCS in tau. The Allow click on a
+  never write their own provider or VCS in heiko. The Allow click on a
   slot keeps it the person's choice.
-- **Make the loop and store plugins with no kernel default.** A tau with
+- **Make the loop and store plugins with no kernel default.** A heiko with
   no loop does nothing; a default keeps the kernel usable alone and
   gives a filler something to be tested against.
 
 ## Consequences
 
-- tau-ui's host and tau-ui-remote shrink to the frame and the
+- heiko-ui's host and heiko-ui-remote shrink to the frame and the
   lifecycle; most of `host.rs`, `host/*.rs`, `github.rs`, `accounts.rs`,
   `notify.rs` and the phones server move into plugins.
-- Every Rust plugin's UI is rewritten as trees. The hardest are tau-ask
-  (focus, keys, a panel in the composer's place), tau-tools (the
-  terminal), tau-vcs (diffs) and tau-memory (its graph); they need
+- Every Rust plugin's UI is rewritten as trees. The hardest are heiko-ask
+  (focus, keys, a panel in the composer's place), heiko-tools (the
+  terminal), heiko-vcs (diffs) and heiko-memory (its graph); they need
   kernel widgets first.
 - A plugin's look is no longer its own: what the tree and the widgets
   cannot express needs a kernel change. That is the price of one look,
@@ -562,6 +562,6 @@ Each step lands on main by itself and leaves tau working.
 - The Luau binding, the view tree and the slot traits are public
   interfaces: changing one touches the renderer, the phone, the skill
   and its tests.
-- 0002 and 0012 become the default provider's decisions, not tau's.
+- 0002 and 0012 become the default provider's decisions, not heiko's.
 - `RunView` and snapshot JSON from before this change do not load;
   nothing is migrated.

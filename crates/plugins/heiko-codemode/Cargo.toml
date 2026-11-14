@@ -1,0 +1,31 @@
+[package]
+autotests = false
+name = "heiko-codemode"
+description = "Codemode's interface half: the cards of its Luau scripts, and the records they fold."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+# The cards show scripts formatted.
+stylua.workspace = true
+heiko-agent = { workspace = true, features = ["serde"] }
+heiko-ai.workspace = true
+heiko-jev.workspace = true
+heiko-ui-kit.workspace = true
+heiko-ui-plugin.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+heiko-ui-plugin = { workspace = true, features = ["testing"] }
+hegeltest.workspace = true
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

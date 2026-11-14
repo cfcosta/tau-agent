@@ -1,0 +1,25 @@
+[package]
+name = "heiko-plugin"
+description = "heiko-plugin, a command line for Luau plugins: check and test packages with no window (ADR 0053)."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish.workspace = true
+autotests = false
+
+[dependencies]
+# Packages tested at once.
+futures-util.workspace = true
+rustix.workspace = true
+serde_json.workspace = true
+heiko-luau-plugins.workspace = true
+heiko-luau-plugins-host.workspace = true
+tokio-util.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

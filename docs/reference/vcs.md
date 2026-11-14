@@ -1,7 +1,7 @@
-# Version-control tools (`tau-vcs`, optional)
+# Version-control tools (`heiko-vcs`, optional)
 
-- Status: implemented in `crates/plugins/tau-vcs-host`, on `jj-lib` 0.47.0,
-  with its cards in `crates/plugins/tau-vcs`.
+- Status: implemented in `crates/plugins/heiko-vcs-host`, on `jj-lib` 0.47.0,
+  with its cards in `crates/plugins/heiko-vcs`.
 - Design study: [jj-lib.md](../research/jj-lib.md). Decisions:
   [0009](../decisions/0009-child-runs-land-on-their-parent.md) (child
   runs land on their parent),
@@ -18,7 +18,7 @@ there is no staging area, and file edits made with `write`, `edit` or
 ## Setup
 
 ```rust
-use tau_vcs_host::{Identity, Vcs, VcsPlugin};
+use heiko_vcs_host::{Identity, Vcs, VcsPlugin};
 
 // An existing jj workspace:
 let vcs = Vcs::open("/path/to/workspace", Identity::default()).await?;
@@ -30,7 +30,7 @@ let agent = Agent::new(llm).plugin(VcsPlugin::new(vcs));
 
 - `Identity` says who the commits and operations the tools write are
   by, and where the jj config they follow is (see "Identity and jj
-  config"). The default is `tau <tau@localhost>` and reads no config.
+  config"). The default is `heiko <heiko@localhost>` and reads no config.
 - `Vcs::open` and `Vcs::init` are async: they load the workspace on
   tokio's blocking pool, so they need a runtime. Call them when you set
   up the agent, not inside a tool.
@@ -45,18 +45,18 @@ let agent = Agent::new(llm).plugin(VcsPlugin::new(vcs));
 
 ## Identity and jj config
 
-tau follows the person's jj config exactly as the jj CLI (0.47.0) would
-in the same workspace. tau-vcs-host's `config` module ports jj-cli's
+heiko follows the person's jj config exactly as the jj CLI (0.47.0) would
+in the same workspace. heiko-vcs-host's `config` module ports jj-cli's
 loading:
 
-- Layers, lowest first: jj-lib's defaults; tau's `Identity` (`user.name`
+- Layers, lowest first: jj-lib's defaults; heiko's `Identity` (`user.name`
   and `user.email`); the system's `/etc/jj/config.toml` and
   `/etc/jj/conf.d/`; the variables the person's config overrides
   (`operation.hostname`, `operation.username`, `NO_COLOR`, `VISUAL`,
   `EDITOR`); the person's config; the repository's; the workspace's;
   then the variables that override every file (`JJ_USER`, `JJ_EMAIL`,
   `JJ_TIMESTAMP`, `JJ_RANDOMNESS_SEED`, `JJ_OP_TIMESTAMP`,
-  `JJ_OP_HOSTNAME`, `JJ_OP_USERNAME`, `JJ_EDITOR`, `JJ_PAGER`). So tau's
+  `JJ_OP_HOSTNAME`, `JJ_OP_USERNAME`, `JJ_EDITOR`, `JJ_PAGER`). So heiko's
   identity names a commit only when nothing else sets `user.name` or
   `user.email`.
 - The person's config is `~/.jjconfig.toml` when it exists, then
@@ -66,7 +66,7 @@ loading:
 - The repository's and the workspace's configs are where jj 0.46 keeps
   them, outside the repository: `repos/<id>/config.toml` and
   `workspaces/<id>/config.toml` in jj's config directory, named by
-  `.jj/repo/config-id` and `.jj/workspace-config-id`. tau reads them
+  `.jj/repo/config-id` and `.jj/workspace-config-id`. heiko reads them
   with jj-lib's `SecureConfig::maybe_load_config`, as any jj command
   does, and makes a config id only where `jj git clone` or
   `jj git init` would: when a clone, an import or a local repository's setup
@@ -74,7 +74,7 @@ loading:
   local repository").
 - `--when` scopes resolve once the repository is known, against the
   canonical workspace and repository paths, the home directory (for
-  `~`), the host name and the variables. tau runs no jj command, so a
+  `~`), the host name and the variables. heiko runs no jj command, so a
   `--when.commands` scope never holds.
 - Settings are built when a workspace loads, in its job: a `Vcs` finds
   its workspace's repository first (`WorkspaceLoader::repo_path`), as
@@ -86,11 +86,11 @@ loading:
   again with its own. Config changes reach a `Vcs` or `ProjectRepo`
   opened after them.
 - jj-lib builds the commit signer from the same settings, so with the
-  person's `signing.*` tau's commits are signed as jj would sign them.
+  person's `signing.*` heiko's commits are signed as jj would sign them.
   `~/` at the start of the paths it reads (`signing.key`,
   `signing.backends.ssh.allowed-signers` and `revocation-list`) is the
   `JjEnv`'s home directory, as jj expands it with its own.
-- tau adds jj-cli's defaults (from its `src/config/misc.toml`) for the
+- heiko adds jj-cli's defaults (from its `src/config/misc.toml`) for the
   jj-cli settings it reads, just above jj-lib's: the person's config
   overrides them as it would the CLI's.
 - Snapshots follow jj-cli's snapshot options: `snapshot.auto-track`, a
@@ -109,7 +109,7 @@ loading:
   malformed `snapshot.auto-track` or `snapshot.max-new-file-size` fails
   the snapshot with an error naming the setting (and the file that set
   it), so every tool fails until it is fixed, as every jj command
-  would. A project's Git store is tau's own, so its `info/exclude` is
+  would. A project's Git store is heiko's own, so its `info/exclude` is
   not the source checkout's.
 - Files are written and shown as jj writes them. jj-lib's working copy
   reads `ui.conflict-marker-style`, `working-copy.eol-conversion` and
@@ -120,8 +120,8 @@ loading:
   `ui.conflict-marker-style` too, merged with the store's `merge.*`
   options, as `jj diff --git` does, with `diff.git.context` lines of
   context (three by default).
-- jj-cli settings tau does not follow in a repository it owns, each
-  because tau's own design decides what they would:
+- jj-cli settings heiko does not follow in a repository it owns, each
+  because heiko's own design decides what they would:
   `remotes.<name>.auto-track-bookmarks` and
   `git.track-default-bookmark-on-clone` (a project tracks every
   upstream branch, so trunk follows upstream, ADR 0015);
@@ -129,22 +129,22 @@ loading:
   `git.record-synthetic-predecessors` on an update (an update keeps
   what upstream dropped, and catch-ups leave it behind, so a chat's
   `@` is never abandoned under it). A local repository is the person's,
-  so there tau imports Git's refs as their jj does, with all three
+  so there heiko imports Git's refs as their jj does, with all three
   (ADR 0043, decision 4; see "Setting up a local repository");
-  `snapshot.auto-update-stale` (tau always moves a stale workspace's
+  `snapshot.auto-update-stale` (heiko always moves a stale workspace's
   files, as `jj workspace update-stale` does, since the main chat's
   catch-up restacks its chats); `git.colocate` (a project's layout is
-  tau's; jj 0.46 also reads it in `jj workspace add`, which makes the
+  heiko's; jj 0.46 also reads it in `jj workspace add`, which makes the
   new workspace a Git worktree when the current one is colocated, and
-  tau's run workspaces always are, see "Projects");
+  heiko's run workspaces always are, see "Projects");
   `git.push` and `revsets.git-push` (a push names its remote, `origin`,
   and the one branch it sends, as
   `jj git push --remote origin --bookmark <branch>` would, so neither the default remotes nor the
-  default revset applies); `aliases.*` (tau runs no jj command);
-  `experimental-advance-branches` (tau moves its trunk and run
-  bookmarks itself); `diff.git.show-path-prefix` (tau's diff readers
+  default revset applies); `aliases.*` (heiko runs no jj command);
+  `experimental-advance-branches` (heiko moves its trunk and run
+  bookmarks itself); `diff.git.show-path-prefix` (heiko's diff readers
   need the `a/` and `b/` prefixes); `revsets.short-prefixes` and
-  `revsets.log` (tau shows 12-character ids and resolves prefixes in
+  `revsets.log` (heiko shows 12-character ids and resolves prefixes in
   the whole repository); `templates.*`, `ui.*` presentation, editors
   and pagers, which a model has no use for, including
   `templates.commit_trailers`, which needs jj-cli's template
@@ -152,7 +152,7 @@ loading:
 - The environment is a value, `JjEnv`: config directory, home
   directory, system directory, host name, user name and variables.
   Only the app reads the process's (`Identity::from_environment`, which
-  `tau`'s `main` puts in `HostConfig::identity`); everything else,
+  `heiko`'s `main` puts in `HostConfig::identity`); everything else,
   tests included, gets the empty default and reads no file or
   variable. The host hands the same `Identity` to plugin hosts as a
   service, for the plugins and agents repositories.
@@ -189,70 +189,70 @@ loading:
   commit two of them rewrote
   would be divergent, and a bookmark two of them moved conflicted.
   Under the lock they happen one after another. The lock is
-  `.jj/repo/tau.lock`, held with `flock`, so it holds between threads
+  `.jj/repo/heiko.lock`, held with `flock`, so it holds between threads
   and between processes. Reads take no lock.
 - In a local repository, each tool's snapshot and each `ProjectRepo`
   write imports Git's refs first, under both locks, as the jj CLI does
   in a colocated workspace (see "Setting up a local repository").
-- Under it, tau also takes the lock jj-cli 0.46.0 takes around its Git
+- Under it, heiko also takes the lock jj-cli 0.46.0 takes around its Git
   import and export in a colocated workspace,
   `.jj/repo/git_import_export.lock`: around an import of Git's refs and
   the operation it goes into, and around writing each operation with
   the export and the `HEAD` and index reset that follow it. A tool
   takes it before it snapshots, as the CLI does, and holds it until the
-  tool's operation is written. So a `jj` command and tau never write
+  tool's operation is written. So a `jj` command and heiko never write
   the Git store at once: each waits for the other. Fetching and pushing
   over the network happen outside it, as in the CLI.
-- The locks are taken in one order: `tau.lock`, then
+- The locks are taken in one order: `heiko.lock`, then
   `git_import_export.lock`, then a working copy's own lock. The CLI
-  takes the second and then the third, and never `tau.lock`, so no two
+  takes the second and then the third, and never `heiko.lock`, so no two
   holders wait on each other in a circle.
 
 ## Tagged operations
 
-Every operation tau writes in a repository, from the one that makes it
-on, says it is tau's (ADR 0043, decision 6), so tau can tell the
+Every operation heiko writes in a repository, from the one that makes it
+on, says it is heiko's (ADR 0043, decision 6), so heiko can tell the
 person's own `jj` commands from its own in the operation log:
 
-- It carries the operation attribute `tau.op` (`TAU_OP_ATTRIBUTE`),
-  whose value is the version of tau-vcs-host that wrote it.
-- Its description starts `tau: ` (`DESCRIPTION_PREFIX`), so
+- It carries the operation attribute `heiko.op` (`HEIKO_OP_ATTRIBUTE`),
+  whose value is the version of heiko-vcs-host that wrote it.
+- Its description starts `heiko: ` (`DESCRIPTION_PREFIX`), so
   `jj op log` shows whose it is:
 
   | Description                           | Written by                                             |
   | ------------------------------------- | ------------------------------------------------------ |
-  | `tau: vcs_<tool>`                     | a write tool, `vcs_land` included                      |
-  | `tau: snapshot working copy`          | a tool's or a turn's snapshot, a local setup's         |
-  | `tau: import git refs`                | in a local repository, a write's import of Git's refs  |
-  | `tau: import git head`                | a local setup, as `jj git init` imports `HEAD`         |
-  | `tau: checkpoint`                     | a turn's end (`end_turn`, `commit_all`)                |
-  | `tau: move onto`                      | a catch-up (`Vcs::move_onto`)                          |
-  | `tau: make the repository`            | `Project::init`, `Vcs::init`                           |
-  | `tau: import`                         | a clone or an import                                   |
-  | `tau: update`                         | `update`                                               |
-  | `tau: add workspace <name>`           | `add_workspace`, a fork's, a local setup               |
-  | `tau: name the main chat's workspace` | opening a project made before it had one               |
-  | `tau: forget workspace <name>`        | a sweep, a landing, a dropped child, a sub-agent's end |
-  | `tau: abandon <n> changes`            | a sweep, a dropped child, a sub-agent's end            |
-  | `tau: remove bookmark <name>`         | `remove_head` of a branch                              |
-  | `tau: move run heads to refs/tau`     | opening a project whose runs' heads were bookmarks     |
-  | `tau: push <branch>`                  | `push_trunk`                                           |
-  | `tau: sign commits before pushing`    | `push_trunk` with `git.sign-on-push`                   |
+  | `heiko: vcs_<tool>`                     | a write tool, `vcs_land` included                      |
+  | `heiko: snapshot working copy`          | a tool's or a turn's snapshot, a local setup's         |
+  | `heiko: import git refs`                | in a local repository, a write's import of Git's refs  |
+  | `heiko: import git head`                | a local setup, as `jj git init` imports `HEAD`         |
+  | `heiko: checkpoint`                     | a turn's end (`end_turn`, `commit_all`)                |
+  | `heiko: move onto`                      | a catch-up (`Vcs::move_onto`)                          |
+  | `heiko: make the repository`            | `Project::init`, `Vcs::init`                           |
+  | `heiko: import`                         | a clone or an import                                   |
+  | `heiko: update`                         | `update`                                               |
+  | `heiko: add workspace <name>`           | `add_workspace`, a fork's, a local setup               |
+  | `heiko: name the main chat's workspace` | opening a project made before it had one               |
+  | `heiko: forget workspace <name>`        | a sweep, a landing, a dropped child, a sub-agent's end |
+  | `heiko: abandon <n> changes`            | a sweep, a dropped child, a sub-agent's end            |
+  | `heiko: remove bookmark <name>`         | `remove_head` of a branch                              |
+  | `heiko: move run heads to refs/heiko`     | opening a project whose runs' heads were bookmarks     |
+  | `heiko: push <branch>`                  | `push_trunk`                                           |
+  | `heiko: sign commits before pushing`    | `push_trunk` with `git.sign-on-push`                   |
 
 - jj-lib writes an operation of its own when it makes a repository or
-  a workspace (`add workspace '<name>'`). tau makes both without it:
-  the operation that adds a workspace's working-copy commit is tau's,
+  a workspace (`add workspace '<name>'`). heiko makes both without it:
+  the operation that adds a workspace's working-copy commit is heiko's,
   and the workspace's working copy starts there.
-- `is_taus(op)` tells whether tau wrote an operation: it carries
-  `tau.op`. Two kinds of operation carry no one's tag. The root
+- `is_heikos(op)` tells whether heiko wrote an operation: it carries
+  `heiko.op`. Two kinds of operation carry no one's tag. The root
   operation, which every repository starts from, is no one's, so it is
-  not tau's. A merge (an operation with several parents) is what jj-lib
+  not heiko's. A merge (an operation with several parents) is what jj-lib
   writes when it loads a repository whose operation log forked
-  (`reconcile divergent operations`), in tau or in a `jj` command,
-  whichever loads it first. It is tau's when every operation it merges
+  (`reconcile divergent operations`), in heiko or in a `jj` command,
+  whichever loads it first. It is heiko's when every operation it merges
   is. The person's own operations come in as its parents.
 - `vcs_undo` and a landing's record read the tool's own attributes
-  (`tau.vcs.tool`, `tau.vcs.undo`, `tau.vcs.landing`), not the
+  (`heiko.vcs.tool`, `heiko.vcs.undo`, `heiko.vcs.landing`), not the
   description.
 
 ## Scoping rules
@@ -278,14 +278,14 @@ person's own `jj` commands from its own in the operation log:
   untracked remote bookmarks and tags (the internal `git` remote left
   out); the person's `revset-aliases` can say otherwise. A `trunk()`
   that names something the repository lacks, as a bookmark it does not
-  have, is `root()` instead, as jj makes it after warning; tau has no
+  have, is `root()` instead, as jj makes it after warning; heiko has no
   one to warn. One that does not parse fails the tools that read it. A write tool fails with
   `The working-copy commit <id> is immutable` when `@` is one of them,
   and one that cannot read `immutable_heads()` fails naming it.
 - **Tagged operations.** Each write is one operation, described as
-  `tau: vcs_<tool>`. It carries the workspace name, `tau.op` (as every
-  operation tau writes, see "Tagged operations"), and the operation
-  attribute `tau.vcs.tool = <tool>`. `vcs_undo` uses these tags, never
+  `heiko: vcs_<tool>`. It carries the workspace name, `heiko.op` (as every
+  operation heiko writes, see "Tagged operations"), and the operation
+  attribute `heiko.vcs.tool = <tool>`. `vcs_undo` uses these tags, never
   the description.
 - **New files are tracked as jj would track them.** The snapshot
   takes jj's snapshot options from the config, as the jj CLI does (see
@@ -303,7 +303,7 @@ person's own `jj` commands from its own in the operation log:
   first moves the files to the rewritten commit, as jj's
   `workspace update-stale` does, with what was edited on disk since the
   last snapshot merged on top, as a rebase would: an edit to a file the
-  rewrite changed too becomes a conflict. tau-vcs never forks the
+  rewrite changed too becomes a conflict. heiko-vcs never forks the
   operation log itself (see "Threading"). Another program can, as a
   `jj` command run by hand can. When that leaves the working copy on an
   operation the repository's head does not descend from, or leaves
@@ -453,7 +453,7 @@ A changed path is a `FileChange`:
 (…). Commit your work with vcs_commit first.`), and otherwise returns
   `{ "proposed": true, "head": <@'s parent> }` for the host, which
   shows the person what would land and waits for them to confirm.
-- tau-ui opens the landing card once the run stops, if a `vcs_land`
+- heiko-ui opens the landing card once the run stops, if a `vcs_land`
   went through during it: one the model called, or one a tool called
   through the loop at any depth, such as a codemode script's
   (`RunView::proposes_landing`). It knows a nested one from its
@@ -503,7 +503,7 @@ A changed path is a `FileChange`:
   what the host does in this workspace: a turn's checkpoint, a
   catch-up with trunk (`Vcs::move_onto`) or a landing (`Vcs::land`).
   So a run never undoes work that it did not do.
-- The undo records `tau.vcs.undo = <operation id>` on its own
+- The undo records `heiko.vcs.undo = <operation id>` on its own
   operation.
 - Details: `operation` (the id that was undone), `tool`,
   `working_copy`.
@@ -546,8 +546,8 @@ model gave it, and the real message puts it in backquotes.
 
 ## Projects
 
-A `Project` is a repository tau owns, in a directory of its own
-(the host uses `$XDG_DATA_HOME/tau/repos/github/<owner>/<name>/` for a
+A `Project` is a repository heiko owns, in a directory of its own
+(the host uses `$XDG_DATA_HOME/heiko/repos/github/<owner>/<name>/` for a
 clone from GitHub). Runs never work in
 the user's checkout.
 
@@ -558,28 +558,28 @@ the user's checkout.
 
 A `Layout` says where these are (`ProjectRepo::layout`): the
 repository's directory, the runs' directory, and the main chat's
-workspace, its name and directory. A project tau owns has the layout
+workspace, its name and directory. A project heiko owns has the layout
 above (`Layout::of_clone`): the repository's directory is the main
 chat's. A local repository (`Layout::local`, `local` set) is the
-person's folder, with the main chat's workspace and the runs' in tau's
+person's folder, with the main chat's workspace and the runs' in heiko's
 data directory, where the caller says (see "Setting up a local
 repository").
 
-The main chat works in a workspace of its own, `tau-main`
+The main chat works in a workspace of its own, `heiko-main`
 (`MAIN_WORKSPACE`, `ProjectRepo::main_workspace`, `main_dir`). jj's
-`default` workspace is never tau's (ADR 0043): a new project has none.
-Where `tau-main` is taken, `main_workspace_name` picks `tau-main-<n>`,
+`default` workspace is never heiko's (ADR 0043): a new project has none.
+Where `heiko-main` is taken, `main_workspace_name` picks `heiko-main-<n>`,
 the smallest `n` from 2 that is free; a project then keeps the name its
 main directory's working copy has.
 
 A project made before had its main chat in `default`, in `main/`.
-Opening it renames that workspace, as `jj workspace rename tau-main`
+Opening it renames that workspace, as `jj workspace rename heiko-main`
 would in `main/` (jj-cli 0.46.0's `commands/workspace/rename.rs`):
-under tau's lock, jj's Git import/export lock and the working copy's
+under heiko's lock, jj's Git import/export lock and the working copy's
 lock, the workspace store first, then the view, in one operation
-(`tau: name the main chat's workspace`), then the working copy. The
+(`heiko: name the main chat's workspace`), then the working copy. The
 working-copy commit, the files in `main/`, Git's `HEAD` and index
-there, and `.jj/tau-moved-onto` stay as they were: the operation moves
+there, and `.jj/heiko-moved-onto` stay as they were: the operation moves
 no working copy, so it resets neither `HEAD` nor the index. Each step
 is skipped once done, so a rename cut off between steps is finished by
 the next open: it applies while the working copy in `main/` names
@@ -595,7 +595,7 @@ one the workspace store gives `main/`.
   `refs/remotes/origin/HEAD` names its default branch. `origin` holds
   upstream's URL (or, for a local source, its path) and no fetch
   refspec.
-- Every operation tau writes exports the bookmarks and tags to Git's
+- Every operation heiko writes exports the bookmarks and tags to Git's
   `refs/heads/` and `refs/tags/`, and, when it moved the `@` of the
   workspace it was written in (a tool's, a snapshot's, the one
   `add_workspace` makes), points Git's `HEAD` there at `@-` and resets
@@ -605,18 +605,18 @@ one the workspace store gives `main/`.
   (a landing or a catch-up restacking the chats on the main chat's
   commits) leaves that workspace's `HEAD` where its files are, and the
   workspace's next tool, moving its stale files to the new commit,
-  moves `HEAD` too, in an operation of its own (`tau: reset git head`,
+  moves `HEAD` too, in an operation of its own (`heiko: reset git head`,
   a snapshot's kind, which `vcs_undo` passes over) when no snapshot
   goes with it, as `jj workspace update-stale` does. A workspace
   renamed in the operation did not move. `git status` in `main/` and
   in each run's workspace shows `@`'s changes, and `git ls-files` lists
   `@`'s new files, which nix flakes need.
-- Runs' heads are Git refs, `refs/tau/runs/<run id>`, never branches or
+- Runs' heads are Git refs, `refs/heiko/runs/<run id>`, never branches or
   bookmarks: `git branch -a` and `jj bookmark list` do not show them
   (see "Run heads").
 - Each run's workspace is also a Git worktree of `main/.git`, so `git`,
   nix flakes and build scripts that ask Git work in it (ADR 0043). jj
-  0.46.0's `git::create_worktree` runs `git worktree add`, so tau
+  0.46.0's `git::create_worktree` runs `git worktree add`, so heiko
   writes the files itself, laid out as Git's `gitrepository-layout`
   has them: `main/.git/worktrees/<id>/` with `gitdir` (the absolute
   path of the workspace's `.git`), `commondir` (`../..`) and `HEAD`,
@@ -631,21 +631,21 @@ one the workspace store gives `main/`.
   adds the workspace points it at `@-`; they write `.jj/.gitignore`
   there too. The jj CLI finds the workspace colocated
   (`jj git colocation status`), and its export, which detaches every worktree's
-  `HEAD` on a branch it moves, finds tau's detached already.
+  `HEAD` on a branch it moves, finds heiko's detached already.
 - A run workspace that is not a whole worktree (one made before runs
   had them, one whose making was cut off, one whose worktree the person
   removed) is made one again when the project opens and when
   `add_workspace` opens it again: the files it lacks are written, a
   worktree folder that names the workspace is used again, `HEAD`
   becomes the parent of the commit the workspace's files are at, and
-  the index follows, in one `tau: reset git head` operation when the
+  the index follows, in one `heiko: reset git head` operation when the
   view's record of that `HEAD` changes. The workspace in the Git
   store's own working tree is never linked: a clone's main chat's, a
   local repository's `default`. `forget_workspace` removes the
   worktree folders that name that workspace, and its `.git`, never
   another's: unlike `git worktree prune`, which jj's `unlink_worktree`
   runs, it leaves alone a worktree whose folder is gone. The person's
-  `git worktree prune` keeps tau's, whose folders exist.
+  `git worktree prune` keeps heiko's, whose folders exist.
 
 - `Project::clone(url, token, root, identity)` makes the project at
   `root` by fetching every branch and tag of `url` with gix, as
@@ -663,7 +663,7 @@ one the workspace store gives `main/`.
   default branch. jj 0.46.0 refuses to clone when the person's own
   `trunk()` names a remote bookmark: it resolves `immutable_heads()`
   in the still-empty repository, without the fallback to `root()` its
-  other commands have. tau clones, and falls back as those commands
+  other commands have. heiko clones, and falls back as those commands
   do.
 - `Project::open_or_import(source, root, identity)` opens the project at
   `root`, or makes it from the local repository at `source` (a checkout,
@@ -693,14 +693,14 @@ one the workspace store gives `main/`.
   since the caller read it, as the main chat's catch-up rewrites its
   commits, the workspace starts on the commit `base`'s change names
   now, so the old commit does not come back beside the new one. It is
-  one operation, `tau: add workspace <name>`, after the workspace's
+  one operation, `heiko: add workspace <name>`, after the workspace's
   Git worktree is made. `forget_workspace(name)` removes it as
   `jj workspace remove` does: it drops it from the view, then from the
   workspace store (`.jj/repo/workspace_store`), then its Git worktree,
   then deletes the directory; its commits stay. (`jj workspace forget`
-  keeps the store's entry, for `jj undo`; tau deletes the directory,
+  keeps the store's entry, for `jj undo`; heiko deletes the directory,
   so there is nothing to point back at.)
-- A run's workspace is one tau made: the workspace store has it in its
+- A run's workspace is one heiko made: the workspace store has it in its
   directory under `runs/`. `workspaces()` lists those, and only those:
   never the main chat's, and never one the person made with
   `jj workspace add`, wherever they put it. `forget_workspace` leaves the
@@ -711,7 +711,7 @@ one the workspace store gives `main/`.
 ## Inspecting a folder
 
 Before a folder on this computer becomes a local repository
-(ADR 0043), `local::inspect(path, identity)` says what tau found there,
+(ADR 0043), `local::inspect(path, identity)` says what heiko found there,
 or why it refuses the folder (`local::Refusal`) and what to add
 instead. It only reads, with gix, and with jj-lib for a jj repository:
 nothing in the folder changes, not even Git's index, which `git
@@ -726,7 +726,7 @@ The checks run in this order, and the first that holds is the answer:
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `Missing`, `NotAFolder`         | The path is not there, or is a file.                                                                                               |
 | `Unreadable { path, reason }`   | The folder, its repository or its jj config could not be read.                                                                     |
-| `NotARepository`                | No Git or jj repository holds the folder. tau does not offer to make one.                                                          |
+| `NotARepository`                | No Git or jj repository holds the folder. heiko does not offer to make one.                                                          |
 | `Bare`                          | The folder is a bare repository, or inside one.                                                                                    |
 | `Worktree { main }`             | A linked Git worktree, or a jj workspace other than the repository's own; `main` is the main checkout (none when it is bare).      |
 | `Inside { root }`               | A folder inside a repository, `.git` included; `root` is the repository's folder.                                                  |
@@ -749,7 +749,7 @@ Otherwise it returns `Found`:
 - `branch`: the checked-out branch, one with no commits yet included;
   none when `HEAD` is detached, as it is in a colocated jj repository.
 - `origin`: `remote.origin.url`. The forge's plugin says which of its
-  repositories it names (`Forge::repository_of`): tau-github takes an
+  repositories it names (`Forge::repository_of`): heiko-github takes an
   HTTPS, HTTP, `git://` or SSH URL, or `user@host:owner/name`, on
   `github.com` (`www.` and `ssh.` too), with or without `.git`.
 - `commits`: how many commits `HEAD` reaches.
@@ -758,7 +758,7 @@ Otherwise it returns `Found`:
   (one holding nothing tracked) as one path ending in `/`. Ignored
   files are left out. gix's own collapsing takes a folder whose
   tracked files are all deleted for untracked, which git does not, so
-  tau collapses the untracked files itself.
+  heiko collapses the untracked files itself.
 - `trunk`: the branch `origin/HEAD` names, when it exists; else, in a
   jj repository, the first bookmark by name (local, or on a remote
   other than Git) at the commit `trunk()` names, when that is not the
@@ -772,28 +772,28 @@ Otherwise it returns `Found`:
 (`ProjectRepo::setup_local`) sets jj up in the folder `local::inspect`
 found, where it is, colocated with its `.git` (ADR 0043). `layout` is
 `Layout::local(folder, main_dir, runs_dir)`: the caller picks both
-directories in tau's data directory; `local::runs_dir_name(parent,
+directories in heiko's data directory; `local::runs_dir_name(parent,
 folder)` names the runs' directory after the folder, made unique, and
 the setup records the name, which is never made again from the folder.
 `progress` hears of each step (`local::Step`) before it starts, and
 breaking stops the setup (`SetupStopped`).
 
 In a Git repository the steps are `jj git init --colocate`'s there
-(jj-cli 0.46.0's `commands/git/init.rs`), each a `tau: …` operation:
+(jj-cli 0.46.0's `commands/git/init.rs`), each a `heiko: …` operation:
 
 | Step         | What it does                                                                                                                                                                                                                                                   |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ImportRefs` | jj's repository on the folder's `.git` (`init_external_git`), `.jj/.gitignore`, `default` on the root commit, and Git's branches and tags imported with nothing abandoned and the person's `auto-track-bookmarks` (`tau: import git refs`).                    |
-| `Snapshot`   | Git's `HEAD` imported and `default`'s `@` made a new commit on it, its working copy reset with no file written (`tau: import git head`); the files snapshotted with the person's snapshot settings; Git's refs imported again; the `trunk()` alias written.    |
-| `Workspace`  | The main chat's workspace, `main_workspace_name` over the names the repository has, made as a run's is: a Git worktree of the folder's `.git` at `main_dir`, then the jj workspace on a new commit on the root (`tau: add workspace <name>`), after an import. |
-| `Record`     | tau's state, `.jj/repo/tau/state.json` (`local::State`): `repo_id` (a new UUID, kept when the file was there), `main_workspace`, `runs_dir`, the runs' directory's name, and `trunk`, trunk's branch (below).                                                  |
+| `ImportRefs` | jj's repository on the folder's `.git` (`init_external_git`), `.jj/.gitignore`, `default` on the root commit, and Git's branches and tags imported with nothing abandoned and the person's `auto-track-bookmarks` (`heiko: import git refs`).                    |
+| `Snapshot`   | Git's `HEAD` imported and `default`'s `@` made a new commit on it, its working copy reset with no file written (`heiko: import git head`); the files snapshotted with the person's snapshot settings; Git's refs imported again; the `trunk()` alias written.    |
+| `Workspace`  | The main chat's workspace, `main_workspace_name` over the names the repository has, made as a run's is: a Git worktree of the folder's `.git` at `main_dir`, then the jj workspace on a new commit on the root (`heiko: add workspace <name>`), after an import. |
+| `Record`     | heiko's state, `.jj/repo/heiko/state.json` (`local::State`): `repo_id` (a new UUID, kept when the file was there), `main_workspace`, `runs_dir`, the runs' directory's name, and `trunk`, trunk's branch (below).                                                  |
 
-- Unlike `jj git init`, tau never moves Git's `HEAD` or index in the
+- Unlike `jj git init`, heiko never moves Git's `HEAD` or index in the
   folder (ADR 0043, decision 1): the CLI resets the index after its
-  snapshot, tau leaves it as it was. `HEAD` stays symbolic: the view
+  snapshot, heiko leaves it as it was. `HEAD` stays symbolic: the view
   records it for `default`, so the person's next `jj` command finds it
-  imported, as after `jj git init`. tau's own workspaces are worktrees,
-  where `HEAD` and the index follow tau's working copies as in a clone;
+  imported, as after `jj git init`. heiko's own workspaces are worktrees,
+  where `HEAD` and the index follow heiko's working copies as in a clone;
   `crate::colocate` never resets them in a local repository's main
   working tree, whatever writes there.
 - With the person's `remotes.origin.auto-track-bookmarks`, the import
@@ -808,20 +808,20 @@ In a Git repository the steps are `jj git init --colocate`'s there
 - A folder that is a colocated jj repository already keeps its
   repository as it is: Git's refs are imported (with the person's
   settings, as their next `jj` command would), no snapshot of their
-  `default`, no alias, then the main chat's workspace and tau's state.
+  `default`, no alias, then the main chat's workspace and heiko's state.
 - After setup, each tool's snapshot in a local repository imports Git's
-  refs after it, as the jj CLI does (`tau: import git refs`, written in
+  refs after it, as the jj CLI does (`heiko: import git refs`, written in
   the tool's workspace, whose files move when the import rebased its
   `@`), and each `ProjectRepo` write imports them before it, with the
   person's `git.abandon-unreachable-commits`,
   `git.record-synthetic-predecessors` and `auto-track-bookmarks`; what
   stood on commits Git rewrote or abandoned is rebased unless it is
   immutable (jj-cli's `rebase_mutable_descendants`). A commit the
-  person amends with `git commit --amend` after tau imported it is
-  abandoned when their setting says so, and what tau stood on it moves
+  person amends with `git commit --amend` after heiko imported it is
+  abandoned when their setting says so, and what heiko stood on it moves
   to its parent; with the setting off it stays. Git's amend keeps the
   change id jj wrote in a commit's header, so an amended commit of
-  tau's, kept, is one change twice, divergent, and tau refuses to move
+  heiko's, kept, is one change twice, divergent, and heiko refuses to move
   onto it. Exports detach `HEAD` on its commit before moving the
   branch it names, as jj's do (`check_and_detach_head`).
 - Trunk's branch is chosen once, at the `Record` step, and kept in
@@ -837,7 +837,7 @@ In a Git repository the steps are `jj git init --colocate`'s there
   moves it onto trunk (`Vcs::move_onto`, as before each of its turns).
 - `ProjectRepo::open_local(layout, identity)` opens it again, with the
   main chat's workspace `state.json` names (`NotSetUp` without one),
-  making tau's workspaces whole worktrees where they are not.
+  making heiko's workspaces whole worktrees where they are not.
 - A local `ProjectRepo`'s `root()` is the person's folder: a caller
   that keeps files of its own per project keeps them elsewhere.
 
@@ -848,7 +848,7 @@ index, config and files are as before:
 - `.jj`, when the setup made it, with the repository config directory
   jj-lib's `SecureConfig` made for it (`remove_repo_config_dir`) and
   the folders above it it made; in a jj repository of the person's,
-  its operation heads, its workspace store and `.jj/repo/tau` as they
+  its operation heads, its workspace store and `.jj/repo/heiko` as they
   were;
 - the refs it made: jj's under `refs/jj/`, and the branches and tags
   its exports made for bookmarks an import created (the person's
@@ -861,50 +861,50 @@ Objects it wrote may stay in `.git/objects` as unreachable loose
 objects until Git collects them, and in a jj repository of the
 person's, the operations, index files and commit metadata it wrote stay
 in jj's content-addressed stores (`op_store`, `index`, `store/extra`),
-which no operation head reaches. Every `.jj` tau makes (a setup's, a
-project's, a run's workspace's) appears whole with `.jj/tau-making` and
+which no operation head reaches. Every `.jj` heiko makes (a setup's, a
+project's, a run's workspace's) appears whole with `.jj/heiko-making` and
 its `.gitignore` in it, made aside and renamed into place, and loses
 the mark as its maker's last step; one taken away is renamed aside
 first, so no `.jj` is left without its mark half deleted. A `.jj` that
 has the mark is one a crash cut off: a project whose `main/.jj` has it
 is not a project, and is made again; a run's workspace with it is made
 again on its next add. A setup keeps a journal of what it did in the
-Git store, `.git/tau-setup.json`, written whole before each thing it
+Git store, `.git/heiko-setup.json`, written whole before each thing it
 notes is done: what the folder had (refs, reflogs, `HEAD`, the person's
 operation heads and workspace store), what its exports will make or
-move, and the `.jj` and tau folder it is about to make. A setup cut off
-by a crash leaves it, and `.jj/tau-making` or `.jj/repo/tau/making` in
+move, and the `.jj` and heiko folder it is about to make. A setup cut off
+by a crash leaves it, and `.jj/heiko-making` or `.jj/repo/heiko/making` in
 a `.jj` it made (`local::unfinished`): inspecting the folder sees the
 Git repository it was, and the next setup undoes the cut-off one from
 its journal, as a failed setup undoes itself, in a jj repository of the
 person's too, then starts again. One cut off after it ended well, while
 it took its marks off, is finished instead. Undo is safe to cut off and
-run again: the person's operation heads go back before tau's go, and
+run again: the person's operation heads go back before heiko's go, and
 what it writes back it writes whole. The checks are in
 `tests/local_setup.rs`.
 
 ## Local repositories in the host
 
-tau-ui's `Host::add_local(folder, progress)` adds a folder on this
+heiko-ui's `Host::add_local(folder, progress)` adds a folder on this
 computer as a local repository (ADR 0043). It inspects the folder (a
 refusal comes back as `NotAdded::Refused`, with what to add instead; a
 folder listed already as `NotAdded::Listed`; one the person removed
 from the list is listed again as it was), sets jj up in it with
-`Project::setup_local` under tau's own directory for it
+`Project::setup_local` under heiko's own directory for it
 (`HostConfig::local_dir`: `main/`, the main chat's workspace, and
 `runs/`, the runs'), lists it in `repos.json` with its `Local` entry
 (the folder, those two directories, the main chat's workspace's name,
 where pushes go, and the untracked paths linked into each run's
 workspace), makes its main chat, and moves the main chat's workspace
 onto trunk. Pushes go to GitHub only when `origin` is GitHub's and
-tau's app can push to it; otherwise nowhere. When adding fails,
+heiko's app can push to it; otherwise nowhere. When adding fails,
 nothing is listed and the setup leaves the folder as it was.
 
 Started again, the host opens each listed local repository where it
-was set up (`Open::Local` through the `tau.vcs` slot, never
-`Project::open`, which would take the person's `tau/*` branches for
-run heads of tau's), with its main chat and its trunk, and fetches
-nothing for it. The checks are in tau-ui's `tests/local.rs`.
+was set up (`Open::Local` through the `heiko.vcs` slot, never
+`Project::open`, which would take the person's `heiko/*` branches for
+run heads of heiko's), with its main chat and its trunk, and fetches
+nothing for it. The checks are in heiko-ui's `tests/local.rs`.
 
 ## Runs and turns
 
@@ -922,7 +922,7 @@ run's coding tools at `RunWorkspace::dir()`, and give `VcsPlugin` its
   head (see "Run heads"), `Head::Run`, at the run's newest commit (`@`'s
   parent): the workspace is the run's from then on, and the run's work
   stays findable after its workspace is gone. Then it stores a `Link` record under the plugin
-  name `tau-vcs`:
+  name `heiko-vcs`:
 
   ```json
   {
@@ -951,10 +951,10 @@ run's coding tools at `RunWorkspace::dir()`, and give `VcsPlugin` its
   catch-up brought by restacking the commit the run stands on, is not
   the turn's. Nothing else is followed: the run's own commits, undos and
   recommits are the turn's work. A confirmed landing tags its operation
-  with the change ids it landed (`tau.vcs.landed`), and a catch-up
+  with the change ids it landed (`heiko.vcs.landed`), and a catch-up
   (`Vcs::move_onto`, or the step a run's commit, turn end or landing
   takes after an update) with the commit it moved onto
-  (`tau.vcs.caught_up`). The turn walks the operation log back to its
+  (`heiko.vcs.caught_up`). The turn walks the operation log back to its
   snapshot, and for each tagged operation applies the change of the
   run's newest commit (its working copy's parent) from before to after
   it, whichever workspace made it: a catch-up of the main chat moves
@@ -967,13 +967,13 @@ run's coding tools at `RunWorkspace::dir()`, and give `VcsPlugin` its
   `@`, they are committed (`Vcs::commit_all`), with a message the run's
   model writes from the diff and the run's task (its own input, not the
   first message of a transcript it forked): one short `PluginCtx::ask`.
-  tau never writes a commit message itself. An empty or failed answer,
+  heiko never writes a commit message itself. An empty or failed answer,
   a failed commit, or oversized untracked files leave the work uncommitted
   and record a finalization error. A delegating caller verifies the native
   working copy before handing it off; manual landing also refuses
   remaining edits. A failed or cancelled run keeps its work as it is.
 - **Forking at a turn**: read the run's links with
-  `Store::plugin_entries(run, "tau-vcs")`, take the `seq` of the
+  `Store::plugin_entries(run, "heiko-vcs")`, take the `seq` of the
   turn's link, and fork with `Checkpoint::at(run, seq)` and a new
   `RunWorkspace`. The fork inherits the transcript and links up to that
   turn, and `Project::add_workspace_from_snapshot` starts it on a new
@@ -990,10 +990,10 @@ run's coding tools at `RunWorkspace::dir()`, and give `VcsPlugin` its
 
 ## Run heads
 
-A run's newest commit is its head, a `tau_vcs_host::Head`:
+A run's newest commit is its head, a `heiko_vcs_host::Head`:
 `Head::Run(run id)` for a run's own, `Head::Branch(name)` for a branch
 a run moves instead, as the main chat moves trunk's. Everything that
-moves or reads a head goes through `tau_vcs_host::heads`:
+moves or reads a head goes through `heiko_vcs_host::heads`:
 
 - In a job: `commit_all`, `end_turn`, `move_onto` and `land` take the
   head to point (`impl Into<Head>`; a name is a branch), and a step
@@ -1013,18 +1013,18 @@ would be one of their branches. Instead:
 - While the run's workspace exists, its head is that workspace's `@-`
   (none while that is the root commit). The first point of a run's head
   (a turn's end, a final commit, a landing on it, a catch-up) records
-  that the workspace is the run's: the file `.jj/tau-run` in the
+  that the workspace is the run's: the file `.jj/heiko-run` in the
   workspace names the run, and goes with the workspace's directory.
   From then on the head moves with `@-`: the model's `vcs_commit`, a
   rewrite from another workspace, and `vcs_undo`, which moves `@` back
   with the view, all move it.
-- After each operation tau writes (`colocate::commit`, under the
+- After each operation heiko writes (`colocate::commit`, under the
   repository's lock and jj's import/export lock), and after a tool
-  call that wrote none, tau writes the Git ref
-  `refs/tau/runs/<run id>` with gix at that commit. `git branch -a`,
+  call that wrote none, heiko writes the Git ref
+  `refs/heiko/runs/<run id>` with gix at that commit. `git branch -a`,
   `git push --all` and `jj bookmark list --all-remotes` never show it,
-  and jj's import (tau's, or the person's `jj git import`) leaves
-  `refs/tau/` alone, so it never becomes a bookmark. The ref also keeps
+  and jj's import (heiko's, or the person's `jj git import`) leaves
+  `refs/heiko/` alone, so it never becomes a bookmark. The ref also keeps
   the commit from Git's garbage collection, but jj does not count it:
   with no bookmark on them, a run's commits are abandoned by an import
   with `git.abandon-unreachable-commits` (the person's `jj git fetch`)
@@ -1043,12 +1043,12 @@ would be one of their branches. Instead:
 - `ProjectRepo::run_heads` lists the runs with a ref or a workspace
   that is theirs; `remove_head` deletes the ref and the workspace's
   record with no jj operation.
-- A project from before kept runs' heads as `tau/<run id>` bookmarks.
-  Opening it (`ProjectRepo::open`) moves each local `tau/<run id>`
+- A project from before kept runs' heads as `heiko/<run id>` bookmarks.
+  Opening it (`ProjectRepo::open`) moves each local `heiko/<run id>`
   bookmark with no remote of that name (a pull request's branch fetched
   back has one, and stays) to its ref, at the same commit, and removes
-  the bookmark, with the `refs/heads/tau/<run id>` jj exported for it,
-  in one operation, `tau: move run heads to refs/tau`. The refs are
+  the bookmark, with the `refs/heads/heiko/<run id>` jj exported for it,
+  in one operation, `heiko: move run heads to refs/heiko`. The refs are
   written before the operation, from the bookmarks it has not removed
   yet, so an open cut off between the steps is finished by the next. A
   bookmark with conflicting commits named no head, and goes with no
@@ -1087,10 +1087,10 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
   child, so forks, the compare view and pull requests read them as the
   parent's own. Then it closes the child: its workspace is forgotten
   and its head removed. Both runs must be idle.
-- `Host::land` survives tau closing at any step. It first stores a
+- `Host::land` survives heiko closing at any step. It first stores a
   `landing-intent` record in the parent (the child, its head, both
   workspaces). The restack is one jj operation, which records what it
-  did under the attribute `tau.vcs.landing` (`{ child_head, landing }`),
+  did under the attribute `heiko.vcs.landing` (`{ child_head, landing }`),
   so `Project::landed(child_head)` reads the `Landing` back from the
   operation log (the newest `LANDING_LOOKBACK` operations). The links
   and the `landing` record go in one store write; forgetting the
@@ -1099,7 +1099,7 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
   At start, `Host::recover` finishes each intent with no `landing`
   record: a restack the operations show done is recorded, and the
   child closed; one not done lands now. Their records say `recovered`,
-  and the parent's card says tau finished the landing at start. A
+  and the parent's card says heiko finished the landing at start. A
   landing whose record was stored is done but for the child's
   workspace and head, which the sweep takes. A host test cuts a
   landing off after each step (`Host::cut_landing_after`) and checks
@@ -1113,7 +1113,7 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
   `Host::land` catches a main chat up first too, and reads the child's
   head after, since the catch-up restacks the child.
   The operation log keeps what was abandoned. It stores a `dropped`
-  record on the child first, so a drop cut off by tau closing still
+  record on the child first, so a drop cut off by heiko closing still
   counts.
 - A chat that landed (its parent holds a `landing` record from it, or
   links whose `from` names it) or was dropped (it holds a `dropped`
@@ -1141,7 +1141,7 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
   (`Host::preview_landing` keeps it), or, for a chat queued already,
   what its last preview in the queue found.
 - `queue::drain` lands what may land: never while main runs, while
-  tau's resolving turn is about to start, or while main is marked
+  heiko's resolving turn is about to start, or while main is marked
   conflicted. It reads main's stack first (`Host::main_conflicts`:
   catch up, then `Vcs::conflicts`), then previews the first chat again.
   Clean, or conflicting only in confirmed files, it lands through
@@ -1155,7 +1155,7 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
 - A preview works while main runs: it reads main as it is, without
   catching it up or making workspaces. `Host::land` holds the start
   lock, so no turn of main starts in the middle of a landing.
-- tau's resolving turn (`Host::start_resolving`) gets a plugin that
+- heiko's resolving turn (`Host::start_resolving`) gets a plugin that
   holds its stop once while main's working copy still has conflicts:
   `Conflicts remain in a.rs, b.rs. Resolve them and commit.` A main turn
   that ends with conflicts marks main (`Record::Conflicted`), and the
@@ -1163,7 +1163,7 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
   marked, nothing lands on main, and `Host::start` and `Host::fork`
   refuse with `main has conflicts in a.rs; resolve them first`. The mark
   goes once main's stack is clean, checked at each turn end of main and
-  each drain. Resolve again starts tau's turn again with the last
+  each drain. Resolve again starts heiko's turn again with the last
   resolving message; "I'll write to main" stores `dismissed`, which
   hides the card and keeps the mark.
 - The interface shows the queue and the mark on the main chat's view
@@ -1189,11 +1189,11 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
 
 Nothing cleans a run's workspace and head once the process that ran
 it is gone: a sub-agent cut off mid-call, a chat whose landing or drop
-tau closed in the middle of, a workspace whose run never reached the
+heiko closed in the middle of, a workspace whose run never reached the
 store. Left there, they take disk space, and the main chat's catch-ups
 restack their commits every time.
 
-`tau_vcs_host::sweep::plan(owners, workspaces, heads)` is the rule, a
+`heiko_vcs_host::sweep::plan(owners, workspaces, heads)` is the rule, a
 pure function. Each `Owner` is a run with the workspaces it worked in
 and its `Standing`:
 
@@ -1233,7 +1233,7 @@ its own, moved onto the root commit (upstream deleted every trunk
 branch), has none, and the head names nothing: no head names the root
 commit. The run's changes are
 what `@` has that neither trunk nor the commit the workspace last moved
-onto has. The workspace records that commit (in `.jj/tau-moved-onto`)
+onto has. The workspace records that commit (in `.jj/heiko-moved-onto`)
 with each move, unless it was one of the run's own commits: written
 whole, before the move's operation stands, as what it says holds
 either way, so a crash between the two never loses it. So
@@ -1248,7 +1248,7 @@ below).
 ## A repository's main chat
 
 Each repository has a main chat, a top-level run that every other chat
-forks from. It works in the main workspace, `tau-main` in `main/`
+forks from. It works in the main workspace, `heiko-main` in `main/`
 (`Project::main_workspace`, `main_dir`), never in one of a run's, and
 `forget_workspace` never removes it. It commits on trunk: its
 `RunWorkspace` is built with `commits_to(project.trunk_name())`, so its
@@ -1301,12 +1301,12 @@ orchestrates: each of its runs starts with context that says to split
 the request into tasks, spawn a sub-agent for each, and end its turn
 while they work. Nothing waits for a sub-agent. A caller's
 sub-agents live in a `SubAgents`, which outlives the caller's turns:
-tau-ui keeps one per repository's main chat, which sends the
+heiko-ui keeps one per repository's main chat, which sends the
 sub-agents' events on with the host's own. `Spawn` is built per run on
 the run's `RunWorkspace` and the caller's `SubAgents`.
 `Spawn` also takes the model ids a call may pick from and a closure
 that builds the sub-agent's `Agent` around the sub-agent's own
-`RunWorkspace` on the `ChildModel` its call asked for. tau-ui builds it
+`RunWorkspace` on the `ChildModel` its call asked for. heiko-ui builds it
 on the model and effort asked for, or the caller's, and refuses an
 effort the model does not take.
 
@@ -1314,7 +1314,7 @@ effort the model does not take.
    committed (ADR 0014): with changes in its `@`, it refuses and says to
    commit with `vcs_commit` first. With `MAX_RUNNING` (8) running
    already, it refuses and says to end the turn and spawn again when
-   tau reports one. The sub-agent's
+   heiko reports one. The sub-agent's
    workspace, `<caller's workspace>-sub-<12 random hex digits>`, so that
    no process reuses one an earlier one left, starts on the caller's
    newest commit (`RunWorkspace::with_base`), so it sees the caller's
@@ -1339,9 +1339,9 @@ effort the model does not take.
    and its workspace and head go. One spawned with `land: false`
    that finished is `Ending::Kept` instead of `Done`: its workspace
    closes, its commits stay under its head, the ref
-   `refs/tau/runs/<run id>` now, and the ending lists its
+   `refs/heiko/runs/<run id>` now, and the ending lists its
    own changes (`ProjectRepo::changes_between` its base and its head).
-4. tau-ui takes each ended sub-agent (`SubAgents::take`) and queues it
+4. heiko-ui takes each ended sub-agent (`SubAgents::take`) and queues it
    on the main chat's landing queue (ADR 0024) with how it ended
    (`Waiting::sub_agent`). It lands whatever it conflicts in. A drain
    lands queued sub-agents one after another, and reports one with
@@ -1349,7 +1349,7 @@ effort the model does not take.
    A kept one is recorded as dropped as it is queued, so the next
    start's sweep abandons its commits; until then its report names its
    changes (`kept_note`), for main to read with `vcs_show` and take
-   files from with `vcs_restore` `from`; after the drain, tau starts main's turn with each
+   files from with `vcs_restore` `from`; after the drain, heiko starts main's turn with each
    sub-agent's title, answer and landing note, which starts by saying
    which limit stopped it, if one did (`It stopped at its turn limit.`),
    and the conflicts to resolve, if any. The turn tells main to check
@@ -1363,7 +1363,7 @@ Behavioral properties and replay instructions are in
 
 A landed sub-agent records its links on main as a chat's landing does.
 A call a tool makes through the loop, such as a codemode script's, is
-a call like the model's: in tau-ui a `spawn` it makes gets a chat on
+a call like the model's: in heiko-ui a `spawn` it makes gets a chat on
 its task (`RunView::call` finds a nested call while the model's call
 runs).
 
@@ -1372,7 +1372,7 @@ runs).
 [ADR 0023](../decisions/0023-main-pushes-with-git-chat-prs-replay-onto-origin.md).
 A project pushes to the repository it was cloned from with jj-lib's
 `push_updates`, which runs `git push` on the project's Git store. This
-is the one place tau runs `git`; the Nix package puts it on `tau-ui`'s
+is the one place heiko runs `git`; the Nix package puts it on `heiko-ui`'s
 `PATH`, and `git.executable-path` in the person's jj config names
 another, as for jj. `Remote { url, token }` says where:
 
@@ -1380,7 +1380,7 @@ another, as for jj. `Remote { url, token }` says where:
   `GIT_CONFIG_COUNT` sets `credential.helper` to an empty value, which
   drops the person's own helpers so none stores the token, then to a
   shell helper that answers `get` with `x-access-token` and
-  `$TAU_GIT_TOKEN`. `GIT_TERMINAL_PROMPT=0` keeps `git` from asking.
+  `$HEIKO_GIT_TOKEN`. `GIT_TERMINAL_PROMPT=0` keeps `git` from asking.
   The token is never written to a file or put on a command line.
 - The Git store's `origin` is rewritten before each push to hold the
   URL and nothing else. Without a fetch refspec, `git push` writes no
@@ -1476,7 +1476,7 @@ The main chat has no pull request: it pushes.
 
 These operations change shared state, use the network, or throw work
 away. The model does not get them. The host calls jj-lib (or later
-`tau-vcs` APIs) for them when the user asks
+`heiko-vcs` APIs) for them when the user asks
 ([jj-lib.md](../research/jj-lib.md), "Operations the user triggers from
 the UI"):
 

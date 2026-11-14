@@ -18,7 +18,7 @@ sub-agents one kind of run, a child, whose changes land on its
 parent's stack by restacking. Three things in it do not hold up:
 
 - **A commit per turn.** `RunWorkspace` commits whatever each turn
-  changed, as `tau: run <id> turn <n>`. A turn is when the model
+  changed, as `heiko: run <id> turn <n>`. A turn is when the model
   stopped talking, not a unit of work: one change can take five turns,
   and one turn can make three unrelated changes. Landed children bring
   every turn along, so a parent with a few children gets a tall stack
@@ -59,15 +59,15 @@ keeps its change id.
   The tool exists already; its description says so, and the system
   prompt says that commits are how the run's work is seen and landed.
 - **Every message is written by a model.** Commits carry what a
-  reviewer reads, so tau never describes one itself: no
-  `tau: run <id> turn <n>`, and no run's answer pasted in as a
+  reviewer reads, so heiko never describes one itself: no
+  `heiko: run <id> turn <n>`, and no run's answer pasted in as a
   description.
 - **For sure at the end.** A run that would stop with uncommitted
-  changes is held once: tau-vcs keeps it going (as a plugin holds a
+  changes is held once: heiko-vcs keeps it going (as a plugin holds a
   stop now) with "Commit your work with `vcs_commit` before you
   finish." If it stops again with changes left (having finished, or
   reached a limit; a run that failed or was cancelled keeps its work as
-  it is), tau still commits them, so no work is left outside a change, but the message comes
+  it is), heiko still commits them, so no work is left outside a change, but the message comes
   from a model: one short call with the diff and the run's task, on
   the run's own model, asked for a Conventional Commits message. The
   call's cost is the run's.
@@ -93,7 +93,7 @@ id, and the old one stays in the operation log.
   whose parent is the snapshot's parent and whose files are the
   snapshot's. The fork's own commits then stack on that.
 - The operation log's snapshots must not be collected while a run
-  links to them. tau never runs `jj util gc`; a later decision can
+  links to them. heiko never runs `jj util gc`; a later decision can
   add a collection that keeps linked commits.
 
 ### Landing
@@ -111,14 +111,14 @@ id, and the old one stays in the operation log.
 ### Conflicts: the parent resolves, or the child for trunk
 
 - **When the parent is a run**, a landing that conflicts asks first,
-  as in 0009, and once confirmed, **tau starts the parent's next turn
+  as in 0009, and once confirmed, **heiko starts the parent's next turn
   itself**: "Landing `<child title>` left conflicts in `a.rs` and
   `b.rs`. Resolve them, and commit the resolution." The parent knows
   its own stack, and resolving is part of taking the child's work.
   The landing card shows that turn running.
 - **When the parent is trunk**, there is no model on that side. The
   session resolves instead: Merge first restacks the session onto
-  trunk's head. If that conflicts, tau starts the session's next turn
+  trunk's head. If that conflicts, heiko starts the session's next turn
   with the same message, and Merge finishes once that turn ends with
   no conflicts left. Then trunk's bookmark moves to the session's head,
   a fast-forward, and the session closes.
@@ -136,7 +136,7 @@ id, and the old one stays in the operation log.
   land, drawn as `vcs_log` draws changes, with any conflict flagged, and
   Land or Merge, or Cancel. A fork's card also waits in its parent's
   chat, as before.
-- **tau's own turn** shows in the chat as a message _started by tau_,
+- **heiko's own turn** shows in the chat as a message _started by heiko_,
   and a merge waiting on it says so in its card. A finished merge leaves
   a _merged into main_ card in the run's chat, and the run closes.
 
@@ -171,9 +171,9 @@ id, and the old one stays in the operation log.
 - `delegate` refuses with uncommitted changes, which costs the model a
   `vcs_commit` before delegating.
 - The host starts a turn on its own: the conflict-resolving turn,
-  after a landing or during a merge. It is the first turn tau starts
+  after a landing or during a merge. It is the first turn heiko starts
   that the person did not ask for.
-- tau-ui grows a Merge action on sessions, and a way to show that a
+- heiko-ui grows a Merge action on sessions, and a way to show that a
   landing or merge waits on a resolving turn.
 - A run whose model never commits still ends with one change, made at
   the end, with a message a model wrote from its diff.
@@ -190,5 +190,5 @@ id, and the old one stays in the operation log.
 3. The conflict-resolving turn after a confirmed landing.
 4. Sessions as children of trunk: Merge, with the session resolving.
 
-Sub-agents need nothing new: tau-ui's runs already `delegate`, and
+Sub-agents need nothing new: heiko-ui's runs already `delegate`, and
 their sub-agents already land as they return.

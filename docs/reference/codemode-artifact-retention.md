@@ -7,7 +7,7 @@ source, and observed source completeness. A failed publication reports its
 error. The model and card receive bounded output, not the complete artifact
 bytes. Command output is not published as an artifact.
 
-The run inspector lists the run's scoped grants from its serialized `tau-tools`
+The run inspector lists the run's scoped grants from its serialized `heiko-tools`
 state. Live record folding and reloaded record folding use the same serde
 state. A preview action names the run, artifact ID, byte offset, and UTF-8 or
 base64 encoding. The host resolves metadata from that run's persisted fork
@@ -31,7 +31,7 @@ is not called on startup or after a tool call. It holds the artifact
 publication lock while it enumerates every persisted run, validates each
 run's repository record and reachable fork parent, reads the original message
 bodies (including those hidden by later context rewrites), scans all original
-`tau-tools` grant records, and sweeps. Structured tool results, artifact grant
+`heiko-tools` grant records, and sweeps. Structured tool results, artifact grant
 records, and codemode return/store values containing artifact metadata can
 retain an object. The complete grant scan retains an original scoped grant
 even when a current card or script store no longer displays it. Any retained

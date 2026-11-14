@@ -1,7 +1,7 @@
-# Research: agent memory, for tau-memory
+# Research: agent memory, for heiko-memory
 
 - Status: decided 2026-09-29 (see Decisions); the plan is in
-  [plugins.md](../reference/plugins.md#tau-memory-a-zettelkasten)
+  [plugins.md](../reference/plugins.md#heiko-memory-a-zettelkasten)
 - Date: 2026-09-29
 - Checked against: Codex `codex-rs` at `6c49240`; akitaonrails/ai-memory
   at `0e560e3` (v2.4.1); letta-ai/letta-code at `2b95889` and letta
@@ -11,7 +11,7 @@
   and articles in `~/Notes/resources/ai-ml`, and arXiv as cited.
 
 This note surveys how agents keep long-term memory today, to shape
-`tau-memory`: a Zettelkasten of atomic notes, retrieved with docbert
+`heiko-memory`: a Zettelkasten of atomic notes, retrieved with docbert
 (BM25 and ColBERT late interaction through `docbert-pylate`, with a
 `docbert-plaid` index). It covers coding agents, memory frameworks,
 linked-note systems, and the research evidence, then proposes a design
@@ -64,17 +64,17 @@ across sessions.
   not in memory.
 - **Build the evaluation first.** No design wins everywhere, plain
   retrieval over raw logs is a hard baseline, and vendor benchmarks
-  disagree by double digits. tau-memory needs its own eval on coding
+  disagree by double digits. heiko-memory needs its own eval on coding
   tasks before any optional machinery (decay, merging, reflection) ships
   on.
 
-## Where tau-memory stands
+## Where heiko-memory stands
 
-The plan is in [plugins.md](../reference/plugins.md#tau-memory-a-zettelkasten):
+The plan is in [plugins.md](../reference/plugins.md#heiko-memory-a-zettelkasten):
 four tools (`memory_write`, `memory_search`, `memory_read`,
 `memory_link`), top notes put into `plan.context` at `start`, optional
 distillation at `finish`, one Markdown file per note indexed by
-`docbert-core`. Nothing is built; tau-ui's Memory screen runs on demo
+`docbert-core`. Nothing is built; heiko-ui's Memory screen runs on demo
 data.
 
 What docbert offers today (`~/Code/cfcosta/docbert`):
@@ -112,7 +112,7 @@ What docbert offers today (`~/Code/cfcosta/docbert`):
 
 ### Codex CLI
 
-The most complete design for a coding agent, and close to what tau
+The most complete design for a coding agent, and close to what heiko
 needs. Off by default behind the `memories` feature
 (`features/src/lib.rs`).
 
@@ -183,7 +183,7 @@ what the code or git history already records.
   frontmatter checked by a pre-commit hook; `[[path]]` links are
   "synapses". A background reflection subagent ("dreaming") runs on step
   count or at compaction and resolves contradictions "in favor of the
-  latest evidence". This is nearly tau-memory's plan.
+  latest evidence". This is nearly heiko-memory's plan.
 - Letta's own LoCoMo run of a plain filesystem agent scored 74.0% with
   gpt-4o-mini (vendor-run), above several dedicated memory systems; its
   conclusion is that memory is more about managing context than the
@@ -358,7 +358,7 @@ Long-Context Processors`: agents using `rg` and `sed` over a folder of
   (an audit found about 6% wrong), its LLM judge accepts vague answers,
   and judge or prompt choices move results by double digits.
 
-## A design for tau-memory
+## A design for heiko-memory
 
 A proposal to argue with, not a decision.
 
@@ -459,7 +459,7 @@ Asked and answered on 2026-09-29; the plan in plugins.md follows them.
 
 | Question                    | Decision                                                                                                                                                                  |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Where repository notes live | tau's data directory, private and versioned; nothing in the project's history                                                                                             |
+| Where repository notes live | heiko's data directory, private and versioned; nothing in the project's history                                                                                             |
 | Background consolidation    | Built, off until the evaluation shows it helps; on by default since 2026-10-07, a setting                                                                                 |
 | Context at `start`          | The index note plus the top few search hits, fenced as untrusted                                                                                                          |
 | The index note              | Written by the agent, about 2k tokens; a write past the budget is refused with a request to rewrite it                                                                    |

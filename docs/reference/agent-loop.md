@@ -2,17 +2,17 @@
 
 The loop is inherited from pi's `agentLoop`
 (`packages/agent/src/agent-loop.ts`). The ordering guarantees below are
-part of tau-agent's contract. Where tau-agent intentionally differs from
+part of heiko-agent's contract. Where heiko-agent intentionally differs from
 pi, a note says so.
 
 ## One run
 
-What follows, from step 1 to the end, is what tau-agent's own loop
+What follows, from step 1 to the end, is what heiko-agent's own loop
 does (`runner::driver::Kernel`). An agent can be given another
-(`Agent::with_loop`; tau's host takes whatever fills `tau.loop`): it
+(`Agent::with_loop`; heiko's host takes whatever fills `heiko.loop`): it
 drives the same steps, `begin` (1), `turn` (each pass of 2) and `end`
 (3 on), in its own order, and checks itself against the runner's model
-(`tau_agent::testing::loop_model`).
+(`heiko_agent::testing::loop_model`).
 
 0. Before the run: store it as `running`, start each plugin in
    registration order (`Plugin::start` may change the input, the
@@ -72,7 +72,7 @@ drives the same steps, `begin` (1), `turn` (each pass of 2) and `end`
      - a plugin that returns an error also blocks the call;
      - mutated arguments are validated again. **Deliberate difference
        from pi:** pi runs mutated arguments without validating them again,
-       and a test pins that (`agent-loop.test.ts:480`). tau-agent
+       and a test pins that (`agent-loop.test.ts:480`). heiko-agent
        validates them, so a plugin cannot pass the tool arguments that
        the tool's schema rejects.
 - **Execution is parallel** across the prepared calls. A tool whose
@@ -107,7 +107,7 @@ drives the same steps, `begin` (1), `turn` (each pass of 2) and `end`
 
 ## Coercion before validation
 
-tau-agent reproduces pi's `validateToolArguments`
+heiko-agent reproduces pi's `validateToolArguments`
 (`packages/ai/src/utils/validation.ts:317`):
 
 1. Clone the arguments.
@@ -120,7 +120,7 @@ tau-agent reproduces pi's `validateToolArguments`
      `array`.
 4. Validate against the compiled schema.
 
-Without the coercion pass, tau-agent would reject tool calls that pi
+Without the coercion pass, heiko-agent would reject tool calls that pi
 accepts today.
 
 ## Steering
@@ -128,7 +128,7 @@ accepts today.
 `Run::steer(msg)` queues a user message. The loop drains the queue after
 the current tool batch, or at once if no batch is running. The message
 is appended before the next request. pi's default is one message per
-drain, and tau-agent keeps that default.
+drain, and heiko-agent keeps that default.
 
 A message that comes while a response streams cuts it short, as Codex's
 instant interrupt does (`codex-rs/core/src/session/turn.rs`,
@@ -139,7 +139,7 @@ block as far as it streamed. An open reasoning block or tool call is
 dropped, since it cannot go back to the model. The kept tool calls run,
 then the message is the one the drain takes. A response cut before
 anything in it finished is not stored. Every steer cuts: all of them
-come from the person (a message, one forwarded to main, a goal); tau's
+come from the person (a message, one forwarded to main, a goal); heiko's
 reports to main start turns instead. How the provider stops the cut
 response is the provider's: see `openai-websocket.md`, "Cancel".
 

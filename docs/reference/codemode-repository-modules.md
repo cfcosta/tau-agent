@@ -2,7 +2,7 @@
 
 Repository modules are host-owned immutable versions outside the repository
 checkout. The UI configures `Codemode::with_repository` with
-`run.repo.dir/codemode-modules`, tau's private per-repository directory. A
+`run.repo.dir/codemode-modules`, heiko's private per-repository directory. A
 custom host can configure the same API with its own private directory. Access
 to that directory is within the same-user filesystem trust boundary.
 

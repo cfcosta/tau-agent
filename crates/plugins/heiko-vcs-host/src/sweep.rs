@@ -1,0 +1,329 @@
+//! Sweeping a project of what runs left behind: the workspaces and
+//! heads ([`Head`]) of runs that are gone, closed or thrown away, which
+//! nothing cleans once the process that ran them is gone
+//! (`docs/reference/vcs.md`, "Sweeping at start").
+//!
+//! [`plan`] is the rule, a pure function of the runs' standings
+//! ([`Owner`]) and what the project holds; [`ProjectRepo::sweep`]
+//! carries a plan out.
+
+use std::collections::BTreeSet;
+
+use heiko_agent::tool::RunId;
+use heiko_ui_plugin::vcs::{Keep, Owner, Standing};
+
+pub use crate::heads::RUN_HEAD_PREFIX;
+use crate::{ProjectRepo, error::VcsError, heads::Head};
+
+/// The commits of a discarded run to abandon: what `heads` have that
+/// `keep` lacks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Abandon {
+    pub run: String,
+    /// The name of its head, if the project has it.
+    pub head: Option<String>,
+    /// Its workspaces the project still has: their working copies.
+    pub workspaces: Vec<String>,
+    pub keep: Keep,
+}
+
+/// What a sweep does, in this order: abandons, then forgets the
+/// workspaces, then removes the heads, by name.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Sweep {
+    pub abandon: Vec<Abandon>,
+    pub forget: Vec<String>,
+    pub remove: Vec<String>,
+}
+
+impl Sweep {
+    pub fn is_empty(&self) -> bool {
+        self.abandon.is_empty()
+            && self.forget.is_empty()
+            && self.remove.is_empty()
+    }
+}
+
+/// What to sweep from a project that holds the run workspaces
+/// `workspaces` ([`ProjectRepo::workspaces`]: never the main chat's, nor
+/// one the person made) and the heads named `heads`
+/// ([`ProjectRepo::run_heads`]), given the runs that may own them:
+///
+/// - a workspace goes unless a kept run worked in it;
+/// - a run's head goes unless that run is kept; a name that is no run's
+///   head ([`Head::run_of`]) stays;
+/// - a discarded run's own commits go first, from its head and the
+///   working copies of its workspaces that go.
+///
+/// A workspace or head with no owner at all belongs to a run that is
+/// gone, and goes.
+pub fn plan(
+    owners: &[Owner],
+    workspaces: &[String],
+    heads: &[String],
+) -> Sweep {
+    let kept_workspaces: BTreeSet<&str> = owners
+        .iter()
+        .filter(|owner| owner.standing == Standing::Kept)
+        .flat_map(|owner| owner.workspaces.iter().map(String::as_str))
+        .collect();
+    let kept_runs: BTreeSet<&str> = owners
+        .iter()
+        .filter(|owner| owner.standing == Standing::Kept)
+        .map(|owner| owner.run.as_str())
+        .collect();
+    let forget: Vec<String> = workspaces
+        .iter()
+        .filter(|name| !kept_workspaces.contains(name.as_str()))
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let remove: Vec<String> = heads
+        .iter()
+        .filter(|name| {
+            Head::run_of(name).is_some_and(|run| !kept_runs.contains(run))
+        })
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let abandon = owners
+        .iter()
+        .filter(|owner| owner.standing == Standing::Discarded)
+        .filter_map(|owner| {
+            let head = head_of(&owner.run).to_string();
+            let head = remove.contains(&head).then_some(head);
+            let workspaces: Vec<String> = owner
+                .workspaces
+                .iter()
+                .filter(|name| forget.contains(name))
+                .cloned()
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            (head.is_some() || !workspaces.is_empty()).then(|| Abandon {
+                run: owner.run.clone(),
+                head,
+                workspaces,
+                keep: owner.keep.clone(),
+            })
+        })
+        .collect();
+    Sweep {
+        abandon,
+        forget,
+        remove,
+    }
+}
+
+fn head_of(run: &str) -> Head {
+    Head::Run(RunId(run.into()))
+}
+
+impl ProjectRepo {
+    /// What [`plan`] says to sweep, given `owners`, from what the
+    /// project holds now.
+    pub fn plan_sweep(&self, owners: &[Owner]) -> Result<Sweep, VcsError> {
+        let workspaces = self.workspaces()?;
+        let heads = self.run_heads()?;
+        Ok(plan(owners, &workspaces, &heads))
+    }
+
+    /// Carries `sweep` out: abandons each discarded run's own commits,
+    /// then forgets the workspaces (their directories go) and removes
+    /// the heads. Each step finds nothing to do when done before, so
+    /// a sweep cut off is finished by the next. The operation log keeps
+    /// what was abandoned.
+    pub fn sweep(&self, sweep: &Sweep) -> Result<(), VcsError> {
+        for abandon in &sweep.abandon {
+            let keep = match &abandon.keep {
+                Keep::Run(run) => self.head(&Head::Run(run.clone()))?,
+                Keep::Workspace(name) => self.workspace_head(name)?,
+            };
+            // Trunk always stays: a main chat that never ran stands on
+            // the root commit.
+            let trunk = self.trunk()?;
+            let keeps: Vec<&str> = keep
+                .iter()
+                .map(String::as_str)
+                .chain([trunk.as_str()])
+                .collect();
+            let mut heads = Vec::new();
+            for name in &abandon.workspaces {
+                heads.extend(self.workspace_head(name)?);
+            }
+            if abandon.head.is_some() {
+                heads.extend(self.head(&head_of(&abandon.run))?);
+            }
+            for head in heads {
+                self.abandon_beyond(&keeps, &head)?;
+            }
+        }
+        for name in &sweep.forget {
+            self.forget_workspace(name)?;
+        }
+        for name in &sweep.remove {
+            if let Some(run) = Head::run_of(name) {
+                self.remove_head(&head_of(run))?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hegel::{
+        TestCase,
+        generators::{self as gs, Generator as _},
+    };
+
+    use super::*;
+
+    fn names(tc: &TestCase, pool: &[&str], max: usize) -> Vec<String> {
+        let pool: Vec<String> =
+            pool.iter().map(|name| (*name).to_owned()).collect();
+        tc.draw(gs::vecs(gs::sampled_from(pool)).max_size(max))
+    }
+
+    fn owners(tc: &TestCase) -> Vec<Owner> {
+        let runs = ["a", "b", "c", "d"];
+        let count: usize = tc.draw(gs::integers().max_value(runs.len()));
+        runs[..count]
+            .iter()
+            .map(|run| Owner {
+                run: (*run).to_owned(),
+                standing: tc.draw(
+                    gs::sampled_from(vec![
+                        Standing::Kept,
+                        Standing::Landed,
+                        Standing::Discarded,
+                    ])
+                    .print_as_debug(),
+                ),
+                workspaces: names(tc, &WORKSPACES, 2),
+                keep: Keep::Workspace(crate::MAIN_WORKSPACE.to_owned()),
+            })
+            .collect()
+    }
+
+    const WORKSPACES: [&str; 5] = ["w1", "w2", "w3", "w1-sub-0", "w4"];
+    const BOOKMARKS: [&str; 6] = [
+        "refs/heiko/runs/a",
+        "refs/heiko/runs/b",
+        "refs/heiko/runs/c",
+        "refs/heiko/runs/d",
+        "refs/heiko/runs/gone",
+        "main",
+    ];
+
+    /// What the project holds after `sweep`.
+    fn after(
+        sweep: &Sweep,
+        workspaces: &[String],
+        bookmarks: &[String],
+    ) -> (Vec<String>, Vec<String>) {
+        (
+            workspaces
+                .iter()
+                .filter(|name| !sweep.forget.contains(name))
+                .cloned()
+                .collect(),
+            bookmarks
+                .iter()
+                .filter(|name| !sweep.remove.contains(name))
+                .cloned()
+                .collect(),
+        )
+    }
+
+    /// A sweep keeps everything a kept run has, takes everything else a
+    /// run's (other bookmarks stay), abandons
+    /// only discarded runs' commits, and only from what goes; and once
+    /// done, sweeping again finds nothing.
+    #[hegel::test(test_cases = 500)]
+    fn a_sweep_keeps_what_kept_runs_have_and_nothing_else(tc: TestCase) {
+        let owners = owners(&tc);
+        let workspaces = names(&tc, &WORKSPACES, 6);
+        let bookmarks = names(&tc, &BOOKMARKS, 6);
+        let sweep = plan(&owners, &workspaces, &bookmarks);
+        let (left_workspaces, left_bookmarks) =
+            after(&sweep, &workspaces, &bookmarks);
+        let kept: Vec<&Owner> = owners
+            .iter()
+            .filter(|owner| owner.standing == Standing::Kept)
+            .collect();
+        // What a kept run has stays.
+        for owner in &kept {
+            for name in &owner.workspaces {
+                assert!(
+                    !sweep.forget.contains(name),
+                    "{name} of {}",
+                    owner.run
+                );
+            }
+            assert!(!sweep.remove.contains(&head_of(&owner.run).to_string()));
+        }
+        // What stays has a kept owner, or is not a run's.
+        for name in &left_workspaces {
+            assert!(
+                kept.iter().any(|owner| owner.workspaces.contains(name)),
+                "{name} stayed"
+            );
+        }
+        for name in &left_bookmarks {
+            assert!(
+                !name.starts_with(RUN_HEAD_PREFIX)
+                    || kept
+                        .iter()
+                        .any(|owner| head_of(&owner.run).to_string() == *name),
+                "{name} stayed"
+            );
+        }
+        // Only what the project has goes, never a bookmark that is not a
+        // run's.
+        assert!(sweep.forget.iter().all(|name| workspaces.contains(name)));
+        assert!(sweep.remove.iter().all(|name| bookmarks.contains(name)));
+        assert!(
+            sweep
+                .remove
+                .iter()
+                .all(|name| name.starts_with(RUN_HEAD_PREFIX))
+        );
+        // Commits go only for discarded runs, from what goes.
+        for abandon in &sweep.abandon {
+            let owner = owners
+                .iter()
+                .find(|owner| owner.run == abandon.run)
+                .unwrap();
+            assert_eq!(owner.standing, Standing::Discarded);
+            assert!(
+                abandon
+                    .workspaces
+                    .iter()
+                    .all(|name| sweep.forget.contains(name))
+            );
+            assert!(
+                abandon.head.iter().all(|name| sweep.remove.contains(name))
+            );
+        }
+        // A discarded run with something left to sweep has its commits go.
+        for owner in owners
+            .iter()
+            .filter(|owner| owner.standing == Standing::Discarded)
+        {
+            let has = sweep.remove.contains(&head_of(&owner.run).to_string())
+                || owner
+                    .workspaces
+                    .iter()
+                    .any(|name| sweep.forget.contains(name));
+            assert_eq!(
+                has,
+                sweep.abandon.iter().any(|abandon| abandon.run == owner.run)
+            );
+        }
+        // Done once, a sweep has nothing left to do.
+        assert!(plan(&owners, &left_workspaces, &left_bookmarks).is_empty());
+    }
+}

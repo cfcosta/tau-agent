@@ -21,7 +21,7 @@ plugin to share it.
 - **A plugins chat lands when its turn ends.** When a chat's turn ends
   as it meant to (not stopped, not failed), the host asks each plugin's
   host half whether the chat may land by itself (`HostHalf::lands_itself`,
-  false by default). tau-luau-plugins says yes for its own repository
+  false by default). heiko-luau-plugins says yes for its own repository
   when every plugin folder the chat's workspace changes from trunk
   loads, passes its tests and reaches no further than the person
   allowed. A folder the same as trunk's does not count, even when
@@ -37,7 +37,7 @@ plugin to share it.
   marked `kept`, so it is not taken for a chat that landed and closed.
   The landing's card shows in main and in the chat.
 - **Recovery keeps it open.** The intent stored before a landing says
-  the chat goes on, so a landing tau closed in the middle of is finished
+  the chat goes on, so a landing heiko closed in the middle of is finished
   at start without closing the chat, and only once.
 
 ## Alternatives considered

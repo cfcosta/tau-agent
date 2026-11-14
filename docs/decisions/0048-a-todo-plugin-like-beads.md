@@ -20,12 +20,12 @@ Agents claim an issue, work it, file what they find on the way, and
 close it with a reason. Its storage is SQLite with a JSONL export kept
 in the repository.
 
-tau has what beads lacks around it: runs with a lifecycle, a store,
+heiko has what beads lacks around it: runs with a lifecycle, a store,
 phones, and plugins with a UI (0045, 0046). It lacks the list.
 
 ## Decision
 
-### A plugin, `tau-todo`, with beads' model
+### A plugin, `heiko-todo`, with beads' model
 
 An **issue** has:
 
@@ -56,7 +56,7 @@ and every issue that blocks it is closed. Ready issues sort by
 priority, then age. `blocked` is not stored as a status for an open
 issue with an open blocker: it is computed, so it is never stale. The
 stored `blocked` status is for an issue blocked by something outside
-tau, and says what.
+heiko, and says what.
 
 ### Two kinds of task: issues and steps
 
@@ -128,7 +128,7 @@ tool of one (`tests/shipped.rs`).
 
 ### A claim belongs to a run
 
-beads leaves a stale claim for a person to find. tau knows when a run
+beads leaves a stale claim for a person to find. heiko knows when a run
 ends, so a claim is the run's, not a name:
 
 - `todo_claim` sets the issue `in_progress` and records the run.
@@ -145,7 +145,7 @@ ends, so a claim is the run's, not a name:
 ### Storage: the plugin's own SQLite, replicated, never in the repository
 
 Issues live in a SQLite database the plugin owns, one per repository,
-under tau's data directory, as `tau-constitution-host` keeps its own.
+under heiko's data directory, as `heiko-constitution-host` keeps its own.
 They are not in the repository: every run works in its own jj
 workspace, so a file there would be edited by parallel runs and
 conflict when they land. Tools write through the host half, one write
@@ -218,12 +218,12 @@ composer and opens the issue when tapped.
 
 ## Built in Luau, after five seams
 
-tau-todo is a Luau plugin. It is the plugin that makes Luau a full
+heiko-todo is a Luau plugin. It is the plugin that makes Luau a full
 tier (0045's "What Luau gains"): everything it needs that Luau lacks
 is a seam 0045 already promises, built first, each with its own Rust
-test, and used by tau-todo as its first caller.
+test, and used by heiko-todo as its first caller.
 
-What Luau has today and tau-todo uses as it is: tools with schemas and
+What Luau has today and heiko-todo uses as it is: tools with schemas and
 cards, `run_end` (a claim ends with its run), per-run state kept as the
 run's records (a run's steps), view trees with `graph`, `tabs`,
 `input`, `modal`, `section` and `table`, actions, settings, and Luau
@@ -259,7 +259,7 @@ queries already sorted and filtered, and the view only draws.
 
 ## Testing: models first, one per layer
 
-tau-todo is tested the way the November rounds tested tau's stateful
+heiko-todo is tested the way the November rounds tested heiko's stateful
 parts (docs/plan-test-quality.md): a hegel state machine per layer,
 each checked against a small model after every step, with fault probes
 proving each model can fail and a nightly twin running it long. The
@@ -277,7 +277,7 @@ enough to read in one sitting.
 
 ### 1. The issue graph: laws over pure functions
 
-`crates/plugins/tau-todo/luau/tests/graph.luau`, properties over the
+`crates/plugins/heiko-todo/luau/tests/graph.luau`, properties over the
 plugin's pure Luau core (the graph module: no store, no clock), written
 in Luau on hegel's engine (ADR 0049), with a Luau reference model of
 their own in the file. They began as Rust (`tests/graph_laws.rs`),
@@ -313,8 +313,8 @@ import, from one to three writers at once. After every step the store
 reads back exactly the reference model.
 
 `tests/crash_model.rs` does what the host's crash model does
-(`crates/tau-ui/tests/crash_model.rs`): every write goes through a
-counter that lets a drawn number through and fails the rest, as if tau
+(`crates/heiko-ui/tests/crash_model.rs`): every write goes through a
+counter that lets a drawn number through and fails the rest, as if heiko
 died there. The test reopens the store from the same file, then
 checks:
 
@@ -327,7 +327,7 @@ checks:
 
 ### 3. Claims and runs: the plugin in the real host
 
-`crates/tau-ui/tests/todo_model.rs` runs the real host with the model
+`crates/heiko-ui/tests/todo_model.rs` runs the real host with the model
 the sync and crash models use, which answers only when the test says
 so, so runs stay live as long as the test wants. The fake model's
 turns call the `todo_*` tools.
@@ -374,7 +374,7 @@ the computer, a phone, or both at once.
 
 ### 5. The board and the band on every device
 
-`crates/tau-ui/tests/todo_sync_model.rs`, built on the sync model's
+`crates/heiko-ui/tests/todo_sync_model.rs`, built on the sync model's
 harness (the real feed and encoding, in process, phones dropped and
 brought back by the test):
 
@@ -408,8 +408,8 @@ joins its two nodes, and every blocker is left of what it blocks.
   `br ready --json` and `br blocked --json` with ours. It is skipped,
   not failed, where `br` is missing, and runs in the nightly set.
 - **Tool schemas.** A test runs every `todo_*` schema through
-  `tau_agent::schema::to_strict` and the oracle in
-  `crates/tau-agent/tests/schema.rs` (every object closed and fully
+  `heiko_agent::schema::to_strict` and the oracle in
+  `crates/heiko-agent/tests/schema.rs` (every object closed and fully
   required), and validates drawn arguments with the `jsonschema`
   crate, so a provider never refuses a run for a schema this plugin
   added.
@@ -475,20 +475,20 @@ showed a better way, or where the kernel had no piece for it:
   when it ends (seam 1). The crash model's fault "an issue's row and
   its links written in two transactions" became "each write of a hook
   committed alone", which fails both crash tests.
-- **A hook never waits on a chat.** Starting or steering a chat (seam 3) is what an action answers, `tau.start_chat` or `tau.steer_chat`;
+- **A hook never waits on a chat.** Starting or steering a chat (seam 3) is what an action answers, `heiko.start_chat` or `heiko.steer_chat`;
   the host carries it out once the action ended and its store is
   written, then calls the action it names next with the chat's run. A
-  tool asks the person with `tau.allow`: the host shows the Allow card
+  tool asks the person with `heiko.allow`: the host shows the Allow card
   and waits outside any hook, so no store is held while a chat starts
   whose own hooks may want it. Starting a chat on an issue holds it as
   `starting` until the chat's run takes it; `recover` lets go of that
   too.
 - **`recover` covers every repository with a store**, not only those
-  listed as tau starts: tau lists them after its plugins resume.
+  listed as heiko starts: heiko lists them after its plugins resume.
 - **`run_end` runs however a run ended**: the run's cancel no longer
   cuts it off, so a stopped run's claims end too.
 - **Landing.** A claim ends when its run ends, landed or not: the run
-  ends before tau lands it, so "keeps it in progress if it landed
+  ends before heiko lands it, so "keeps it in progress if it landed
   without closing it" is not built.
 - **The board.** The kernel's `board` widget shows its columns as tabs
   when too narrow for them, as on a phone, where each ready card has
@@ -504,11 +504,11 @@ showed a better way, or where the kernel had no piece for it:
   beads' `acceptance_criteria` as a Markdown checklist, and a stored
   blocked status its `notes`.
 - **Modules.** A Luau plugin's `lib/` modules may require each other,
-  out of a cycle; tau-todo's are `graph`, `issues`, `beads`, `time` and
+  out of a cycle; heiko-todo's are `graph`, `issues`, `beads`, `time` and
   `steps`.
 - **Tests.** Every layer above landed: the graph laws, the store and
   crash models, the claims and dispatch model in the real host
-  (`crates/tau-ui/tests/todo_model.rs`), the board sync model
+  (`crates/heiko-ui/tests/todo_model.rs`), the board sync model
   (`todo_sync_model.rs`), the schema checks, and the beads_rust oracle,
   skipped where `br` is missing (it was, where this was built). Forks
   are not in the claims model: a claim is keyed by its run's id, which
@@ -523,7 +523,7 @@ showed a better way, or where the kernel had no piece for it:
 - **Issues in the repository, like beads.** They would follow forks
   and branches, but parallel runs would merge or conflict on landing,
   and a phone would need the repository to read them.
-- **GitHub issues through `tau-github`.** Not every repository has a
+- **GitHub issues through `heiko-github`.** Not every repository has a
   forge, and agents need answers in milliseconds, offline, with
   readiness computed from links GitHub does not have. An export to
   GitHub can come later as its own tool.

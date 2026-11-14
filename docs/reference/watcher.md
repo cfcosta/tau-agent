@@ -1,9 +1,9 @@
-# tau-watcher
+# heiko-watcher
 
 Notes what the person likely missed. While the main agent works, every
 6th step a side request reads the whole transcript and answers
-`learn: none`, or offers one short note. It is a Luau plugin tau comes
-with (ADR 0050): `plugins/tau-watcher/`, `src/plugin.luau` and
+`learn: none`, or offers one short note. It is a Luau plugin heiko comes
+with (ADR 0050): `plugins/heiko-watcher/`, `src/plugin.luau` and
 `src/watch.luau`. Decision:
 [0032](../decisions/0032-the-watcher-notes-what-you-missed.md).
 
@@ -99,7 +99,7 @@ nothing but `checked`.
   the quoted line in the composer. Control characters go, and `@` and
   words starting `ultra` get a zero-width space so the composer does not
   read them as mentions or keywords (`watch.chat_text`); the action
-  answers `tau.interface("composer", { text })`.
+  answers `heiko.interface("composer", { text })`.
 
 ## Items
 
@@ -113,7 +113,7 @@ nothing but `checked`.
 | `watch.noted`, `answered`, `band` | The notes in the state, and the one above the composer    |
 | `fixtures/`                       | The views the demo shows                                  |
 
-`tau-plugin test plugins/tau-watcher` loads it as tau does and runs its
+`heiko-plugin test plugins/heiko-watcher` loads it as heiko does and runs its
 Luau tests, cases, properties and a state machine. `tests/fixtures.luau`
 makes the demo's views, which it holds to `fixtures/` (`--bless` writes
 them anew).

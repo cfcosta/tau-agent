@@ -1,0 +1,124 @@
+//! heiko's own repositories, its plugins repository (ADR 0027) and the
+//! agents' (ADR 0037), are
+//! in the catalog so their chats work, but the person never sees them as
+//! a repository: the sidebar's repositories, search and new runs pass
+//! them by, even while one of their chats is open. The sidebar lists the
+//! plugins repository's chats under Plugins (`plugins_sidebar`).
+
+use gpui::{TestAppContext, VisualTestContext};
+use heiko_agent::tool::RunId;
+use heiko_ui_remote::{
+    Workspace,
+    catalog::{Catalog, Repo},
+    route::Route,
+    search::Pick,
+    view::RunView,
+};
+
+const OWN: &str = "heiko-plugins";
+const REPO: &str = "heiko-agent";
+
+fn id(name: &str) -> RunId {
+    RunId(name.into())
+}
+
+fn catalog() -> Catalog {
+    Catalog {
+        // heiko's own is listed first, as a first start leaves it.
+        repos: vec![
+            Repo {
+                name: OWN.into(),
+                main: Some(id("plugins-main")),
+                kind: Some(heiko_luau_plugins::KIND.to_owned()),
+                ..Default::default()
+            },
+            Repo {
+                name: REPO.into(),
+                main: Some(id("main")),
+                ..Default::default()
+            },
+        ],
+        open_repos: vec![OWN.into(), REPO.into()],
+        ..Default::default()
+    }
+}
+
+fn runs() -> Vec<RunView> {
+    vec![
+        RunView::new(id("plugins-main"), "plugins", "coder", "gpt-5.5")
+            .in_repo(OWN),
+        RunView::new(id("main"), "main", "coder", "gpt-5.5").in_repo(REPO),
+    ]
+}
+
+#[gpui::test]
+fn heiko_s_own_repositories_are_not_listed(cx: &mut TestAppContext) {
+    cx.update(heiko_ui_remote::init);
+    let window = cx.add_window(|window, cx| {
+        Workspace::new("heiko", runs(), catalog(), window, cx)
+    });
+    let workspace = window.root(cx).unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    cx.run_until_parked();
+
+    let listed = |ws: &Workspace| -> Vec<String> {
+        ws.repo_rows("")
+            .iter()
+            .map(|rows| rows.repo.name.clone())
+            .collect()
+    };
+    workspace.update(&mut cx, |ws, cx| {
+        assert_eq!(listed(ws), [REPO]);
+        assert_eq!(ws.selected_repo(), Some(REPO));
+        // Its main chat is still one.
+        assert!(ws.is_main(&id("plugins-main")));
+        let repos: Vec<Pick> = ws
+            .search_hits("")
+            .into_iter()
+            .map(|hit| hit.pick)
+            .filter(|pick| matches!(pick, Pick::Repo(_) | Pick::NewRunIn(_)))
+            .collect();
+        assert_eq!(
+            repos,
+            [Pick::Repo(REPO.into()), Pick::NewRunIn(REPO.into())]
+        );
+        // Opening one of its chats neither lists nor selects it.
+        ws.navigate(Route::Run(id("plugins-main")), cx);
+    });
+    cx.run_until_parked();
+    workspace.update(&mut cx, |ws, _| {
+        assert_eq!(listed(ws), [REPO]);
+        assert_eq!(ws.selected_repo(), Some(REPO));
+    });
+}
+
+/// The catalog with two agents beside the plugins repository and the
+/// person's, listed out of name order.
+fn with_agents() -> Catalog {
+    let mut catalog = catalog();
+    for name in ["triage", "digest"] {
+        catalog.repos.push(Repo {
+            name: name.into(),
+            kind: Some(heiko_agents::KIND.to_owned()),
+            ..Default::default()
+        });
+    }
+    catalog
+}
+
+#[test]
+fn agents_are_heiko_s_own_and_neither_the_person_s_nor_the_plugins_repository() {
+    let catalog = with_agents();
+    let names = |kind: &str| -> Vec<String> {
+        catalog
+            .of_kind(kind)
+            .map(|repo| repo.name.clone())
+            .collect()
+    };
+    let listed: Vec<&str> =
+        catalog.listed().map(|repo| repo.name.as_str()).collect();
+    assert_eq!(listed, [REPO]);
+    assert_eq!(names(heiko_luau_plugins::KIND), [OWN]);
+    assert_eq!(names(heiko_agents::KIND), ["digest", "triage"]);
+    assert!(!catalog.is_listed("triage"));
+}

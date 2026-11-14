@@ -1,4 +1,4 @@
-# Coding tools (`tau-tools-host`, optional)
+# Coding tools (`heiko-tools-host`, optional)
 
 Related artifact references: [storage](codemode-artifact-storage.md),
 [file artifacts](codemode-artifact-files.md),
@@ -31,11 +31,11 @@ The truncation helpers:
   **Deliberate difference from pi:** pi keeps the end without a mark.
 
 A tool that fails returns `Err`, and the loop marks the result
-`is_error`. Every tool takes a root directory (`tau_tools_host::path::Root`)
+`is_error`. Every tool takes a root directory (`heiko_tools_host::path::Root`)
 at construction, and all paths resolve against it.
-`tau_tools_host::plugin::CodingTools::new(root)` adds all eight to an agent
+`heiko_tools_host::plugin::CodingTools::new(root)` adds all eight to an agent
 as a plugin (`Agent::plugin`); `only` and `without` pick a subset, which
-keeps pi's order. `tau_tools_host::coding_tools(&root)` returns the same
+keeps pi's order. `heiko_tools_host::coding_tools(&root)` returns the same
 eight, for `Agent::tools`. `exec_command`, and so both, is unix-only.
 
 ## read: `{ path, offset?, limit? }`
@@ -59,7 +59,7 @@ eight, for `Agent::tools`. `exec_command`, and so both, is unix-only.
     `[Showing lines X-Y of N. Use offset=K to continue.]`.
   - If the first line alone is over 50 KiB, the result suggests
     `sed -n 'Np' file | head -c 51200` instead.
-- **Deliberate difference from pi:** tau-agent reads only the requested
+- **Deliberate difference from pi:** heiko-agent reads only the requested
   range. pi reads the whole file even when an offset is given.
 
 ## exec_command and write_stdin
@@ -80,17 +80,17 @@ done when the call returns keeps running, and a second tool reads it.
   send it input. Off by default: stdin is `/dev/null`, and a program
   that reads it gets end of file.
 - `notify` (off by default) asks to be told when a command that is still
-  running when the call returns ends: tau starts a turn on the run, or
+  running when the call returns ends: heiko starts a turn on the run, or
   steers the one going, with ``Process N (`cmd`) exited with code C.``
   `write_stdin` then reads its output. Nothing is told when a call
   reported the end first, when the store pruned or killed the process
   (workspace closed, `^C` aside), or on a sub-agent's run.
 - **Shell:** `/bin/bash`, then `bash` on `PATH`, then `sh`
   (`exec::choose_shell`).
-- **Environment:** the command inherits tau-ui's environment, and starts
+- **Environment:** the command inherits heiko-ui's environment, and starts
   through what plugins give the repository, when one does: words before
   the shell and variables over its environment, such as `direnv exec
-<workspace>` from tau-direnv ([environment.md](environment.md),
+<workspace>` from heiko-direnv ([environment.md](environment.md),
   [0025](../decisions/0025-agent-commands-run-in-an-environment-plugins-give.md)).
   The first command may wait for it; a cancel while it waits ends the
   call before anything ran.
@@ -170,8 +170,8 @@ output, truncated, dropped_lines }`.
   `status` is `running` or `exited`; `exitCode` is the exit code once
   it exited. `bytes` is the raw output this call read, the newest 4 MiB
   of it (`lost` says some was dropped), and `outputBytes` counts all the
-  process wrote so far. tau-ui draws it as the card's terminal screen
-  ([terminal.md](terminal.md), "In tau-ui: the command card").
+  process wrote so far. heiko-ui draws it as the card's terminal screen
+  ([terminal.md](terminal.md), "In heiko-ui: the command card").
 
 ### Processes
 
@@ -184,7 +184,7 @@ output, truncated, dropped_lines }`.
 - **Limit:** 64 processes. Past it, the least recently used goes (one
   that exited first), and the 8 most recently used stay.
 - **End:** dropping the processes, or closing the workspace they ran
-  in, kills each process group (`SIGKILL`). Nothing outlives tau.
+  in, kills each process group (`SIGKILL`). Nothing outlives heiko.
 
 ## edit: `{ path, edits: [{ oldText, newText }] }`
 
@@ -284,12 +284,12 @@ file held, or from nothing for a new file or one that was not text),
   `symlink_dir`), and when they apply `size` (files, in bytes),
   `modified` (Unix seconds), `items` (a directory's entry count),
   `target` (a symlink's) and `ignored` (`.gitignore` leaves it out, by
-  the rules `find` and `grep` walk by). With `tau-vcs`, each entry that
+  the rules `find` and `grep` walk by). With `heiko-vcs`, each entry that
   differs in `@` also gets a `change` (`vcs.md`, "ls").
 
 ## http: `{ method?, url, headers?, body?, timeout? }` (an agent's runs)
 
-- Added by `CodingTools::with_http(store)`, which tau-ui calls for the
+- Added by `CodingTools::with_http(store)`, which heiko-ui calls for the
   runs of an agent's repository only (ADR 0037). It is `Nested`:
   scripts call it as `http.request` ([codemode.md](codemode.md),
   "HTTP"); the model is never declared it.
@@ -314,16 +314,16 @@ file held, or from nothing for a new file or one that was not text),
   is replaced by `[secret:<name>]` in the status's headers, the body
   (and the artifact's bytes) and every error, whether or not the
   request named it.
-- **The store** is the agent's own, `secrets/<agent>.json` in tau's
+- **The store** is the agent's own, `secrets/<agent>.json` in heiko's
   configuration directory (`SecretStore::of_agent`): `{ name: value }`,
   owner-only (0600, its directory 0700), replaced whole in one rename
-  (`tau_tools_host::secrets::SecretStore`). An agent's requests reach
+  (`heiko_tools_host::secrets::SecretStore`). An agent's requests reach
   its own keys and no other agent's. Names
   are 1 to 64 letters, digits, `_`, `-` and `.`. An agent's page lists
   the names its `src/agent.luau` uses and saves or removes values
   (`Act::SetSecret`, `Act::RemoveSecret`, each naming the agent); no interface reads a value
   back.
-- `tau_tools_host::http::fetch` is the same request for the host
+- `heiko_tools_host::http::fetch` is the same request for the host
   itself, without a run (an agent's polls): scrubbed, its body whole as
   text (to 16 MiB) and decoded when it is JSON.
 

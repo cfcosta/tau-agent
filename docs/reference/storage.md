@@ -6,20 +6,20 @@ is bundled into the build. Every query uses `sqlx::query!`, `query_as!`
 or `query_scalar!`, and migrations run through `sqlx::migrate!`. See
 [decision 0003](../decisions/0003-sqlite-via-sqlx-macros.md).
 
-The database is `tau-store-sqlite`'s. `tau-store` holds the types and
+The database is `heiko-store-sqlite`'s. `heiko-store` holds the types and
 the `Backend` trait that a `Store` (`Arc<dyn Backend>`) answers, with
 no database driver, so the agent loop and the plugins build without
-waiting for SQLite to compile. `tau_store_sqlite::open` and
-`tau_store_sqlite::memory` return a `Store`.
+waiting for SQLite to compile. `heiko_store_sqlite::open` and
+`heiko_store_sqlite::memory` return a `Store`.
 
-Credentials are not in the database. tau keeps them in
-`$XDG_CONFIG_HOME/tau/`, each file readable only by the user: ChatGPT
+Credentials are not in the database. heiko keeps them in
+`$XDG_CONFIG_HOME/heiko/`, each file readable only by the user: ChatGPT
 sign-ins in `chatgpt/` (see
 [`chatgpt-sign-in.md`](chatgpt-sign-in.md#storage)), GitHub's token as
-tau-github's `github` secret, in `secrets/plugins/tau-github.json` (a Luau
-plugin's secrets), TypeSafe's key in `typesafe-key` (tau-jev's), and model choices (with
+heiko-github's `github` secret, in `secrets/plugins/heiko-github.json` (a Luau
+plugin's secrets), TypeSafe's key in `typesafe-key` (heiko-jev's), and model choices (with
 whether the plan note was read) in `models.json`. The old `codex.json`
-and `openai-key` are no longer read, and tau does not delete them
+and `openai-key` are no longer read, and heiko does not delete them
 ([0012](../decisions/0012-chatgpt-sign-in-only.md)).
 
 ## Model
@@ -27,7 +27,7 @@ and `openai-key` are no longer read, and tau does not delete them
 Runs are two tables, `runs` and `messages`. A plugin that keeps more
 than its records keeps it in a SQLite file of its own, under
 `HostCx::plugin_dir`, never here: a Luau plugin's store in each
-repository is one, as tau-constitution's rules are
+repository is one, as heiko-constitution's rules are
 ([constitution.md](constitution.md)).
 
 - **A run** is a flat list of messages.
@@ -90,7 +90,7 @@ CREATE TABLE messages (
 ) STRICT;
 ```
 
-`body` holds the message as JSON, in the same shape as the `tau-ai`
+`body` holds the message as JSON, in the same shape as the `heiko-ai`
 message types. Only the fields that queries filter on get their own
 columns.
 
@@ -135,7 +135,7 @@ closes in its middle, nothing finishes the run: it stays `running`. A
 process opening the store calls `Store::interrupt_running` before it
 starts any run, which marks every such run `interrupted` (without
 touching when it was last active) and returns their ids. An interrupted
-run reopens like any finished one (`Store::reopen_run`). tau-ui shows it
+run reopens like any finished one (`Store::reopen_run`). heiko-ui shows it
 as interrupted and offers to resume it, telling the model it was cut
 off.
 
@@ -145,7 +145,7 @@ off.
 | ------------------------------------ | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | writer                               | 1 connection                      | WAL, `synchronous = NORMAL`, `busy_timeout = 5s`, `foreign_keys = ON`; every write transaction starts with `BEGIN IMMEDIATE` |
 | reader                               | 8 connections                     | same settings, plus `read_only(true)`                                                                                        |
-| tests (`tau_store_sqlite::memory()`) | 1 connection shared by both roles | `sqlite::memory:`                                                                                                            |
+| tests (`heiko_store_sqlite::memory()`) | 1 connection shared by both roles | `sqlite::memory:`                                                                                                            |
 
 - **One writer at a time.** SQLite allows only one writer, so parallel
   runs queue on the writer connection. A run makes one write
@@ -236,10 +236,10 @@ sqlx::query_as!(
 ## sqlx workflow
 
 ```sh
-export DATABASE_URL="sqlite://$PWD/target/tau-store-dev.db"
-cargo sqlx database setup --source crates/tau-store-sqlite/migrations
-(cd crates/tau-store-sqlite && cargo sqlx prepare)         # after changing SQL or migrations; commit .sqlx/
-(cd crates/tau-store-sqlite && cargo sqlx prepare --check) # CI
+export DATABASE_URL="sqlite://$PWD/target/heiko-store-dev.db"
+cargo sqlx database setup --source crates/heiko-store-sqlite/migrations
+(cd crates/heiko-store-sqlite && cargo sqlx prepare)         # after changing SQL or migrations; commit .sqlx/
+(cd crates/heiko-store-sqlite && cargo sqlx prepare --check) # CI
 ```
 
 Run them from the repository root. `cargo sqlx prepare` writes `.sqlx/`
@@ -248,18 +248,18 @@ URL is absolute so the macros find it from there too.
 
 A plugin with its own database keeps its migrations and `.sqlx/` in
 its host crate, with a dated migration version so it never clashes with
-tau-store-sqlite's, and prepares its metadata against a database with
-both schemas, since its tests compile tau-store-sqlite's queries too:
+heiko-store-sqlite's, and prepares its metadata against a database with
+both schemas, since its tests compile heiko-store-sqlite's queries too:
 
 ```sh
-sqlx database setup --source crates/tau-store-sqlite/migrations
+sqlx database setup --source crates/heiko-store-sqlite/migrations
 sqlx migrate run --ignore-missing --source crates/plugins/<plugin>-host/migrations
 (cd crates/plugins/<plugin>-host && cargo sqlx prepare)
 ```
 
-- **Commit `.sqlx/`.** Crates that depend on `tau-store-sqlite` don't
+- **Commit `.sqlx/`.** Crates that depend on `heiko-store-sqlite` don't
   set `DATABASE_URL`, so the macros read the committed metadata
-  instead. Building `tau-store-sqlite` needs no database.
+  instead. Building `heiko-store-sqlite` needs no database.
 - **Override uncertain types.** Where SQLite's nullability inference is
   unsure, such as aggregates and CTE columns, write the type out with an
   override like `"next!: i64"`. Nullability is then decided in the SQL.

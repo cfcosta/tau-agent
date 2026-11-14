@@ -284,7 +284,7 @@ TUI shows the script, live nested-call rows (✓/✗, name, args preview, durati
 - `coding-agent/test/suite/agent-session-mcp.test.ts` (~35 cases): codemode-only tools hidden from the model but callable; direct model calls to them rejected; survive `/tree`; direct exposure; resources; per-tool overrides; describeNamespace returns instructions; `autoEnableCodemode: false`; reaching deferred tools through codemode; warning when neither discovery tool is active; not activating a foreign tool named `codemode` (identity check by schema reference, `isCodemodeTool`); first prompt not held for codemode servers; description stable on connect; servers section appended later; waits for named servers, including when the identifier differs from the name; no wait for unnamed servers; startupWaitMs cap; codemode cannot call itself or inactive direct tools; searchTools/describeTool; tool_search loads persist on branch.
 - `coding-agent/test/mcp-extension.test.ts`: config merge/validation, `-`/`_` clashes, exposure patterns, provider auth only global, tool-name sanitizing/hash, result conversion, 20 KB middle cut at UTF-8 boundaries, session-expired retry, no-tools-capability servers, reconnect after drop, transient HTTP retry (tool calls not retried), OAuth re-sign-in, log file, servers-section sizing.
 
-## 6. Notes for a Lua port in tau-agent (Rust)
+## 6. Notes for a Lua port in heiko-agent (Rust)
 
 These are inferences, not pi facts.
 

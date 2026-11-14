@@ -1,0 +1,356 @@
+//! Asking the model for a response, with retries: the loop's turns and
+//! a plugin's own requests (`PluginCtx::ask`) read a response the same
+//! way.
+
+use std::time::Duration;
+
+use heiko_ai::llm::EventStream;
+
+use super::*;
+
+/// How reading a response stream ended.
+pub(crate) enum Streamed {
+    /// With a terminal event: the message, and the class of its error
+    /// (`Fatal` when it has none).
+    Finished(AssistantMessage, Class),
+    /// Cancelled first, with what had come.
+    Cancelled(Accumulator),
+    /// An event out of the stream's grammar, with what had come.
+    BrokeGrammar(Accumulator),
+    /// Without a terminal event, with what had come.
+    NoTerminal(Accumulator),
+}
+
+/// A response stream being read: each event is accumulated as it comes.
+pub(crate) struct Reading {
+    stream: EventStream,
+    accumulator: Accumulator,
+    class: Class,
+    stopped: Option<Stop>,
+}
+
+/// Why reading stopped before the stream's end.
+#[derive(Clone, Copy)]
+enum Stop {
+    Cancelled,
+    BrokeGrammar,
+}
+
+impl Reading {
+    pub(crate) fn new(stream: EventStream) -> Self {
+        Self {
+            stream,
+            accumulator: Accumulator::new(),
+            class: Class::Fatal,
+            stopped: None,
+        }
+    }
+
+    /// The next event, accumulated. `None` once the stream ends or gave
+    /// its terminal event, an event breaks its grammar, or `cancel`
+    /// fires: [`Self::end`] says which. A stream left open after its
+    /// terminal event is not read on, so nothing after it (a cancel, a
+    /// steer) undoes a finished response.
+    pub(crate) async fn next(
+        &mut self,
+        cancel: &CancellationToken,
+    ) -> Option<AssistantEvent> {
+        if self.stopped.is_some() || self.accumulator.is_finished() {
+            return None;
+        }
+        let event = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                self.stopped = Some(Stop::Cancelled);
+                return None;
+            }
+            event = self.stream.next() => event,
+        }?;
+        if let AssistantEvent::Error { class, .. } = &event {
+            self.class = *class;
+        }
+        if self.accumulator.push(event.clone()).is_err() {
+            self.stopped = Some(Stop::BrokeGrammar);
+            return None;
+        }
+        Some(event)
+    }
+
+    /// How reading ended, once [`Self::next`] gave `None`.
+    pub(crate) fn end(self) -> Streamed {
+        match self.stopped {
+            Some(Stop::Cancelled) => Streamed::Cancelled(self.accumulator),
+            Some(Stop::BrokeGrammar) => {
+                Streamed::BrokeGrammar(self.accumulator)
+            }
+            None if self.accumulator.is_finished() => Streamed::Finished(
+                self.accumulator.finish().expect("finished"),
+                self.class,
+            ),
+            None => Streamed::NoTerminal(self.accumulator),
+        }
+    }
+
+    /// Reads to the end, unless `cancel` fires first.
+    pub(crate) async fn read_all(
+        mut self,
+        cancel: &CancellationToken,
+    ) -> Streamed {
+        while self.next(cancel).await.is_some() {}
+        self.end()
+    }
+}
+
+/// Waits `delay` before a retry. False when `cancel` fires first.
+pub(crate) async fn wait(cancel: &CancellationToken, delay: Duration) -> bool {
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => false,
+        _ = tokio::time::sleep(delay) => true,
+    }
+}
+
+/// What a response cut short by a steering message leaves: what had
+/// finished in it, or an empty message that stops. Dropping the stream
+/// stops it; the next request goes in full.
+fn cut(
+    reading: Reading,
+    model: &str,
+    timestamp: Timestamp,
+) -> AssistantMessage {
+    reading
+        .accumulator
+        .cut()
+        .unwrap_or_else(|| AssistantMessage {
+            content: Vec::new(),
+            model: model.to_owned(),
+            response_id: None,
+            usage: Usage::default(),
+            stop_reason: MessageStop::Stop,
+            error_message: None,
+            timestamp,
+        })
+}
+
+/// Ends a partial message with an error of `reason`.
+pub(super) fn finish(
+    mut accumulator: Accumulator,
+    model: &str,
+    timestamp: Timestamp,
+    reason: ErrorReason,
+    message: &str,
+) -> AssistantMessage {
+    if accumulator.partial().is_none() {
+        let _ = accumulator.push(AssistantEvent::Start {
+            model: model.to_owned(),
+            response_id: None,
+            timestamp,
+        });
+    }
+    let _ = accumulator.push(AssistantEvent::Error {
+        reason,
+        message: message.to_owned(),
+        usage: Usage::default(),
+        class: Class::Fatal,
+    });
+    accumulator
+        .finish()
+        .expect("an error event always finishes the stream")
+}
+
+/// What ended a response.
+#[derive(Debug)]
+pub(super) enum Ended {
+    /// It ran its course, as `Class` says.
+    Done(Class),
+    /// A steering message cut it short: the next one the run reads.
+    Cut(crate::agent::Prompt),
+}
+
+impl Ended {
+    /// What a retry makes of it: a cut response is never asked again.
+    pub(super) fn class(&self) -> Class {
+        match self {
+            Self::Done(class) => *class,
+            Self::Cut(_) => Class::Fatal,
+        }
+    }
+}
+
+impl Runner {
+    /// Asks for a response, retrying failures classified as retryable
+    /// with the run's policy. Returns the last response and what ended
+    /// it.
+    pub(super) async fn respond(
+        &mut self,
+        transcript: &[Message],
+        turn: u32,
+    ) -> (AssistantMessage, Ended) {
+        let mut attempts = 1;
+        loop {
+            let (message, ended) = self.respond_once(transcript).await;
+            if ended.class() != Class::Retryable || !self.retry.allows(attempts)
+            {
+                return (message, ended);
+            }
+            let delay = self.retry.delay(attempts, heiko_ai::retry::jitter());
+            attempts += 1;
+            self.emit(RunEvent::Retry {
+                run: self.run.clone(),
+                turn,
+                attempt: attempts,
+                delay,
+                error: message.error_message.clone().unwrap_or_default(),
+            })
+            .await;
+            if !wait(&self.cancel, delay).await {
+                let model = self.session.settings().model.clone();
+                let aborted = finish(
+                    Accumulator::new(),
+                    &model,
+                    (self.clock)(),
+                    ErrorReason::Aborted,
+                    CANCELLED,
+                );
+                return (aborted, Ended::Done(Class::Fatal));
+            }
+        }
+    }
+
+    /// Streams one response, emitting its deltas. A cancel drops the
+    /// stream and ends the message as aborted.
+    pub(super) async fn respond_once(
+        &mut self,
+        transcript: &[Message],
+    ) -> (AssistantMessage, Ended) {
+        let timestamp = (self.clock)();
+        let stream = self.session.respond(transcript, timestamp);
+        let model = self.session.settings().model.clone();
+        let mut reading = Reading::new(stream);
+        let mut call_id = String::new();
+        loop {
+            // A steering message cuts the response short: the person
+            // should not wait for the rest of an answer they moved on
+            // from (Codex's instant interrupt).
+            let event = tokio::select! {
+                biased;
+                event = reading.next(&self.cancel) => event,
+                Some(text) = self.steering.recv() => {
+                    return (cut(reading, &model, timestamp), Ended::Cut(text));
+                }
+            };
+            let Some(event) = event else {
+                break;
+            };
+            match event {
+                AssistantEvent::TextDelta { delta, .. } => {
+                    self.emit(RunEvent::TextDelta {
+                        run: self.run.clone(),
+                        parent: self.parent.clone(),
+                        delta,
+                    })
+                    .await
+                }
+                AssistantEvent::ThinkingDelta { delta, .. } => {
+                    self.emit(RunEvent::ThinkingDelta {
+                        run: self.run.clone(),
+                        delta,
+                    })
+                    .await
+                }
+                AssistantEvent::ToolCallStart { id, .. } => call_id = id,
+                AssistantEvent::ToolCallDelta { delta, .. } => {
+                    self.emit(RunEvent::ToolCallDelta {
+                        run: self.run.clone(),
+                        call_id: call_id.clone(),
+                        json_fragment: delta,
+                    })
+                    .await
+                }
+                _ => {}
+            }
+        }
+        let streamed = reading.end();
+        let (accumulator, reason, text) = match streamed {
+            Streamed::Finished(message, class) => {
+                return (message, Ended::Done(class));
+            }
+            Streamed::Cancelled(accumulator) => {
+                (accumulator, ErrorReason::Aborted, CANCELLED)
+            }
+            Streamed::BrokeGrammar(accumulator) => (
+                accumulator,
+                ErrorReason::Error,
+                "the model's response broke the event grammar",
+            ),
+            Streamed::NoTerminal(accumulator) => (
+                accumulator,
+                ErrorReason::Error,
+                "the model's response ended without a terminal event",
+            ),
+        };
+        (
+            finish(accumulator, &model, timestamp, reason, text),
+            Ended::Done(Class::Fatal),
+        )
+    }
+
+    /// Fails every call of a response cut off by the output limit.
+    pub(super) async fn fail_truncated(
+        &mut self,
+        calls: &[MessageToolCall],
+    ) -> Vec<ToolResultMessage> {
+        let mut results = Vec::new();
+        for call in calls {
+            let args = Value::Object(call.arguments.clone());
+            self.emit_start(&call.id, &call.name, args, None).await;
+            let output = ToolOutput::text(format!(
+                "Tool call \"{}\" {TRUNCATED}",
+                call.name
+            ));
+            self.emit_end(&call.id, &output, true, None).await;
+            results.push(self.result_message(call, output, true));
+        }
+        results
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use futures_util::{StreamExt, stream};
+    use heiko_ai::event::DoneReason;
+
+    use super::*;
+
+    /// A stream that stays open after its terminal event is read up to
+    /// that event: a cancel or a steer that comes later finds a finished
+    /// response, not one to abort or cut short.
+    #[test]
+    fn reading_ends_at_the_terminal_event() {
+        let events = vec![
+            AssistantEvent::Start {
+                model: "m".into(),
+                response_id: None,
+                timestamp: 0,
+            },
+            AssistantEvent::Done {
+                reason: DoneReason::Length,
+                usage: Usage::default(),
+                response_id: Some("r".into()),
+            },
+        ];
+        let stream = stream::iter(events).chain(stream::pending()).boxed();
+        heiko_testing::block_on(async {
+            let cancel = CancellationToken::new();
+            let mut reading = Reading::new(stream);
+            assert!(reading.next(&cancel).await.is_some());
+            assert!(reading.next(&cancel).await.is_some());
+            cancel.cancel();
+            assert!(reading.next(&cancel).await.is_none());
+            let Streamed::Finished(message, _) = reading.end() else {
+                panic!("the response finished before the cancel");
+            };
+            assert_eq!(message.stop_reason, MessageStop::Length);
+        });
+    }
+}

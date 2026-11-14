@@ -1,8 +1,8 @@
 -- The gate as a machine: every event from every state, in any order,
 -- keeps its states in shape, and a change ships only once it was
 -- approved and no other was asked since. Then the plugin around it.
-local tau = require("tau")
-local t = tau.test
+local heiko = require("heiko")
+local t = heiko.test
 local g = t.gen
 local gate = require("gate")
 

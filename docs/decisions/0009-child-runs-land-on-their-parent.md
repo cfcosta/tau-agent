@@ -2,7 +2,7 @@
 
 - Status: accepted. Amended by
   [0014](0014-the-model-commits-and-runs-land-as-stacked-diffs.md):
-  the model makes the commits (no commit per turn), tau starts the
+  the model makes the commits (no commit per turn), heiko starts the
   parent's turn that resolves a landing's conflicts, and sessions
   merge into trunk. Amended by
   [0015](0015-delegates-fork-their-caller.md): a sub-agent forks its
@@ -22,13 +22,13 @@ ever comes back to its parent:
 
 - **Forks.** The user forks a turn. The fork gets its own jj workspace
   on the commit that turn's `Link` names, and its own stack of turn
-  commits (`tau: run <id> turn <n>`). Those commits have no bookmark
+  commits (`heiko: run <id> turn <n>`). Those commits have no bookmark
   and stay in the project. "Keep branch" only forgets the other
   workspaces. A fork's pull request pushes its own turns and never
   touches the parent.
 - **Sub-agents.** `Agent::as_tool` runs an agent as a tool call. The
   caller waits and gets the child's last text back. The child
-  inherits no transcript and no records. tau-ui never builds one, so
+  inherits no transcript and no records. heiko-ui never builds one, so
   a sub-agent has no workspace. Given a `RunWorkspace`, it would start
   on trunk and not see its caller's edits.
 
@@ -63,7 +63,7 @@ Every child run has:
 - its own chat, listed under its parent;
 - its own jj workspace, on the parent's work at the point it started:
   that turn's commit for a fork, the parent's `@` for a sub-agent;
-- a bookmark, `tau/<run>`, moved to its head at every turn commit.
+- a bookmark, `heiko/<run>`, moved to its head at every turn commit.
 
 A child run can be opened, steered and forked like any run.
 
@@ -120,7 +120,7 @@ one move: **restack**.
 
 ### Groundwork, first
 
-1. `tau/<run>` bookmarks, set in `RunWorkspace`.
+1. `heiko/<run>` bookmarks, set in `RunWorkspace`.
 2. `Link`s resolved by change id. A change id that has diverged is
    reported, not guessed at.
 3. The landing record, and the host's rule of rewriting only idle

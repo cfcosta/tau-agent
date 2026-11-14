@@ -1,5 +1,5 @@
-local tau = require("tau")
-local t = tau.test
+local heiko = require("heiko")
+local t = heiko.test
 
 -- A run's messages as `rewrite_context` sees them: the person's, then
 -- `calls` answers that each call a tool, and their results.

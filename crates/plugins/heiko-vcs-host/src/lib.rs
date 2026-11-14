@@ -1,0 +1,100 @@
+//! Version-control tools for heiko agents, backed by jj-lib
+//! (`docs/reference/vcs.md`), so the model never runs `jj` or `git` in a
+//! shell: heiko-vcs's host half. Its cards and the shapes they read are
+//! `heiko-vcs`'s (ADR 0030).
+//!
+//! A [`Vcs`] opens one jj workspace ([`Vcs::open`]) or makes a new
+//! repository with an internal Git store ([`Vcs::init`]).
+//! [`VcsPlugin`] adds its tools to an agent:
+//! `Agent::plugin(VcsPlugin::new(vcs))`.
+//!
+//! - Reading: `vcs_status`, `vcs_diff`, `vcs_log`, `vcs_show`.
+//! - Writing: `vcs_describe`, `vcs_commit`, `vcs_new`, `vcs_restore`,
+//!   `vcs_resolve`, `vcs_undo`.
+//! - Landing, when asked for ([`VcsPlugin::landing`]): `vcs_land`.
+//!
+//! A [`ProjectRepo`] is a repository heiko owns, cloned from the user's, with
+//! a workspace per run; [`RunWorkspace`] makes a run's workspace when
+//! the run starts and snapshots it after each turn, so forks start from
+//! a turn's code, and [`JjRunWorkspace`] is that workspace as the
+//! kernel asks it. The model makes the commits, with `vcs_commit`
+//! ([ADR 0014](../../../docs/decisions/0014-the-model-commits-and-runs-land-as-stacked-diffs.md)).
+//! The host reaches a project through the `heiko.vcs` slot, which
+//! [`JjVcs`] fills: each project it opens is a [`JjRepository`].
+//!
+//! Every operation heiko writes says it is heiko's: the attribute
+//! [`HEIKO_OP_ATTRIBUTE`] and a description starting `heiko: `, which
+//! [`is_heikos`] reads.
+//!
+//! The tools take change ids and commit ids, never revsets. Every tool
+//! snapshots the working copy first, so edits made with other tools are
+//! never lost, and the writing tools refuse immutable commits. Fetch and
+//! push are left to the host: [`ProjectRepo::clone`] brings a remote
+//! repository in over HTTPS, and [`ProjectRepo::push_trunk`]
+//! and [`ProjectRepo::push_branch`] push through jj-lib, which runs `git`.
+
+mod clone;
+mod colocate;
+mod config;
+mod diff;
+pub mod error;
+mod half;
+pub mod heads;
+mod land;
+pub mod local;
+mod lock;
+mod operations;
+mod ops;
+pub mod plugin;
+pub mod project;
+mod repository;
+mod revsets;
+pub mod run_workspace;
+mod session;
+mod snapshot_config;
+mod sub_agents;
+pub mod sweep;
+pub mod tools;
+mod vcs;
+mod workspace_init;
+mod worktree;
+
+pub use clone::{CloneError, TransferError};
+pub use config::{JjEnv, settings as jj_settings};
+pub use diff::MAX_DIFF_BYTES;
+pub use error::VcsError;
+pub use half::VcsHost;
+pub use heads::Head;
+pub use operations::{DESCRIPTION_PREFIX, HEIKO_OP_ATTRIBUTE, is_heikos};
+pub use ops::{
+    Committed,
+    DEFAULT_LOG_LIMIT,
+    MAX_LOG_LIMIT,
+    TurnSnapshot,
+    WorkingCopy,
+};
+pub use plugin::VcsPlugin;
+pub use project::{
+    Layout,
+    MAIN_WORKSPACE,
+    Project,
+    ProjectRepo,
+    REMOTE,
+    UpdateFrom,
+    main_workspace_name,
+};
+pub use repository::{JjRepository, JjVcs};
+pub use run_workspace::{
+    JjRunWorkspace,
+    MAIN_DOES_NOT_LAND,
+    RunWorkspace,
+    SUB_AGENTS_DO_NOT_LAND,
+};
+pub use session::MAX_NEW_FILE_SIZE;
+use heiko_vcs::ui;
+// The shapes the tools return, from the interface half.
+pub use heiko_vcs::{ChangeInfo, Landing, TooLarge, details};
+pub use vcs::{Identity, Vcs};
+
+/// What every tool returns when the run is cancelled before it starts.
+pub const ABORTED: &str = "Operation aborted";

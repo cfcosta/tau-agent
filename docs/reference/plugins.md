@@ -1,6 +1,6 @@
 # Plugins
 
-- Status: implemented in `tau_agent::plugin`; compaction is a plugin.
+- Status: implemented in `heiko_agent::plugin`; compaction is a plugin.
   The first four plugins are not built yet.
 - Date: 2026-09-28
 
@@ -13,7 +13,7 @@ four plugins.
 
 ## Principles
 
-- **Plugins are crates, linked at compile time.** tau-agent is a
+- **Plugins are crates, linked at compile time.** heiko-agent is a
   library ([0001](../decisions/0001-library-not-product.md)). There is
   no dynamic loading, no discovery, no settings file and no command
   surface. A plugin is a value that the caller builds and passes to
@@ -121,7 +121,7 @@ and opens the session. Nothing changes them afterwards.
 
 Every method has a default that does nothing, so a plugin implements
 only what it uses. The loop calls plugins in registration order; in
-tau, that is the registry's order, which each plugin declares (below,
+heiko, that is the registry's order, which each plugin declares (below,
 "Declarations").
 
 ```rust
@@ -159,7 +159,7 @@ pub trait PluginRun: Send {
 
     /// Called on every plugin once a rewrite replaced the transcript,
     /// with the transcript it replaced: the last chance to keep what it
-    /// dropped (tau-memory saves notes here).
+    /// dropped (heiko-memory saves notes here).
     async fn rewritten(&mut self, replaced: &[Message], rewrite: &Rewrite,
         ctx: &PluginCtx) -> Result<(), PluginError> { Ok(()) }
 
@@ -246,7 +246,7 @@ impl PluginCtx {
         -> Result<(), StoreError>;
     /// The plugin's records along the run's fork chain as stored now:
     /// its own since the start, and any an interface stored for it
-    /// meanwhile (tau-goal's pause, extend and clear).
+    /// meanwhile (heiko-goal's pause, extend and clear).
     pub async fn records(&self) -> Result<Vec<Value>, StoreError>;
 }
 
@@ -326,8 +326,8 @@ pub struct Rewrite {
 - **On overflow,** plugins are asked in order, and the first rewrite
   wins, as between turns. The request is then retried once. Plugins are
   offered the context in the order they were added, so add cheap ones
-  (pruning) before compaction (in tau, `tau-fast-compaction` comes
-  before the tree and the summary among tau-luau-plugins' built-ins); one that cannot free enough should
+  (pruning) before compaction (in heiko, `heiko-fast-compaction` comes
+  before the tree and the summary among heiko-luau-plugins' built-ins); one that cannot free enough should
   decline and leave the overflow to the summary. The loop does not re-estimate after a rewrite: the
   estimate anchors on the last reported usage, which a kept message can
   still carry, so "fits the window" would not be reliable.
@@ -342,13 +342,13 @@ pub struct Rewrite {
   followed by only the messages it made or changed
   ([storage.md](storage.md)). Loading a transcript replays the
   rewrites.
-  Compaction's rewrite is a `context` entry from `tau-luau-plugins`,
-  naming `tau-compaction`, whose first message is the summary.
+  Compaction's rewrite is a `context` entry from `heiko-luau-plugins`,
+  naming `heiko-compaction`, whose first message is the summary.
 - **Resuming.** A fork gets the details of the latest rewrite it
   inherits from `RunPlan::last_rewrite`, when its plugin made it. A
   Luau plugin keeps what it needs in its state instead, which a fork
   inherits: compaction resumes its summary and file lists from there,
-  and fast pruning its ledger. No plugin tau comes with reads
+  and fast pruning its ledger. No plugin heiko comes with reads
   `last_rewrite` now.
 - **Events.** `ContextRewritten { run, plugin, tokens_before,
 tokens_after, trigger }` marks each rewrite.
@@ -361,8 +361,8 @@ cancel)` offers a finished run's transcript for a rewrite with
   part, and `plan` shows them the run as stored, with no input; no
   plugin's `start` runs, so nothing a start does (an effort picked, a
   memory search, a record) happens, and the settings stay the last
-  request's. tau-luau-plugins takes part, for tau-compaction and
-  tau-memory: one summarizes, the other keeps what the summary drops. The rewrite is stored as any
+  request's. heiko-luau-plugins takes part, for heiko-compaction and
+  heiko-memory: one summarizes, the other keeps what the summary drops. The rewrite is stored as any
   is; no message is added, the run stays finished, and its events are
   only the rewrite's (`ContextRewritten`, and what plugins charged,
   reported or failed at). Cancelling it stores nothing that was not
@@ -394,24 +394,24 @@ compact an idle run
 
 `on_event` sees every event throughout.
 
-## The shared Jev client: `tau-jev`
+## The shared Jev client: `heiko-jev`
 
 Three of the four plugins ask Jev (TypeSafe's System One model) for
 decisions, so the client is its own small crate, not code copied three
-times. It is built: `crates/plugins/tau-jev`. Plugins take an `impl Jev`
-(the trait), so tests answer with `tau_jev::fake::FakeJev` and
-production uses the HTTP client, `tau_jev::TypeSafe`.
+times. It is built: `crates/plugins/heiko-jev`. Plugins take an `impl Jev`
+(the trait), so tests answer with `heiko_jev::fake::FakeJev` and
+production uses the HTTP client, `heiko_jev::TypeSafe`.
 
-tau-jev is a plugin too (ADR 0045). The kernel names no Jev: tau-jev
-keeps the TypeSafe key (`typesafe-key` in tau's config directory), and
-gives the plugins that declare its service (`tau_jev::SERVICE`,
-`tau.jev`) the client, counted (`Metered`), while there is a key
+heiko-jev is a plugin too (ADR 0045). The kernel names no Jev: heiko-jev
+keeps the TypeSafe key (`typesafe-key` in heiko's config directory), and
+gives the plugins that declare its service (`heiko_jev::SERVICE`,
+`heiko.jev`) the client, counted (`Metered`), while there is a key
 (`HostHalf::provide`). Its section of the Models screen, and its own
-page (`tau_jev::key_page`, which other plugins' buttons link to), take
+page (`heiko_jev::key_page`, which other plugins' buttons link to), take
 the key in a secret field and show what Jev did this session. Another
-plugin's view reads whether a key is saved with `tau_jev::keyed`, from
-tau-jev's data. Tests give it a Jev in place of TypeSafe's with
-`Host::with_service(tau_jev::Upstream(jev))`.
+plugin's view reads whether a key is saved with `heiko_jev::keyed`, from
+heiko-jev's data. Tests give it a Jev in place of TypeSafe's with
+`Host::with_service(heiko_jev::Upstream(jev))`.
 
 - **API.** One call: `POST https://api.typesafe.ai/v1/systemone` with
   `{ model, state, questions }`. The answers come back under the
@@ -434,7 +434,7 @@ tau-jev's data. Tests give it a Jev in place of TypeSafe's with
 - **Errors.** Transport errors leave the URL out, and error statuses
   drop the body, which can echo the request.
 - **Retries.** 429, 503 and 529 are retried, honoring `retry-after`,
-  under tau-ai's `RetryPolicy`.
+  under heiko-ai's `RetryPolicy`.
 - **Cost.** Input tokens only; output is free. Jev 1.13 costs $0.042
   per million input tokens. The client returns `Usage` with the cost
   filled in, which a plugin passes to `ctx.charge`.
@@ -449,20 +449,20 @@ tau-jev's data. Tests give it a Jev in place of TypeSafe's with
 
 ## A plugin's UI
 
-`tau-agent`'s `Plugin` has no UI. In this repository, each plugin has
-two halves (`tau-ui-plugin`). Its `UiPlugin` folds what it publishes
+`heiko-agent`'s `Plugin` has no UI. In this repository, each plugin has
+two halves (`heiko-ui-plugin`). Its `UiPlugin` folds what it publishes
 (`PluginCtx::publish`) into its state for the run, live and from
 history alike, and adds its pages and contributions to the interface
 at extension points. Its `HostHalf` builds its agent plugin for a run,
-and keeps what the plugin needs on the host. `tau-plugins` lists the
-plugins, the one place they are named; `tau-ui` gives each its host
+and keeps what the plugin needs on the host. `heiko-plugins` lists the
+plugins, the one place they are named; `heiko-ui` gives each its host
 half (`Registry::host`), installs them, and builds a run's plugins only
 through that registry
-([0030](../decisions/0030-host-halves-are-crates.md)). `tau-ui-remote`,
+([0030](../decisions/0030-host-halves-are-crates.md)). `heiko-ui-remote`,
 the kernel, names and links none: a process that installs nothing, a
 phone, has none ([0046](../decisions/0046-the-phone-draws-what-the-computer-builds.md)),
 and `tests/core_names_no_plugin.rs` checks that neither its sources
-outside their tests nor tau-phone's name a plugin crate, a plugin's
+outside their tests nor heiko-phone's name a plugin crate, a plugin's
 name or its tools, and that neither links one.
 
 A phone draws each plugin view from what the computer builds for it
@@ -472,14 +472,14 @@ asks again for every view it has after a snapshot and whenever it
 reaches the computer again, since what was pushed while it was away
 reached nobody. Once a phone's last connection closes, the phone
 server says it left (`ServerEvent::Left`) and the computer builds no
-view for it until it asks again (`Workspace::forget_phone`). `tau-ui`'s `tests/plugins_model.rs` checks it, with the
-rest of how plugins compose (see [testing](testing.md#tau-ui)).
+view for it until it asks again (`Workspace::forget_phone`). `heiko-ui`'s `tests/plugins_model.rs` checks it, with the
+rest of how plugins compose (see [testing](testing.md#heiko-ui)).
 
-A slot (`tau_ui_plugin::slots`, ADR 0045) is a role one plugin fills,
-such as `tau.vcs` or `tau.forge`. Each plugin's `HostHalf::fill` offers
+A slot (`heiko_ui_plugin::slots`, ADR 0045) is a role one plugin fills,
+such as `heiko.vcs` or `heiko.forge`. Each plugin's `HostHalf::fill` offers
 what it can fill; `hosted::fills` gathers every offer. When several
 plugins can fill a slot, the first in the slot's order fills it: the
-order `tau-plugins` declares with `Registry::slot_order`, then by name,
+order `heiko-plugins` declares with `Registry::slot_order`, then by name,
 never the registration order. The Plugins screen lists such slots under
 Roles; picking another plugin there sets the UI state's
 `slots::PICKS` key for the slot, which the host applies at once
@@ -489,15 +489,15 @@ show like any UI state.
 ### Declarations
 
 Each plugin declares itself in one place, `UiPlugin::declaration`
-(`tau_ui_plugin::Declaration`, ADR 0045):
+(`heiko_ui_plugin::Declaration`, ADR 0045):
 
 - `after` / `before`: the plugins it comes after or before. The
   registry puts plugins in that order, the rest by name
-  (`declare::order`), so the order `tau-plugins` lists them in never
+  (`declare::order`), so the order `heiko-plugins` lists them in never
   counts; a cycle panics as the registry is built, naming two plugins
   in it. A name not in the registry orders nothing.
-  `tau-plugins/tests/declared.rs` checks that every name is one of
-  tau's and that the order keeps them all. That order is the order of
+  `heiko-plugins/tests/declared.rs` checks that every name is one of
+  heiko's and that the order keeps them all. That order is the order of
   every hook, of each plugin's part of a prompt, and of contributions
   among equals.
 - `seams`: where it steps into a run (`Seam`: `tools`, `start`,
@@ -511,7 +511,7 @@ Each plugin declares itself in one place, `UiPlugin::declaration`
 - `fills`: the slots it can fill. `Fills::fill` refuses any other, and
   says so.
 - `services`: the host services it takes, by name
-  (`services::names`, such as `tau.jev` or `tau.workspace-dir`). The
+  (`services::names`, such as `heiko.jev` or `heiko.workspace-dir`). The
   host offers each named service with `Services::offer`; the registry
   hands each plugin's host half a view (`Services::scoped`, through
   `RunCtx` and `HostCx`) without the services it did not declare, and
@@ -519,7 +519,7 @@ Each plugin declares itself in one place, `UiPlugin::declaration`
   (`Services::with`: the home and config directories, saved settings,
   jobs) go to every plugin.
 - `provides`, `tools`, `store`, `network`, `secrets`, `reads`: what else
-  it reaches. For a plugin built into tau these are statements, not
+  it reaches. For a plugin built into heiko these are statements, not
   fences.
 
 The registry puts the declaration's reach in the plugin's catalog
@@ -528,37 +528,37 @@ plugin's About tab: its seams, then each kind of reach it declares.
 
 A plugin gives other plugins a service with `HostHalf::provide`, called
 each time the host builds its context or a run's, so what it gives can
-change (tau-jev gives `tau.jev` only while a key is saved);
+change (heiko-jev gives `heiko.jev` only while a key is saved);
 `Provide::offer` refuses a name the declaration does not list in
 `provides`. A slot the host needs before any host state is made
-(`tau.store`, which every host state is made with) is filled by
+(`heiko.store`, which every host state is made with) is filled by
 `HostHalf::fill_early`, from the half alone, and read with
 `hosted::early_fills`; the rest by `HostHalf::fill`. The slots so far:
-`tau.vcs` (tau-vcs), `tau.forge` (tau-github, through tau-luau-plugins), `tau.notify`
-(tau-notify), `tau.title` (tau-titles), `tau.store` (tau-sqlite) and
-`tau.provider` (tau-chatgpt) and `tau.compaction` (tau-compaction-chain;
+`heiko.vcs` (heiko-vcs), `heiko.forge` (heiko-github, through heiko-luau-plugins), `heiko.notify`
+(heiko-notify), `heiko.title` (heiko-titles), `heiko.store` (heiko-sqlite) and
+`heiko.provider` (heiko-chatgpt) and `heiko.compaction` (heiko-compaction-chain;
 the gate turns off the rewrites of a plugin it does not name).
-tau-titles and tau-compaction-chain are Luau (ADR 0050):
-tau-luau-plugins fills their slots for them. A plugin's setup step may come first
+heiko-titles and heiko-compaction-chain are Luau (ADR 0050):
+heiko-luau-plugins fills their slots for them. A plugin's setup step may come first
 (`SetupAt::Model`), be `required`, and say how its link to a service
 stands (`SetupView::link`), which the handshake above it draws.
 
-A plugin declares the kinds of tau's own repository it keeps
-(`UiPlugin::repo_kinds`, `tau_ui_plugin::kinds::KindHost`): the
+A plugin declares the kinds of heiko's own repository it keeps
+(`UiPlugin::repo_kinds`, `heiko_ui_plugin::kinds::KindHost`): the
 directory beside the clones', one repository or one per folder, the
 files one starts with, whether its runs are kept in (only the plugin's
 own launcher, and no commands without one) and which plugins its runs
 leave out. The host lists them as it starts and makes one on
-`Conversations::make_repo`; tau-agents keeps agents' repositories and
-tau-luau-plugins the plugins repository.
+`Conversations::make_repo`; heiko-agents keeps agents' repositories and
+heiko-luau-plugins the plugins repository.
 
 - **The host half.** A plugin whose host half brings what the
   interface does not need keeps it in a crate of its own,
-  `tau-<plugin>-host`: tau-codemode (Luau), tau-luau-plugins, tau-vcs
-  (jj-lib, gix), tau-mcp (rmcp), tau-tools (the tools). The plugin's crate keeps its records, their fold, its
-  views and the shapes they read (`details` modules, tau-mcp's
-  `info`). tau-direnv keeps its behind a default `host` feature; the rest,
-  which are light, beside their `UiPlugin`. `tau-ui-remote` depends on
+  `heiko-<plugin>-host`: heiko-codemode (Luau), heiko-luau-plugins, heiko-vcs
+  (jj-lib, gix), heiko-mcp (rmcp), heiko-tools (the tools). The plugin's crate keeps its records, their fold, its
+  views and the shapes they read (`details` modules, heiko-mcp's
+  `info`). heiko-direnv keeps its behind a default `host` feature; the rest,
+  which are light, beside their `UiPlugin`. `heiko-ui-remote` depends on
   no plugin crate at all, so neither it nor a phone links one.
 
 - **The fold.** `UiPlugin::State` implements `Fold`: its `Record` is
@@ -590,53 +590,53 @@ tau-luau-plugins the plugins repository.
   as `PluginValue`: its own type once read, JSON only on the wire.
 - **Agent commands' environment.** `HostHalf::launcher(host, repo,
 settings)` gives what commands in a repository start through: a
-  `tau_agent::launch::Launcher`, which answers, for a directory, the
+  `heiko_agent::launch::Launcher`, which answers, for a directory, the
   words to put before the program and the variables to set (`Launch`),
   and may wait first (an environment loading). The host joins every
   plugin's in the registry's order (`Launchers`) and hands the result,
   through `RunCtx::services`, to a run's commands (`RunCommands`) and
-  to tau-mcp, which starts the repository's stdio servers through it in
+  to heiko-mcp, which starts the repository's stdio servers through it in
   the main workspace (`RepoLauncher`). With none, commands start as
-  they are. tau-direnv is the first such plugin
+  they are. heiko-direnv is the first such plugin
   ([0025](../decisions/0025-agent-commands-run-in-an-environment-plugins-give.md)).
 - **What a run's services hold.** Besides the metered Jev and the turn
   hooks (`TurnHooks`), `RunCtx::services` holds the run's workspace
   (`WorkspaceDir`); how its commands start (`RunCommands`: `Direct`,
   `Through` the joined launcher, or `Off` for an agent's repository
-  without a sandbox); what wakes it with tau's message (`RunWake`), for
+  without a sandbox); what wakes it with heiko's message (`RunWake`), for
   main chats and chats, not sub-agents; `AgentRepo` when it works in an
   agent's repository; and the repository's joined launcher
   (`RepoLauncher`) when a plugin gives one.
 - **A run's tools and prompt.** The host builds a run's agent (ADR
   0045, step 4): `spawn` (or the refusing one), then every plugin's
   `HostHalf::run_tools(host, run, settings)` in the registry's order,
-  the tools that keep state per workspace (tau-tools' coding tools,
+  the tools that keep state per workspace (heiko-tools' coding tools,
   with the commands a run leaves running), then the VCS's parts of the
   workspace, the repository's `AGENTS.md`, and last every plugin's
   `agent_plugins`. Every run declares the same tools in the same
   order, so each reads the others' prompt cache (ADR 0022). When a
   workspace closes (a landing, a drop, a sub-agent's work kept or
   dropped) the host calls every plugin's
-  `HostHalf::workspace_closed( host, repo, dir)`: tau-tools ends the commands left running there.
+  `HostHalf::workspace_closed( host, repo, dir)`: heiko-tools ends the commands left running there.
   `HostHalf::prompt(host, kind, settings)` gives a `Prompt`: a part of
   the instructions, which must not hang on `kind` as every run shares
   them, and context put before the run's first message, which may. The
   host joins its own first sentence, the plugins' parts in the
-  registry's order, then its last sentence: tau-tools says to use the
-  tools, tau-vcs to use the vcs tools and commit.
+  registry's order, then its last sentence: heiko-tools says to use the
+  tools, heiko-vcs to use the vcs tools and commit.
 - **The repository.** `RepoCtx` says which repository a run or a host
   half works for: its `id` (`RepoId`), its sidebar `name`, its
   `remote` (GitHub's URL for a clone from there, else `None`), the
   person's `folder` for a repository worked on in place
   ([0043](../decisions/0043-local-repositories-in-place.md); `None` for
-  a clone tau keeps), its `checkout`, tau's `dir` for it, and its
+  a clone heiko keeps), its `checkout`, heiko's `dir` for it, and its
   `workspaces`. The id is a UUID given once, as the repository is
   listed in `repos.json`, and never made from a path, so it survives a
   move: a plugin keys what it keeps for a repository on it. The
   catalog's `Repo` carries it too, for pages and the phone
   ([0044](../decisions/0044-memory-imports-what-other-agents-learned.md)).
 - **Per-repository settings.** `points::REPO_MENU` (`Point<AtRepo>`)
-  takes entries for a repository's menu in the sidebar, after tau's
+  takes entries for a repository's menu in the sidebar, after heiko's
   own: a toggle the plugin keeps per repository, or a page of its own
   for it (memory's Memory entry, which opens the repository's notes).
 - **A repository's actions.** `points::REPO_ACTIONS` (`Point<AtRepo>`)
@@ -653,22 +653,22 @@ settings)` gives what commands in a repository start through: a
   (where an agent stands), unless the repository's main chat is going,
   which reads `working`; `points::KIND_ROW_LINE` (`Point<AtRepo>`)
   under an open row and under its name on the phone (its last word).
-  tau-agents fills all three
+  heiko-agents fills all three
   ([0037](../decisions/0037-agents.md)).
 - **What waits on the person.** `points::WAITING`
   (`Point<AtApp, Waiting>`) lists the plugin's things that wait on the person, by
   group (an agent): each `WaitItem` by an id that stays while it waits,
   with a notice's title and body, the run a notice opens, and the
   `away` words for a group first seen with some waiting.
-  `tau_ui_plugin::waiting::Watch` tells each new item once, and a
-  group's `away` once, on the desktop (`tau-ui`'s notices) and on the
+  `heiko_ui_plugin::waiting::Watch` tells each new item once, and a
+  group's `away` once, on the desktop (`heiko-ui`'s notices) and on the
   phone (Android's) alike; an item that stops waiting is forgotten.
 - **Landing's changes and a card's stat.** `points::CHANGES`
   (`Point<AtChanges>`) draws the changes a landing brings, in its
-  preview and on the card it leaves in the parent's chat: tau-vcs's.
+  preview and on the card it leaves in the parent's chat: heiko-vcs's.
   `points::CARD_STAT` (`Point<AtCard, PluginStatus>`) is what a card
   says of its run on the compare screen; the newest card with one says
-  it (tau-tools' tests, from a command's summary).
+  it (heiko-tools' tests, from a command's summary).
 - **Times.** A tree's `ticker` counts from a start, `due` down to a
   time, and `ago` up from one (`4m ago`): the state says when, and only
   the interface reads the clock.
@@ -676,10 +676,10 @@ settings)` gives what commands in a repository start through: a
   key in the workspace, as the keymap spells it. Pressing it runs the
   closure with `at.repo`, the repository the sidebar has selected, if
   any; it navigates to a page (`view.handle.navigate`) or asks the
-  host half (`view.handle.act`). tau-ui-remote binds them in
+  host half (`view.handle.act`). heiko-ui-remote binds them in
   `bind_keys`, after its own, as one `PluginKey { plugin, key }`
-  action each. A key tau binds
-  stays tau's, and a key an earlier plugin in the registry declared
+  action each. A key heiko binds
+  stays heiko's, and a key an earlier plugin in the registry declared
   stays that plugin's; the later declaration is dropped, and a key gpui
   cannot read too, each said on stderr. Memory's ctrl-2 opens the
   selected repository's notes.
@@ -707,7 +707,7 @@ settings)` gives what commands in a repository start through: a
   }
   ```
 
-  It asks as `PluginCtx::ask` does (`tau_agent::plugin::ask_outside`):
+  It asks as `PluginCtx::ask` does (`heiko_agent::plugin::ask_outside`):
   a session of its own, the default retry policy, `cancel` observed.
   Signed out since, it fails with `AskError::Unavailable`. Every
   attempt's usage is booked to the plugin alone with
@@ -747,12 +747,12 @@ settings)` gives what commands in a repository start through: a
   `HostHalf::resume(host, cx)` is called once as the host starts, after
   every plugin's host state is made: the plugin starts again what a
   restart cut off, from its own checkpoint. The host only asks.
-  tau-agents' schedule ticker and registry watcher stay plain tasks: they
-  run for as long as tau does and have no progress to show.
+  heiko-agents' schedule ticker and registry watcher stay plain tasks: they
+  run for as long as heiko does and have no progress to show.
 
 - **The status bar**
   ([0044](../decisions/0044-memory-imports-what-other-agents-learned.md)).
-  The bar under the desktop shows, left to right: tau's own news as
+  The bar under the desktop shows, left to right: heiko's own news as
   before (a repository importing, updating or failing to, then an
   update's result), the jobs going on, and what plugins add at
   `points::ACTIVITY` (`Point<AtApp>`, every contribution drawn, in
@@ -768,7 +768,7 @@ settings)` gives what commands in a repository start through: a
   ([0044](../decisions/0044-memory-imports-what-other-agents-learned.md)).
   `points::SETUP` (`Point<AtSetup, SetupView>`) adds a step around the
   Repositories step. `AtSetup::repos` are the repositories picked so
-  far (`SetupRepo`: the name picked, `owner/name`; tau's `id` once its
+  far (`SetupRepo`: the name picked, `owner/name`; heiko's `id` once its
   clone is listed; the `remote` the forge gave; the `folder`, `None` for
   a clone; and the clone's state, `SetupClone`). A contribution gives a
   `SetupView`: its `step` (the plugin's name for it, `&'static str`), its
@@ -777,7 +777,7 @@ settings)` gives what commands in a repository start through: a
   step bar's `title`, the screen's `heading` and `detail`, and its
   `body`. A contribution that gives none, from its catalog data, is no
   step: it is not drawn or counted. The step is
-  `SetupStep::Plugin { plugin, step }`, a route like tau's own, so back
+  `SetupStep::Plugin { plugin, step }`, a route like heiko's own, so back
   and forward work. The step bar's stages are computed (`Stage::all`):
   Model, the steps placed before the repositories, Repositories, the
   steps placed after them, each in the order contributions come (their
@@ -793,7 +793,7 @@ settings)` gives what commands in a repository start through: a
   catalog says the forge is newly signed in, as `SetupUpdate::Repos`,
   and empties it on sign-out. A step ends with `Handle::setup_done`
   (`Request::SetupDone`), or when the person clicks the "Skip for now"
-  tau draws under it; either goes to the next step, or past the last to
+  heiko draws under it; either goes to the next step, or past the last to
   Ready (with clones) or a new run (without). As setup passes its last
   step, the workspace says `WorkspaceEvent::SetupFinished { repos }`
   once per window, and the host calls
@@ -801,12 +801,12 @@ settings)` gives what commands in a repository start through: a
   what its step chose, such as a job, which reads the repositories as
   their clones land (`JobCx::repos`). Setup stays on the desktop: a phone
   drops `HostUpdate::Setup`, and draws no step.
-- **Signing in to the forge.** tau-github's step comes before the
+- **Signing in to the forge.** heiko-github's step comes before the
   repositories: the device code to enter on GitHub (with "Copy code and
   open GitHub" and "I have approved it"), or a fine-grained personal
   access token typed into a secret input, then who is signed in and
   Continue. The same sign-in is a section of the Models screen
-  (`points::MODELS`), with Sign out. tau-github is a Luau package (ADR
+  (`points::MODELS`), with Sign out. heiko-github is a Luau package (ADR
   0050, gaps E and H): its `setup` and `models` draw them of what its
   `app` keeps, its buttons are its actions (`sign_in`, `check`,
   `sign_out`, `token_form`), and a job polls the device code. The token
@@ -833,31 +833,31 @@ built" section for the interface as it is.
 
 ## Luau packages
 
-tau's Luau plugins are packages under `plugins/` (ADR 0051), a person's and
-an agent's the same: `tau.toml` (`name`, `version`, `description`, `entry`),
-`src/`, `tests/`, and for tau's own the `fixtures/` the demo reads.
-`plugins/built-in.toml` lists tau's own, in the order they are active: the
+heiko's Luau plugins are packages under `plugins/` (ADR 0051), a person's and
+an agent's the same: `heiko.toml` (`name`, `version`, `description`, `entry`),
+`src/`, `tests/`, and for heiko's own the `fixtures/` the demo reads.
+`plugins/built-in.toml` lists heiko's own, in the order they are active: the
 compactions rewrite in that order. Adding one is a folder and a line, with
 nothing to compile. `plugins/examples/` holds the worked plugins and agents
-the `tau-plugins` and `tau-agents` skills teach, read as the skills install;
+the `heiko-plugins` and `heiko-agents` skills teach, read as the skills install;
 no package lives under `crates/`.
 
 | Command                                             | What it does                                                         |
 | --------------------------------------------------- | -------------------------------------------------------------------- |
-| `tau-plugin new <name>`                             | Writes a package that loads and passes its tests                     |
-| `tau-plugin new --built-in tau-<name>`              | The same under the checkout's `plugins/`, listed in `built-in.toml`  |
-| `tau-plugin test [<folder>...]`                     | Its cases, properties, fixtures and loops (`t.fixture`, `t.loop`)    |
-| `tau-plugin test --bless [<folder>...]`             | Writes the fixtures anew from what the plugins make                  |
-| `tau-plugin test --watch [<folder>...]`             | Runs them again each time a package changes                          |
-| `tau-plugin check [<folder>...]`                    | Loads each, says what it declares and reaches                        |
-| `tau-plugin install <folder>`                       | Tests it, then commits it to the plugins repository's trunk          |
-| `cargo nextest run --release -p tau-built-in-tests` | What Luau cannot say: the real host, the store under a fuse, oracles |
+| `heiko-plugin new <name>`                             | Writes a package that loads and passes its tests                     |
+| `heiko-plugin new --built-in heiko-<name>`              | The same under the checkout's `plugins/`, listed in `built-in.toml`  |
+| `heiko-plugin test [<folder>...]`                     | Its cases, properties, fixtures and loops (`t.fixture`, `t.loop`)    |
+| `heiko-plugin test --bless [<folder>...]`             | Writes the fixtures anew from what the plugins make                  |
+| `heiko-plugin test --watch [<folder>...]`             | Runs them again each time a package changes                          |
+| `heiko-plugin check [<folder>...]`                    | Loads each, says what it declares and reaches                        |
+| `heiko-plugin install <folder>`                       | Tests it, then commits it to the plugins repository's trunk          |
+| `cargo nextest run --release -p heiko-built-in-tests` | What Luau cannot say: the real host, the store under a fuse, oracles |
 
-`tau-plugin` (ADR 0053) is a binary of its own, with no window; with no
+`heiko-plugin` (ADR 0053) is a binary of its own, with no window; with no
 folder, `test` and `check` take the one they are run in when it holds a
-`tau.toml`, else every plugin tau comes with. A loop runs the plugin in a
+`heiko.toml`, else every plugin heiko comes with. A loop runs the plugin in a
 real agent loop with a scripted model; the `looping` module of
-tau-luau-plugins-host documents what a loop's spec holds and what its
+heiko-luau-plugins-host documents what a loop's spec holds and what its
 check gets.
 
 ### Hooks, the model and commands
@@ -872,26 +872,26 @@ itself, changed in place, and `env` the run's `run`, `now`, `settings`,
 `settings.view` `(settings, model, env)`: each draws a frozen copy of the
 model and cannot await.
 
-A hook reaches nothing itself. Every effect is a command of `tau.cmd`:
-reads and waits are awaited, `local v = tau.await(cmd.store.get(k))`
+A hook reaches nothing itself. Every effect is a command of `heiko.cmd`:
+reads and waits are awaited, `local v = heiko.await(cmd.store.get(k))`
 (`nil` for a missing value; Jev's answer and its cost; an infer's answer
 unwrapped, or raised), and writes are given,
-`tau.give(cmd.store.put(k, v))`, carried out when the step ends. A host
-tool is `cmd.tool(name, args)`, and `tau.all({ ... })` awaits several at
+`heiko.give(cmd.store.put(k, v))`, carried out when the step ends. A host
+tool is `cmd.tool(name, args)`, and `heiko.all({ ... })` awaits several at
 once, answering a list of `{ ok, values, error }`. A failed command
-raises its own message. `tau.log(text)` writes the plugin's log.
+raises its own message. `heiko.log(text)` writes the plugin's log.
 
 The host takes a model's messages one at a time: a hook's code from one
 await to the next is a step, and no other message is handled while it
 runs. Across an await anything may have changed: an action, another hook,
 a job, or another run's write to the store. So a hook reads what it uses
 of the model and the store again after each await. An action is a
-message to the same model, not a copy: a Pause pressed while tau-goal's
+message to the same model, not a copy: a Pause pressed while heiko-goal's
 check waits on Jev is in the model when the check goes on. Hooks have no
 clock and no randomness; time is `env.now`. The return protocols
-(`tau.continue`, `tau.block`, `tau.start`, `tau.rewrite`, `tau.result`,
-`tau.effort`, `tau.interface`, `tau.start_chat`, `tau.steer_chat`,
-`tau.allow`, `tau.ask` and `tau.answer` with their "then" actions) are
+(`heiko.continue`, `heiko.block`, `heiko.start`, `heiko.rewrite`, `heiko.result`,
+`heiko.effort`, `heiko.interface`, `heiko.start_chat`, `heiko.steer_chat`,
+`heiko.allow`, `heiko.ask` and `heiko.answer` with their "then" actions) are
 what a hook returns, as before.
 
 ```luau
@@ -900,7 +900,7 @@ before_stop = function(stop, model)
   if asked == nil or asked.status ~= "active" then
     return nil
   end
-  local answers, cost = tau.await(cmd.jev.ask({
+  local answers, cost = heiko.await(cmd.jev.ask({
     state = { goal = asked.condition, final_answer = stop.text },
     questions = { met = QUESTION },
   }))
@@ -915,7 +915,7 @@ end,
 ### Lifecycles as machines
 
 A Luau plugin keeps anything that goes through steps (a sign-in, an
-import, a goal, an approval) as one `tau.machine` (ADR 0054), not as
+import, a goal, an approval) as one `heiko.machine` (ADR 0054), not as
 flags beside each other. A state is a plain table naming its tag
 (`state`, or the field `tag` says) with exactly the fields its tag
 carries, kept in `model` or the store; `machine:step(state, event)`
@@ -923,11 +923,11 @@ gives the next one and the effects the hook carries out as commands,
 and an event the state has no arm for changes nothing. The answer to an
 effect that waits is stepped on the state as it is after the await, so
 an answer that comes after a Stop finds no arm and is dropped.
-tau-github's sign-in and tau-goal's goal are machines;
-`plugins/examples/ship-gate` is the worked one the `tau-plugins` skill
+heiko-github's sign-in and heiko-goal's goal are machines;
+`plugins/examples/ship-gate` is the worked one the `heiko-plugins` skill
 teaches.
 
-Two helpers of `tau.test` test them on hegel's engine:
+Two helpers of `heiko.test` test them on hegel's engine:
 `t.machine_of(name, machine, spec)` fires every event from every state,
 checking each step's shape, the no-arm rule, purity and the JSON round
 trip, with the plugin's own model and invariant, from `initial` or any
@@ -943,22 +943,22 @@ order.
 
 Token estimates and overflow detection, which the loop uses for
 `ContextView` and plugins use to decide when to rewrite, are in
-`tau_agent::context`.
+`heiko_agent::context`.
 
-### `tau-reasoning`: reasoning effort per job
+### `heiko-reasoning`: reasoning effort per job
 
-Built: `plugins/tau-reasoning`, a Luau plugin tau comes with
+Built: `plugins/heiko-reasoning`, a Luau plugin heiko comes with
 (ADR 0050): `src/plugin.luau`, the policy in `src/effort.luau`.
 It scores runs whose effort is "auto" when a TypeSafe key is saved
 (`uses.jev`); each choice (every level's probability, the confidence
 and the threshold) is kept in the run's state, and shows as the run's
 reasoning note, plan field and plan step. Its settings, in its pane
-under tau-luau-plugins, set `redecide` ("Decide again between steps")
+under heiko-luau-plugins, set `redecide` ("Decide again between steps")
 and the threshold (0.7 by default) for runs started after.
 
-- **Seams:** `start` (it sets the effort with `tau.start{ effort }`,
+- **Seams:** `start` (it sets the effort with `heiko.start{ effort }`,
   on auto only), and `before_request` when `redecide` is on (with
-  `tau.effort`, reading the run with `cmd.transcript()`). `rewritten`
+  `heiko.effort`, reading the run with `cmd.transcript()`). `rewritten`
   ends a lease; `run_end` leaves the next message its context, a run
   at an effort the person chose too.
 - **How, as a message comes in:**
@@ -970,7 +970,7 @@ and the threshold (0.7 by default) for runs started after.
      "yes, do it" is only as simple as what it agrees to.
   2. Ask one `Score` question whose levels describe the work each
      effort suits. The levels are the efforts the run's model takes
-     (`tau_ai::model::efforts`), so Jev never picks one the API would
+     (`heiko_ai::model::efforts`), so Jev never picks one the API would
      reject; a model that does not reason is not scored. The question
      asks for the minimum sufficient depth, says that a short message
      alone is not evidence the work is simple, and that the state is
@@ -982,14 +982,14 @@ and the threshold (0.7 by default) for runs started after.
      last choice's, or the effort the last run's last request went
      out at, which `run_end` keeps), if the model takes it,
      else at the model's default. The record says what the message runs
-     at (`runs_at`); tau-ui shows a note only when that changes.
+     at (`runs_at`); heiko-ui shows a note only when that changes.
   4. **Sticky effort.** A run that goes on with a conversation or
      inherits one (a fork, whose records start with its parent's) keeps
      the effort it last ran at, even when Jev is sure of another, once
      its prefix reaches `STICKY_TOKENS` (20k): `start`'s
      `prefix_tokens`, what the conversation and the instructions hold. Any change of effort makes OpenAI read nothing from
      cache, so switching would resend all of it at full price. The
-     choice records `kept_for_cache` (the prefix's tokens), and tau-ui
+     choice records `kept_for_cache` (the prefix's tokens), and heiko-ui
      notes it even though the effort did not change: "kept **medium**
      reasoning for this message", "… but this message stays at medium:
      switching to high would resend 48k tokens uncached." An effort the
@@ -1010,7 +1010,7 @@ and the threshold (0.7 by default) for runs started after.
   failed, and up to three excerpts, failed ones first. A confident
   answer sets the effort for that request on; an unsure or failed one
   leaves it. Each choice is kept with its `turn` and `lease`, and
-  tau-ui shows it before the reply it chose for, with how long the
+  heiko-ui shows it before the reply it chose for, with how long the
   effort holds. A request Jev fails gets a note too (`kind = "failed"`,
   with its turn between turns), so a stored run shows it.
 
@@ -1030,7 +1030,7 @@ and the threshold (0.7 by default) for runs started after.
 
 #### Replaying stored runs
 
-The `replay` example loads the plugin as tau does and walks a stored
+The `replay` example loads the plugin as heiko does and walks a stored
 run's timeline request by request through its hooks: `start` as a user
 message after a final answer comes in, sticky effort included, and
 `before_request` before each request, which asks Jev only when the
@@ -1040,7 +1040,7 @@ what Jev answered, and what the plugin would send. It runs on the
 latest runs of a store, each on its own model, with the real Jev:
 
 ```sh
-cargo run -p tau-built-in-tests --example replay -- ~/.local/share/tau/runs.db 20
+cargo run -p heiko-built-in-tests --example replay -- ~/.local/share/heiko/runs.db 20
 ```
 
 It reports decisions, not savings: the reasoning tokens a request
@@ -1048,10 +1048,10 @@ would have spent at another effort were never spent, so no stored
 number says what it would have cost. The store keeps no agent
 instructions, so the replay goes without them.
 
-### `tau-memory`: a zettelkasten
+### `heiko-memory`: a zettelkasten
 
-Built: `plugins/tau-memory`, a Luau plugin tau comes with (ADR 0050,
-gap L; it was the Rust crates `tau-memory` and `tau-memory-host` until
+Built: `plugins/heiko-memory`, a Luau plugin heiko comes with (ADR 0050,
+gap L; it was the Rust crates `heiko-memory` and `heiko-memory-host` until
 2026-11-10). Research and the reasons behind these choices:
 [research/memory.md](../research/memory.md). Decided 2026-09-29.
 
@@ -1064,7 +1064,7 @@ gap L; it was the Rust crates `tau-memory` and `tau-memory-host` until
   `recall`, `safety`, `memory` (one scope), `render` (what the model
   reads), `import_read` and `import`, and `ui_notes`, `ui_import` and
   `ui_settings`; `unicode` is written from Rust's tables by
-  `tau-built-in-tests`, never by hand.
+  `heiko-built-in-tests`, never by hand.
 - **Notes:** one idea per Markdown file at `<type>/<slug>.md`, the title
   stating the claim, the body in full prose with exact versions, flags,
   paths and error strings.
@@ -1125,17 +1125,17 @@ gap L; it was the Rust crates `tau-memory` and `tau-memory-host` until
     tools.
   - Only notes last written before the turn began are marked: a commit
     can hold edits made before a note about that file was written.
-- **Storage:** tau's directory for each repository, each change kept
+- **Storage:** heiko's directory for each repository, each change kept
   as the version it replaced in `.history/<id>/<n>.md`, so it can be
   reviewed or reverted; nothing lands in the project's history. Notes
   are the truth; the search index is derived and rebuilt from them on
   open. Front matter is TOML between `+++` lines, which `toml.luau`
-  reads in the subset tau writes and a person plausibly edits; a file
+  reads in the subset heiko writes and a person plausibly edits; a file
   that does not read is reported on its page, never dropped.
   - The index is BM25, in process, over each note's title, description,
     tags and body (ADR 0052). It was ColBERT MaxSim with docbert's
     model from 2026-09-29, which found paraphrased queries more often;
-    the model was what kept tau-memory from moving to Luau, so it went
+    the model was what kept heiko-memory from moving to Luau, so it went
     on 2026-11-09, with the retrieval evaluation that compared the two.
     In Luau a score can differ from the Rust's in its last place:
     Rust's `ln` is glibc's `logf`, which does not always round
@@ -1152,18 +1152,18 @@ gap L; it was the Rust crates `tau-memory` and `tau-memory-host` until
   `MEMORY.md`, BM25 over raw transcripts. The retrieval evaluation,
   which measured recall as near-duplicates pile up for BM25, ColBERT and
   the two fused, was removed with ColBERT (ADR 0052).
-  - The end-to-end tasks run with `cargo run --release -p tau-memory-e2e`,
+  - The end-to-end tasks run with `cargo run --release -p heiko-memory-e2e`,
     searching memory and transcripts with BM25. The memory arms run the
-    Luau plugin as tau does (`Active::built_in`), on the run's own model,
+    Luau plugin as heiko does (`Active::built_in`), on the run's own model,
     its notes in a directory of the trial's; the commit between runs
     reaches it as a turn's commit does. They make real model
     calls, which cost money: `--budget-usd` stops the run once that much
     is spent, and `--scenario`, `--arm`, `--variant` and `--trials N`
     pick what runs. `--help` lists the rest.
     - Access is a saved ChatGPT sign-in with plan usage: `--chatgpt ID`,
-      or tau's active account. The model defaults to tau-ui's. Without
+      or heiko's active account. The model defaults to heiko-ui's. Without
       a sign-in, nothing runs.
-    - Five scenarios in `crates/evals/tau-memory-e2e`, each a small bash
+    - Five scenarios in `crates/evals/heiko-memory-e2e`, each a small bash
       repository made in a temporary directory. The first run finds a
       fact by doing a task (the suite needs an environment variable,
       code is generated, settings keys take a prefix, a release touches
@@ -1177,7 +1177,7 @@ gap L; it was the Rust crates `tau-memory` and `tau-memory-host` until
       second run starts with it); `transcripts` (the best chunks of the
       first run's transcript for the second task); `memory`;
       `memory_consolidate`; and `tree` (the first run folded into
-      tau-tree-compaction's tree as it ends, its requests charged to
+      heiko-tree-compaction's tree as it ends, its requests charged to
       that run; the second run starts with a 16,000-byte view and can
       `zoom`, which counts as reading memory). The memory arms share a
       fresh scope between a trial's two runs.
@@ -1196,9 +1196,9 @@ gap L; it was the Rust crates `tau-memory` and `tau-memory-host` until
   default.
 - **Scope:** per repository, plus a user scope for preferences across
   projects; a fact lives in exactly one.
-  - In the app, a repository's notes are in `tau-memory/` in tau's
-    directory for it (`uses.files`' `repository/tau-memory`), and the
-    user's in `tau-memory/` in tau's data directory (`data/tau-memory`):
+  - In the app, a repository's notes are in `heiko-memory/` in heiko's
+    directory for it (`uses.files`' `repository/heiko-memory`), and the
+    user's in `heiko-memory/` in heiko's data directory (`data/heiko-memory`):
     the plugin's own folders, which it writes with no Allow.
   - Plugin context sits in the run's first message as text blocks before
     the input; the app shows only the last block as what the user
@@ -1227,7 +1227,7 @@ gap L; it was the Rust crates `tau-memory` and `tau-memory-host` until
     normalised so SSH, HTTPS and `.git` agree. A listed repository claims
     a place when the folder is its own or inside it, or the remotes
     agree; it is looked up as the page is drawn and as a note is kept, so
-    proposals for a folder tau does not have yet wait for a repository
+    proposals for a folder heiko does not have yet wait for a repository
     that claims it. Claude Code's `user` and `feedback` notes go to the
     person, the rest to the folder; for Codex and chats the model says
     which, per note.
@@ -1246,7 +1246,7 @@ gap L; it was the Rust crates `tau-memory` and `tau-memory-host` until
     secret, a note they disagree with, a note of their title) wait
     unticked, under "Need a look".
   - **State.** `proposals.json`, `checkpoint.json` and `kept.json` in
-    `import/` under `data/tau-memory`, and the setup step's choice in
+    `import/` under `data/heiko-memory`, and the setup step's choice in
     `setup.json` there. The checkpoint holds the import going on, which
     the job carries on after a restart, and each item read: a file's
     size and modification time, a section's hash, and how far into a
@@ -1259,7 +1259,7 @@ gap L; it was the Rust crates `tau-memory` and `tau-memory-host` until
   - **Where the person sees it.** A Memories step in first-run setup,
     only when either tool is found: what each saved and its chats, both
     ticked, where their folders go among the picked repositories, and
-    "Also bring folders tau does not have yet". The review page
+    "Also bring folders heiko does not have yet". The review page
     (`import`, `repo=you|<name>`, `look`) with All, About you, each
     repository and Need a look. On the Memory tab, "Import from Claude
     Code or Codex…" (also in a repository's menu), and a banner when the
@@ -1268,12 +1268,12 @@ gap L; it was the Rust crates `tau-memory` and `tau-memory-host` until
     remote the host reads (`cmd.files.repositories()`), never by reading
     project folders. All of it is drawn by the plugin's pages and `app`,
     and acts through its actions, so the review page and the banner work
-    on a phone. No cost is shown: tau runs on
+    on a phone. No cost is shown: heiko runs on
     the person's subscription.
 
-### `tau-constitution`: rules checked on specific calls
+### `heiko-constitution`: rules checked on specific calls
 
-Built: `plugins/tau-constitution`, a Luau plugin tau comes with
+Built: `plugins/heiko-constitution`, a Luau plugin heiko comes with
 (ADR 0050). Its reference is [constitution.md](constitution.md).
 
 - **Seams:** `start` (what it watches, and a run fails on rules that
@@ -1306,13 +1306,13 @@ Built: `plugins/tau-constitution`, a Luau plugin tau comes with
   calls get higher thresholds, and the checked fields are what the
   model wrote, not what tools returned.
 
-### `tau-fast-compaction`: prune stale tool history
+### `heiko-fast-compaction`: prune stale tool history
 
-Built: `plugins/tau-fast-compaction`, a Luau plugin tau comes
+Built: `plugins/heiko-fast-compaction`, a Luau plugin heiko comes
 with (ADR 0050). Its reference is [fast-compaction.md](fast-compaction.md).
 
 - **Seams:** `rewrite_context` (turn ends, starts and overflows; it
-  leaves an idle run to tau-compaction, since pruning first would
+  leaves an idle run to heiko-compaction, since pruning first would
   change what that summary reads from cache), `start` (whether there is
   a TypeSafe key), and `after_tool_result` to prune a large
   `exec_command` output before the model first sees it. It uses Jev,
@@ -1334,7 +1334,7 @@ with (ADR 0050). Its reference is [fast-compaction.md](fast-compaction.md).
   and the ledger in its details. If the saving is under a minimum ratio
   (`cmd.measure`), it returns nothing, and the next plugin can take the
   boundary.
-- **Why it fits tau better than pi:** pi re-applies the ledger to a
+- **Why it fits heiko better than pi:** pi re-applies the ledger to a
   per-turn view. Here the rewrite is stored once, so the next request
   is one full resend and then deltas again. The cooldown keeps full
   resends rare.
@@ -1342,9 +1342,9 @@ with (ADR 0050). Its reference is [fast-compaction.md](fast-compaction.md).
   model, which forks inherit. Its view marks the pruned calls'
   cards, writes a note at each pass, and draws the ledger page.
 
-### `tau-compaction`: summarize what the window cannot hold
+### `heiko-compaction`: summarize what the window cannot hold
 
-Built: `plugins/tau-compaction`, a Luau plugin tau comes with
+Built: `plugins/heiko-compaction`, a Luau plugin heiko comes with
 (ADR 0050). Its reference is [compaction.md](compaction.md).
 
 - **Seams:** `start` (the effort the run starts at, which its summaries
@@ -1362,46 +1362,46 @@ Built: `plugins/tau-compaction`, a Luau plugin tau comes with
 - **State:** the latest summary, and the failures in a row, in the
   run's model, which forks inherit.
 
-### `tau-tree-compaction`: fold the context into a tree
+### `heiko-tree-compaction`: fold the context into a tree
 
-Built: `plugins/tau-tree-compaction`, a Luau plugin tau comes
+Built: `plugins/heiko-tree-compaction`, a Luau plugin heiko comes
 with (ADR 0050), off by default. Its reference is
 [tree-compaction.md](tree-compaction.md).
 
 - **Seams:** `rewrite_context` (every trigger but `Idle`, which it
-  leaves to tau-compaction), `start` (the effort its lines are built
+  leaves to heiko-compaction), `start` (the effort its lines are built
   at), and the `zoom` tool, offered while it is on.
 - **How** (after OptChat's memory):
-  1. Past the threshold, fold the messages before tau-compaction's cut
+  1. Past the threshold, fold the messages before heiko-compaction's cut
      into a history of entries, kept word for word.
   2. Build a one-line summary per entry and merge lines in pairs, most
      due first, until a view of the whole history fits its budget.
   3. Rewrite the transcript to the view, then the kept messages.
      `zoom(id, n)` opens a line, down to a message whole.
 - **Output:** a rewrite with the view in its details. When a line
-  cannot be built it rewrites nothing, and tau-compaction, after it,
+  cannot be built it rewrites nothing, and heiko-compaction, after it,
   summarizes.
 - **State:** the history and the view, in the run's model, which
   forks inherit.
 
-### `tau-ask`: the agent asks the person
+### `heiko-ask`: the agent asks the person
 
-Built: `plugins/tau-ask`, a Luau plugin tau comes with (ADR
+Built: `plugins/heiko-ask`, a Luau plugin heiko comes with (ADR
 0050). Its reference is [ask.md](ask.md).
 
 - **Seams:** `tools` (`ask`, the model's alone, which answers
-  `tau.ask` and waits for the person), `start` and `run_end` (they close
+  `heiko.ask` and waits for the person), `start` and `run_end` (they close
   the calls that wait), and the view's `composer` (the panel), `calls`
   (each call's card), `asks` and `status`.
 - **State:** the run's `model.calls`: each call's questions, the
   person's draft and focus, and the reply. Each key and click of the
   panel is one of its actions; Send gives the call the answers with
-  `tau.answer`, and its `answered` action takes them in the run.
+  `heiko.answer`, and its `answered` action takes them in the run.
 - **Left out** of an agent's runs, whose kind names it (ADR 0037).
 
-### `tau-goal`: keep going until a goal holds
+### `heiko-goal`: keep going until a goal holds
 
-Built: `plugins/tau-goal`, a Luau plugin tau comes with (ADR
+Built: `plugins/heiko-goal`, a Luau plugin heiko comes with (ADR
 0050). Its reference is [goal.md](goal.md).
 
 - **Seams:** `start` (a `/goal` input sets the goal, and gives the
@@ -1416,9 +1416,9 @@ Built: `plugins/tau-goal`, a Luau plugin tau comes with (ADR
   `/goal` command pause, extend or clear it, and the check reads the
   model again after Jev answers, so a Pause pressed meanwhile stands.
 
-### `tau-watcher`: notes what you missed
+### `heiko-watcher`: notes what you missed
 
-Built: `plugins/tau-watcher`, a Luau plugin tau comes with (ADR
+Built: `plugins/heiko-watcher`, a Luau plugin heiko comes with (ADR
 0050). Its reference is [watcher.md](watcher.md).
 
 - **Seams:** `start` (a message written past a waiting note), and
@@ -1427,9 +1427,9 @@ Built: `plugins/tau-watcher`, a Luau plugin tau comes with (ADR
 - **State:** the run's model: its notes, the back-off and the
   last check. The note's buttons are the plugin's `answer` action.
 
-### `tau-schedule`: a chat wakes itself later
+### `heiko-schedule`: a chat wakes itself later
 
-Built: `plugins/tau-schedule`, a Luau plugin tau comes with (ADR 0050).
+Built: `plugins/heiko-schedule`, a Luau plugin heiko comes with (ADR 0050).
 Its decision is [0039](../decisions/0039-chats-wake-themselves-later.md).
 
 - **Tools**, in every run but an agent's (whose own `schedule` also
@@ -1440,33 +1440,33 @@ Its decision is [0039](../decisions/0039-chats-wake-themselves-later.md).
   there so its prompt prefix stays main's.
 - **Waking:** its job, `wake`, ticks each second (`uses.chats`): it reads
   every repository's store for what came due, and wakes each such chat
-  through `cmd.chats.wake` with one message of tau's holding every note
+  through `cmd.chats.wake` with one message of heiko's holding every note
   due. A chat with a turn going waits for it; one that landed or was
   dropped loses what it had waiting; a turn that did not start is tried
   again thirty seconds later.
 - **At least once:** a wake-up leaves the store once its chat's turn
   started, and what the job wrote is kept as each wake starts a turn.
-  tau closed before a turn started wakes the chat as it starts again, so
-  no wake-up is missed; tau closed after it started and before the job
+  heiko closed before a turn started wakes the chat as it starts again, so
+  no wake-up is missed; heiko closed after it started and before the job
   kept that it went wakes it once more, on the same note.
 - **State:** the repository's store, `wake/<chat>/<name>` each; and the
   chat's state, which each turn's `start` reads again from the store:
   its inspector's Scheduled section, and the cards of the messages it
   woke on.
 
-## What changed in tau-agent
+## What changed in heiko-agent
 
 1. `Plugin`, `PluginRun`, `PluginCtx`, `RunPlan`, `ContextView`,
-   `Rewrite` and `StopDecision` in a new `tau_agent::plugin` module,
+   `Rewrite` and `StopDecision` in a new `heiko_agent::plugin` module,
    with `ToolCall` and `Decision`. `RunHook` and `Agent::hook` are
    gone: plugins are the only extension.
 2. `Agent` builds each run's settings from its `RunPlan`, not from the
    agent directly.
 3. Compaction moves behind `rewrite_context`, into its own crate,
-   `tau-compaction` (`plugins/tau-compaction`); an agent adds it with
+   `heiko-compaction` (`plugins/heiko-compaction`); an agent adds it with
    `Agent::plugin` ([0006](../decisions/0006-plugin-crates.md)). It is a
    Luau plugin now (ADR 0050).
-4. `tau-store`:
+4. `heiko-store`:
    - a `context` entry kind, which replaces `compaction`;
    - a `plugin` entry kind, for records, which the transcript skips.
 5. The loop gains the new call sites:
@@ -1491,9 +1491,9 @@ Its decision is [0039](../decisions/0039-chats-wake-themselves-later.md).
 
 ## Nested calls
 
-Built in `tau_agent::tool`, `tau_agent::plugin` and the loop. Decided
-in [0018](../decisions/0018-codemode-and-mcp.md), for `tau-codemode`
-and `tau-mcp`.
+Built in `heiko_agent::tool`, `heiko_agent::plugin` and the loop. Decided
+in [0018](../decisions/0018-codemode-and-mcp.md), for `heiko-codemode`
+and `heiko-mcp`.
 
 ```rust
 pub enum Exposure {
@@ -1568,13 +1568,13 @@ impl Catalog {
 }
 
 impl RunPlan {
-    /// Adds a tool for this run only: tau-mcp's direct tools.
+    /// Adds a tool for this run only: heiko-mcp's direct tools.
     pub fn add_tool(&mut self, tool: Arc<dyn AgentTool>);
     /// The run's tools, the agent's and the ones added so far.
     pub fn tools(&self) -> &[Arc<dyn AgentTool>];
 }
 
-pub struct ToolCall {        // what plugins see, in `tau_agent::plugin`
+pub struct ToolCall {        // what plugins see, in `heiko_agent::plugin`
     pub id: String,
     pub name: String,
     pub args: Value,
@@ -1626,7 +1626,7 @@ pub struct ToolCall {        // what plugins see, in `tau_agent::plugin`
   run's cancel reaches it. Ending the outer call cancels the nested
   calls it left running, and fails the ones still waiting to start;
   their `ToolEnd`s may come after the outer call's.
-- **In tau-ui.** A nested call gets no card. Its events fold into the
+- **In heiko-ui.** A nested call gets no card. Its events fold into the
   `CallData::nested` rows of the card of the model's call it came from,
   at any depth, and the card's data drops them when that call ends,
   since a stored run has no events; a tool whose calls should outlast

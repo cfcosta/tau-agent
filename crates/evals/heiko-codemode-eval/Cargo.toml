@@ -1,0 +1,33 @@
+[package]
+autotests = false
+name = "heiko-codemode-eval"
+description = "Independent workloads and oracles for Codemode's capability evaluation."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+heiko-agent = { path = "../../heiko-agent" }
+heiko-ai = { path = "../../heiko-ai" }
+heiko-artifacts.workspace = true
+heiko-codemode = { path = "../../plugins/heiko-codemode" }
+heiko-codemode-host = { path = "../../plugins/heiko-codemode-host" }
+heiko-store-sqlite.workspace = true
+heiko-store.workspace = true
+heiko-testing.workspace = true
+heiko-tools-host = { path = "../../plugins/heiko-tools-host" }
+tempfile.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+hegeltest.workspace = true
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

@@ -1,5 +1,5 @@
-local tau = require("tau")
-local t = tau.test
+local heiko = require("heiko")
+local t = heiko.test
 
 t.case("a keep-alive is not an event", function()
   t.equal(t.agent({}):parse("builds", { event = "ping", data = "" }), nil)

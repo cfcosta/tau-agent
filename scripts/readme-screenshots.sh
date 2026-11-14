@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# The README's screenshots, taken from tau's demo (`--demo --open
+# The README's screenshots, taken from heiko's demo (`--demo --open
 # <screen>`) into docs/screenshots/. Run it by hand, from the repository's
-# root, after `cargo build --release -p tau`; it reads the binary from
+# root, after `cargo build --release -p heiko`; it reads the binary from
 # $CARGO_TARGET_DIR (or target/). Pass names to retake only those shots.
 #
 # Each shot runs in its own headless sway and is grabbed with grim, so
@@ -13,8 +13,8 @@ set -euo pipefail
 
 root=$(pwd)
 out="$root/docs/screenshots"
-tau="${CARGO_TARGET_DIR:-$root/target}/release/tau"
-[ -x "$tau" ] || { echo "build tau first: cargo build --release -p tau" >&2; exit 1; }
+heiko="${CARGO_TARGET_DIR:-$root/target}/release/heiko"
+[ -x "$heiko" ] || { echo "build heiko first: cargo build --release -p heiko" >&2; exit 1; }
 
 tools=$(nix build --no-link --print-out-paths nixpkgs#sway nixpkgs#grim nixpkgs#imagemagick nixpkgs#oxipng)
 sway=$(echo "$tools" | grep -- '-sway-' | head -1)/bin/sway
@@ -71,13 +71,13 @@ shoot() {
   local host_socket="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/${WAYLAND_DISPLAY:-none}"
   # A short path: sway dies when its socket's path passes 108 bytes.
   local run
-  run=$(mktemp -d /tmp/tau-shot.XXXX)
+  run=$(mktemp -d /tmp/heiko-shot.XXXX)
   mkdir -p "$run/xdg" "$run/config" "$run/data"
   printf 'output HEADLESS-1 resolution 1440x900\ndefault_border none\n' > "$run/sway.cfg"
   env -u WAYLAND_DISPLAY -u DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE -u SWAYSOCK \
     XDG_RUNTIME_DIR="$run/xdg" WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 \
     "$sway" -d -c "$run/sway.cfg" > "$run/sway.log" 2>&1 &
-  local sway_pid=$! tau_pid=""
+  local sway_pid=$! heiko_pid=""
   local socket=""
   for _ in $(seq 1 50); do
     socket=$(grep -o "Running compositor on wayland display '[^']*'" "$run/sway.log" |
@@ -94,12 +94,12 @@ shoot() {
   env -u WAYLAND_DISPLAY -u DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE -u SWAYSOCK \
     XDG_RUNTIME_DIR="$run/xdg" WAYLAND_DISPLAY="$socket" \
     XDG_CONFIG_HOME="$run/config" XDG_DATA_HOME="$run/data" \
-    "$tau" --demo --open "$screen" --frame 1440x900 "$@" > "$run/tau.log" 2>&1 &
-  tau_pid=$!
+    "$heiko" --demo --open "$screen" --frame 1440x900 "$@" > "$run/heiko.log" 2>&1 &
+  heiko_pid=$!
   sleep "$wait"
   XDG_RUNTIME_DIR="$run/xdg" WAYLAND_DISPLAY="$socket" "$grim" "$out/$name.png"
-  kill "$tau_pid" "$sway_pid" 2>/dev/null || true
-  wait "$tau_pid" "$sway_pid" 2>/dev/null || true
+  kill "$heiko_pid" "$sway_pid" 2>/dev/null || true
+  wait "$heiko_pid" "$sway_pid" 2>/dev/null || true
   rm -rf "$run"
   # The phone layout draws a 390×844 phone in the middle of the screen.
   case $name in

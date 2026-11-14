@@ -15,12 +15,12 @@ instead.
 
 ## Decision
 
-The coding tools live in `tau-tools`. The core crates do not depend on
+The coding tools live in `heiko-tools`. The core crates do not depend on
 it.
 
 ## Consequences
 
 - The core stays at about 7.5k lines.
-- `tau-tools` adds about 2k lines and roughly 1.5 weeks of work, after
+- `heiko-tools` adds about 2k lines and roughly 1.5 weeks of work, after
   the core is done.
 - The tools' behaviour spec lives in [`../reference/tools.md`](../reference/tools.md).

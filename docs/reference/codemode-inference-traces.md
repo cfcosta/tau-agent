@@ -1,7 +1,7 @@
 # Codemode inference traces
 
 Each `tools.infer` call returns an opaque `trace_id`. Its private provenance is
-stored as `tau-codemode` plugin records under outer `kind = "inference"`:
+stored as `heiko-codemode` plugin records under outer `kind = "inference"`:
 
 1. `phase = "started"` stores the trace ID, owning `RunId`, task, context,
    optional schema, model, and reasoning effort before admission or model work.

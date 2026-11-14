@@ -1,0 +1,75 @@
+[package]
+autotests = false
+name = "heiko-ui"
+description = "heiko on the computer: the host that runs agents behind heiko-ui-remote's interface, and mirrors it for the phones heiko-phones pairs."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dev-dependencies]
+# The demo's session, which tests drive the interface with.
+heiko-demo.workspace = true
+image = { workspace = true, features = ["png"] }
+# The app's plugins, every host half included, for the demo's tests.
+heiko.workspace = true
+gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
+hegeltest.workspace = true
+# Stores for tests; the host opens its own through heiko-sqlite.
+heiko-store-sqlite.workspace = true
+heiko-testing.workspace = true
+# The phone model's network: a proxy on the loopback.
+tokio = { workspace = true, features = ["io-util", "net"] }
+tokio-util.workspace = true
+# The plugins whose data and records the tests read.
+heiko-remote.workspace = true
+heiko-mcp.workspace = true
+heiko-vcs.workspace = true
+# Luau plugins' files and heiko-todo's store, which its tests read.
+heiko-luau-plugins-host.workspace = true
+base64.workspace = true
+
+[dependencies]
+gpui = { package = "gpui-pre", version = "=0.3.7" }
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+statig.workspace = true
+heiko-agent = { workspace = true, features = ["serde"] }
+heiko-ai.workspace = true
+heiko-direnv.workspace = true
+heiko-phones.workspace = true
+heiko-sqlite.workspace = true
+heiko-chatgpt.workspace = true
+heiko-agents.workspace = true
+heiko-luau-plugins.workspace = true
+heiko-jev.workspace = true
+heiko-mcp-host.workspace = true
+heiko-store.workspace = true
+# The product shows `bash` output as a terminal: commands run under a
+# pseudo-terminal (docs/decisions/0010-terminal-rendering.md).
+heiko-tools = { workspace = true, features = ["terminal"] }
+heiko-tools-host.workspace = true
+heiko-vcs-host.workspace = true
+heiko-ui-kit.workspace = true
+heiko-ui-plugin.workspace = true
+# The interface it drives.
+heiko-ui-remote.workspace = true
+# The plugins heiko comes with.
+heiko-plugins.workspace = true
+futures-util.workspace = true
+tokio = { workspace = true, features = ["fs", "rt-multi-thread", "time"] }
+# A sub-agent's stop, as its plugins get it.
+tokio-util.workspace = true
+anyhow.workspace = true
+uuid.workspace = true
+tempfile.workspace = true
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"
+
+# heiko-tools is here for its `terminal` feature, not for its code.
+[package.metadata.cargo-shear]
+ignored = ["heiko-tools"]

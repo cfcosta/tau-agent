@@ -1,0 +1,28 @@
+[package]
+name = "heiko-plugins"
+description = "The plugins heiko comes with, each with its UI and in the order a run's agent gets them: the one place they are listed (ADR 0045)."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# The plugins come without their host halves: those are crates of
+# their own (`heiko-*-host`, ADR 0030), or the `host` feature of the
+# plugins that keep theirs in the same crate. Cargo cannot turn a
+# workspace dependency's defaults off, so those name their paths.
+[dependencies]
+heiko-ui-plugin.workspace = true
+heiko-codemode.workspace = true
+heiko-direnv = { path = "../plugins/heiko-direnv", default-features = false }
+heiko-phones = { path = "../plugins/heiko-phones", default-features = false }
+heiko-sqlite = { path = "../plugins/heiko-sqlite", default-features = false }
+heiko-chatgpt = { path = "../plugins/heiko-chatgpt", default-features = false }
+heiko-jev.workspace = true
+heiko-luau-plugins.workspace = true
+heiko-agents.workspace = true
+heiko-mcp.workspace = true
+# `exec_command` cards draw their output as a terminal
+# (docs/decisions/0010-terminal-rendering.md).
+heiko-tools = { workspace = true, features = ["terminal"] }
+heiko-vcs.workspace = true

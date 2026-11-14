@@ -1,0 +1,467 @@
+//! How the interface words an agent: times relative to now, its
+//! triggers, a name from its purpose, and its commands.
+
+use hegel::generators as gs;
+use heiko_agents::{
+    Agent,
+    Overview,
+    Status,
+    Trigger,
+    TriggerKind,
+    shown::{relative, suggest_name},
+    ui::commands,
+    valid_name,
+};
+
+fn trigger(kind: TriggerKind) -> Trigger {
+    Trigger {
+        name: "t".into(),
+        kind,
+        last: None,
+        next: None,
+        error: None,
+        live: None,
+    }
+}
+
+fn agent(name: &str, triggers: Vec<Trigger>) -> Agent {
+    Agent {
+        name: name.into(),
+        purpose: String::new(),
+        status: Status::Waiting,
+        triggers,
+        versions: Vec::new(),
+        spend_today: 0.5,
+        cap_today: 1.0,
+        queued: 0,
+        last: None,
+        model: "gpt-6-luna".into(),
+        effort: "low".into(),
+        main: None,
+        secrets: Vec::new(),
+        sandbox: None,
+        notices: Vec::new(),
+        scheduled: Vec::new(),
+    }
+}
+
+/// The unit a time is said in, independently of how `relative` picks it:
+/// the largest of days, hours and minutes that fits the gap, counted
+/// whole; under a minute either way is now.
+fn said(gap: i64) -> String {
+    let far = gap.unsigned_abs();
+    if far < 60 {
+        return "now".to_owned();
+    }
+    let (count, unit) = [(86_400, "d"), (3_600, "h"), (60, "m")]
+        .into_iter()
+        .find(|(seconds, _)| far >= *seconds)
+        .map(|(seconds, unit)| (far / seconds, unit))
+        .unwrap();
+    if gap > 0 {
+        format!("in {count}{unit}")
+    } else {
+        format!("{count}{unit} ago")
+    }
+}
+
+/// A time is said from now, in the largest whole unit its distance fits,
+/// as ahead or behind (the agents page's times). Gaps reach every unit's
+/// edges on both sides of now.
+#[hegel::test(test_cases = 500)]
+fn a_time_is_said_from_now_in_its_largest_whole_unit(tc: hegel::TestCase) {
+    let now: i64 =
+        tc.draw(gs::integers::<i64>().min_value(0).max_value(1 << 40));
+    let edges: Vec<i64> = [0, 59, 60, 3_599, 3_600, 86_399, 86_400]
+        .into_iter()
+        .flat_map(|gap| [gap, -gap])
+        .collect();
+    let gap: i64 = tc.draw(hegel::one_of!(
+        gs::sampled_from(edges),
+        gs::integers::<i64>()
+            .min_value(-(1 << 30))
+            .max_value(1 << 30),
+    ));
+    assert_eq!(relative(now + gap, now), said(gap), "gap {gap}");
+}
+
+/// Words a purpose is made of: ones that name something, in any case,
+/// the small words a name leaves out, ones that start with a digit, and
+/// long ones.
+const WORDS: [&str; 16] = [
+    "Watch",
+    "RustSec",
+    "advisories",
+    "feed",
+    "morning",
+    "pr2",
+    "the",
+    "a",
+    "every",
+    "to",
+    "of",
+    "42",
+    "7up",
+    "supercalifragilistic",
+    "internationalization",
+    "x",
+];
+
+/// The small words of [`WORDS`] a name leaves out.
+const LEFT_OUT: [&str; 5] = ["the", "a", "every", "to", "of"];
+
+/// A name for an agent comes from its purpose: the first three of its
+/// words that name something, lower case, joined by dashes, cut to forty
+/// characters with no dash left at the end; when that does not make a
+/// name (an agent's name starts with a letter), `agent`. Purposes are
+/// drawn from [`WORDS`] between runs of punctuation, spaces and `é`;
+/// any other text gives a valid name too.
+#[hegel::test(test_cases = 500)]
+fn a_suggested_name_is_the_purposes_first_words(tc: hegel::TestCase) {
+    let words: Vec<&str> =
+        tc.draw(gs::vecs(gs::sampled_from(WORDS.to_vec())).max_size(7));
+    let mut purpose = tc.draw(gs::sampled_from(vec!["", " ", "!!"])).to_owned();
+    for word in &words {
+        purpose.push_str(word);
+        purpose.push_str(
+            tc.draw(gs::sampled_from(vec![" ", ", ", "-", "/", "é", "!!"])),
+        );
+    }
+    let kept: Vec<String> = words
+        .iter()
+        .map(|word| word.to_ascii_lowercase())
+        .filter(|word| !LEFT_OUT.contains(&word.as_str()))
+        .take(3)
+        .collect();
+    let joined = kept.join("-");
+    let cut: String = joined.chars().take(40).collect();
+    let cut = cut.trim_end_matches('-');
+    let rule = regex::Regex::new(r"\A[a-z][a-z0-9-]{0,39}\z").unwrap();
+    let expected = if rule.is_match(cut) {
+        if joined.len() > 40 {
+            tc.event("cut to forty");
+        }
+        cut.to_owned()
+    } else {
+        tc.event("agent");
+        "agent".to_owned()
+    };
+    assert_eq!(suggest_name(&purpose), expected, "{purpose:?}");
+
+    let any: String = tc.draw(gs::text().max_size(200));
+    assert!(valid_name(&suggest_name(&any)), "{any:?}");
+}
+
+#[test]
+fn every_command_trigger_is_a_composer_command() {
+    let overview = Overview {
+        agents: vec![
+            agent(
+                "pr-triage",
+                vec![
+                    trigger(TriggerKind::Command {
+                        command: "triage".into(),
+                        hint: Some("<number>".into()),
+                    }),
+                    trigger(TriggerKind::Schedule {
+                        every: Some("1h".into()),
+                        at: None,
+                        days: Vec::new(),
+                    }),
+                ],
+            ),
+            agent(
+                "digest",
+                vec![trigger(TriggerKind::Command {
+                    command: "digest".into(),
+                    hint: None,
+                })],
+            ),
+        ],
+    };
+    let listed: Vec<(String, String, String)> = commands(&overview)
+        .into_iter()
+        .map(|command| (command.name, command.args, command.hint))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("triage".into(), "<number>".into(), "Tell pr-triage".into()),
+            ("digest".into(), String::new(), "Tell digest".into()),
+        ]
+    );
+}
+
+/// Finite inventory: every kind of trigger, each way a schedule can say
+/// when and a command can hint, says what wakes it and its kind in a
+/// word; a stream says whether it is open and an `mcp` trigger whether
+/// it watches, once the host knows, and nothing before. The literal
+/// table is the oracle.
+#[test]
+fn every_trigger_says_what_wakes_it_and_whether_it_is_live() {
+    let schedule = |every: Option<&str>, at: Option<&str>, days: &[&str]| {
+        TriggerKind::Schedule {
+            every: every.map(str::to_owned),
+            at: at.map(str::to_owned),
+            days: days.iter().map(|day| (*day).to_owned()).collect(),
+        }
+    };
+    let url = "https://ci.example.com/events";
+    let cases = [
+        (schedule(Some("15m"), None, &[]), "every 15m", "schedule"),
+        (
+            schedule(Some("1h"), Some("09:00"), &["Mon"]),
+            "every 1h Mon",
+            "schedule",
+        ),
+        (
+            schedule(None, Some("09:00"), &["Mon", "Fri"]),
+            "09:00 Mon Fri",
+            "schedule",
+        ),
+        (schedule(None, Some("09:00"), &[]), "09:00", "schedule"),
+        (schedule(None, None, &[]), "on a schedule", "schedule"),
+        (
+            schedule(None, None, &["Sat"]),
+            "on a schedule Sat",
+            "schedule",
+        ),
+        (
+            TriggerKind::Command {
+                command: "triage".into(),
+                hint: Some("<number>".into()),
+            },
+            "/triage <number>",
+            "command",
+        ),
+        (
+            TriggerKind::Command {
+                command: "digest".into(),
+                hint: None,
+            },
+            "/digest",
+            "command",
+        ),
+        (
+            TriggerKind::Poll {
+                source: "releases".into(),
+                every: "1h".into(),
+                tool: Some("t".into()),
+                args: None,
+                http: None,
+            },
+            "releases every 1h",
+            "poll",
+        ),
+        (
+            TriggerKind::Stream {
+                url: url.into(),
+                via: heiko_agents::StreamVia::Sse,
+                headers: None,
+            },
+            url,
+            "stream",
+        ),
+        (
+            TriggerKind::Stream {
+                url: url.into(),
+                via: heiko_agents::StreamVia::Websocket,
+                headers: None,
+            },
+            url,
+            "stream",
+        ),
+        (
+            TriggerKind::Mcp {
+                server: "ci".into(),
+                uri: "ci://heiko-agent/main".into(),
+            },
+            "ci ci://heiko-agent/main",
+            "mcp",
+        ),
+        (TriggerKind::Message, "messages from agents", "message"),
+    ];
+    for (kind, label, kind_label) in cases {
+        let watch = matches!(kind, TriggerKind::Mcp { .. });
+        let mut shown = trigger(kind);
+        assert_eq!(shown.label(), label);
+        assert_eq!(shown.kind_label(), kind_label, "{label}");
+        assert_eq!(shown.connection(), None, "{label}");
+        for (live, open, closed) in [
+            (true, "open", "watching"),
+            (false, "closed", "not watching"),
+        ] {
+            shown.live = Some(live);
+            let expected = if watch { closed } else { open };
+            assert_eq!(shown.connection(), Some(expected), "{label} {live}");
+        }
+    }
+}
+
+/// Finite inventory: an agent waits on the person once for each note or
+/// question it left, and once more when it spent its day or nothing
+/// loads; it needs them when anything waits. All five states, with none,
+/// one and two notices.
+#[test]
+fn what_waits_on_the_person_is_its_notices_and_a_stuck_state() {
+    let statuses = [
+        (Status::Waiting, false),
+        (Status::Working, false),
+        (Status::Paused, false),
+        (Status::AtCap, true),
+        (
+            Status::Broken {
+                error: "no agent.luau".into(),
+            },
+            true,
+        ),
+    ];
+    for (status, stuck) in statuses {
+        for notices in 0..=2 {
+            let agent = Agent {
+                status: status.clone(),
+                notices: (0..notices)
+                    .map(|n| heiko_agents::Notice {
+                        id: format!("n{n}"),
+                        at: 0,
+                        text: "a note".into(),
+                        choices: None,
+                    })
+                    .collect(),
+                ..agent("a", Vec::new())
+            };
+            let waits = notices + usize::from(stuck);
+            assert_eq!(agent.waits_on_you(), waits, "{status:?} {notices}");
+            assert_eq!(agent.needs_you(), waits > 0, "{status:?} {notices}");
+        }
+    }
+}
+
+/// The share of today's cap spent is the spend over the cap, from 0 to 1;
+/// with no cap to spend, all of it. Caps reach zero and below.
+#[hegel::test(test_cases = 300)]
+fn the_share_spent_is_the_spend_over_the_cap_at_most_all(tc: hegel::TestCase) {
+    let spend = tc.draw(hegel::one_of!(
+        gs::sampled_from(vec![0.0f64, 1.0, 2.0]),
+        gs::floats::<f64>().min_value(0.0).max_value(10.0),
+    ));
+    let cap = tc.draw(hegel::one_of!(
+        gs::sampled_from(vec![-1.0f64, 0.0, 1.0]),
+        gs::floats::<f64>().min_value(0.001).max_value(10.0),
+    ));
+    let agent = Agent {
+        spend_today: spend,
+        cap_today: cap,
+        ..agent("a", Vec::new())
+    };
+    let expected = if cap <= 0.0 {
+        tc.event("no cap");
+        1.0
+    } else if spend >= cap {
+        tc.event("spent it all");
+        1.0
+    } else {
+        (spend / cap) as f32
+    };
+    assert_eq!(agent.spent_share(), expected, "{spend} of {cap}");
+}
+
+#[test]
+fn an_agent_is_its_main_chat_only() {
+    let overview = Overview {
+        agents: vec![Agent {
+            main: Some("its-main".into()),
+            ..agent("pr-triage", Vec::new())
+        }],
+    };
+    assert!(overview.agent_of_main("pr-triage", "its-main").is_some());
+    // A sub-agent or chat in its repository is not the agent.
+    assert!(overview.agent_of_main("pr-triage", "a-sub-agent").is_none());
+    // Before the host names its main chat, no run is the agent.
+    let unnamed = Overview {
+        agents: vec![agent("pr-triage", Vec::new())],
+    };
+    assert!(unnamed.agent_of_main("pr-triage", "its-main").is_none());
+}
+
+#[test]
+fn the_form_offers_the_person_s_mcp_servers_that_are_on() {
+    use heiko_agents::ui::mcp_servers;
+    let data = serde_json::json!({
+        "started": true,
+        "servers": [
+            { "name": "github", "enabled": true },
+            { "name": "linear" },
+            { "name": "off", "enabled": false },
+        ],
+    });
+    assert_eq!(mcp_servers(Some(&data)), ["github", "linear"]);
+    // Without heiko-mcp's data, or with a shape it does not know, none.
+    assert!(mcp_servers(None).is_empty());
+    assert!(mcp_servers(Some(&serde_json::json!([1, 2]))).is_empty());
+}
+
+#[test]
+fn a_form_left_unnamed_takes_its_purpose_s_name() {
+    use heiko_agents::{Act, ui::Form};
+    let form = Form {
+        name: String::new(),
+        purpose: "watch the advisories feed".into(),
+        model: None,
+        daily_cap: 1.0,
+        window_secs: 30,
+        servers: Default::default(),
+        making: None,
+        error: None,
+    };
+    let suggested = suggest_name(&form.purpose);
+    assert_eq!(form.chosen_name(), suggested);
+    let Ok(Act::Create { name, .. }) = form.act() else {
+        panic!("the form makes an agent: {:?}", form.act())
+    };
+    assert_eq!(name, suggested);
+    // A name typed wins; one that is not a name is refused.
+    let named = Form {
+        name: " deps ".into(),
+        ..form.clone()
+    };
+    assert_eq!(named.chosen_name(), "deps");
+    let bad = Form {
+        name: "Deps!".into(),
+        ..form.clone()
+    };
+    assert!(bad.act().is_err());
+    // Without a purpose there is nothing to do, nor a name from it.
+    let empty = Form {
+        purpose: " ".into(),
+        ..form
+    };
+    assert_eq!(empty.chosen_name(), "");
+    assert!(empty.act().is_err());
+}
+
+/// Start asks the host once: pressed again while the agent is being made,
+/// it asks nothing, as a second ask would find the name taken; and a name
+/// already taken is refused before it asks.
+#[test]
+fn start_asks_once_while_the_agent_is_made() {
+    use heiko_agents::ui::Form;
+    let form = Form {
+        name: "deps".into(),
+        purpose: "watch the advisories feed".into(),
+        model: None,
+        daily_cap: 1.0,
+        window_secs: 30,
+        servers: Default::default(),
+        making: None,
+        error: None,
+    };
+    assert!(matches!(form.start(false), Some(Ok(_))));
+    // A name taken is refused before the host is asked.
+    assert!(matches!(form.start(true), Some(Err(_))));
+    let making = Form {
+        making: Some("deps".into()),
+        ..form
+    };
+    assert!(making.start(false).is_none());
+}

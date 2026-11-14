@@ -6,7 +6,7 @@
 
 ## Context
 
-[0002](0002-openai-websocket-only.md) limits tau-agent to OpenAI's
+[0002](0002-openai-websocket-only.md) limits heiko-agent to OpenAI's
 Responses API over WebSocket, with API keys only. Many users pay for
 ChatGPT Plus or Pro instead of API usage. pi serves them with its
 `openai-codex` provider: the same Responses protocol, on ChatGPT's
@@ -22,7 +22,7 @@ few headers differ.
   builds a client whose connector reaches
   `wss://chatgpt.com/backend-api/codex/responses`. The pool, lanes,
   continuation and delta rule are shared with the API endpoint.
-- **Credentials are OAuth, ported from pi.** `tau_ai::codex` has the
+- **Credentials are OAuth, ported from pi.** `heiko_ai::codex` has the
   browser flow (PKCE, callback on `localhost:1455`, or a pasted redirect
   URL) and the device-code flow, with pi's client id. It can also read
   the credentials the Codex CLI saved in `~/.codex/auth.json`.
@@ -30,7 +30,7 @@ few headers differ.
   refreshes an access token that expires within five minutes; clones of
   a client share one refresh. A callback can persist new credentials.
 - **Requests follow pi's Codex shape.** The upgrade sends
-  `chatgpt-account-id` (read from the token), `originator: tau` and
+  `chatgpt-account-id` (read from the token), `originator: heiko` and
   `OpenAI-Beta: responses_websockets=2026-02-06`. Every session has
   instructions (a default when the agent has none) and no
   `max_output_tokens`. `store` stays `false`, as for every request.
@@ -39,7 +39,7 @@ few headers differ.
   run and routes frames by connection.
 - **No second HTTP stack.** The three token requests go over a small
   HTTPS client on the rustls setup the WebSocket already uses.
-- **Credentials live in `$XDG_CONFIG_HOME/tau/codex.json`**, mode 0600,
+- **Credentials live in `$XDG_CONFIG_HOME/heiko/codex.json`**, mode 0600,
   in pi's field names. Where to keep them stays the caller's choice.
 - **Codex models are priced like their API versions**, as pi prices
   them, so limits and cost reports keep working. The subscription bills

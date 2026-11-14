@@ -8,9 +8,9 @@
 
 ## Context
 
-Settings are wherever each plugin put them. tau-reasoning draws its two
-controls inside its page, tau-mcp edits servers on its page,
-tau-direnv's per-repository switch lives in a repository menu, and most
+Settings are wherever each plugin put them. heiko-reasoning draws its two
+controls inside its page, heiko-mcp edits servers on its page,
+heiko-direnv's per-repository switch lives in a repository menu, and most
 plugins have no settings at all. The Plugins screen is a flat list in
 two columns: name, description, and either the open run's state or what
 the plugin cost. A Luau plugin's settings are its declared defaults, and
@@ -38,7 +38,7 @@ plugin differently from the rest.
     seams), what it reaches, and for a Luau plugin its README, tests
     and version.
 - A plugin can list **entries of its own** (`PluginInfo::entries`):
-  tau-luau-plugins lists each Luau plugin, which is then a row like any
+  heiko-luau-plugins lists each Luau plugin, which is then a row like any
   other, selected as `<plugin>/<entry>`.
 
 ### Every plugin draws its settings in its own pane
@@ -46,8 +46,8 @@ plugin differently from the rest.
 `Manifest::settings` registers a function that draws the plugin's
 settings, given its value for the scope shown and a handle that saves a
 new one. The host places the pane on the Plugins screen and in the
-inspector; a page no longer draws settings. tau-reasoning, tau-mcp and
-tau-direnv move theirs there.
+inspector; a page no longer draws settings. heiko-reasoning, heiko-mcp and
+heiko-direnv move theirs there.
 
 ### Scopes: everywhere, or one repository
 
@@ -92,7 +92,7 @@ settings = {
   a switch, a string with `enum` a choice, an array of such strings a
   choice of several, a string or number a field. A property of any
   other shape is listed read-only with its value.
-- **With `view`**, the plugin draws its own page from `tau.ui`, plus
+- **With `view`**, the plugin draws its own page from `heiko.ui`, plus
   three pieces bound to a key of its settings: `ui.toggle(key, label)`,
   `ui.choice(key, options, { multi })` and `ui.field(key, { kind,
 placeholder })`. Changing one changes that key; the host checks the
@@ -100,7 +100,7 @@ placeholder })`. Changing one changes that key; the host checks the
   it does not hold. `view` runs on the host in its own VM within 200
   ms, again after each change, and its tree is sent to the interface,
   so the phone draws it too.
-- **Saved values** are kept by tau-luau-plugins as its own settings,
+- **Saved values** are kept by heiko-luau-plugins as its own settings,
   one value per Luau plugin, so the scopes above apply to them. A run's
   `ctx.settings` is the saved value for its repository, filled in from
   `default`; a value the schema no longer accepts falls back to the

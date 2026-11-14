@@ -7,14 +7,14 @@
 
 A long chat costs most when the person comes back to it after a
 while. By then its prompt cache has lapsed: on OpenAI's route the cache
-lives on the connection, which tau rotates 55 minutes after it opened
+lives on the connection, which heiko rotates 55 minutes after it opened
 (0022), and the next message resends the whole chat uncached. Claude
 Code compacts such a session while it is idle, shortly before its
 1-hour cache lapses ("Compacted while idle, before the prompt cache
 expired"): the summary reads the session from cache, and the next
 message starts small.
 
-tau's compaction could not do that. Its summary request has its own
+heiko's compaction could not do that. Its summary request has its own
 instructions and sends the history as text, so it reads nothing from
 the chat's cache; and compacting meant a run, which needs a message.
 
@@ -32,12 +32,12 @@ the chat's cache; and compacting meant a run, which needs a message.
   compaction for an idle run (`Resumed::compact_idle`) opens a session
   with the settings of the run's last request (`Outcome::request`), on
   its connection. Plugins ask the model there through
-  `ContextView::conversation`; tau-compaction sends the messages it
+  `ContextView::conversation`; heiko-compaction sends the messages it
   summarizes as they are, then its prompt, so the request reads them
   from cache.
 - **Plugins opt in.** Only plugins whose `Plugin::start_idle` returns a
-  run take part: tau-compaction (switched by "Compact idle chats") and
-  tau-memory, which keeps what the summary drops. No `start` runs, so
+  run take part: heiko-compaction (switched by "Compact idle chats") and
+  heiko-memory, which keeps what the summary drops. No `start` runs, so
   nothing changes the settings the cache depends on, and nothing a
   start does for a message (an effort picked, a memory search) happens.
 - **It says so.** The rewrite is stored and sent with its trigger,
@@ -52,10 +52,10 @@ the chat's cache; and compacting meant a run, which needs a message.
 - **Compact at the next message, as now.** That pays the uncached
   resend this avoids, and then the summary on top.
 - **Resume the run with every plugin, as a message would.** Plugins
-  start for a message: tau-reasoning asks a model to pick the effort,
+  start for a message: heiko-reasoning asks a model to pick the effort,
   which can change it and miss the cache; memory searches; others
   record. A compaction is not a message.
-- **Claude Code's 200,000-token floor.** tau's models have 272,000-token
+- **Claude Code's 200,000-token floor.** heiko's models have 272,000-token
   windows and compact at 255,616: half the window leaves room between
   the two.
 
@@ -65,7 +65,7 @@ the chat's cache; and compacting meant a run, which needs a message.
   person never comes back; it costs the summary's request, mostly read
   from cache.
 - Only chats that ran in this session are watched: the pool's
-  connections, and so the caches, do not outlive tau.
+  connections, and so the caches, do not outlive heiko.
 - A compaction's events reach the interface without `RunStart` or
   `RunEnd`; interfaces fold `ContextRewritten` as they do between
   turns.

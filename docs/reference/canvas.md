@@ -2,8 +2,8 @@
 
 The canvas is a pane beside a run's transcript that holds what the run
 made for the person to look at: images and Markdown documents. The
-plugin is `tau-canvas` (`plugins/tau-canvas`), a Luau plugin tau comes
-with (ADR 0050), and the pane is `tau-ui-plugin`'s `PANE` point, which
+plugin is `heiko-canvas` (`plugins/heiko-canvas`), a Luau plugin heiko comes
+with (ADR 0050), and the pane is `heiko-ui-plugin`'s `PANE` point, which
 a Luau view fills with `pane`. The decision is
 [ADR 0040](../decisions/0040-what-a-run-shows-goes-on-a-canvas.md).
 
@@ -51,12 +51,12 @@ fresh }`, in the run's state too, so every device shows the same.
 ## Storage
 
 An image's bytes are a blob of the plugin's in the repository
-(`ctx.blobs.put_file`): a `tau-artifacts` store under tau-luau-plugins'
-directory, `blobs/tau-canvas/<repository>`, with quotas of 8 MiB a blob
+(`ctx.blobs.put_file`): a `heiko-artifacts` store under heiko-luau-plugins'
+directory, `blobs/heiko-canvas/<repository>`, with quotas of 8 MiB a blob
 and 1 GiB in all. The state holds the blob's metadata. Nothing prunes
 the store yet.
 
-The interface asks tau-luau-plugins' host half for an image with
+The interface asks heiko-luau-plugins' host half for an image with
 `{ "act": "blob", "plugin", "repo", "blob" }`, which `ui.image` makes.
 The host half reads the blob in ranges and answers `{ "data" }` with
 the bytes in base64, or `{ "error" }`. Each window fetches an image
@@ -75,7 +75,7 @@ once and keeps it.
   pane closed.
 - `Handle::open_pane` opens it from a plugin.
 
-tau-canvas's pane shows a tab per item when there are several, then a
+heiko-canvas's pane shows a tab per item when there are several, then a
 bar with the revision shown ("Revision 2 of 3") and the way to the
 ones before and after it. Below that is the image, fitted to the pane
 with its caption, type, size and file, or the document's title and
@@ -92,9 +92,9 @@ draws it.
 
 ## Demo
 
-`tau --demo --open canvas` shows a chart and a two-revision document on
+`heiko --demo --open canvas` shows a chart and a two-revision document on
 the demo run, with the pane open on the document. The calls, the state
-and the view come from `plugins/tau-canvas/fixtures`, which the
+and the view come from `plugins/heiko-canvas/fixtures`, which the
 plugin's tests check against what it leaves and draws; the demo keeps
 its chart as a blob and puts it in the fixtures' place. `--open canvas-image`
 shows it on the chart, and `--open canvas-document` on the document's

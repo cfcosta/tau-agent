@@ -17,11 +17,11 @@ setup = "no-disk-syncs"
 [profile.ci]
 default-filter = """
 not (test(/(^|::)[a-z0-9_]*_model::/)
-  | (package(tau-vcs-host) & binary(=tests) & test(/^model::/)))
+  | (package(heiko-vcs-host) & binary(=tests) & test(/^model::/)))
 """
 
 [profile.models]
 default-filter = """
 test(/(^|::)[a-z0-9_]*_model::/)
-  | (package(tau-vcs-host) & binary(=tests) & test(/^model::/))
+  | (package(heiko-vcs-host) & binary(=tests) & test(/^model::/))
 """

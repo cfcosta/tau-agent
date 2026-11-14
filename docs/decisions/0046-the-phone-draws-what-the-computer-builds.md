@@ -2,8 +2,8 @@
 
 - Status: proposed. Builds on [0045](0045-everything-is-a-plugin.md):
   plugins' views are trees of plain data, so they can cross to the
-  phone. Amends [0013](0013-phones-connect-to-a-running-tau.md): the phone runs no
-  plugin's code, only tau's kernel.
+  phone. Amends [0013](0013-phones-connect-to-a-running-heiko.md): the phone runs no
+  plugin's code, only heiko's kernel.
 - Date: 2026-11-04
 
 ## Context
@@ -97,7 +97,7 @@ What comes back is JSON: trees, and the typed outputs (`NavEntry`,
 
 The phone keeps what the kernel draws itself: runs, the catalog and the
 UI state. It folds no plugin's records, and links no plugin crate: the
-kernel names none, and tau-plugins lists them for the computer. Landing
+kernel names none, and heiko-plugins lists them for the computer. Landing
 shows a landing's changes through a point, agents' sidebar section is a
 repository kind, and what waits on the person is a point the phone's
 notifications watch.

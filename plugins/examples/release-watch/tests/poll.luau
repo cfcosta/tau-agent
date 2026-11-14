@@ -1,5 +1,5 @@
-local tau = require("tau")
-local t = tau.test
+local heiko = require("heiko")
+local t = heiko.test
 
 t.case("the first poll only records what is there", function()
   local agent = t.agent {}

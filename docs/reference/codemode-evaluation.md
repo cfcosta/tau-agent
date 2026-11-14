@@ -1,6 +1,6 @@
 # Codemode evaluation
 
-`tau-codemode-eval` has one JSON report API. Its default report (`format_version: 1`) and `tests/goldens/offline.json` retain the original six-case offline baseline. `--matrix` adds a `matrix` member without changing those baseline rows. The checked-in `crates/evals/tau-codemode-eval/tests/goldens/matrix.json` is an authored expected projection: the matrix test compares it with actual deterministic execution. It includes correctness, results, call categories, simulated operations, and null provider metrics. The full report also includes exact artifact page counts and content hashes.
+`heiko-codemode-eval` has one JSON report API. Its default report (`format_version: 1`) and `tests/goldens/offline.json` retain the original six-case offline baseline. `--matrix` adds a `matrix` member without changing those baseline rows. The checked-in `crates/evals/heiko-codemode-eval/tests/goldens/matrix.json` is an authored expected projection: the matrix test compares it with actual deterministic execution. It includes correctness, results, call categories, simulated operations, and null provider metrics. The full report also includes exact artifact page counts and content hashes.
 
 ## CLI
 
@@ -51,4 +51,4 @@ Each scripted Codemode call has a 30-second VM deadline and the default 10,000-o
 
 ## Checks
 
-The package tests compare the actual deterministic JSON report with both checked-in goldens, verify changed-input and failure cases, and run Hegel properties governed by workspace `hegel.toml`. Focused checks are `cargo nextest run --release -p tau-codemode-eval` and `cargo clippy -p tau-codemode-eval --all-targets -- -D warnings` inside the repository's Nix development shell. The dispatcher runs the full feature suite.
+The package tests compare the actual deterministic JSON report with both checked-in goldens, verify changed-input and failure cases, and run Hegel properties governed by workspace `hegel.toml`. Focused checks are `cargo nextest run --release -p heiko-codemode-eval` and `cargo clippy -p heiko-codemode-eval --all-targets -- -D warnings` inside the repository's Nix development shell. The dispatcher runs the full feature suite.

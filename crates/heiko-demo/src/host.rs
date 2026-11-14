@@ -1,0 +1,522 @@
+//! The demo's host half of the plugins: each plugin's real host state,
+//! over a store and directories of its own that go away with it. What a
+//! plugin's page asks is carried out the way a host would. The Luau
+//! plugins heiko comes with, which the demo cannot run, draw their pages
+//! from their fixtures.
+
+#![allow(
+    clippy::disallowed_methods,
+    reason = "the demo answers each scripted step at once, from an in-memory store, so its screens are the same every time (ADR 0028)"
+)]
+
+use std::{
+    collections::BTreeMap,
+    sync::{
+        Arc,
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
+
+use serde_json::Value;
+use heiko_jev::{Jev, fake::FakeJev};
+use heiko_ui::hosted::{self, Hosted};
+use heiko_ui_plugin::{
+    ConfigDir,
+    ErasedPlugin,
+    HostCx,
+    PluginValue,
+    Push,
+    RepoCtx,
+    SavedSettings,
+    Services,
+};
+use heiko_ui_remote::catalog::{Catalog, PluginInfo};
+use tokio::{runtime::Runtime, sync::mpsc};
+
+/// What the demo's runs cost each plugin over the last 30 days, as the
+/// store would add it up.
+const SPEND: [(&str, f64); 6] = [
+    (heiko_luau_plugins::names::REASONING, 0.004),
+    (heiko_luau_plugins::names::CONSTITUTION, 0.031),
+    (heiko_luau_plugins::names::FAST_COMPACTION, 0.046),
+    (heiko_luau_plugins::names::COMPACTION, 0.061),
+    (heiko_luau_plugins::names::GOAL, 0.009),
+    (heiko_codemode::PLUGIN, 0.002),
+];
+
+/// Jev's scores as the demo scripts them: one per question, in the
+/// order they come.
+const SCORES: [f64; 6] = [0.94, 0.41, 0.06, 0.12, 0.33, 0.71];
+
+/// The plugins' host halves for the demo.
+pub struct DemoHost {
+    cx: HostCx,
+    hosted: Vec<Hosted>,
+    settings: Arc<Mutex<BTreeMap<String, Value>>>,
+    /// The repositories' own copies, by repository, then plugin.
+    repo_settings: Mutex<BTreeMap<String, BTreeMap<String, Value>>>,
+    pushed: Mutex<Option<mpsc::UnboundedReceiver<Push>>>,
+    /// Plugins whose entry and data a screen set, whatever their host
+    /// half says.
+    pinned: Mutex<Vec<(PluginInfo, PluginValue)>>,
+    /// What heiko-skills keeps of the app, drawn once as the demo starts.
+    skills_app: heiko_luau_plugins::AppView,
+    /// heiko-github, and what it keeps of the app with its sign-in as the
+    /// demo has it now.
+    github: crate::github::GitHub,
+    github_now: Mutex<(crate::github::State, heiko_luau_plugins::AppView)>,
+    // Dropped last: the plugins' files, and the runtime their work runs
+    // on.
+    runtime: Runtime,
+    _dir: tempfile::TempDir,
+}
+
+impl DemoHost {
+    /// The host halves for the repositories `catalog` lists, with the
+    /// demo's notes and rules in them.
+    pub fn new(catalog: &Catalog) -> anyhow::Result<Self> {
+        let dir = tempfile::tempdir()?;
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()?;
+        let store = runtime.block_on(heiko_ui::hosted::open_store(
+            &dir.path().join("runs.db"),
+            &heiko_ui_plugin::UiState::default(),
+        ))?;
+        let repos = catalog
+            .repos
+            .iter()
+            .map(|repo| {
+                let checkout = dir.path().join("checkouts").join(&repo.name);
+                std::fs::create_dir_all(&checkout)?;
+                Ok(RepoCtx {
+                    id: repo.id.clone(),
+                    remote: None,
+                    folder: None,
+                    name: repo.name.clone(),
+                    checkout,
+                    dir: dir.path().join("projects").join(&repo.name),
+                    workspaces: dir.path().join("projects").join(&repo.name),
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let settings: Arc<Mutex<BTreeMap<String, Value>>> = Arc::default();
+        let (read, save) = (settings.clone(), settings.clone());
+        // The demo keeps no repository's own copy: one is the plugin's.
+        let saved = SavedSettings::new(
+            move |plugin, _repo| {
+                read.lock().expect("not poisoned").get(plugin).cloned()
+            },
+            move |plugin, _repo, value| {
+                save.lock()
+                    .expect("not poisoned")
+                    .insert(plugin.to_owned(), value);
+                Box::pin(std::future::ready(Ok(())))
+            },
+        );
+        let jev: Arc<dyn Jev> = Arc::new(scripted_jev());
+        let skills = dir.path().join("person-skills");
+        crate::skills::seed(&skills)?;
+        let skills_app =
+            crate::skills::app_view(&runtime, &skills, dir.path())?;
+        let github = runtime.block_on(crate::github::GitHub::load())?;
+        let signed_in =
+            crate::github::State::of(crate::github::SignIn::SignedIn);
+        let github_app = runtime.block_on(github.app_view(signed_in))?;
+        let services = Services::default()
+            .with(saved)
+            .with(ConfigDir(dir.path().join("config")))
+            .with(heiko_ui_plugin::SkillsDir(skills))
+            .with(heiko_jev::Upstream(jev.clone()))
+            .with(jev);
+        let (pushes, pushed) = mpsc::unbounded_channel();
+        let cx = HostCx::new(
+            store,
+            runtime.handle().clone(),
+            services,
+            dir.path().to_owned(),
+            repos,
+            Arc::new(move |push| {
+                let _ = pushes.send(push);
+            }),
+        );
+        let hosted = runtime.block_on(hosted::host_all(&cx));
+        Ok(Self {
+            cx,
+            hosted,
+            settings,
+            repo_settings: Mutex::default(),
+            pushed: Mutex::new(Some(pushed)),
+            pinned: Mutex::default(),
+            skills_app,
+            github,
+            github_now: Mutex::new((signed_in, github_app)),
+            runtime,
+            _dir: dir,
+        })
+    }
+
+    /// Shows `info` and `data` for its plugin from now on, in place of
+    /// what its host half has: a screen's plugin in a state the demo's
+    /// host never reaches.
+    pub fn pin(&self, info: PluginInfo, data: PluginValue) {
+        self.pinned.lock().expect("not poisoned").push((info, data));
+    }
+
+    /// `catalog` with what the plugins have now: their entries, data and
+    /// settings, and each repository's plugin data.
+    pub fn catalog(&self, mut catalog: Catalog) -> Catalog {
+        let (mut plugins, data, settings) = self.runtime.block_on(
+            hosted::catalog(&self.hosted, &self.cx, |plugin| {
+                self.settings_of(plugin)
+            }),
+        );
+        for plugin in &mut plugins {
+            plugin.spend = SPEND
+                .iter()
+                .find(|(name, _)| *name == plugin.name)
+                .map_or(0.0, |(_, usd)| *usd);
+        }
+        catalog.plugins = plugins;
+        catalog.plugin_data = data;
+        // heiko's Luau plugins, which the demo cannot run: what they
+        // declare, from their fixtures (ADR 0050).
+        let github = &self.github_now.lock().expect("not poisoned").1;
+        let (info, data) =
+            luau_built_ins(&self.skills_app, self.github.entry(github.clone()));
+        catalog.plugins.push(info);
+        catalog
+            .plugin_data
+            .insert(heiko_luau_plugins::NAME.into(), data);
+        for (info, data) in self.pinned.lock().expect("not poisoned").iter() {
+            catalog.plugins.retain(|plugin| plugin.name != info.name);
+            catalog.plugins.push(info.clone());
+            catalog.plugin_data.insert(info.name.clone(), data.clone());
+        }
+        catalog.plugin_settings = settings;
+        catalog.repo_plugin_settings = self
+            .repo_settings
+            .lock()
+            .expect("not poisoned")
+            .iter()
+            .map(|(repo, plugins)| {
+                let plugins = plugins
+                    .iter()
+                    .map(|(plugin, value)| {
+                        (plugin.clone(), PluginValue::from_json(value.clone()))
+                    })
+                    .collect();
+                (repo.clone(), plugins)
+            })
+            .collect();
+        for repo in &mut catalog.repos {
+            if let Some(ctx) = self.cx.repo(&repo.name) {
+                repo.plugins = self.runtime.block_on(hosted::repo_data(
+                    &self.hosted,
+                    ctx,
+                    &self.cx,
+                ));
+            }
+            // heiko-memory's, a Luau plugin's: what its fixture keeps of
+            // the repository.
+            let memory = &crate::luau_fixture(
+                heiko_luau_plugins::names::MEMORY,
+                "demo",
+            )["repo_data"][&repo.name];
+            if !memory.is_null() {
+                let values = heiko_luau_plugins::RepoValues(
+                    [(
+                        heiko_luau_plugins::names::MEMORY.to_owned(),
+                        memory.clone(),
+                    )]
+                    .into(),
+                );
+                repo.plugins.insert(
+                    heiko_luau_plugins::NAME.to_owned(),
+                    PluginValue::typed(values),
+                );
+            }
+            // No server answers in a demo: heiko-agent's show as a host
+            // that started them would see them.
+            if repo.name == "heiko-agent" {
+                repo.plugins.insert(
+                    heiko_mcp_host::NAME.to_owned(),
+                    PluginValue::typed(heiko_mcp::demo::servers()),
+                );
+                // It has an `.envrc`, as the real one does, and direnv
+                // is there.
+                repo.plugins.insert(
+                    heiko_direnv::NAME.to_owned(),
+                    PluginValue::typed(heiko_direnv::RepoData {
+                        envrc: true,
+                        direnv: true,
+                    }),
+                );
+            }
+        }
+        catalog
+    }
+
+    /// How heiko-github's sign-in stands in the demo now.
+    pub fn github(&self) -> crate::github::State {
+        self.github_now.lock().expect("not poisoned").0
+    }
+
+    /// Has heiko-github's sign-in stand as `state` from now on: what the
+    /// plugin keeps of the app, then, and its entry among the Luau
+    /// plugins.
+    pub fn set_github(
+        &self,
+        state: crate::github::State,
+    ) -> anyhow::Result<heiko_luau_plugins::Entry> {
+        let app = self.runtime.block_on(self.github.app_view(state))?;
+        *self.github_now.lock().expect("not poisoned") = (state, app.clone());
+        Ok(self.github.entry(app))
+    }
+
+    /// The repository listed as `name`, as its host halves see it.
+    pub fn repo(&self, name: &str) -> Option<&RepoCtx> {
+        self.cx.repo(name)
+    }
+
+    /// Where the Luau plugins' blobs are kept (`ctx.blobs`): a screen puts
+    /// one in place, as the canvas's chart.
+    pub fn luau_blobs(&self) -> std::path::PathBuf {
+        self.cx.plugin_dir(heiko_luau_plugins::NAME).join("blobs")
+    }
+
+    /// Runs `future` on the demo's runtime: a screen putting in place
+    /// what a host half would have, such as an image the canvas kept.
+    pub fn block_on<F: Future>(&self, future: F) -> F::Output {
+        self.runtime.block_on(future)
+    }
+
+    /// Carries out what `plugin`'s UI asked, as a host would.
+    pub fn act(
+        &self,
+        plugin: &str,
+        action: Value,
+    ) -> anyhow::Result<Option<Value>> {
+        if let Some(page) = luau_page(plugin, &action) {
+            return Ok(Some(page));
+        }
+        self.runtime.block_on(hosted::act(
+            &self.hosted,
+            plugin,
+            action,
+            &self.cx,
+        ))
+    }
+
+    /// Saves `plugin`'s settings everywhere, or as `repo`'s own copy;
+    /// no value drops the copy.
+    pub fn save_settings(
+        &self,
+        plugin: &str,
+        repo: Option<&str>,
+        value: Option<Value>,
+    ) {
+        match (repo, value) {
+            (None, Some(value)) => {
+                self.settings
+                    .lock()
+                    .expect("not poisoned")
+                    .insert(plugin.to_owned(), value);
+            }
+            (Some(repo), Some(value)) => {
+                self.repo_settings
+                    .lock()
+                    .expect("not poisoned")
+                    .entry(repo.to_owned())
+                    .or_default()
+                    .insert(plugin.to_owned(), value);
+            }
+            (Some(repo), None) => {
+                if let Some(plugins) = self
+                    .repo_settings
+                    .lock()
+                    .expect("not poisoned")
+                    .get_mut(repo)
+                {
+                    plugins.remove(plugin);
+                }
+            }
+            (None, None) => {}
+        }
+    }
+
+    /// What the plugins push as their work finishes, once.
+    pub fn pushed(&self) -> Option<mpsc::UnboundedReceiver<Push>> {
+        self.pushed.lock().expect("not poisoned").take()
+    }
+
+    fn settings_of(&self, plugin: &dyn ErasedPlugin) -> PluginValue {
+        self.settings
+            .lock()
+            .expect("not poisoned")
+            .get(plugin.name())
+            .cloned()
+            .map(PluginValue::from_json)
+            .unwrap_or_else(|| plugin.default_settings())
+    }
+}
+
+/// Jev answering with [`SCORES`], in turn.
+fn scripted_jev() -> FakeJev {
+    let next = AtomicUsize::new(0);
+    FakeJev::nouls(move |_| {
+        SCORES[next.fetch_add(1, Ordering::Relaxed) % SCORES.len()]
+    })
+}
+
+/// heiko-luau-plugins' entry, with the Luau plugins heiko comes with that the
+/// demo draws: each as it declares itself, from its fixture.
+fn luau_built_ins(
+    skills: &heiko_luau_plugins::AppView,
+    github: heiko_luau_plugins::Entry,
+) -> (PluginInfo, PluginValue) {
+    use heiko_luau_plugins::{Entry, Overview, Standing};
+    let built_in = |name: &str| Entry {
+        name: name.into(),
+        description: String::new(),
+        version: String::new(),
+        standing: Standing::Active,
+        declaration: Some(
+            serde_json::from_value(crate::luau_fixture(name, "declaration"))
+                .expect("a declaration's fixture is one"),
+        ),
+        tests: Vec::new(),
+        keeps_earlier: false,
+        built_in: true,
+        app: match name {
+            heiko_luau_plugins::names::SKILLS => Some(skills.clone()),
+            heiko_luau_plugins::names::MEMORY => Some(memory_app()),
+            _ => None,
+        },
+    };
+    let overview = Overview {
+        commit: None,
+        plugins: vec![
+            built_in(heiko_luau_plugins::names::CONSTITUTION),
+            built_in(heiko_luau_plugins::names::GOAL),
+            built_in(heiko_luau_plugins::names::ASK),
+            built_in(heiko_luau_plugins::names::SCHEDULE),
+            built_in(heiko_luau_plugins::names::FAST_COMPACTION),
+            built_in(heiko_luau_plugins::names::COMPACTION),
+            built_in(heiko_luau_plugins::names::TREE_COMPACTION),
+            built_in(heiko_luau_plugins::names::REASONING),
+            built_in(heiko_luau_plugins::names::SKILLS),
+            built_in(heiko_luau_plugins::names::MEMORY),
+            github,
+        ],
+        error: None,
+    };
+    let entries = overview
+        .plugins
+        .iter()
+        .map(|entry| heiko_ui_plugin::CatalogEntry {
+            name: entry.name.clone(),
+            description: entry.description.clone(),
+            group: heiko_ui_plugin::Group::Yours,
+            seams: entry
+                .declaration
+                .as_ref()
+                .map(heiko_luau_plugins::Declaration::seams)
+                .unwrap_or_default(),
+            note: None,
+        })
+        .collect();
+    let info = PluginInfo {
+        name: heiko_luau_plugins::NAME.into(),
+        description: "Plugins written in Luau: 3 active".into(),
+        group: heiko_ui_plugin::Group::Yours,
+        page: Some(heiko_ui_plugin::Link::page(heiko_luau_plugins::ui::PAGE)),
+        reach: Default::default(),
+        spend: 0.0,
+        note: None,
+        entries,
+        settings: true,
+        ui: true,
+        rewrites_keep_transcript: false,
+    };
+    (info, PluginValue::typed(overview))
+}
+
+/// What heiko-memory keeps of the app in the demo, from its fixture: the
+/// person's notes, the imports, its menu entry and its setup step.
+fn memory_app() -> heiko_luau_plugins::AppView {
+    let demo = crate::luau_fixture(heiko_luau_plugins::names::MEMORY, "demo");
+    heiko_luau_plugins::AppView {
+        value: demo["app"].clone(),
+        setup: Some(demo["setup"].clone()),
+        ..Default::default()
+    }
+}
+
+/// The pages of the Luau plugins the demo cannot draw with Luau, as
+/// heiko-luau-plugins' host half answers them: heiko-constitution's rules
+/// page of heiko-agent, the tree its fixture keeps for the screen its
+/// `demo` parameter names (the rules when it names none); heiko-memory's
+/// notes pages, a note open, its review page, its setup step and its
+/// settings pane, from its fixture `demo`. `None` for any other action.
+fn luau_page(plugin: &str, action: &Value) -> Option<Value> {
+    use heiko_luau_plugins::{Act, names, ui};
+    if plugin != heiko_luau_plugins::NAME {
+        return None;
+    }
+    let act: Act = serde_json::from_value(action.clone()).ok()?;
+    let memory = || crate::luau_fixture(names::MEMORY, "demo");
+    let tree = match act {
+        Act::Page {
+            plugin: luau,
+            page,
+            params,
+            ..
+        } if luau == names::MEMORY => {
+            let demo = memory();
+            match params.get("repo") {
+                Some(repo) => {
+                    let open = params
+                        .get("note")
+                        .map(|note| &demo["pages"][format!("{repo}/{note}")])
+                        .filter(|tree| !tree.is_null());
+                    let tree = open.unwrap_or(&demo["pages"][repo]);
+                    ui::embed_repo(tree, &luau, repo)
+                }
+                None if page == "import" => {
+                    ui::embed_app(&demo["pages"]["import"], &luau)
+                }
+                None => return None,
+            }
+        }
+        Act::Page {
+            plugin: luau,
+            params,
+            ..
+        } if luau == names::CONSTITUTION => {
+            let pages = crate::luau_fixture(&luau, "pages");
+            let screen =
+                params.get("demo").map_or("constitution", String::as_str);
+            let repo = params.get("repo").map_or("", String::as_str);
+            ui::embed_repo(&pages[screen], &luau, repo)
+        }
+        Act::Setup { plugin: luau, .. } if luau == names::MEMORY => {
+            ui::embed_app(&memory()["setup"]["body"], &luau)
+        }
+        Act::SettingsView {
+            plugin: luau,
+            settings,
+            fields,
+        } if luau == names::MEMORY => {
+            return Some(heiko_luau_plugins::pane::settings_view(
+                Ok(memory()["settings"].clone()),
+                &settings,
+                &fields,
+            ));
+        }
+        _ => return None,
+    };
+    Some(serde_json::json!({ "tree": tree.value() }))
+}

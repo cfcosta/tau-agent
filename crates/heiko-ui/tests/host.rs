@@ -1,0 +1,3188 @@
+//! The host runs agents and reports their events; the view folds them.
+//! With a project, each run works in a workspace of its own, forks
+//! start from a turn's code, and past runs come back as history.
+
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test is a synchronous entry point (ADR 0028)"
+)]
+
+use std::{path::Path, time::Duration};
+
+use heiko_agent::{
+    agent::Agent,
+    event::{RunEvent, StopReason},
+};
+use heiko_store::Store;
+use heiko_testing::{git::git, scripted::ScriptedModel};
+use heiko_ui::{
+    accounts::Credentials,
+    host::{Delivery, Host, HostConfig},
+};
+use heiko_ui_plugin::RepoId;
+use heiko_ui_remote::{
+    models::{Effort, ModelChoice},
+    view::{DiffKind, FileStat, Item, Origin, RunStatus, ToolState},
+};
+use heiko_vcs_host::{Identity, Project};
+use tokio::sync::mpsc::UnboundedReceiver;
+
+use crate::common::{self, LuauSettings as _, forge::FakeForge};
+
+/// The repository a host under test lists, made from the checkout it
+/// is given, as a clone from GitHub would be.
+const REPO: &str = "repo";
+
+fn host(llm: ScriptedModel) -> (Host, UnboundedReceiver<RunEvent>) {
+    host_on(llm, &tempfile::tempdir().unwrap().keep())
+}
+
+/// A project imported from `checkout`, which is made a Git repository
+/// with one commit first if it is not one.
+fn project_of(checkout: &Path) -> Project {
+    if !checkout.join(".git").exists() {
+        git(checkout, &["init", "--quiet"]);
+        git(
+            checkout,
+            &["commit", "--quiet", "--allow-empty", "-m", "first"],
+        );
+    }
+    heiko_vcs_host::ProjectRepo::import(
+        checkout.to_str().unwrap(),
+        tempfile::tempdir().unwrap().keep().join("p"),
+        Identity::default(),
+    )
+    .map(Project::from)
+    .unwrap()
+}
+
+fn host_on(
+    llm: ScriptedModel,
+    root: &Path,
+) -> (Host, UnboundedReceiver<RunEvent>) {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(heiko_store_sqlite::memory()).unwrap();
+    host_over(runtime, store, llm, root)
+}
+
+/// [`host_on`] over a store in the file `db`, which a test can open
+/// again to look into.
+fn host_with_store(
+    llm: ScriptedModel,
+    root: &Path,
+    db: &Path,
+) -> (Host, UnboundedReceiver<RunEvent>) {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(heiko_store_sqlite::open(db)).unwrap();
+    host_over(runtime, store, llm, root)
+}
+
+fn host_over(
+    runtime: tokio::runtime::Runtime,
+    store: Store,
+    llm: ScriptedModel,
+    root: &Path,
+) -> (Host, UnboundedReceiver<RunEvent>) {
+    host_of(runtime, store, Agent::new(llm).name("coder"), root)
+}
+
+/// A host whose sub-agents ask `child` and every other run `main`
+/// ([`Routed`]).
+fn routed_host(
+    main: &ScriptedModel,
+    child: &ScriptedModel,
+) -> (Host, UnboundedReceiver<RunEvent>) {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(heiko_store_sqlite::memory()).unwrap();
+    let agent = Agent::new(Routed {
+        main: main.clone(),
+        child: child.clone(),
+    })
+    .name("coder");
+    host_of(runtime, store, agent, &tempfile::tempdir().unwrap().keep())
+}
+
+/// A host whose runs start from `agent`.
+fn host_of(
+    runtime: tokio::runtime::Runtime,
+    store: Store,
+    agent: Agent,
+    root: &Path,
+) -> (Host, UnboundedReceiver<RunEvent>) {
+    // Plugins keep their files beside the repositories, in the parent of
+    // `repos`: a directory of the host's own, not the shared temporary one.
+    let own = fresh_repo_list();
+    let config = HostConfig {
+        credentials: Credentials::new(
+            fresh_repo_list().with_extension("config"),
+        ),
+        model: Some("gpt-6-luna".into()),
+        // Unused but for its directory, where the person's images are
+        // kept: the test's own.
+        store: own.join("runs.db"),
+        // Heiko's directory for repositories, where memory lives too: the
+        // test's own.
+        repos: own.join("repos"),
+        // The test's own: a test that saves settings leaves others be.
+        settings: fresh_repo_list().with_extension("models"),
+        repo_list: fresh_repo_list(),
+        home: None,
+        services: Default::default(),
+    };
+    let (host, events) = Host::with_agent(runtime, agent, store, config);
+    // Memory's pass after each run asks the model once more: these
+    // scripts answer only the requests they write.
+    let host = host.with_luau_settings(
+        heiko_luau_plugins::names::MEMORY,
+        serde_json::json!({ "after_each_run": false }),
+    );
+    (
+        host.with_repository(
+            REPO,
+            std::sync::Arc::new(heiko_vcs_host::JjRepository::new(
+                project_of(root),
+                Identity::default(),
+            )),
+        ),
+        events,
+    )
+}
+
+/// A repository list of the test's own, so tests do not share one.
+fn fresh_repo_list() -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static COUNT: AtomicU32 = AtomicU32::new(0);
+    // A directory of its own: a host keeps its plugins' files next to
+    // its repositories, and tests must not share them.
+    let dir = std::env::temp_dir().join(format!(
+        "heiko-ui-host-{}-{}",
+        std::process::id(),
+        COUNT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir.join("repos.json")
+}
+
+/// Receives until `RunEnd`, with a timeout so a hang fails the test.
+/// How long a test waits for what a run does. Each wait ends as soon as
+/// the thing happens; the bound is generous because a run's turn ends
+/// with jj work, and the tests share the machine with every other test.
+const WAIT: Duration = Duration::from_secs(60);
+
+fn until_end(events: &mut UnboundedReceiver<RunEvent>) -> Vec<RunEvent> {
+    let deadline = std::time::Instant::now() + WAIT;
+    let mut seen = Vec::new();
+    while std::time::Instant::now() < deadline {
+        match events.try_recv() {
+            Ok(event) => {
+                let end = matches!(event, RunEvent::RunEnd { .. });
+                seen.push(event);
+                if end {
+                    return seen;
+                }
+            }
+            Err(_) => std::thread::sleep(Duration::from_millis(5)),
+        }
+    }
+    panic!("no RunEnd within {WAIT:?}: {seen:?}");
+}
+
+/// Each repository has a main chat from the start: finished, empty and
+/// open for good. A new chat forks it, at its start while it has no
+/// turn, then at its latest. The main chat commits on trunk: a chat that
+/// lands on it moves trunk, so do its own commits, and it has nothing
+/// to merge.
+#[test]
+fn new_chats_fork_the_repository_main_chat() {
+    let write = |path: &str| serde_json::json!({ "path": path, "content": format!("{path}\n") });
+    let commit = |message: &str| serde_json::json!({ "message": message });
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("first"))
+        .turn(|t| t.text("hello back"))
+        .turn(|t| t.text("second"))
+        .turn(|t| t.tool_call("write", write("a.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: a")))
+        .turn(|t| t.text("wrote a"))
+        .turn(|t| t.tool_call("write", write("b.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: b")))
+        .turn(|t| t.text("wrote b"));
+    let (host, mut events) = host(llm.clone());
+    let main = host.block_on(host.main_of(REPO)).unwrap();
+    assert_eq!(
+        host.block_on(host.main_of(REPO)).unwrap(),
+        main,
+        "made once"
+    );
+    let listed = host.block_on(host.history()).unwrap();
+    let view = listed.iter().find(|view| view.id == main).unwrap();
+    assert_eq!((view.title.as_str(), &view.origin), ("main", &Origin::Root));
+    assert_eq!(view.status, RunStatus::Finished(StopReason::Stop));
+    assert_eq!(view.repo, REPO);
+    assert!(
+        host.block_on(host.set_closed(&main, true)).is_err(),
+        "main stays open"
+    );
+    let repo = host.block_on(host.catalog()).repos[0].clone();
+    assert_eq!(repo.main.as_ref(), Some(&main), "the sidebar knows it");
+    // It has a view to send with the repository when it is added.
+    let sent = host
+        .block_on(host.main_view(&repo))
+        .unwrap()
+        .expect("the chat is stored");
+    assert_eq!(
+        (
+            &sent.id,
+            sent.title.as_str(),
+            sent.repo.as_str(),
+            &sent.origin
+        ),
+        (&main, "main", REPO, &Origin::Root)
+    );
+
+    // Before main has a turn, a chat starts from nothing, on trunk.
+    let first = host
+        .block_on(host.start("one", &ModelChoice::default(), REPO))
+        .unwrap();
+    assert_eq!(
+        first.origin,
+        Origin::Fork {
+            from: main.clone(),
+            turn: 0
+        }
+    );
+    until_end(&mut events);
+    wait_until_done(&host, &first.id);
+
+    // A message to main goes on with it; the next chat has it.
+    host.block_on(host.resume(&main, "hello main", &ModelChoice::default()))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let second = host
+        .block_on(host.start("two", &ModelChoice::default(), REPO))
+        .unwrap();
+    assert_eq!(
+        second.origin,
+        Origin::Fork {
+            from: main.clone(),
+            turn: 1
+        }
+    );
+    until_end(&mut events);
+    wait_until_done(&host, &second.id);
+    let asked = llm.requests().pop().unwrap();
+    assert!(
+        format!("{:?}", asked.transcript).contains("hello main"),
+        "the chat saw main's conversation"
+    );
+
+    // A chat's work lands on main, which takes its workspace then.
+    let third = host
+        .block_on(host.start("three", &ModelChoice::default(), REPO))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &third.id);
+    host.block_on(host.land(&third.id)).unwrap();
+    let dir = host.block_on(host.workspace(&main)).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+        "a.txt\n"
+    );
+    let project = common::project(&host, REPO);
+    let on_trunk = |path: &str| {
+        project
+            .blocking()
+            .file_at(&project.blocking().trunk().unwrap(), path)
+            .unwrap()
+            .map(|(bytes, _)| bytes)
+    };
+    assert_eq!(on_trunk("a.txt").as_deref(), Some(&b"a.txt\n"[..]));
+
+    // The main chat's own commit moves trunk too.
+    host.block_on(host.resume(&main, "write b", &ModelChoice::default()))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    assert_eq!(on_trunk("b.txt").as_deref(), Some(&b"b.txt\n"[..]));
+    llm.assert_exhausted();
+}
+
+/// A run shows its prompt's first line until a model writes its title;
+/// a written title comes back with history.
+#[test]
+fn written_titles_come_back_in_history() {
+    let llm = ScriptedModel::new().turn(|t| t.text("Hello from heiko"));
+    let data = tempfile::tempdir().unwrap();
+    let db = data.path().join("runs.db");
+    // A checkout of its own: `project_of` makes it a Git repository.
+    let checkout = tempfile::tempdir().unwrap();
+    let (host, mut events) = host_with_store(llm, checkout.path(), &db);
+    let view = host
+        .block_on(host.start(
+            "Say hello\nto everyone",
+            &ModelChoice::default(),
+            REPO,
+        ))
+        .unwrap();
+    assert_eq!(view.title, "Say hello");
+    until_end(&mut events);
+    wait_until_done(&host, &view.id);
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let store = heiko_store_sqlite::open(&db).await.unwrap();
+            store.set_title(&view.id.0, "Greet everyone").await.unwrap();
+        });
+    let history = host.block_on(host.history()).unwrap();
+    assert_eq!(history[0].title, "Greet everyone");
+}
+
+/// A run read back from history shows the plan it showed live: its
+/// model, effort, access and workspace, and the workspace's line.
+#[test]
+fn a_stored_run_shows_the_plan_it_ran_with() {
+    let llm = ScriptedModel::new().turn(|t| t.text("done"));
+    let (host, mut events) = host(llm);
+    let live = host
+        .block_on(host.start("Look around", &ModelChoice::default(), REPO))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &live.id);
+    let history = host.block_on(host.history()).unwrap();
+    let stored = history.iter().find(|view| view.id == live.id).unwrap();
+    assert_eq!(stored.plan, live.plan);
+    assert!(
+        stored
+            .plan
+            .iter()
+            .any(|field| field.name == "workspace" && !field.value.is_empty())
+    );
+    let workspace = |view: &heiko_ui_remote::view::RunView| {
+        view.plugins.iter().any(|status| status.name == "workspace")
+    };
+    assert_eq!(workspace(stored), workspace(&live));
+}
+
+/// A PNG of `n`×1 pixels: a different image for each `n`.
+fn png(n: u32) -> heiko_ai::message::ImageContent {
+    use base64::Engine as _;
+    let mut bytes = Vec::new();
+    image::RgbImage::new(n, 1)
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+    heiko_ai::message::ImageContent {
+        data: base64::engine::general_purpose::STANDARD.encode(bytes),
+        mime_type: "image/png".into(),
+    }
+}
+
+/// Images the person sends go to the model with the message, show in
+/// the run's view by reference, and the host gives their bytes back:
+/// kept, or found again in the run's messages once the kept file is
+/// gone. A steered message's images go with it; history shows them all.
+#[test]
+fn images_go_to_the_model_and_come_back_by_reference() {
+    use heiko_agent::agent::Prompt;
+    use heiko_ui_remote::view::Picture;
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("A red square."))
+        .turn(|t| t.text("And a wider one."));
+    let (host, mut events) = host(llm.clone());
+    let (first, second) = (png(3), png(5));
+    let mut view = host
+        .block_on(host.start(
+            Prompt::new("what is this?").images(vec![first.clone()]),
+            &ModelChoice::default(),
+            REPO,
+        ))
+        .unwrap();
+    let picture = Picture::of(&first);
+    assert_eq!(
+        view.items[..2],
+        [
+            Item::User("what is this?".into()),
+            Item::Pictures(vec![picture.clone()]),
+        ]
+    );
+    for event in until_end(&mut events) {
+        view.apply(&event);
+    }
+    wait_until_done(&host, &view.id);
+    // The reply streamed into the run's view.
+    assert_eq!(view.status, RunStatus::Finished(StopReason::Stop));
+    assert_eq!(view.last_text(), Some("A red square."));
+    let sent = serde_json::to_string(&llm.requests()[0].transcript).unwrap();
+    assert!(sent.contains(&first.data), "the model got the image");
+    assert_eq!(
+        host.block_on(host.picture(&view.id, &picture)).unwrap(),
+        first.data
+    );
+
+    // A finished chat goes on with the next message, images and all.
+    host.block_on(host.resume(
+        &view.id,
+        Prompt::new("and this?").images(vec![second.clone()]),
+        &ModelChoice::default(),
+    ))
+    .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &view.id);
+    let sent = serde_json::to_string(&llm.requests()[1].transcript).unwrap();
+    assert!(sent.contains(&second.data));
+
+    // History shows each message's pictures under it.
+    let history = host.block_on(host.history()).unwrap();
+    let stored = history.iter().find(|run| run.id == view.id).unwrap();
+    let pictures: Vec<&Item> = stored
+        .items
+        .iter()
+        .filter(|item| matches!(item, Item::Pictures(_)))
+        .collect();
+    assert_eq!(
+        pictures,
+        [
+            &Item::Pictures(vec![picture.clone()]),
+            &Item::Pictures(vec![Picture::of(&second)]),
+        ]
+    );
+
+    // The kept file gone, the run's messages still hold it.
+    let kept = host.uploads_dir().join(&picture.key);
+    assert!(kept.exists(), "the image was kept");
+    std::fs::remove_file(&kept).unwrap();
+    assert_eq!(
+        host.block_on(host.picture(&view.id, &picture)).unwrap(),
+        first.data
+    );
+    assert!(kept.exists(), "and it is kept again");
+    // A key that is no image's is refused, and so is one the run lacks.
+    let wrong = Picture {
+        key: "../runs.db".into(),
+        mime: "image/png".into(),
+    };
+    assert!(host.block_on(host.picture(&view.id, &wrong)).is_err());
+    let other = Picture::of(&png(9));
+    assert!(host.block_on(host.picture(&view.id, &other)).is_err());
+}
+
+/// A message steered into a live run goes with its images: the model's
+/// next request has them, and the host gives the message back, images
+/// and all, as the run reads it.
+#[test]
+fn a_steered_message_goes_with_its_images() {
+    use heiko_agent::agent::Prompt;
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("Looking.").delay(Duration::from_millis(300)))
+        .turn(|t| t.text("Seen."));
+    let (host, mut events) = host(llm.clone());
+    let view = host
+        .block_on(host.start("look at the logs", &ModelChoice::default(), REPO))
+        .unwrap();
+    let shot = png(7);
+    let delivery = host
+        .block_on(host.steer(
+            &view.id,
+            Prompt::new("this one").images(vec![shot.clone()]),
+        ))
+        .unwrap();
+    assert!(matches!(delivery, Delivery::Steered));
+    let read = until_end(&mut events)
+        .into_iter()
+        .find_map(|event| match event {
+            RunEvent::Steered { run, text } => host.steer_read(&run, &text),
+            _ => None,
+        })
+        .expect("the run read it");
+    assert_eq!(read.images, std::slice::from_ref(&shot));
+    wait_until_done(&host, &view.id);
+    let sent = serde_json::to_string(&llm.requests()[1].transcript).unwrap();
+    assert!(sent.contains(&shot.data));
+}
+
+#[test]
+fn a_run_can_be_cancelled_from_the_ui() {
+    // A response that takes 30 s to start: cancelled long before.
+    let llm = ScriptedModel::new()
+        .turn(|t| t.delay(Duration::from_secs(30)).text("too late"));
+    let (host, mut events) = host(llm);
+    let view = host
+        .block_on(host.start("wait", &ModelChoice::default(), REPO))
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(host.is_running(&view.id));
+    host.cancel(&view.id);
+    let ends: Vec<StopReason> = until_end(&mut events)
+        .into_iter()
+        .filter_map(|event| match event {
+            RunEvent::RunEnd { stop, .. } => Some(stop),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ends, [StopReason::Cancelled]);
+}
+
+/// Sends `prompt` to the repository's main chat, the top-level run the
+/// others nest under (runs nest one level), and returns its id.
+fn on_main(host: &Host, prompt: &str) -> heiko_agent::tool::RunId {
+    let main = host.block_on(host.main_of(REPO)).unwrap();
+    host.block_on(host.resume(&main, prompt, &ModelChoice::default()))
+        .unwrap();
+    main
+}
+
+/// A message heiko started a turn with (a report, an agent's events) is
+/// heiko's in the stored run too, not the person's: reloaded, it reads as
+/// it did live.
+#[test]
+fn heiko_s_message_is_heiko_s_in_a_stored_run() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("hi"))
+        .turn(|t| t.text("noted"))
+        .turn(|t| t.text("again"));
+    let (host, mut events) = host(llm);
+    let main = on_main(&host, "hello");
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let report = "Two chats landed on main.";
+    host.block_on(host.resume_by_heiko(&main, report, &ModelChoice::default()))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    // The person's words, even the same ones, stay theirs.
+    host.block_on(host.resume(&main, report, &ModelChoice::default()))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+
+    let history = host.block_on(host.history()).unwrap();
+    let stored = history.iter().find(|view| view.id == main).unwrap();
+    let said: Vec<(bool, &str)> = stored
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::User(text) => Some((false, text.as_str())),
+            Item::Heiko(text) => Some((true, text.as_str())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(said, [(false, "hello"), (true, report), (false, report)]);
+}
+
+fn wait_until_done(host: &Host, run: &heiko_agent::tool::RunId) {
+    let deadline = std::time::Instant::now() + WAIT;
+    while host.is_running(run) && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!host.is_running(run));
+}
+
+#[test]
+fn forks_start_from_a_turn_and_come_back_in_history() {
+    let src = tempfile::tempdir().unwrap();
+    git(src.path(), &["init", "--quiet"]);
+    std::fs::write(src.path().join("README.md"), "hello\n").unwrap();
+    git(src.path(), &["add", "README.md"]);
+    git(src.path(), &["commit", "--quiet", "-m", "first"]);
+    let repos = tempfile::tempdir().unwrap();
+    let project = heiko_vcs_host::ProjectRepo::import(
+        src.path().to_str().unwrap(),
+        repos.path().join("p"),
+        Identity::default(),
+    )
+    .map(Project::from)
+    .unwrap();
+
+    let write = |content: &str| serde_json::json!({ "path": "a.txt", "content": content });
+    let commit = |message: &str| serde_json::json!({ "message": message });
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("write", write("one\n")))
+        .turn(|t| t.tool_call("write", write("two\n")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: a.txt says two")))
+        .turn(|t| t.text("done"))
+        // The fork starts on turn 1's files, uncommitted, and keeps them.
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: a.txt says one")))
+        .turn(|t| t.text("forked"));
+    let (host, mut events) = host_on(llm.clone(), src.path());
+    let host = host.with_repository(
+        REPO,
+        std::sync::Arc::new(heiko_vcs_host::JjRepository::new(
+            project,
+            Identity::default(),
+        )),
+    );
+
+    let main = on_main(&host, "write a.txt twice");
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let main_dir = host.block_on(host.workspace(&main)).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(main_dir.join("a.txt")).unwrap(),
+        "two\n"
+    );
+    // The user's checkout is untouched.
+    assert!(!src.path().join("a.txt").exists());
+
+    let other = ModelChoice::new("gpt-6-sol", Effort::High);
+    let fork = host
+        .block_on(host.fork(&main, Some(1), "try it another way", &other))
+        .unwrap();
+    assert_eq!(fork.model, "gpt-6-sol");
+    assert_eq!(
+        fork.origin,
+        Origin::Fork {
+            from: main.clone(),
+            turn: 1
+        }
+    );
+    until_end(&mut events);
+    wait_until_done(&host, &fork.id);
+    let fork_dir = host.block_on(host.workspace(&fork.id)).unwrap();
+    // The fork asked its own model, at its own effort.
+    let asked = llm.requests();
+    let last = &asked.last().unwrap().settings;
+    assert_eq!(last.model, "gpt-6-sol");
+    assert_eq!(
+        last.reasoning,
+        Some(heiko_ai::responses::request::ReasoningEffort::High)
+    );
+    // Main named no model: it took the coder's default, the model the
+    // host was given.
+    assert_eq!(asked[0].settings.model, "gpt-6-luna");
+    assert_eq!(
+        std::fs::read_to_string(fork_dir.join("a.txt")).unwrap(),
+        "one\n"
+    );
+
+    let history = host.block_on(host.history()).unwrap();
+    let ids: Vec<_> = history.iter().map(|view| view.id.clone()).collect();
+    assert_eq!(ids, [fork.id.clone(), main.clone()]);
+    assert_eq!(history[0].title, "try it another way");
+    assert_eq!(history[0].origin, fork.origin);
+    assert_eq!(history[0].status, RunStatus::Finished(StopReason::Stop));
+    assert!(history.iter().all(|view| view.repo == REPO));
+    let old_main = &history[1];
+    assert_eq!(old_main.children.len(), 1);
+    assert_eq!(old_main.turn, 4);
+    let writes = old_main
+        .items
+        .iter()
+        .filter(|item| {
+            matches!(item, Item::Tool(card)
+                if card.tool == "write" && matches!(card.state, ToolState::Done { .. }))
+        })
+        .count();
+    assert_eq!(writes, 2);
+
+    // Compare: the run changed a.txt after the fork point, the fork did
+    // nothing, and their code differs in a.txt.
+    let code = host.block_on(host.branch_code(&main, &fork.id)).unwrap();
+    let paths = |files: &[FileStat]| {
+        files
+            .iter()
+            .map(|file| (file.path.clone(), file.added, file.removed))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(paths(&code.main), [("a.txt".to_owned(), 1, 1)]);
+    assert!(code.fork.is_empty());
+    assert_eq!(code.between.len(), 1);
+    let lines: Vec<(DiffKind, &str)> = code.between[0]
+        .lines
+        .iter()
+        .map(|line| (line.kind, line.text.as_str()))
+        .collect();
+    assert_eq!(
+        lines,
+        [(DiffKind::Removed, "two"), (DiffKind::Added, "one")]
+    );
+
+    // Runs nest one level: the fork, a chat under the main chat,
+    // cannot be forked in turn, and says why.
+    let refused = host
+        .block_on(host.fork(
+            &fork.id,
+            Some(1),
+            "a third way",
+            &ModelChoice::default(),
+        ))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        refused.contains("Only a repository's main chat"),
+        "{refused}"
+    );
+
+    // Keeping the fork keeps the main chat's checkout: it is the main
+    // workspace, which never goes.
+    host.block_on(host.keep_branch(&fork.id)).unwrap();
+    assert!(main_dir.exists());
+    assert!(fork_dir.exists());
+}
+
+/// A fork lands on the run it forked (ADR 0009): its change restacks
+/// onto the run's newest turn, and the fork closes.
+#[test]
+fn a_fork_lands_on_its_parent_and_closes() {
+    let src = tempfile::tempdir().unwrap();
+    git(src.path(), &["init", "--quiet"]);
+    std::fs::write(src.path().join("README.md"), "hello\n").unwrap();
+    git(src.path(), &["add", "README.md"]);
+    git(src.path(), &["commit", "--quiet", "-m", "first"]);
+    let repos = tempfile::tempdir().unwrap();
+    let project = heiko_vcs_host::ProjectRepo::import(
+        src.path().to_str().unwrap(),
+        repos.path().join("p"),
+        Identity::default(),
+    )
+    .map(Project::from)
+    .unwrap();
+
+    let write =
+        |path: &str| serde_json::json!({ "path": path, "content": "x\n" });
+    let commit = |message: &str| serde_json::json!({ "message": message });
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("write", write("a.txt")))
+        .turn(|t| t.tool_call("write", write("b.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: a and b")))
+        .turn(|t| t.text("done"))
+        .turn(|t| t.tool_call("write", write("c.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: a and c")))
+        .turn(|t| t.text("forked"));
+    let (host, mut events) = host_on(llm, src.path());
+    let host = host.with_repository(
+        REPO,
+        std::sync::Arc::new(heiko_vcs_host::JjRepository::new(
+            project.clone(),
+            Identity::default(),
+        )),
+    );
+
+    let main = on_main(&host, "write two files");
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let main_dir = host.block_on(host.workspace(&main)).unwrap();
+    let fork = host
+        .block_on(host.fork(
+            &main,
+            Some(1),
+            "write c instead",
+            &ModelChoice::default(),
+        ))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &fork.id);
+    let fork_dir = host.block_on(host.workspace(&fork.id)).unwrap();
+    assert!(fork_dir.join("c.txt").exists());
+    assert!(!fork_dir.join("b.txt").exists(), "forked before turn 2");
+
+    // A repository's main chat has nothing to land on.
+    assert!(
+        host.block_on(host.land(&host.block_on(host.main_of(REPO)).unwrap()))
+            .is_err()
+    );
+    // From history, the finished fork waits in the main run's chat.
+    let waiting = |host: &Host| {
+        host.block_on(host.history())
+            .unwrap()
+            .iter()
+            .find(|view| view.id == main)
+            .unwrap()
+            .items
+            .iter()
+            .any(|item| matches!(item, Item::ForkReady { fork: f } if *f == fork.id))
+    };
+    assert!(waiting(&host));
+
+    let preview = host.block_on(host.preview_landing(&fork.id)).unwrap();
+    assert_eq!(preview.changes.len(), 1);
+    assert!(preview.conflicts.is_empty());
+    assert!(
+        !main_dir.join("c.txt").exists(),
+        "a preview changes nothing"
+    );
+
+    let landed = host.block_on(host.land(&fork.id)).unwrap();
+    assert_eq!(landed.changes.len(), 1);
+    // The main run has both its own files and the fork's.
+    for file in ["a.txt", "b.txt", "c.txt"] {
+        assert!(main_dir.join(file).exists(), "{file}");
+    }
+    // The fork is closed: no workspace, no head.
+    assert!(!fork_dir.exists());
+    let fork_head = heiko_vcs_host::Head::Run(fork.id.clone());
+    assert_eq!(project.blocking().head(&fork_head).unwrap(), None);
+    assert!(project.blocking().run_heads().unwrap().is_empty());
+    // The main chat commits on trunk: landing on it moves main.
+    assert_eq!(project.blocking().trunk().unwrap(), landed.head);
+    // Landing again finds nothing to land.
+    assert!(host.block_on(host.land(&fork.id)).is_err());
+
+    // Back from history, the main run shows the landing where it
+    // happened: after its last turn, before its stop.
+    let history = host.block_on(host.history()).unwrap();
+    let items = &history.iter().find(|view| view.id == main).unwrap().items;
+    let [.., turn_end, Item::Landed(card), Item::Stop { .. }] =
+        items.as_slice()
+    else {
+        panic!("no landed card before the stop: {items:?}");
+    };
+    assert!(
+        matches!(turn_end, Item::TurnEnd { turn: 4 }),
+        "{turn_end:?}"
+    );
+    assert_eq!(card.from, fork.id);
+    assert_eq!(card.title, "write c instead");
+    assert!(!waiting(&host), "landed, it no longer waits");
+    assert_eq!(card.changes.len(), 1);
+}
+
+/// A main chat that committed `a.txt`, a chat forked from it that
+/// committed `c.txt`, and an update that moved trunk to upstream's commit
+/// beside the main chat's, which the chat stands on: the main chat has
+/// not caught up yet.
+struct AfterUpdate {
+    host: Host,
+    project: Project,
+    main_dir: std::path::PathBuf,
+    chat: heiko_agent::tool::RunId,
+    _dirs: (tempfile::TempDir, tempfile::TempDir),
+}
+
+fn a_chat_after_an_update() -> AfterUpdate {
+    let src = tempfile::tempdir().unwrap();
+    git(src.path(), &["init", "--quiet"]);
+    std::fs::write(src.path().join("README.md"), "hello\n").unwrap();
+    git(src.path(), &["add", "README.md"]);
+    git(src.path(), &["commit", "--quiet", "-m", "first"]);
+    let repos = tempfile::tempdir().unwrap();
+    let project = heiko_vcs_host::ProjectRepo::import(
+        src.path().to_str().unwrap(),
+        repos.path().join("p"),
+        Identity::default(),
+    )
+    .map(Project::from)
+    .unwrap();
+
+    let write =
+        |path: &str| serde_json::json!({ "path": path, "content": "x\n" });
+    let commit = |message: &str| serde_json::json!({ "message": message });
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("write", write("a.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: a")))
+        .turn(|t| t.text("done"))
+        .turn(|t| t.tool_call("write", write("c.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: c")))
+        .turn(|t| t.text("done too"));
+    let (host, mut events) = host_on(llm, src.path());
+    let host = host.with_repository(
+        REPO,
+        std::sync::Arc::new(heiko_vcs_host::JjRepository::new(
+            project.clone(),
+            Identity::default(),
+        )),
+    );
+
+    let main = on_main(&host, "write a");
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let main_dir = host.block_on(host.workspace(&main)).unwrap();
+    let chat = host
+        .block_on(host.fork(&main, None, "write c", &ModelChoice::default()))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &chat.id);
+
+    std::fs::write(src.path().join("NEW.md"), "new\n").unwrap();
+    git(src.path(), &["add", "NEW.md"]);
+    git(src.path(), &["commit", "--quiet", "-m", "second"]);
+    project
+        .blocking()
+        .update(heiko_vcs_host::UpdateFrom::Checkout(src.path()))
+        .unwrap();
+    AfterUpdate {
+        host,
+        project,
+        main_dir,
+        chat: chat.id,
+        _dirs: (src, repos),
+    }
+}
+
+/// A chat lands after an update, before the main chat caught up.
+/// `Host::land` used to read the chat's head before the catch-up that
+/// restacks it, and so failed every time (`DivergentAfterLanding`).
+#[test]
+fn a_chat_lands_after_an_update() {
+    let after = a_chat_after_an_update();
+    let landed = after.host.block_on(after.host.land(&after.chat)).unwrap();
+    assert_eq!(landed.changes.len(), 1);
+    let trunk = after.project.blocking().trunk().unwrap();
+    assert_eq!(trunk, landed.head);
+    for file in ["README.md", "NEW.md", "a.txt", "c.txt"] {
+        let at = after.project.blocking().file_at(&trunk, file).unwrap();
+        assert!(at.is_some(), "{file}");
+    }
+}
+
+/// A chat dropped after an update, before the main chat caught up,
+/// takes only its own commits. `Host::drop_child` used to keep only what
+/// trunk's bookmark had, upstream's commit, and so abandoned the main
+/// chat's commit too, and its files left the main chat's workspace.
+#[test]
+fn a_chat_drops_after_an_update() {
+    let after = a_chat_after_an_update();
+    after
+        .host
+        .block_on(after.host.drop_child(&after.chat))
+        .unwrap();
+    for file in ["a.txt", "NEW.md"] {
+        assert!(after.main_dir.join(file).exists(), "{file}");
+    }
+    assert!(!after.main_dir.join("c.txt").exists());
+    let trunk = after.project.blocking().trunk().unwrap();
+    for file in ["NEW.md", "a.txt"] {
+        let at = after.project.blocking().file_at(&trunk, file).unwrap();
+        assert!(at.is_some(), "{file} on trunk");
+    }
+}
+
+/// A sub-agent's chat stops on its own: it is dropped, nothing reports
+/// it, and the main chat it runs beside goes on.
+#[test]
+fn a_sub_agent_stops_and_its_main_chat_goes_on() {
+    let main_llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("spawn", serde_json::json!({ "task": "wait" })))
+        .turn(|t| t.text("it works on it"));
+    // The sub-agent's answer would take a minute.
+    let child_llm = ScriptedModel::new()
+        .turn(|t| t.text("too late").delay(Duration::from_secs(60)));
+    let (host, mut events) = routed_host(&main_llm, &child_llm);
+    let main = on_main(&host, "hand it off");
+    // Main may end before the sub-agent starts: what comes first is kept.
+    let mut seen = Vec::new();
+    let deadline = std::time::Instant::now() + WAIT;
+    let child = loop {
+        assert!(std::time::Instant::now() < deadline, "no sub-agent started");
+        match events.try_recv() {
+            Ok(RunEvent::RunStart {
+                run,
+                parent: Some(_),
+                ..
+            }) => break run,
+            Ok(event) => seen.push(event),
+            Err(_) => std::thread::sleep(Duration::from_millis(5)),
+        }
+    };
+    host.cancel(&child);
+    let ended = |seen: &[RunEvent], run: &heiko_agent::tool::RunId| {
+        seen.iter().find_map(|event| match event {
+            RunEvent::RunEnd {
+                run: ended, stop, ..
+            } if ended == run => Some(stop.clone()),
+            _ => None,
+        })
+    };
+    while ended(&seen, &main).is_none() || ended(&seen, &child).is_none() {
+        seen.extend(until_end(&mut events));
+    }
+    assert_eq!(ended(&seen, &child), Some(StopReason::Cancelled));
+    assert_eq!(ended(&seen, &main), Some(StopReason::Stop), "main goes on");
+    wait_until_done(&host, &main);
+    // The person stopped it: nothing lands, and heiko starts no turn.
+    let report = host
+        .block_on(host.sub_agent_ended(&child, Vec::new()))
+        .unwrap();
+    assert!(report.landed.is_empty(), "{report:?}");
+    assert!(report.resolve.is_none(), "{report:?}");
+    main_llm.assert_exhausted();
+}
+
+/// Answers a sub-agent's requests from `child`, every other from
+/// `main`: a sub-agent nobody waits for runs beside main, so one script
+/// cannot say whose request comes next.
+#[derive(Clone)]
+struct Routed {
+    main: ScriptedModel,
+    child: ScriptedModel,
+}
+
+impl heiko_ai::llm::Llm for Routed {
+    fn open(
+        &self,
+        settings: heiko_ai::responses::request::Settings,
+    ) -> futures_util::future::BoxFuture<
+        'static,
+        Result<Box<dyn heiko_ai::llm::LlmSession>, heiko_ai::llm::LlmError>,
+    > {
+        use futures_util::FutureExt as _;
+        let main = self.main.open(settings.clone());
+        let child = self.child.open(settings);
+        async move {
+            Ok(Box::new(RoutedSession {
+                main: main.await?,
+                child: child.await?,
+            }) as Box<dyn heiko_ai::llm::LlmSession>)
+        }
+        .boxed()
+    }
+}
+
+struct RoutedSession {
+    main: Box<dyn heiko_ai::llm::LlmSession>,
+    child: Box<dyn heiko_ai::llm::LlmSession>,
+}
+
+impl heiko_ai::llm::LlmSession for RoutedSession {
+    fn settings(&self) -> &heiko_ai::responses::request::Settings {
+        self.main.settings()
+    }
+
+    fn set_reasoning(
+        &mut self,
+        effort: Option<heiko_ai::responses::request::ReasoningEffort>,
+    ) {
+        self.main.set_reasoning(effort);
+        self.child.set_reasoning(effort);
+    }
+
+    fn respond(
+        &mut self,
+        transcript: &[heiko_ai::message::Message],
+        timestamp: heiko_ai::message::Timestamp,
+    ) -> heiko_ai::llm::EventStream {
+        // A sub-agent's transcript says which call it runs.
+        let sub_agent = format!("{transcript:?}")
+            .contains("You are the sub-agent running this call");
+        let session = if sub_agent {
+            &mut self.child
+        } else {
+            &mut self.main
+        };
+        session.respond(transcript, timestamp)
+    }
+}
+
+/// A sub-agent nobody waits for (ADR 0026): main's turn ends at once,
+/// the sub-agent works on, and once it ends, its work lands on main
+/// through main's queue, and heiko's turn on main reports what it said
+/// and what landed.
+#[test]
+fn a_sub_agent_nobody_waits_for_lands_and_is_reported() {
+    let src = tempfile::tempdir().unwrap();
+    git(src.path(), &["init", "--quiet"]);
+    std::fs::write(src.path().join("README.md"), "hello\n").unwrap();
+    git(src.path(), &["add", "README.md"]);
+    git(src.path(), &["commit", "--quiet", "-m", "first"]);
+    let repos = tempfile::tempdir().unwrap();
+    let project = heiko_vcs_host::ProjectRepo::import(
+        src.path().to_str().unwrap(),
+        repos.path().join("p"),
+        Identity::default(),
+    )
+    .map(Project::from)
+    .unwrap();
+    let main_llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call("spawn", serde_json::json!({ "task": "write c.txt" }))
+        })
+        .turn(|t| t.text("it works on c.txt"))
+        // heiko's turn with the report.
+        .turn(|t| t.text("c.txt is in"));
+    let child_llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call(
+                "write",
+                serde_json::json!({ "path": "c.txt", "content": "c\n" }),
+            )
+            .tool_call(
+                "vcs_commit",
+                serde_json::json!({ "message": "feat: add c.txt" }),
+            )
+        })
+        .turn(|t| t.text("wrote c.txt"));
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    // On disk, so the test reads the queue's records back itself.
+    let db = tempfile::tempdir().unwrap();
+    let store = runtime
+        .block_on(heiko_store_sqlite::open(db.path().join("runs.db")))
+        .unwrap();
+    let agent = Agent::new(Routed {
+        main: main_llm.clone(),
+        child: child_llm.clone(),
+    })
+    .name("coder");
+    let (host, mut events) = host_of(runtime, store, agent, src.path());
+    let host = host.with_repository(
+        REPO,
+        std::sync::Arc::new(heiko_vcs_host::JjRepository::new(
+            project.clone(),
+            Identity::default(),
+        )),
+    );
+    let main = on_main(&host, "hand c.txt off");
+    // Both end: main without waiting, the sub-agent once it is done.
+    let mut ended = Vec::new();
+    while ended.len() < 2 {
+        for event in until_end(&mut events) {
+            if let RunEvent::RunEnd { run, stop, .. } = event {
+                assert_eq!(stop, StopReason::Stop, "{run}");
+                ended.push(run);
+            }
+        }
+    }
+    wait_until_done(&host, &main);
+    let child = ended.into_iter().find(|run| *run != main).unwrap();
+    assert!(host.is_sub_agent(&child));
+    let dir = host.block_on(host.workspace(&main)).unwrap();
+    // The coordinator hears both end, in either order: main's turn
+    // ended, then the sub-agent's work lands on main, idle.
+    let before = host.block_on(host.main_turn_ended(&main)).unwrap();
+    assert!(before.landed.is_empty(), "nothing waited yet");
+    let report = host
+        .block_on(host.sub_agent_ended(&child, Vec::new()))
+        .unwrap();
+    assert_eq!(report.landed.len(), 1, "{report:?}");
+    assert_eq!(report.landed[0].0, child);
+    assert_eq!(std::fs::read_to_string(dir.join("c.txt")).unwrap(), "c\n");
+    assert!(report.queue.is_empty(), "{:?}", report.queue);
+    // The main chat works in the main workspace, in `main/`.
+    assert_eq!(dir, project.main_dir().to_owned());
+    // From history, the sub-agent's chat comes back under main.
+    let history = host.block_on(host.history()).unwrap();
+    let main_view = history.iter().find(|view| view.id == main).unwrap();
+    assert!(main_view.children.iter().any(|kid| kid.id == child));
+    let child_view = history.iter().find(|view| view.id == child).unwrap();
+    assert_eq!(
+        child_view.origin,
+        Origin::SubAgent {
+            parent: main.clone()
+        }
+    );
+    // It joined the queue with the change it brings, not none.
+    let queued = tokio::runtime::Runtime::new().unwrap().block_on(async {
+        let store = heiko_store_sqlite::open(db.path().join("runs.db"))
+            .await
+            .unwrap();
+        store
+            .plugin_entries(&main.0, heiko_ui::host::QUEUE_PLUGIN)
+            .await
+            .unwrap()
+    });
+    let joined = queued
+        .iter()
+        .find(|(_, body)| body.contains("\"queued\""))
+        .expect("it queued");
+    assert!(joined.1.contains("\"changes\":1"), "{}", joined.1);
+    let prompt = report.resolve.expect("heiko's turn reports it");
+    assert!(prompt.contains("wrote c.txt"), "{prompt}");
+    assert!(
+        prompt.contains("Its 1 change landed on top of yours."),
+        "{prompt}"
+    );
+    // The sub-agent is closed, landed on main.
+    assert!(project.blocking().workspaces().unwrap().is_empty());
+    assert!(project.blocking().run_heads().unwrap().is_empty());
+    assert!(project.blocking().bookmarks("heiko/").unwrap().is_empty());
+    assert!(matches!(
+        host.block_on(host.ending_of(&child)).unwrap(),
+        Some(heiko_ui_remote::view::Ending::Landed { .. })
+    ));
+    // heiko's turn reports it to main.
+    host.block_on(host.start_resolving(&main, &prompt)).unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let asked = format!("{:?}", main_llm.requests().last().unwrap().transcript);
+    assert!(asked.contains("wrote c.txt"), "{asked}");
+    main_llm.assert_exhausted();
+    child_llm.assert_exhausted();
+}
+
+/// A main chat that hands "write c.txt" to a sub-agent nobody waits
+/// for, with `main_llm` and the sub-agent's model, both ended: the host,
+/// its events, main, the sub-agent, and the directories that must
+/// outlive the host.
+fn detached_sub_agent(
+    main_llm: &ScriptedModel,
+    child_llm: &ScriptedModel,
+) -> (
+    Host,
+    UnboundedReceiver<RunEvent>,
+    heiko_agent::tool::RunId,
+    heiko_agent::tool::RunId,
+    [tempfile::TempDir; 2],
+) {
+    let src = tempfile::tempdir().unwrap();
+    git(src.path(), &["init", "--quiet"]);
+    std::fs::write(src.path().join("README.md"), "hello\n").unwrap();
+    git(src.path(), &["add", "README.md"]);
+    git(src.path(), &["commit", "--quiet", "-m", "first"]);
+    let repos = tempfile::tempdir().unwrap();
+    let project = heiko_vcs_host::ProjectRepo::import(
+        src.path().to_str().unwrap(),
+        repos.path().join("p"),
+        Identity::default(),
+    )
+    .map(Project::from)
+    .unwrap();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(heiko_store_sqlite::memory()).unwrap();
+    let agent = Agent::new(Routed {
+        main: main_llm.clone(),
+        child: child_llm.clone(),
+    })
+    .name("coder");
+    let (host, mut events) = host_of(runtime, store, agent, src.path());
+    let host = host.with_repository(
+        REPO,
+        std::sync::Arc::new(heiko_vcs_host::JjRepository::new(
+            project,
+            Identity::default(),
+        )),
+    );
+    let main = on_main(&host, "hand c.txt off");
+    let mut ended = Vec::new();
+    while ended.len() < 2 {
+        for event in until_end(&mut events) {
+            if let RunEvent::RunEnd { run, .. } = event {
+                ended.push(run);
+            }
+        }
+    }
+    wait_until_done(&host, &main);
+    let child = ended.into_iter().find(|run| *run != main).unwrap();
+    assert!(host.is_sub_agent(&child));
+    (host, events, main, child, [src, repos])
+}
+
+/// The two turns of a main chat that hands "write c.txt" off and goes
+/// on, and the two of a sub-agent that writes and commits it.
+fn hand_off() -> (ScriptedModel, ScriptedModel) {
+    let main_llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call("spawn", serde_json::json!({ "task": "write c.txt" }))
+        })
+        .turn(|t| t.text("it works on c.txt"));
+    let child_llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call(
+                "write",
+                serde_json::json!({ "path": "c.txt", "content": "c\n" }),
+            )
+            .tool_call(
+                "vcs_commit",
+                serde_json::json!({ "message": "feat: add c.txt" }),
+            )
+        })
+        .turn(|t| t.text("wrote c.txt"));
+    (main_llm, child_llm)
+}
+
+/// A sub-agent spawned not to land is reported and never lands: main
+/// has none of its work, the report names its change for main to read
+/// and take files from, and it is recorded as dropped, so heiko's next
+/// start sweeps what it kept.
+#[test]
+fn a_sub_agent_not_to_land_is_reported_and_kept_off_main() {
+    let main_llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call(
+                "spawn",
+                serde_json::json!({ "task": "write c.txt", "land": false }),
+            )
+        })
+        .turn(|t| t.text("it works on c.txt"));
+    let (_, child_llm) = hand_off();
+    let (host, _events, main, child, _dirs) =
+        detached_sub_agent(&main_llm, &child_llm);
+    host.block_on(host.main_turn_ended(&main)).unwrap();
+    let report = host
+        .block_on(host.sub_agent_ended(&child, Vec::new()))
+        .unwrap();
+    assert!(report.landed.is_empty(), "{report:?}");
+    assert!(report.queue.is_empty(), "{:?}", report.queue);
+    let dir = host.block_on(host.workspace(&main)).unwrap();
+    assert!(!dir.join("c.txt").exists());
+    let prompt = report.resolve.expect("heiko's turn reports it");
+    assert!(prompt.contains("wrote c.txt"), "{prompt}");
+    assert!(
+        prompt.contains("was kept beside yours, not landed"),
+        "{prompt}"
+    );
+    assert!(matches!(
+        host.block_on(host.ending_of(&child)).unwrap(),
+        Some(heiko_ui_remote::view::Ending::Dropped)
+    ));
+}
+
+/// What the person wrote to a sub-agent that it ended before reading is
+/// not lost: main's report turn quotes it, as main's to act on now.
+#[test]
+fn what_a_sub_agent_never_read_goes_to_main_with_its_report() {
+    let (main_llm, child_llm) = hand_off();
+    let (host, _events, main, child, _dirs) =
+        detached_sub_agent(&main_llm, &child_llm);
+    host.block_on(host.main_turn_ended(&main)).unwrap();
+    let report = host
+        .block_on(host.sub_agent_ended(
+            &child,
+            vec!["also add d.txt".into(), "two\nlines".into()],
+        ))
+        .unwrap();
+    assert_eq!(report.landed.len(), 1, "{report:?}");
+    let prompt = report.resolve.expect("heiko's turn reports it");
+    assert!(prompt.contains("wrote c.txt"), "{prompt}");
+    assert!(
+        prompt.contains(
+            "The person also wrote to it after its last turn, so it never \
+             read this. Its work is yours now: take it as written to you.\n\n\
+             > also add d.txt\n\n> two\n> lines"
+        ),
+        "{prompt}"
+    );
+    // Nothing unread, nothing more said.
+    let (main_llm, child_llm) = hand_off();
+    let (host, _events, main, child, _dirs) =
+        detached_sub_agent(&main_llm, &child_llm);
+    host.block_on(host.main_turn_ended(&main)).unwrap();
+    let report = host
+        .block_on(host.sub_agent_ended(&child, Vec::new()))
+        .unwrap();
+    assert!(!report.resolve.unwrap().contains("also wrote to it"));
+}
+
+/// A message for a sub-agent that ended, and has not landed yet, goes
+/// to main rather than starting the sub-agent again (ADR 0026): with
+/// main idle, as the text of a turn on it; with main going, into its
+/// turn, which reads it.
+#[test]
+fn a_message_for_a_sub_agent_that_ended_goes_to_main() {
+    let (main_llm, child_llm) = hand_off();
+    let main_llm = main_llm
+        // Main goes on, slowly, so the next message finds it going.
+        .turn(|t| {
+            t.tool_call("read", serde_json::json!({ "path": "README.md" }))
+                .delay(Duration::from_millis(500))
+        })
+        .turn(|t| t.text("on it"));
+    let (host, mut events, main, child, _dirs) =
+        detached_sub_agent(&main_llm, &child_llm);
+    let delivery = host.block_on(host.steer(&child, "and d.txt")).unwrap();
+    let Delivery::ToMain {
+        main: to,
+        text,
+        steered: false,
+    } = delivery
+    else {
+        panic!("{delivery:?}")
+    };
+    assert_eq!(to, main);
+    assert!(text.contains("after its last turn"), "{text}");
+    assert!(text.ends_with("\n\n> and d.txt"), "{text}");
+    assert!(!host.is_running(&child), "the sub-agent did not go on");
+    // Main going: the message joins its turn.
+    host.block_on(host.resume(&main, "go on", &ModelChoice::default()))
+        .unwrap();
+    let delivery = host.block_on(host.steer(&child, "and e.txt")).unwrap();
+    let Delivery::ToMain {
+        main: to,
+        text,
+        steered: true,
+    } = delivery
+    else {
+        panic!("{delivery:?}")
+    };
+    assert_eq!(to, main);
+    assert!(text.ends_with("\n\n> and e.txt"), "{text}");
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let asked = format!("{:?}", main_llm.requests().last().unwrap().transcript);
+    assert!(asked.contains("> and e.txt"), "{asked}");
+    main_llm.assert_exhausted();
+    child_llm.assert_exhausted();
+}
+
+/// A sub-agent nobody waits for that changes no files still lands: its
+/// answer reaches main, with a note that it changed nothing, and it
+/// closes like one that brought changes.
+#[test]
+fn a_sub_agent_that_changes_nothing_is_reported_with_its_answer() {
+    changes_nothing_and_is_reported(false);
+}
+
+/// The same with no head left, as when no turn of it ended with a
+/// snapshot: it lands from its working copy.
+#[test]
+fn a_sub_agent_without_a_head_is_reported_with_its_answer() {
+    changes_nothing_and_is_reported(true);
+}
+
+fn changes_nothing_and_is_reported(without_head: bool) {
+    let main_llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call(
+                "spawn",
+                serde_json::json!({ "task": "what does README.md say?" }),
+            )
+        })
+        .turn(|t| t.text("it reads README.md"))
+        // heiko's turn with the report.
+        .turn(|t| t.text("README.md says hello"));
+    let child_llm =
+        ScriptedModel::new().turn(|t| t.text("README.md says hello"));
+    let (host, mut events, main, child, dirs) =
+        detached_sub_agent(&main_llm, &child_llm);
+    if without_head {
+        let project = heiko_vcs_host::ProjectRepo::open(
+            dirs[1].path().join("p"),
+            Identity::default(),
+        )
+        .unwrap();
+        let head = heiko_vcs_host::Head::Run(child.clone());
+        project.remove_head(&head).unwrap();
+        assert_eq!(project.head(&head).unwrap(), None);
+    }
+    host.block_on(host.main_turn_ended(&main)).unwrap();
+    let report = host
+        .block_on(host.sub_agent_ended(&child, Vec::new()))
+        .unwrap();
+    assert!(report.failed.is_empty(), "{report:?}");
+    assert_eq!(report.landed.len(), 1, "{report:?}");
+    assert!(report.landed[0].1.changes.is_empty(), "{report:?}");
+    assert!(matches!(
+        host.block_on(host.ending_of(&child)).unwrap(),
+        Some(heiko_ui_remote::view::Ending::Landed { .. })
+    ));
+    let prompt = report.resolve.expect("heiko's turn reports it");
+    assert!(prompt.contains("README.md says hello"), "{prompt}");
+    assert!(prompt.contains("[It changed no files.]"), "{prompt}");
+    host.block_on(host.start_resolving(&main, &prompt)).unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let asked = format!("{:?}", main_llm.requests().last().unwrap().transcript);
+    assert!(asked.contains("[It changed no files.]"), "{asked}");
+    main_llm.assert_exhausted();
+    child_llm.assert_exhausted();
+}
+
+/// Plugins that finish a run slowly, as one that asks a model does: its
+/// end went by, and main is still not done for longer than any wait.
+struct SlowFinish(Duration);
+
+#[async_trait::async_trait]
+impl heiko_agent::plugin::Plugin for SlowFinish {
+    fn name(&self) -> &str {
+        "slow-finish"
+    }
+
+    async fn start(
+        &self,
+        _plan: &mut heiko_agent::plugin::RunPlan,
+        _ctx: &heiko_agent::plugin::PluginCtx,
+    ) -> Result<
+        Box<dyn heiko_agent::plugin::PluginRun>,
+        heiko_agent::plugin::PluginError,
+    > {
+        Ok(Box::new(SlowFinishRun(self.0)))
+    }
+}
+
+struct SlowFinishRun(Duration);
+
+#[async_trait::async_trait]
+impl heiko_agent::plugin::PluginRun for SlowFinishRun {
+    async fn finish(
+        &mut self,
+        run: &heiko_agent::plugin::FinishedRun<'_>,
+        _ctx: &heiko_agent::plugin::PluginCtx,
+    ) {
+        // Only heiko's turn reporting a sub-agent is slow.
+        if format!("{:?}", run.transcript).contains("your sub-agents came back")
+        {
+            tokio::time::sleep(self.0).await;
+        }
+    }
+}
+
+/// heiko's turn reporting a sub-agent ends, but its plugins take their
+/// time finishing it: what waited meanwhile still lands, and is reported,
+/// after it.
+#[test]
+fn what_waits_lands_after_a_main_turn_that_finishes_slowly() {
+    let src = tempfile::tempdir().unwrap();
+    git(src.path(), &["init", "--quiet"]);
+    std::fs::write(src.path().join("README.md"), "hello\n").unwrap();
+    git(src.path(), &["add", "README.md"]);
+    git(src.path(), &["commit", "--quiet", "-m", "first"]);
+    let repos = tempfile::tempdir().unwrap();
+    let project = heiko_vcs_host::ProjectRepo::import(
+        src.path().to_str().unwrap(),
+        repos.path().join("p"),
+        Identity::default(),
+    )
+    .map(Project::from)
+    .unwrap();
+    let main_llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call("spawn", serde_json::json!({ "task": "read one" }))
+                .tool_call("spawn", serde_json::json!({ "task": "read two" }))
+        })
+        .turn(|t| t.text("they read"))
+        // heiko's turns with the reports.
+        .turn(|t| t.text("first is in"))
+        .turn(|t| t.text("second is in"));
+    let child_llm = ScriptedModel::new()
+        .turn(|t| t.text("answer one"))
+        .turn(|t| t.text("answer two"));
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(heiko_store_sqlite::memory()).unwrap();
+    let agent = Agent::new(Routed {
+        main: main_llm.clone(),
+        child: child_llm.clone(),
+    })
+    .plugin(SlowFinish(Duration::from_secs(7)))
+    .name("coder");
+    let (host, mut events) = host_of(runtime, store, agent, src.path());
+    let host = host.with_repository(
+        REPO,
+        std::sync::Arc::new(heiko_vcs_host::JjRepository::new(
+            project,
+            Identity::default(),
+        )),
+    );
+    let main = on_main(&host, "read both");
+    let mut ended = Vec::new();
+    while ended.len() < 3 {
+        for event in until_end(&mut events) {
+            if let RunEvent::RunEnd { run, .. } = event {
+                ended.push(run);
+            }
+        }
+    }
+    wait_until_done(&host, &main);
+    let children: Vec<_> =
+        ended.into_iter().filter(|run| *run != main).collect();
+    assert_eq!(children.len(), 2);
+    host.block_on(host.main_turn_ended(&main)).unwrap();
+    let first = host
+        .block_on(host.sub_agent_ended(&children[0], Vec::new()))
+        .unwrap();
+    let prompt = first.resolve.expect("heiko's turn reports the first");
+    let second = host
+        .block_on(host.sub_agent_ended(&children[1], Vec::new()))
+        .unwrap();
+    assert_eq!(second.queue.len(), 1, "{second:?}");
+    host.block_on(host.start_resolving(&main, &prompt)).unwrap();
+    until_end(&mut events);
+    // Its end went by; its plugins are still finishing it.
+    let after = host.block_on(host.main_turn_ended(&main)).unwrap();
+    assert!(after.queue.is_empty(), "{after:?}");
+    assert!(after.resolve.is_some(), "the second is reported: {after:?}");
+}
+
+/// A sub-agent that fails still comes back from history, under the run
+/// that called it, with how it ended.
+#[test]
+fn a_failed_sub_agent_comes_back_from_history() {
+    let (main_llm, _) = hand_off();
+    let child_llm = ScriptedModel::new().turn(|t| t.dropped());
+    let (host, _events, main, _child, _dirs) =
+        detached_sub_agent(&main_llm, &child_llm);
+
+    let history = host.block_on(host.history()).unwrap();
+    let main_view = history.iter().find(|view| view.id == main).unwrap();
+    let child = main_view
+        .children
+        .iter()
+        .find(|child| child.kind == heiko_ui_remote::view::ChildKind::SubAgent)
+        .expect("the sub-agent under its parent");
+    let view = history.iter().find(|view| view.id == child.id).unwrap();
+    assert_eq!(
+        view.origin,
+        Origin::SubAgent {
+            parent: main.clone()
+        }
+    );
+    assert_eq!(view.title, "write c.txt");
+    assert!(
+        matches!(&view.status, RunStatus::Finished(StopReason::Error(_))),
+        "{:?}",
+        view.status
+    );
+}
+
+#[test]
+fn runs_come_back_under_their_repository() {
+    let other = tempfile::tempdir().unwrap();
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("one"))
+        .turn(|t| t.text("two"));
+    let (host, mut events) = host(llm);
+    let host = host.with_repository(
+        "other",
+        std::sync::Arc::new(heiko_vcs_host::JjRepository::new(
+            project_of(other.path()),
+            Identity::default(),
+        )),
+    );
+
+    let here = host
+        .block_on(host.start("in the first", &ModelChoice::default(), REPO))
+        .unwrap();
+    assert_eq!(here.repo, REPO);
+    until_end(&mut events);
+    wait_until_done(&host, &here.id);
+    let there = host
+        .block_on(host.start("in the other", &ModelChoice::default(), "other"))
+        .unwrap();
+    assert_eq!(there.repo, "other");
+    until_end(&mut events);
+    wait_until_done(&host, &there.id);
+
+    let history = host.block_on(host.history()).unwrap();
+    let repo_of = |id| {
+        history
+            .iter()
+            .find(|view| view.id == id)
+            .map(|view| view.repo.clone())
+            .unwrap()
+    };
+    assert_eq!(repo_of(here.id.clone()), REPO);
+    assert_eq!(repo_of(there.id.clone()), "other");
+    // A repository that is not listed runs nothing.
+    assert!(
+        host.block_on(host.start("nowhere", &ModelChoice::default(), "none"))
+            .is_err()
+    );
+}
+
+/// What GitHub would serve for `full_name`: a repository with one
+/// commit at `owner/name.git` under `remote`.
+fn served(remote: &Path, full_name: &str) -> std::path::PathBuf {
+    let src = remote.join(format!("{full_name}.git"));
+    std::fs::create_dir_all(&src).unwrap();
+    git(&src, &["init", "--quiet"]);
+    std::fs::write(src.join("README.md"), "hello\n").unwrap();
+    git(&src, &["add", "README.md"]);
+    git(&src, &["commit", "--quiet", "-m", "first"]);
+    src
+}
+
+/// `host`, signed in to GitHub and reaching it at `remote`.
+fn on_github(host: Host, remote: &Path) -> Host {
+    let web = format!("file://{}", remote.display());
+    let forge = FakeForge::at(web).signed_in("cfcosta");
+    host.with_forge(std::sync::Arc::new(forge))
+}
+
+#[test]
+fn repositories_are_listed_and_remembered() {
+    let data = tempfile::tempdir().unwrap();
+    let remote = tempfile::tempdir().unwrap();
+    served(remote.path(), "a/proj");
+    served(remote.path(), "b/proj");
+    let names = |host: &Host| -> Vec<String> {
+        host.block_on(host.catalog())
+            .repos
+            .iter()
+            .map(|repo| repo.name.clone())
+            .collect()
+    };
+
+    let (host, _events) = Host::new(config_on(data.path())).unwrap();
+    let host = on_github(host, remote.path());
+    // Nothing is listed until it is cloned but heiko's own plugins: not
+    // even the directory heiko started in.
+    assert_eq!(names(&host), ["heiko-plugins"]);
+    // heiko's own, which the sidebar leaves out.
+    assert_eq!(
+        host.block_on(host.catalog()).repos[0].kind,
+        Some(heiko_luau_plugins::KIND.to_owned())
+    );
+    // Two repositories with one name get two names.
+    assert_eq!(
+        host.block_on(host.clone_from_forge("a/proj")).unwrap().name,
+        "proj"
+    );
+    assert_eq!(
+        host.block_on(host.clone_from_forge("b/proj")).unwrap().name,
+        "proj-2"
+    );
+    // Cloning one again keeps its name.
+    assert_eq!(
+        host.block_on(host.clone_from_forge("a/proj")).unwrap().name,
+        "proj"
+    );
+    assert!(host.block_on(host.clone_from_forge("c/missing")).is_err());
+    host.block_on(host.set_open_repos(vec!["proj-2".into()]))
+        .unwrap();
+    assert_eq!(names(&host), ["heiko-plugins", "proj", "proj-2"]);
+    drop(host);
+
+    let (host, _events) = Host::new(config_on(data.path())).unwrap();
+    let host = on_github(host, remote.path());
+    assert_eq!(names(&host), ["heiko-plugins", "proj", "proj-2"]);
+    assert_eq!(host.block_on(host.catalog()).open_repos, ["proj-2"]);
+    host.block_on(host.hide_repo("proj")).unwrap();
+    assert_eq!(names(&host), ["heiko-plugins", "proj-2"]);
+    // Closed conversations are remembered too, until opened again.
+    let (first, second) = (
+        heiko_agent::tool::RunId("a".into()),
+        heiko_agent::tool::RunId("b".into()),
+    );
+    host.block_on(host.set_closed(&first, true)).unwrap();
+    host.block_on(host.set_closed(&second, true)).unwrap();
+    host.block_on(host.set_closed(&second, false)).unwrap();
+    drop(host);
+
+    let (host, _events) = Host::new(config_on(data.path())).unwrap();
+    let host = on_github(host, remote.path());
+    assert_eq!(names(&host), ["heiko-plugins", "proj-2"]);
+    let catalog = host.block_on(host.catalog());
+    assert_eq!(catalog.closed_runs, std::slice::from_ref(&first));
+    // Cloning a removed one lists it again, under its name.
+    assert_eq!(
+        host.block_on(host.clone_from_forge("a/proj")).unwrap().name,
+        "proj"
+    );
+    assert_eq!(names(&host), ["heiko-plugins", "proj", "proj-2"]);
+}
+
+/// A repository gets its id once, as it is listed, and keeps it: the
+/// catalog and plugins see the same one, a reload brings it back, and
+/// cloning it again after it was removed lists it under it. Plugins see
+/// where a clone from GitHub is fetched from.
+#[test]
+fn a_listed_repository_keeps_its_id() {
+    // Every plugin's host half, as the app has them: heiko.forge is
+    // heiko-luau-plugins' (heiko-github is a Luau plugin), there as heiko
+    // starts and lists what it cloned, before the test's own forge.
+    heiko::install();
+    let data = tempfile::tempdir().unwrap();
+    let remote = tempfile::tempdir().unwrap();
+    served(remote.path(), "a/proj");
+    served(remote.path(), "b/proj");
+    let ids = |host: &Host| -> Vec<(String, RepoId)> {
+        host.block_on(host.catalog())
+            .repos
+            .iter()
+            .map(|repo| (repo.name.clone(), repo.id.clone()))
+            .collect()
+    };
+
+    let (host, _events) = Host::new(config_on(data.path())).unwrap();
+    let host = on_github(host, remote.path());
+    let a = host.block_on(host.clone_from_forge("a/proj")).unwrap();
+    let b = host.block_on(host.clone_from_forge("b/proj")).unwrap();
+    assert_ne!(a.id, b.id, "two repositories, two ids");
+    assert!(!a.id.0.is_empty());
+    let listed = ids(&host);
+    assert_eq!(listed.len(), 3, "with heiko's own: {listed:?}");
+    let unique: std::collections::BTreeSet<&RepoId> =
+        listed.iter().map(|(_, id)| id).collect();
+    assert_eq!(unique.len(), 3, "{listed:?}");
+    let ctx = host.repo("proj").unwrap();
+    assert_eq!(ctx.id, a.id);
+    assert_eq!(
+        ctx.remote,
+        Some(format!("file://{}/a/proj.git", remote.path().display()))
+    );
+    assert_eq!(ctx.folder, None, "a clone heiko keeps");
+    assert_eq!(host.repo("heiko-plugins").unwrap().remote, None);
+    drop(host);
+
+    let (host, _events) = Host::new(config_on(data.path())).unwrap();
+    let host = on_github(host, remote.path());
+    assert_eq!(ids(&host), listed);
+    assert_eq!(host.repo("proj-2").unwrap().id, b.id);
+    assert!(host.repo("proj-2").unwrap().remote.is_some());
+    host.block_on(host.hide_repo("proj")).unwrap();
+    let again = host.block_on(host.clone_from_forge("a/proj")).unwrap();
+    assert_eq!(again.id, a.id, "listed again under its id");
+}
+
+fn config_on(data: &Path) -> HostConfig {
+    HostConfig {
+        credentials: Credentials::new(data.join("config")),
+        model: Some("gpt-6-luna".into()),
+        store: data.join("runs.db"),
+        repos: data.join("repos"),
+        settings: data.join("models.json"),
+        repo_list: data.join("repos.json"),
+        home: None,
+        services: Default::default(),
+    }
+}
+
+#[test]
+fn models_follow_the_sign_in_and_settings_persist() {
+    let data = tempfile::tempdir().unwrap();
+
+    let (host, _events) = Host::new(config_on(data.path())).unwrap();
+    let models = host.models();
+    // No settings yet: coder runs on the model the host was given.
+    assert_eq!(models.default_for("coder").model, "gpt-6-luna");
+    let mut settings = models.settings.clone();
+    settings.set_default("coder", ModelChoice::new("gpt-6-astra", Effort::Low));
+    settings.toggle_hidden("gpt-5.6-terra");
+    host.block_on(host.save_settings(settings.clone())).unwrap();
+    drop(host);
+
+    // On a ChatGPT plan the picker offers the plan's models from the
+    // model table at once; the saved choices come back.
+    let credentials = config_on(data.path()).credentials;
+    let account = sign_in_saved(&credentials, "a@example.com", PLAN);
+    let config = HostConfig {
+        ..config_on(data.path())
+    };
+    let (host, _events) = Host::new(config).unwrap();
+    let models = host.models();
+    assert_eq!(models.settings, settings);
+    assert_eq!(models.options, heiko_chatgpt::plan_models());
+    assert!(models.access.signed_in);
+    assert_eq!(models.access.label, "ChatGPT plan");
+    let accounts = chatgpt_of(&host).accounts;
+    assert_eq!(accounts.len(), 1);
+    assert_eq!(accounts[0].id, account.to_string());
+    assert!(accounts[0].active);
+    assert_eq!(accounts[0].state, heiko_chatgpt::ui::AccountState::Plan);
+    assert_eq!(host.stopped(), None);
+}
+
+/// Scopes of a sign-in that allows plan usage.
+const PLAN: &[&str] = &["chatgpt.tokens.use.direct", "email", "openid"];
+
+/// Saves a signed-in ChatGPT record for `email` with `scopes`, as a
+/// finished sign-in would, and makes it the active account.
+fn sign_in_saved(
+    credentials: &Credentials,
+    email: &str,
+    scopes: &[&str],
+) -> heiko_ai::chatgpt::AccountId {
+    let record = heiko_ai::chatgpt::Credentials {
+        label: email.into(),
+        email: Some(email.into()),
+        issuer: "https://auth.openai.com".into(),
+        subject: format!("sub-{email}"),
+        client_id: "oaiapp_test".into(),
+        ext_agent_host_id: heiko_ai::chatgpt::HostId::new_uuid(),
+        id_token: None,
+        access_token: Some("at".into()),
+        refresh_token: Some("rt".into()),
+        token_type: None,
+        expires_in: None,
+        expires_at: Some(u64::MAX),
+        earliest_refresh_at: None,
+        scopes: scopes.iter().map(|scope| (*scope).to_owned()).collect(),
+        saved_at: String::new(),
+    };
+    let store =
+        heiko_ai::chatgpt::Store::open(credentials.dir.join("chatgpt")).unwrap();
+    store.save(&record).unwrap();
+    store.set_active(&record.id()).unwrap();
+    record.id()
+}
+
+#[test]
+fn runs_use_the_plan_and_never_a_declined_one() {
+    let data = tempfile::tempdir().unwrap();
+    let config = config_on(data.path());
+    let credentials = config.credentials.clone();
+    // A key saved by an older heiko is never read.
+    std::fs::create_dir_all(&credentials.dir).unwrap();
+    std::fs::write(credentials.dir.join("openai-key"), "sk-saved").unwrap();
+    let plan = sign_in_saved(&credentials, "a@example.com", PLAN);
+    let account = heiko_chatgpt::plan_account(&credentials.dir).unwrap();
+    assert_eq!(account, plan);
+    let (host, _events) = Host::new(config).unwrap();
+    let host = host.with_repository(
+        REPO,
+        std::sync::Arc::new(heiko_vcs_host::JjRepository::new(
+            project_of(&tempfile::tempdir().unwrap().keep()),
+            Identity::default(),
+        )),
+    );
+    assert!(host.models().access.signed_in);
+
+    // Switching to an account that declined plan usage leaves nothing
+    // to run on: no model is offered and runs do not start.
+    let declined = sign_in_saved(&credentials, "b@example.com", &["openid"]);
+    let left = heiko_chatgpt::plan_account(&credentials.dir);
+    assert_eq!(left, None);
+    let models = host.models();
+    assert!(!models.access.signed_in);
+    assert!(models.options.is_empty());
+    let data = chatgpt_of(&host);
+    let active = data.accounts.iter().find(|a| a.active).unwrap();
+    assert_eq!(active.id, declined.to_string());
+    assert_eq!(active.state, heiko_chatgpt::ui::AccountState::PlanDisabled);
+    let error = host
+        .block_on(host.start("hi", &ModelChoice::default(), REPO))
+        .unwrap_err();
+    assert!(error.to_string().contains("no ChatGPT plan"), "{error}");
+
+    // Back on the plan account, runs use the plan again.
+    heiko_ai::chatgpt::Store::open(credentials.dir.join("chatgpt"))
+        .unwrap()
+        .set_active(&plan)
+        .unwrap();
+    assert!(host.models().access.signed_in);
+}
+
+#[test]
+fn github_repositories_clone_into_heiko() {
+    let (data, remote) =
+        (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let src = served(remote.path(), "cfcosta/hello");
+
+    let config = config_on(data.path());
+    let (host, _events) = Host::new(config).unwrap();
+    let web = format!("file://{}", remote.path().display());
+    // Signed out: the forge's refusal is what the clone says.
+    let forge = std::sync::Arc::new(FakeForge::at(web));
+    let host = host.with_forge(forge.clone());
+    let error = host
+        .block_on(host.clone_from_forge("cfcosta/hello"))
+        .unwrap_err();
+    assert!(error.to_string().contains("Sign in to GitHub"), "{error}");
+
+    forge.sign_in("cfcosta");
+    assert!(host.block_on(host.clone_from_forge("../escape")).is_err());
+    assert!(host.block_on(host.clone_from_forge("cfcosta/..")).is_err());
+    let repo = host
+        .block_on(host.clone_from_forge("cfcosta/hello"))
+        .unwrap();
+    assert_eq!(repo.name, "hello");
+    assert!(
+        host.block_on(host.catalog())
+            .repos
+            .iter()
+            .any(|listed| listed.name == "hello")
+    );
+    // Waiting for the project is what blocks, not cloning.
+    let project = common::project(&host, "hello");
+    assert!(project.root().starts_with(data.path().join("repos")));
+    assert!(!project.blocking().trunk().unwrap().is_empty());
+    assert!(!host.is_importing());
+    assert_eq!(
+        host.block_on(host.catalog()).project,
+        heiko_ui_remote::catalog::ProjectStatus::Unknown
+    );
+    // Cloning it again lists the same repository, without fetching.
+    assert_eq!(
+        host.block_on(host.clone_from_forge("cfcosta/hello"))
+            .unwrap()
+            .name,
+        "hello"
+    );
+
+    // New commits on GitHub come in with an update.
+    std::fs::write(src.join("NEW.md"), "new\n").unwrap();
+    git(&src, &["add", "NEW.md"]);
+    git(&src, &["commit", "--quiet", "-m", "second"]);
+    let updated = host.block_on(host.update_repo("hello")).unwrap();
+    assert!(updated.changed());
+    assert_eq!(project.blocking().trunk().unwrap(), updated.after);
+    assert!(!host.block_on(host.update_repo("hello")).unwrap().changed());
+}
+
+#[test]
+fn a_finished_run_goes_on_in_its_workspace() {
+    let src = tempfile::tempdir().unwrap();
+    git(src.path(), &["init", "--quiet"]);
+    std::fs::write(src.path().join("README.md"), "hello\n").unwrap();
+    git(src.path(), &["add", "README.md"]);
+    git(src.path(), &["commit", "--quiet", "-m", "first"]);
+    let repos = tempfile::tempdir().unwrap();
+    let project = heiko_vcs_host::ProjectRepo::import(
+        src.path().to_str().unwrap(),
+        repos.path().join("p"),
+        Identity::default(),
+    )
+    .map(Project::from)
+    .unwrap();
+    let write =
+        |path: &str| serde_json::json!({ "path": path, "content": "x\n" });
+    let commit = |message: &str| serde_json::json!({ "message": message });
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("write", write("a.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: a")))
+        .turn(|t| t.text("wrote a"))
+        .turn(|t| t.tool_call("write", write("b.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: b")))
+        .turn(|t| t.text("wrote b"));
+    let (host, mut events) = host_on(llm.clone(), src.path());
+    let host = host.with_repository(
+        REPO,
+        std::sync::Arc::new(heiko_vcs_host::JjRepository::new(
+            project,
+            Identity::default(),
+        )),
+    );
+
+    let chat = host
+        .block_on(host.start("write a.txt", &ModelChoice::default(), REPO))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &chat.id);
+    let dir = host.block_on(host.workspace(&chat.id)).unwrap();
+
+    // The chat goes on on another model, without a fork.
+    let other = ModelChoice::new("gpt-6-sol", Effort::Auto);
+    host.block_on(host.resume(&chat.id, "now b.txt", &other))
+        .unwrap();
+    let turns: Vec<u32> = until_end(&mut events)
+        .into_iter()
+        .filter_map(|event| match event {
+            RunEvent::TurnStart { run, turn } if run == chat.id => Some(turn),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(turns, [4, 5, 6], "turns keep counting");
+    wait_until_done(&host, &chat.id);
+    // The same workspace, with both turns' files.
+    assert_eq!(host.block_on(host.workspace(&chat.id)).unwrap(), dir);
+    assert!(dir.join("a.txt").exists() && dir.join("b.txt").exists());
+    // The model saw the whole chat.
+    let last = llm.requests().pop().unwrap();
+    assert!(last.transcript.len() > 4, "{}", last.transcript.len());
+    assert_eq!(last.settings.model, "gpt-6-sol");
+
+    let history = host.block_on(host.history()).unwrap();
+    assert_eq!(history.len(), 2, "one chat, not two, and main");
+    let view = &history[0];
+    assert_eq!(view.id, chat.id);
+    assert_eq!(view.title, "write a.txt");
+    assert_eq!(
+        view.model, "gpt-6-sol",
+        "it reloads on the model it went on"
+    );
+    assert_eq!(view.turn, 6);
+    let prompts: Vec<&str> = view
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::User(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(prompts, ["write a.txt", "now b.txt"]);
+}
+
+#[test]
+fn an_effort_the_model_does_not_take_runs_at_auto() {
+    let dir = tempfile::tempdir().unwrap();
+    let llm = ScriptedModel::new().turn(|t| t.text("ok"));
+    let (host, mut events) = host_on(llm.clone(), dir.path());
+    // The provider offers gpt-5.5 at the efforts it takes.
+    let host = host
+        .with_provider(std::sync::Arc::new(Offers(vec![offered("gpt-5.5")])));
+    // gpt-5.5 stops at xhigh; the API would reject max.
+    let max = ModelChoice::new("gpt-5.5", Effort::Max);
+    let run = host
+        .block_on(host.start("rename a variable", &max, REPO))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &run.id);
+    assert_eq!(llm.requests()[0].settings.reasoning, None);
+    let reasoning = run.plan.iter().find(|field| field.name == "reasoning");
+    assert_eq!(reasoning.unwrap().value, "auto");
+}
+
+/// A run keeps a note in its repository's memory, the Memory screen
+/// shows it, and a later run's commit that changes the file it is about,
+/// even through a command, marks it as maybe stale.
+#[test]
+fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
+    // heiko-memory is a Luau plugin: the app's plugins, Luau's host half
+    // with them.
+    heiko::install();
+    let src = tempfile::tempdir().unwrap();
+    git(src.path(), &["init", "--quiet"]);
+    std::fs::write(src.path().join("a.txt"), "one\n").unwrap();
+    git(src.path(), &["add", "a.txt"]);
+    git(src.path(), &["commit", "--quiet", "-m", "first"]);
+    let repos = tempfile::tempdir().unwrap();
+    let project = heiko_vcs_host::ProjectRepo::import(
+        src.path().to_str().unwrap(),
+        repos.path().join("p"),
+        Identity::default(),
+    )
+    .map(Project::from)
+    .unwrap();
+    let note = serde_json::json!({
+        "type": "fact",
+        "title": "a.txt holds the count",
+        "description": "The count lives in a.txt, one number per line.",
+        "body": "Read a.txt for the count.",
+        "links": [{ "to": "a.txt", "type": "about" }],
+    });
+    let exec = serde_json::json!({ "cmd": "echo two > a.txt" });
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("memory_write", note.clone()))
+        .turn(|t| t.text("noted"))
+        .turn(|t| t.tool_call("exec_command", exec.clone()))
+        .turn(|t| t.text("changed"));
+    let (host, mut events) = host_on(llm, src.path());
+    let host = host.with_repository(
+        REPO,
+        std::sync::Arc::new(heiko_vcs_host::JjRepository::new(
+            project,
+            Identity::default(),
+        )),
+    );
+    // What memory keeps of the repository, and its notes page as text.
+    let kept = |host: &Host| {
+        let catalog = host.block_on(host.catalog());
+        let repo = catalog
+            .repos
+            .iter()
+            .find(|repo| repo.name == REPO)
+            .expect("the repository is listed")
+            .clone();
+        repo.plugins
+            .get(heiko_luau_plugins::NAME)
+            .map(|data| {
+                data.json()[heiko_luau_plugins::names::MEMORY]["notes"]
+                    .as_u64()
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0)
+    };
+    let page = |host: &Host| {
+        let act = heiko_luau_plugins::Act::Page {
+            plugin: heiko_luau_plugins::names::MEMORY.into(),
+            page: "notes".into(),
+            params: [("repo".to_owned(), REPO.to_owned())].into(),
+            jev: false,
+            drafts: Default::default(),
+        };
+        host.block_on(host.plugin_act(
+            heiko_luau_plugins::NAME,
+            serde_json::to_value(act).unwrap(),
+        ))
+        .unwrap()
+        .expect("a page answers")["tree"]
+            .to_string()
+    };
+    assert_eq!(kept(&host), 0);
+    assert!(
+        host.block_on(host.catalog())
+            .plugins
+            .iter()
+            .any(|plugin| plugin.name == heiko_luau_plugins::NAME)
+    );
+
+    let first = host
+        .block_on(host.start("note it", &ModelChoice::default(), REPO))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &first.id);
+    assert_eq!(kept(&host), 1);
+    let shown = page(&host);
+    assert!(shown.contains("a.txt holds the count"), "{shown}");
+    assert!(shown.contains("a.txt"), "{shown}");
+    assert!(!shown.contains("May be stale"), "{shown}");
+
+    let second = host
+        .block_on(host.start("change it", &ModelChoice::default(), REPO))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &second.id);
+    // The mark is made off the run's thread; give it a moment.
+    let deadline = std::time::Instant::now() + WAIT;
+    loop {
+        let shown = page(&host);
+        if shown.contains("May be stale") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "never marked stale: {shown}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// A done chat is not necessarily finalized: an unusable commit-message
+/// answer must not let manual landing delete its remaining edits.
+#[test]
+fn landing_keeps_a_chat_whose_final_commit_failed() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("write", serde_json::json!({"path": "committed.txt", "content": "committed\n"})))
+        .turn(|t| t.tool_call("vcs_commit", serde_json::json!({"message": "feat: committed"})))
+        .turn(|t| t.tool_call("write", serde_json::json!({"path": "pending.txt", "content": "pending\n"})))
+        .turn(|t| t.text("done"))
+        .turn(|t| t.text("still done"))
+        .turn(|t| t.text(""));
+    let (host, mut events) = host(llm.clone());
+    let chat = host
+        .block_on(host.start("write both files", &ModelChoice::default(), REPO))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &chat.id);
+    let dir = host.block_on(host.workspace(&chat.id)).unwrap();
+    let project = common::project(&host, REPO);
+    let trunk = project.blocking().trunk().unwrap();
+    for action in [
+        host.block_on(host.preview_landing(&chat.id)),
+        host.block_on(host.land(&chat.id)),
+    ] {
+        let error = action.unwrap_err().to_string();
+        assert!(error.contains("workspace is retained"), "{error}");
+    }
+    assert_eq!(project.blocking().trunk().unwrap(), trunk);
+    assert_eq!(
+        std::fs::read(dir.join("pending.txt")).unwrap(),
+        b"pending\n"
+    );
+    assert_eq!(
+        std::fs::read(dir.join("committed.txt")).unwrap(),
+        b"committed\n"
+    );
+    assert!(
+        project
+            .blocking()
+            .head(&heiko_vcs_host::Head::Run(chat.id.clone()))
+            .unwrap()
+            .is_some()
+    );
+    llm.assert_exhausted();
+}
+
+/// Runs nest one level: the main chat can spawn sub-agents, and a chat
+/// under it, which could only nest a sub-agent under itself, has the
+/// tool only so its tools match main's: a call is refused, saying why.
+#[test]
+fn only_the_main_chat_spawns() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("main"))
+        .turn(|t| t.tool_call("spawn", serde_json::json!({ "task": "nest" })))
+        .turn(|t| t.text("chat"));
+    let (host, mut events) = host(llm.clone());
+    let main = on_main(&host, "hello main");
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let chat = host
+        .block_on(host.start("hello chat", &ModelChoice::default(), REPO))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &chat.id);
+    let requests = llm.requests();
+    assert_eq!(requests.len(), 3, "no sub-agent ran");
+    let refused = requests[2]
+        .transcript
+        .iter()
+        .find_map(|message| match message {
+            heiko_ai::message::Message::ToolResult(result)
+                if result.tool_name == "spawn" =>
+            {
+                Some(result.clone())
+            }
+            _ => None,
+        })
+        .expect("the spawn call's result");
+    assert!(refused.is_error);
+    assert!(
+        refused.content.iter().any(|block| matches!(
+            block,
+            heiko_ai::message::InputBlock::Text(text)
+                if text.text.contains(heiko_ui_plugin::sub_agents::ONLY_MAIN_SPAWNS)
+        )),
+        "{:?}",
+        refused.content
+    );
+}
+
+/// The instructions a request was sent with.
+fn instructions_of(request: &heiko_testing::scripted::Request) -> String {
+    request.settings.instructions.clone().unwrap_or_default()
+}
+
+/// A run takes the repository's `AGENTS.md`, from its own workspace,
+/// into its instructions as it starts. A chat that changes the file
+/// sees its own version the next time it starts, and the main chat
+/// keeps reading trunk's.
+#[test]
+fn a_run_reads_the_repository_s_agents_file() {
+    let src = tempfile::tempdir().unwrap();
+    git(src.path(), &["init", "--quiet"]);
+    std::fs::write(
+        src.path().join("AGENTS.md"),
+        "Run `make check` before you commit.\n",
+    )
+    .unwrap();
+    git(src.path(), &["add", "AGENTS.md"]);
+    git(src.path(), &["commit", "--quiet", "-m", "first"]);
+    let rules =
+        serde_json::json!({ "path": "AGENTS.md", "content": "Use tabs.\n" });
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("hello"))
+        .turn(|t| t.tool_call("write", rules))
+        .turn(|t| {
+            t.tool_call(
+                "vcs_commit",
+                serde_json::json!({ "message": "docs: tabs" }),
+            )
+        })
+        .turn(|t| t.text("the rules say tabs"))
+        .turn(|t| t.text("tabs it is"))
+        .turn(|t| t.text("hello again"));
+    let (host, mut events) = host_on(llm.clone(), src.path());
+
+    let main = on_main(&host, "hi");
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let chat = host
+        .block_on(host.start("change the rules", &ModelChoice::default(), REPO))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &chat.id);
+    host.block_on(host.resume(&chat.id, "and now?", &ModelChoice::default()))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &chat.id);
+    host.block_on(host.resume(&main, "and main?", &ModelChoice::default()))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+
+    let asked: Vec<String> =
+        llm.requests().iter().map(instructions_of).collect();
+    assert_eq!(asked.len(), 6);
+    for (at, instructions) in asked.iter().enumerate() {
+        assert!(
+            instructions.contains(heiko_ui::host::AGENTS_HEADING),
+            "request {at}: {instructions}"
+        );
+    }
+    // The main chat, and the chat as it started on trunk's files.
+    for at in [0, 1, 5] {
+        assert!(asked[at].contains("Run `make check`"), "{}", asked[at]);
+    }
+    // Within a start, the instructions stay as they were: the chat's
+    // edit waits for its next start.
+    assert_eq!(asked[1], asked[3]);
+    assert!(asked[4].contains("Use tabs."), "{}", asked[4]);
+    assert!(!asked[4].contains("make check"), "{}", asked[4]);
+}
+
+/// Without an `AGENTS.md`, a run's instructions are heiko's alone.
+#[test]
+fn a_repository_without_an_agents_file_adds_nothing() {
+    let llm = ScriptedModel::new().turn(|t| t.text("hello"));
+    let (host, mut events) = host(llm.clone());
+    let main = on_main(&host, "hi");
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let asked = llm.requests();
+    assert_eq!(asked.len(), 1);
+    assert!(!instructions_of(&asked[0]).contains(heiko_ui::host::AGENTS_HEADING));
+}
+
+/// A chat can land and go on (ADR 0034): its work joins main, and it
+/// keeps its workspace and head and takes messages as before; its
+/// next landing brings only what it did since. Each landing's card is in
+/// main and in the chat, and none ends it. A landing heiko closed in the
+/// middle of is finished at start without closing the chat, once.
+#[test]
+fn a_chat_lands_and_goes_on() {
+    use heiko_ui::host::LandingStep;
+    let write =
+        |path: &str| serde_json::json!({ "path": path, "content": "x\n" });
+    let commit = |message: &str| serde_json::json!({ "message": message });
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("write", write("a.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: a")))
+        .turn(|t| t.text("wrote a"))
+        .turn(|t| t.tool_call("write", write("b.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: b")))
+        .turn(|t| t.text("wrote b"))
+        .turn(|t| t.tool_call("write", write("c.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: c")))
+        .turn(|t| t.text("wrote c"));
+    let src = tempfile::tempdir().unwrap();
+    let (host, mut events) = host_on(llm.clone(), src.path());
+    let project = common::project(&host, REPO);
+    let main = host.block_on(host.main_of(REPO)).unwrap();
+    let chat = host
+        .block_on(host.start("write a", &ModelChoice::default(), REPO))
+        .unwrap()
+        .id;
+    until_end(&mut events);
+    wait_until_done(&host, &chat);
+    let on_trunk = |file: &str| {
+        let project = project.blocking();
+        let trunk = project.trunk().unwrap();
+        project
+            .files_under(&trunk, "")
+            .unwrap()
+            .iter()
+            .any(|(path, _)| path == file)
+    };
+    let mut go_on = |prompt: &str| {
+        host.block_on(host.resume(&chat, prompt, &ModelChoice::default()))
+            .unwrap();
+        until_end(&mut events);
+        wait_until_done(&host, &chat);
+    };
+
+    // No plugin lets a chat here land by itself.
+    assert_eq!(host.block_on(host.land_itself(&chat)).unwrap(), None);
+
+    let landed = host.block_on(host.land_and_go_on(&chat)).unwrap();
+    assert_eq!(landed.changes.len(), 1);
+    assert_eq!(project.blocking().trunk().unwrap(), landed.head);
+    assert!(on_trunk("a.txt"));
+    // It goes on: no ending, its head and workspace stay.
+    let head = heiko_vcs_host::Head::Run(chat.clone());
+    assert_eq!(host.block_on(host.ending_of(&chat)).unwrap(), None);
+    assert!(project.blocking().head(&head).unwrap().is_some());
+    let dir = host.block_on(host.workspace(&chat)).unwrap();
+    assert!(dir.join("a.txt").exists());
+
+    // Its next turn works on top of main, and lands only what is new.
+    go_on("and b");
+    assert!(dir.join("a.txt").exists() && dir.join("b.txt").exists());
+    let landed = host.block_on(host.land_and_go_on(&chat)).unwrap();
+    assert_eq!(landed.changes.len(), 1, "only b");
+    assert!(on_trunk("b.txt"));
+    assert_eq!(host.block_on(host.ending_of(&chat)).unwrap(), None);
+
+    // Cut off after its restack, the landing finishes at start, and the
+    // chat still goes on; a second start has nothing to finish.
+    go_on("and c");
+    host.cut_landing_after(Some(LandingStep::Restack));
+    assert!(host.block_on(host.land_and_go_on(&chat)).is_err());
+    host.cut_landing_after(None);
+    let finished = host.block_on(host.finish_landings()).unwrap();
+    assert_eq!(finished.len(), 1);
+    assert!(finished[0].kept && finished[0].recovered);
+    assert!(on_trunk("c.txt"));
+    assert!(host.block_on(host.finish_landings()).unwrap().is_empty());
+    assert_eq!(host.block_on(host.ending_of(&chat)).unwrap(), None);
+    assert!(project.blocking().head(&head).unwrap().is_some());
+
+    // From history, main and the chat each show the three landings, and
+    // the chat has not ended.
+    let history = host.block_on(host.history()).unwrap();
+    let kept = |run: &heiko_agent::tool::RunId| -> usize {
+        history
+            .iter()
+            .find(|view| view.id == *run)
+            .unwrap()
+            .items
+            .iter()
+            .filter(|item| matches!(item, Item::Landed(card) if card.kept))
+            .count()
+    };
+    assert_eq!(kept(&main), 3);
+    assert_eq!(kept(&chat), 3);
+    let view = history.iter().find(|view| view.id == chat).unwrap();
+    assert_eq!(view.ending, None);
+}
+
+/// A chat that landed or was dropped takes no more messages: the host
+/// refuses to resume or steer it, saying why, and makes it no new
+/// workspace or head, that nothing would land. History still
+/// loads both, with how they ended.
+#[test]
+fn a_landed_or_dropped_chat_takes_no_more_messages() {
+    use heiko_ui_remote::view::Ending;
+    let write =
+        |path: &str| serde_json::json!({ "path": path, "content": "x\n" });
+    let commit = |message: &str| serde_json::json!({ "message": message });
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("write", write("a.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: a")))
+        .turn(|t| t.text("wrote a"))
+        .turn(|t| t.tool_call("write", write("b.txt")))
+        .turn(|t| t.tool_call("vcs_commit", commit("feat: b")))
+        .turn(|t| t.text("wrote b"));
+    let src = tempfile::tempdir().unwrap();
+    let (host, mut events) = host_on(llm.clone(), src.path());
+    let project = common::project(&host, REPO);
+    let main = host.block_on(host.main_of(REPO)).unwrap();
+    let mut chat = |prompt: &str| {
+        let view = host
+            .block_on(host.start(prompt, &ModelChoice::default(), REPO))
+            .unwrap();
+        until_end(&mut events);
+        wait_until_done(&host, &view.id);
+        view.id
+    };
+    let landed = chat("write a");
+    let dropped = chat("write b");
+    host.block_on(host.land(&landed)).unwrap();
+    host.block_on(host.drop_child(&dropped)).unwrap();
+    assert_eq!(
+        host.block_on(host.ending_of(&landed)).unwrap(),
+        Some(Ending::Landed {
+            on: main.clone(),
+            changes: 1
+        })
+    );
+    assert_eq!(
+        host.block_on(host.ending_of(&dropped)).unwrap(),
+        Some(Ending::Dropped)
+    );
+
+    let workspaces = project.blocking().workspaces().unwrap();
+    for (run, why) in [(&landed, "landed on main"), (&dropped, "was dropped")] {
+        let refused = host
+            .block_on(host.resume(
+                run,
+                "one more thing",
+                &ModelChoice::default(),
+            ))
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains(why), "{refused}");
+        assert!(refused.contains("no longer takes messages"), "{refused}");
+        let refused = host
+            .block_on(host.steer(run, "one more thing"))
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains(why), "{refused}");
+        assert!(!host.is_running(run));
+        assert_eq!(
+            project
+                .blocking()
+                .head(&heiko_vcs_host::Head::Run(run.clone()))
+                .unwrap(),
+            None
+        );
+        // A dropped chat cannot land, nor a landed one be dropped.
+        assert!(host.block_on(host.land(run)).is_err());
+    }
+    assert!(host.block_on(host.drop_child(&landed)).is_err());
+    assert_eq!(
+        project.blocking().workspaces().unwrap(),
+        workspaces,
+        "none made"
+    );
+    llm.assert_exhausted();
+
+    let history = host.block_on(host.history()).unwrap();
+    let ending = |run: &heiko_agent::tool::RunId| {
+        history
+            .iter()
+            .find(|view| view.id == *run)
+            .expect("in history")
+            .ending
+            .clone()
+    };
+    assert_eq!(
+        ending(&landed),
+        Some(Ending::Landed {
+            on: main.clone(),
+            changes: 1
+        })
+    );
+    assert_eq!(ending(&dropped), Some(Ending::Dropped));
+    assert_eq!(ending(&main), None);
+}
+
+/// Main, a chat and a sub-agent of one repository send byte-identical
+/// instructions and tools, in the same order, so each can read the
+/// others' prompt cache: `spawn` and `vcs_land` are on every run, and
+/// say why where they do not apply. Kind-specific guidance goes in the
+/// first message instead: main's says it orchestrates.
+#[test]
+fn main_chats_and_sub_agents_send_the_same_prefix() {
+    let main_llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call("spawn", serde_json::json!({ "task": "look around" }))
+        })
+        .turn(|t| t.text("main done"))
+        .turn(|t| t.text("chat done"));
+    let child_llm = ScriptedModel::new().turn(|t| t.text("looked"));
+    let (host, mut events) = routed_host(&main_llm, &child_llm);
+    let main = on_main(&host, "hand something off");
+    let mut ended = 0;
+    while ended < 2 {
+        ended += until_end(&mut events)
+            .iter()
+            .filter(|event| matches!(event, RunEvent::RunEnd { .. }))
+            .count();
+    }
+    wait_until_done(&host, &main);
+    let chat = host
+        .block_on(host.start("hello chat", &ModelChoice::default(), REPO))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &chat.id);
+
+    let requests = main_llm.requests();
+    assert_eq!(requests.len(), 3);
+    let sub_agents = child_llm.requests();
+    assert_eq!(sub_agents.len(), 1);
+    let (main, sub_agent, chat) = (&requests[0], &sub_agents[0], &requests[2]);
+    let names = |request: &heiko_testing::scripted::Request| -> Vec<String> {
+        request
+            .settings
+            .tools
+            .iter()
+            .map(|t| t.name.clone())
+            .collect()
+    };
+    assert!(names(main).iter().any(|name| name == "spawn"));
+    assert!(!names(main).iter().any(|name| name == "wait"));
+    assert!(names(main).iter().any(|name| name == "vcs_land"));
+    let first = |request: &heiko_testing::scripted::Request| {
+        format!("{:?}", request.transcript.first())
+    };
+    assert!(first(main).contains("lead the work as an orchestrator"));
+    for (kind, other) in [("sub-agent", sub_agent), ("chat", chat)] {
+        assert_eq!(names(other), names(main), "{kind}'s tool order");
+        assert_eq!(other.settings.tools, main.settings.tools, "{kind}'s tools");
+        assert_eq!(
+            other.settings.instructions, main.settings.instructions,
+            "{kind}'s instructions"
+        );
+    }
+}
+
+/// Over OpenAI's transport, against a fake whose prompt cache lives on
+/// the connection: a main chat resumed within the idle window goes back
+/// to its connection and reads its whole prefix; a chat forked from it
+/// takes that connection for its first request and reads main's prefix;
+/// and main, resumed again, takes back the connection it served.
+#[test]
+fn conversations_go_back_to_their_connections() {
+    use heiko_ai::{client::OpenAi, ws::proto::pool::Limits};
+    use heiko_testing::fake_openai::{FakeOpenAi, LocalConnector, Reply};
+
+    let fake = FakeOpenAi::new(vec![
+        Reply::text("resp_1", "hello"),
+        Reply::text("resp_2", "again"),
+        Reply::text("resp_3", "chat"),
+        Reply::text("resp_4", "main once more"),
+    ])
+    .report_cache();
+    let address = fake.listen();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(heiko_store_sqlite::memory()).unwrap();
+    let client = {
+        let _guard = runtime.enter();
+        OpenAi::with_connector(LocalConnector(address), Limits::default())
+    };
+    let agent = Agent::new(client.clone()).name("coder");
+    let root = tempfile::tempdir().unwrap().keep();
+    let (host, mut events) = host_of(runtime, store, agent, &root);
+
+    let main = on_main(&host, "hi");
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    host.block_on(host.resume(&main, "and again", &ModelChoice::default()))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let chat = host
+        .block_on(host.start("a chat", &ModelChoice::default(), REPO))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &chat.id);
+    host.block_on(host.resume(
+        &main,
+        "main once more",
+        &ModelChoice::default(),
+    ))
+    .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+
+    let received = fake.received();
+    assert_eq!(received.len(), 4);
+    let key = |at: usize| received[at].body["prompt_cache_key"].clone();
+    assert_eq!(key(0), main.0.as_ref());
+    assert_eq!(key(1), main.0.as_ref());
+    assert_eq!(key(2), chat.id.0.as_ref());
+    assert_eq!(key(3), main.0.as_ref());
+    // Main's second run: its connection, by delta, all of it cached.
+    assert_eq!(received[1].connection, received[0].connection);
+    assert!(received[1].body.get("previous_response_id").is_some());
+    assert!(received[1].cached_tokens >= received[0].input_tokens);
+    // The chat's first request: main's connection and main's prefix.
+    assert_eq!(received[2].connection, received[0].connection);
+    assert!(received[2].cached_tokens >= received[1].input_tokens);
+    // Main again: the connection it served before the chat took it.
+    assert_eq!(received[3].connection, received[0].connection);
+    let stats = host.block_on(client.stats()).unwrap();
+    assert_eq!(stats.connections_opened, 1);
+    assert_eq!(stats.handoffs, 1);
+}
+
+/// Unless the person turned it off, memory saves what each run taught as
+/// it ends: one request after the run's own, with the consolidation
+/// prompt, on the newest luna at low.
+#[test]
+fn memory_saves_after_each_run_on_luna_by_default() {
+    heiko::install();
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("hello"))
+        .turn(|t| t.text("nothing worth keeping"));
+    let (host, mut events) =
+        host_on(llm.clone(), &tempfile::tempdir().unwrap().keep());
+    // Memory's own defaults, not the quiet ones the other tests take.
+    let host = host.with_luau_settings(
+        heiko_luau_plugins::names::MEMORY,
+        serde_json::json!({}),
+    );
+    let main = on_main(&host, "hi");
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let deadline = std::time::Instant::now() + WAIT;
+    while llm.requests().len() < 2 && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let requests = llm.requests();
+    assert_eq!(requests.len(), 2);
+    let pass = &requests[1].settings;
+    assert!(
+        pass.instructions
+            .as_deref()
+            .unwrap()
+            .starts_with("The run below has ended"),
+        "{:?}",
+        pass.instructions
+    );
+    let luna = heiko_ai::model::plan_models()
+        .into_iter()
+        .find(|model| model.id.ends_with("-luna"))
+        .unwrap();
+    assert_eq!(pass.model, luna.id);
+    let low = luna
+        .efforts
+        .contains(&heiko_ai::responses::request::ReasoningEffort::Low)
+        .then_some(heiko_ai::responses::request::ReasoningEffort::Low);
+    assert_eq!(pass.reasoning, low);
+    llm.assert_exhausted();
+}
+
+/// An idle chat is compacted nine tenths of the way from its last
+/// request to its cache's lapse, whatever the lapse, and never after it;
+/// a lapse already due fires at once. It is compacted only when its
+/// context holds half its model's window. (Windows are even; how an odd
+/// one rounds its half is not a rule.)
+#[hegel::test(test_cases = 300)]
+fn an_idle_chat_compacts_late_and_only_when_long(tc: hegel::TestCase) {
+    use hegel::generators as gs;
+    use heiko_ai::ws::io::driver::CacheLapse;
+    use heiko_ui::host::idle::{fire_at, worth_compacting};
+
+    let last_used = tokio::time::Instant::now();
+    // Up to a day ahead, to the microsecond, or already behind.
+    let ahead: u64 = tc.draw(gs::integers::<u64>().max_value(86_400_000_000));
+    let behind: bool = tc.draw(gs::booleans());
+    let gap = Duration::from_micros(ahead);
+    let at = if behind {
+        last_used.checked_sub(gap).unwrap_or(last_used)
+    } else {
+        last_used + gap
+    };
+    let lapse = CacheLapse { last_used, at };
+    let fire = fire_at(&lapse);
+    if behind || ahead == 0 {
+        assert_eq!(fire, last_used, "a lapse already due fires at once");
+    } else {
+        let waited = (fire - last_used).as_secs_f64();
+        let nine_tenths = gap.as_secs_f64() * 0.9;
+        assert!((waited - nine_tenths).abs() < 1e-6, "{waited} of {gap:?}");
+        assert!(fire < at);
+    }
+
+    let half: u64 = tc.draw(gs::integers::<u64>().max_value(1 << 40));
+    let window = half * 2;
+    let tokens: u64 = tc.draw(hegel::one_of!(
+        gs::integers::<u64>().max_value(1 << 41),
+        gs::integers::<u64>()
+            .min_value(half.saturating_sub(2))
+            .max_value(half + 2),
+    ));
+    assert_eq!(
+        worth_compacting(tokens, window),
+        u128::from(tokens) * 2 >= u128::from(window),
+        "{tokens} of {window}"
+    );
+}
+
+/// Agents live beside the plugins repository, a repository each (ADR
+/// 0037), and each is its own project, as the plugins repository is.
+#[test]
+fn agents_live_in_a_repository_each_beside_the_plugins_repository() {
+    let root = tempfile::tempdir().unwrap();
+    let config = HostConfig {
+        credentials: Credentials::new(root.path().join("config")),
+        model: None,
+        store: root.path().join("runs.db"),
+        repos: root.path().join("repos"),
+        settings: root.path().join("models.json"),
+        repo_list: root.path().join("repos.json"),
+        home: None,
+        services: Default::default(),
+    };
+    // Agents' repositories are the kind heiko-agents keeps, one per folder
+    // of its directory; the plugins repository is heiko-luau-plugins'.
+    heiko_ui::hosted::install();
+    let agents = config.kind_dir(heiko_agents::ROOT);
+    assert_eq!(agents, root.path().join("agents"));
+    let triage = agents.join("triage");
+    let kind = |path: &std::path::Path| {
+        config.kind_of(path).map(|(_, kind)| kind.kind)
+    };
+    assert_eq!(kind(&triage), Some(heiko_agents::KIND));
+    assert_eq!(kind(&agents), None);
+    assert_eq!(kind(&triage.join("lib")), None);
+    let plugins = config.kind_dir(heiko_luau_plugins::repository::ROOT);
+    assert_eq!(kind(&plugins), Some(heiko_luau_plugins::KIND));
+    assert_eq!(config.project_dir_of(&triage), triage);
+}
+
+/// A new agent gets a repository of heiko's own, opened as a project with
+/// what an agent starts with, and a main chat: the agent's
+/// conversation. Its name must name a directory, once.
+#[test]
+fn a_new_agent_is_a_repository_of_heiko_s_own_with_a_main_chat() {
+    let (host, _events) = host(ScriptedModel::new());
+    let repo = host
+        .block_on(host.make_repo(heiko_agents::KIND, "triage"))
+        .unwrap();
+    assert_eq!(repo.name, "triage");
+    assert_eq!(repo.kind, Some(heiko_agents::KIND.to_owned()));
+    let main = repo.main.clone().expect("a main chat");
+
+    let project = common::project(&host, "triage");
+    let dir = project.root().to_owned();
+    assert!(dir.ends_with("agents/triage"), "{dir:?}");
+    let repo_files = project.blocking();
+    let trunk = repo_files.trunk().unwrap();
+    let files: Vec<String> = repo_files
+        .files_under(&trunk, "")
+        .unwrap()
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect();
+    assert_eq!(files, ["AGENTS.md"]);
+
+    let catalog = host.block_on(host.catalog());
+    let listed = catalog.repo("triage").expect("listed");
+    assert_eq!(listed.kind, Some(heiko_agents::KIND.to_owned()));
+    assert_eq!(listed.main.as_ref(), Some(&main));
+    assert!(
+        catalog
+            .of_kind(heiko_agents::KIND)
+            .any(|repo| repo.name == "triage")
+    );
+    assert!(!catalog.is_listed("triage"));
+
+    assert!(
+        host.block_on(host.make_repo(heiko_agents::KIND, "triage"))
+            .is_err()
+    );
+    assert!(
+        host.block_on(host.make_repo(heiko_agents::KIND, "Not An Agent"))
+            .is_err()
+    );
+}
+
+/// Calls `http` as a script would, and keeps what came of it.
+struct ProbeHttp(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+#[async_trait::async_trait]
+impl heiko_agent::tool::AgentTool for ProbeHttp {
+    fn name(&self) -> &str {
+        "probe_http"
+    }
+
+    fn description(&self) -> &str {
+        "Calls http."
+    }
+
+    fn parameters(&self) -> &serde_json::Value {
+        static SCHEMA: std::sync::OnceLock<serde_json::Value> =
+            std::sync::OnceLock::new();
+        SCHEMA.get_or_init(|| serde_json::json!({ "type": "object" }))
+    }
+
+    async fn call(
+        &self,
+        _args: serde_json::Value,
+        ctx: heiko_agent::tool::ToolCtx,
+    ) -> Result<heiko_agent::tool::ToolOutput, heiko_agent::error::ToolError> {
+        // Nothing listens on port 1: the call fails either way, and how
+        // says whether the run has `http`.
+        let came = match ctx
+            .call("http", serde_json::json!({ "url": "http://127.0.0.1:1/" }))
+            .await
+        {
+            Ok(_) => "answered".to_owned(),
+            Err(error) => error.to_string(),
+        };
+        self.0.lock().unwrap().push(came);
+        Ok(heiko_agent::tool::ToolOutput::text("probed"))
+    }
+}
+
+/// Only an agent's runs reach the network with `http` (ADR 0037): a
+/// run in the agent's repository finds the tool; one in the person's
+/// repository does not.
+#[test]
+fn only_an_agent_s_runs_have_http() {
+    let came = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let llm = ScriptedModel::new()
+        .turn(|turn| turn.tool_call("probe_http", serde_json::json!({})))
+        .turn(|turn| turn.text("done"))
+        .turn(|turn| turn.tool_call("probe_http", serde_json::json!({})))
+        .turn(|turn| turn.text("done"));
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let store = runtime.block_on(heiko_store_sqlite::memory()).unwrap();
+    let agent = Agent::new(llm).name("coder").tool(ProbeHttp(came.clone()));
+    let (host, mut events) =
+        host_of(runtime, store, agent, &tempfile::tempdir().unwrap().keep());
+    host.block_on(host.make_repo(heiko_agents::KIND, "triage"))
+        .unwrap();
+    for repo in ["triage", REPO] {
+        let run = host
+            .block_on(host.start("probe", &ModelChoice::default(), repo))
+            .unwrap();
+        until_end(&mut events);
+        wait_until_done(&host, &run.id);
+    }
+    let came = came.lock().unwrap().clone();
+    assert_eq!(came.len(), 2, "{came:?}");
+    assert!(came[0].contains("could not connect"), "{came:?}");
+    assert!(came[1].contains("Tool http not found"), "{came:?}");
+}
+
+/// An agent's commands run only in its sandbox (ADR 0037): with no
+/// launcher of heiko-agents' (none is installed here, as without `bwrap`),
+/// an agent's runs declare no command tools, while the person's
+/// repositories' runs keep them.
+#[test]
+fn an_agent_without_a_sandbox_has_no_commands() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("done"))
+        .turn(|t| t.text("done"));
+    let (host, mut events) = host(llm.clone());
+    let repo = host
+        .block_on(host.make_repo(heiko_agents::KIND, "triage"))
+        .unwrap();
+    let main = repo.main.clone().expect("a main chat");
+    host.block_on(host.resume(&main, "hello", &ModelChoice::default()))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    let theirs = on_main(&host, "hello");
+    until_end(&mut events);
+    wait_until_done(&host, &theirs);
+
+    let requests = llm.requests();
+    assert_eq!(requests.len(), 2);
+    let names = |request: &heiko_testing::scripted::Request| -> Vec<String> {
+        request
+            .settings
+            .tools
+            .iter()
+            .map(|t| t.name.clone())
+            .collect()
+    };
+    let (agent, person) = (names(&requests[0]), names(&requests[1]));
+    assert!(agent.iter().any(|name| name == "read"), "{agent:?}");
+    for tool in ["exec_command", "write_stdin"] {
+        assert!(!agent.iter().any(|name| name == tool), "{agent:?}");
+        assert!(person.iter().any(|name| name == tool), "{person:?}");
+    }
+    // heiko-ask, Luau now, is left out of an agent's runs: tests/ask.rs.
+}
+
+/// A command a turn left running goes on between turns: the next turn
+/// types to it and reads what it wrote, though that turn builds its own
+/// tools.
+#[test]
+fn a_command_left_running_goes_on_in_the_next_turn() {
+    let dir = tempfile::tempdir().unwrap();
+    let llm = ScriptedModel::new()
+        .turn(|t| {
+            t.tool_call(
+                "exec_command",
+                serde_json::json!({ "cmd": "cat", "tty": true,
+                                    "yield_time_ms": 250 }),
+            )
+        })
+        .turn(|t| t.text("cat runs"))
+        .turn(|t| {
+            t.tool_call(
+                "write_stdin",
+                serde_json::json!({ "process_id": 1, "chars": "hello\n",
+                                    "yield_time_ms": 500 }),
+            )
+        })
+        .turn(|t| t.text("it answered"));
+    let (host, mut events) = host_on(llm.clone(), dir.path());
+    let main = on_main(&host, "start cat");
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    host.block_on(host.resume(&main, "type to it", &ModelChoice::default()))
+        .unwrap();
+    until_end(&mut events);
+    wait_until_done(&host, &main);
+    // What `write_stdin` answered: cat's echo of what it was typed. The
+    // model's own call holds "hello" too, so only the result counts.
+    let answered: String = llm
+        .requests()
+        .last()
+        .unwrap()
+        .transcript
+        .iter()
+        .filter_map(|message| match message {
+            heiko_ai::message::Message::ToolResult(result)
+                if result.tool_name == "write_stdin" =>
+            {
+                Some(result.content.iter().filter_map(|block| match block {
+                    heiko_ai::message::InputBlock::Text(text) => {
+                        Some(text.text.clone())
+                    }
+                    _ => None,
+                }))
+            }
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert!(answered.contains("hello"), "{answered}");
+    assert!(!answered.contains("No process"), "{answered}");
+    llm.assert_exhausted();
+}
+
+/// The interface's state for plugins (ADR 0045) is saved as it changes,
+/// and a host made again over the same files has it as it was left.
+#[test]
+fn the_interfaces_state_comes_back_after_a_restart() {
+    use heiko_ui_plugin::UiEvent;
+
+    let repo_list = fresh_repo_list();
+    let make = || {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let store = runtime.block_on(heiko_store_sqlite::memory()).unwrap();
+        let config = HostConfig {
+            credentials: Credentials::new(
+                fresh_repo_list().with_extension("config"),
+            ),
+            model: Some("gpt-6-luna".into()),
+            store: repo_list.with_file_name("runs.db"),
+            repos: repo_list.with_file_name("repos"),
+            settings: fresh_repo_list().with_extension("models"),
+            repo_list: repo_list.clone(),
+            home: None,
+            services: Default::default(),
+        };
+        let agent = Agent::new(ScriptedModel::new()).name("coder");
+        Host::with_agent(runtime, agent, store, config).0
+    };
+    let set = |key: &str, value: Option<serde_json::Value>| UiEvent {
+        plugin: "heiko-goal".into(),
+        key: key.into(),
+        value,
+    };
+
+    let first = make();
+    assert_eq!(first.ui_state(), heiko_ui_plugin::UiState::default());
+    for event in [
+        set("open", Some(serde_json::json!(true))),
+        set("draft", Some(serde_json::json!("half a goal"))),
+        set("open", None),
+    ] {
+        heiko_testing::block_on_io(first.set_ui(&event)).unwrap();
+    }
+    let left = first.ui_state();
+    assert_eq!(
+        left.get("heiko-goal", "draft"),
+        Some(&serde_json::json!("half a goal"))
+    );
+    assert_eq!(left.get("heiko-goal", "open"), None);
+    drop(first);
+
+    assert_eq!(make().ui_state(), left);
+}
+
+/// What heiko-chatgpt says of the sign-ins, from its data in the host's
+/// catalog.
+fn chatgpt_of(host: &Host) -> heiko_chatgpt::ui::Data {
+    let catalog = host.block_on(host.catalog());
+    serde_json::from_value(
+        catalog.plugin_data[heiko_chatgpt::NAME].json().clone(),
+    )
+    .unwrap()
+}
+
+/// A provider that offers `models` and runs nothing: what a host given
+/// its own agent fits choices to.
+struct Offers(Vec<heiko_ui_plugin::provider::ModelOption>);
+
+impl heiko_ui_plugin::provider::Provider for Offers {
+    fn label(&self) -> Option<String> {
+        None
+    }
+
+    fn llm(&self) -> Option<std::sync::Arc<dyn heiko_ai::llm::Llm>> {
+        None
+    }
+
+    fn models(&self) -> Vec<heiko_ui_plugin::provider::ModelOption> {
+        self.0.clone()
+    }
+
+    fn stopped(&self) -> Option<heiko_ui_plugin::provider::Stopped> {
+        None
+    }
+
+    fn cache_lapse<'a>(
+        &'a self,
+        _: &'a str,
+    ) -> heiko_ui_plugin::provider::Lapse<'a> {
+        Box::pin(std::future::ready(None))
+    }
+}
+
+/// `id` as the model table has it, offered.
+fn offered(id: &str) -> heiko_ui_plugin::provider::ModelOption {
+    let model = heiko_ai::model::find(id).expect("in the model table");
+    heiko_ui_plugin::provider::ModelOption {
+        id: model.id.clone(),
+        name: Some(model.name.clone()),
+        context: model.context_window,
+        reasoning: model.reasoning,
+        efforts: model.efforts.clone(),
+    }
+}

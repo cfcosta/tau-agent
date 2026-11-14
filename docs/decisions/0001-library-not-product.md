@@ -23,7 +23,7 @@ Our goal is different: arranging agent workflows from code.
 
 ## Decision
 
-tau-agent is a library, built around three concepts:
+heiko-agent is a library, built around three concepts:
 
 - **`Agent`** is a value: a model, instructions, tools, hooks and limits.
 - **`Run`** is one execution of an agent. It has an event stream,

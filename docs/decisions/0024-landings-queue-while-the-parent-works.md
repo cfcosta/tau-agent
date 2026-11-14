@@ -6,7 +6,7 @@
   [0014](0014-the-model-commits-and-runs-land-as-stacked-diffs.md): the
   parent's resolving turn is checked, and conflicts it leaves hold the
   parent. Amended by [0026](0026-sub-agents-run-detached.md):
-  sub-agents nobody waits for join the queue, and tau's turn after a
+  sub-agents nobody waits for join the queue, and heiko's turn after a
   drain reports them.
 - Date: 2026-10-03
 
@@ -14,7 +14,7 @@
 
 0009 lets the host rewrite only idle runs, so Land on a chat refused
 while its main chat ran. The main chat is busy often: the person writes
-to it, and tau starts its turn to resolve each conflicting landing
+to it, and heiko starts its turn to resolve each conflicting landing
 (0014). Someone with several finished chats had to watch main and click
 Land in the gap between turns, one chat at a time.
 
@@ -32,14 +32,14 @@ next landing restacked onto it.
   waits before it, it lands at once, as before.
 - Only finished chats can be queued. A chat that is still running is
   landed once it finishes.
-- The queue is stored as records on the main chat, so it survives tau
+- The queue is stored as records on the main chat, so it survives heiko
   closing. Each landing out of it is the crash-safe landing of 0009.
 - When main becomes idle (its turn ended, and no resolving turn is about
   to start), the host lands the queue in order, one chat at a time. Each
   is previewed again at that moment:
   - clean: it lands;
   - conflicts the person confirmed when they clicked Land (the same
-    files, or fewer): it lands, tau starts main's resolving turn, and
+    files, or fewer): it lands, heiko starts main's resolving turn, and
     the queue waits for that turn to end;
   - new conflicts: it stays first in the queue, marked as needing
     confirmation, and the queue stops. Land again confirms what it
@@ -51,12 +51,12 @@ next landing restacked onto it.
 
 ### The resolving turn is checked
 
-- tau's resolving turn is held once, as tau-vcs holds a stop with
+- heiko's resolving turn is held once, as heiko-vcs holds a stop with
   uncommitted changes, while main's stack still has conflicts:
   "Conflicts remain in a.rs, b.rs. Resolve them and commit."
 - A main turn that ends with conflicts on main's stack marks main
   **conflicted**, a stored mark that names the files. The person sees
-  "Conflicts are still on main", with Resolve again (tau's turn, same
+  "Conflicts are still on main", with Resolve again (heiko's turn, same
   message) and "I'll write to main" (the card goes, the mark stays), and
   a notification.
 - While main is conflicted, its queue does not drain, and new chats are

@@ -1,5 +1,5 @@
-local tau = require("tau")
-local t = tau.test
+local heiko = require("heiko")
+local t = heiko.test
 
 t.case("takes the first sentence", function()
 	t.equal(t.run({}):title({ task = "fix the login. Then deploy.", model = "m" }), "Fix the login")

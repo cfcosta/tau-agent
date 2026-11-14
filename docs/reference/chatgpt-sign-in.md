@@ -1,12 +1,12 @@
 # Sign in with ChatGPT
 
-- Status: implemented. `tau_ai::chatgpt` signs in, keeps tokens, signs
+- Status: implemented. `heiko_ai::chatgpt` signs in, keeps tokens, signs
   out and lists models; `OpenAi::chatgpt` runs inference on the plan
-  over `wss://api.openai.com/v1/responses`; the tau-chatgpt plugin signs
+  over `wss://api.openai.com/v1/responses`; the heiko-chatgpt plugin signs
   in, switches accounts and shows the plan's state, and fills the
-  `tau.provider` slot runs reach models through (ADR 0045). It replaces the Codex backend
+  `heiko.provider` slot runs reach models through (ADR 0045). It replaces the Codex backend
   route (decision 0008, superseded), which is gone, and it is the only
-  way tau reaches OpenAI: there are no API keys (decision 0012).
+  way heiko reaches OpenAI: there are no API keys (decision 0012).
 - Source: OpenAI, "ChatGPT plan usage for open-source apps",
   <https://developers.openai.com/siwc/token-sharing-open-source>, read
   on 2026-09-29.
@@ -16,7 +16,7 @@
 ## Using it
 
 ```rust
-use tau_ai::chatgpt::{ChatGpt, Loopback, Store};
+use heiko_ai::chatgpt::{ChatGpt, Loopback, Store};
 
 let chatgpt = ChatGpt::new(Store::open_default()?);
 let loopback = Loopback::bind().await?; // before the browser opens
@@ -24,7 +24,7 @@ let sign_in = chatgpt.start_sign_in(None, loopback.redirect_uri(), false)?;
 open(sign_in.url()); // may carry id_token_hint: never log it
 let callback = loopback.wait(&sign_in).await?; // or sign_in.callback(pasted)
 let signed_in = chatgpt.finish_sign_in(&sign_in, &callback).await?;
-let client = tau_ai::client::OpenAi::chatgpt(chatgpt, signed_in.account);
+let client = heiko_ai::client::OpenAi::chatgpt(chatgpt, signed_in.account);
 ```
 
 ## Endpoints
@@ -37,7 +37,7 @@ let client = tau_ai::client::OpenAi::chatgpt(chatgpt, signed_in.account);
 | JWKS       | the discovery document's `jwks_uri`                          |
 | Revocation | the discovery document's `revocation_endpoint`               |
 | Models     | `GET https://api.openai.com/v1/models`                       |
-| Inference  | `wss://api.openai.com/v1/responses` (bearer token; tau's)    |
+| Inference  | `wss://api.openai.com/v1/responses` (bearer token; heiko's)    |
 | Issuer     | `https://auth.openai.com`                                    |
 | `resource` | `https://api.openai.com/v1`, on authorize, exchange, refresh |
 
@@ -58,7 +58,7 @@ authorization URL with a fresh `state`, `nonce` and PKCE verifier:
 | Parameter                 | First sign-in                                                                   | Returning (`account` given) |
 | ------------------------- | ------------------------------------------------------------------------------- | --------------------------- |
 | `client_id`               | `dynamic_agent_client`                                                          | the saved issued id         |
-| `agent_name_hint`         | `tau`                                                                           | omitted                     |
+| `agent_name_hint`         | `heiko`                                                                           | omitted                     |
 | `ext_agent_host_id`       | this host's id                                                                  | this host's id              |
 | `id_token_hint`           | omitted                                                                         | the saved ID token, if any  |
 | `login_hint`              | omitted                                                                         | the saved email, if any     |
@@ -105,7 +105,7 @@ The callback checks, in order:
 ## Storage
 
 ```text
-$XDG_CONFIG_HOME/tau/chatgpt/          0700 (~/.config when unset)
+$XDG_CONFIG_HOME/heiko/chatgpt/          0700 (~/.config when unset)
   host.json                            {"ext_agent_host_id": "urn:uuid:…"}
   active                               the active account's id
   accounts/<account id>.json           one credential record, 0600
@@ -115,7 +115,7 @@ $XDG_CONFIG_HOME/tau/chatgpt/          0700 (~/.config when unset)
 The account id is the issued client id plus a hash of the subject
 (`oaiapp_…-1a2b3c4d5e6f`), so two registrations with one email stay
 apart. Every file is written to a temporary owner-only file, synced and
-renamed into place. A record has OpenAI's fields plus three of tau's:
+renamed into place. A record has OpenAI's fields plus three of heiko's:
 
 ```json
 {
@@ -182,21 +182,21 @@ id to the discovered `revocation_endpoint`, and retries a network
 failure or 5xx up to four times (1 s, 2 s, 4 s). Any 2xx is success.
 Then it clears the access, refresh and ID tokens. It returns
 `Revocation::Confirmed`, `NothingToRevoke`, or `Unconfirmed { reason }`:
-tell the user they can disconnect tau in ChatGPT Settings. The record,
+tell the user they can disconnect heiko in ChatGPT Settings. The record,
 its client id and the host id stay for the next sign-in.
 
 ## Models
 
 `ChatGpt::models` sends `GET /v1/models` with the access token and keeps
 the `models` entries with `visibility: "list"`, in the server's order,
-as `ModelInfo { slug, display_name }`. tau-chatgpt calls it once per sign-in
+as `ModelInfo { slug, display_name }`. heiko-chatgpt calls it once per sign-in
 as the eligibility check only, and does not show what it lists: the
 account's catalog leaves out models the plan route runs (`gpt-6-sol`,
 `gpt-6.1-sol` and `gpt-6-luna` completed on 2026-09-29 without being
 listed).
 
-What a plan offers comes from tau's own model table instead:
-`tau_ai::model::plan_models()` takes, for each family in
+What a plan offers comes from heiko's own model table instead:
+`heiko_ai::model::plan_models()` takes, for each family in
 `PLAN_FAMILIES` (`sol`, `luna`, `astra`, `terra`, in that order), the
 model `gpt-<version>-<family>` with the highest version, compared number
 by number (`6.1` > `6` > `5.6`). Excluded ids and models without tool
@@ -247,11 +247,11 @@ and `User-Agent`. Checked live on 2026-09-29 with a Plus/Pro account:
 the upgrade answers 101, a request completes, a second one continuing
 with `previous_response_id` on the same connection completes, and plain
 top-level `{"type": "function"}` tools work (so do `namespace` and
-`additional_tools`). tau stays WebSocket only (0002).
+`additional_tools`). heiko stays WebSocket only (0002).
 
-What the route asks, and how tau keeps it:
+What the route asks, and how heiko keeps it:
 
-- `store: false` on every request: tau never sends anything else.
+- `store: false` on every request: heiko never sends anything else.
 - No `background`, `conversation`, `max_output_tokens`, `max_tool_calls`,
   `metadata`, `moderation`, `multi_agent`, `prompt`,
   `prompt_cache_retention`, `safety_identifier`, `temperature`,
@@ -259,16 +259,16 @@ What the route asks, and how tau keeps it:
   (`chatgpt::UNSUPPORTED_FIELDS`): every session strips them from its
   fields whatever its settings say.
 - No `system` input items: instructions go in `instructions`, and
-  tau's input never has system items.
+  heiko's input never has system items.
 - Continuation only within the connection that produced the response:
   that is how lanes work already; a lost connection means a full resend.
-- `stream_id`: unverified on this route, so tau never sends it. Each
+- `stream_id`: unverified on this route, so heiko never sends it. Each
   run gets a connection of its own, with one response in flight, and
   frames go to the run of the connection they came on.
 
 ### Refusals and retries
 
-A failure the server or the sign-in explains is a `tau_ai::refusal::Refusal`
+A failure the server or the sign-in explains is a `heiko_ai::refusal::Refusal`
 (recovery, HTTP status, code, `x-request-id`, body verbatim):
 
 - **At the upgrade.** An HTTP status instead of 101 (the body and
@@ -287,14 +287,14 @@ temporary one gets the usual single reconnect, and the run's error is
 the refusal's message. The pool opens a connection for a lane moved off
 a lost one only when a request needs it, so nothing reconnects behind
 idle lanes. `OpenAi::refusal()` keeps the latest refusal until a
-response completes; tau-ui reads it when a run ends in an error.
+response completes; heiko-ui reads it when a run ends in an error.
 
 Nothing moves a run to another way of paying after a plan error.
 
-## tau-chatgpt
+## heiko-chatgpt
 
 - Runs use the active account's plan when it is signed in with plan
-  usage (`tau_chatgpt::plan_account`), and nothing else: tau-chatgpt's
+  usage (`heiko_chatgpt::plan_account`), and nothing else: heiko-chatgpt's
   provider reads the saved sign-ins as each run opens, so a sign-in, a
   switch or a sign-out counts for the runs after it.
 - Its section of the Models screen lists every saved account (label, state, the
@@ -302,7 +302,7 @@ Nothing moves a run to another way of paying after a plan error.
   "Sign out" (revokes; says so when OpenAI did not confirm), "Manage
   usage", and for a sign-in without plan usage "Enable ChatGPT plan use"
   (signs in again with `prompt=consent`).
-- Setup's first step, tau-chatgpt's (`SetupAt::Model`, required):
+- Setup's first step, heiko-chatgpt's (`SetupAt::Model`, required):
   "Continue with ChatGPT" opens the browser on the computer
   (`HostCx::open_url`); while it waits, the page can be opened again or
   the redirect pasted. The step's link drives the handshake above it
@@ -313,8 +313,8 @@ Nothing moves a run to another way of paying after a plan error.
   a dead sign-in asks to sign in again; a sign-in without plan usage
   offers "Enable ChatGPT plan use", the only way forward; a restriction
   shows its message.
-- The picker offers the provider's models: tau-chatgpt's
-  `plan_models()`, `tau_ai::model::plan_models()` while signed in (the
+- The picker offers the provider's models: heiko-chatgpt's
+  `plan_models()`, `heiko_ai::model::plan_models()` while signed in (the
   table's names and efforts, in family order), without prices. A run
   that names no model takes the coder's default, the first of them
   unless the person chose another; a saved default the plan no longer
@@ -329,7 +329,7 @@ Nothing moves a run to another way of paying after a plan error.
 
 ## The live probe
 
-`crates/tau-ai/examples/chatgpt_probe.rs`, run by hand:
+`crates/heiko-ai/examples/chatgpt_probe.rs`, run by hand:
 
 | Command      | What it does                                                                                                                                                                        |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -348,16 +348,16 @@ never a token.
 
 ## Tests
 
-- `crates/tau-ai/tests/chatgpt.rs`: the real client against
-  `FakeChatGpt` (`tau-testing`) in turmoil. The fake registers clients,
+- `crates/heiko-ai/tests/chatgpt.rs`: the real client against
+  `FakeChatGpt` (`heiko-testing`) in turmoil. The fake registers clients,
   binds codes to their client, redirect URI, resource and PKCE
   challenge, signs RS256 ID tokens with a test key its JWKS publishes,
   rotates refresh tokens (reuse fails with `refresh_token_reused`), and
   records the rules a client broke.
-- `crates/tau-ai/tests/chatgpt_properties.rs`: Hegel properties for the
+- `crates/heiko-ai/tests/chatgpt_properties.rs`: Hegel properties for the
   authorization URL, the callback checks, error classification, the
   retry policy's agreement with it, and the record's round trip.
-- `crates/tau-ai/tests/chatgpt_transport.rs`: a sign-in on `FakeChatGpt`,
+- `crates/heiko-ai/tests/chatgpt_transport.rs`: a sign-in on `FakeChatGpt`,
   then the plan client on `FakeOpenAi` (which can refuse upgrades with
   a status and body, and records each upgrade's `Authorization`): the
   bearer is refreshed before the connection, clones share one refresh,
@@ -365,11 +365,11 @@ never a token.
   or mid-stream stops without retry, a temporary refusal is retryable
   with its details, a dead sign-in and a sign-in without plan usage
   connect nothing.
-- `crates/tau-ai/tests/plan_models.rs`: a Hegel property that, for any
+- `crates/heiko-ai/tests/plan_models.rs`: a Hegel property that, for any
   table, `newest_per_family` keeps at most one model per plan family,
   in family order, at its highest version; and today's four pinned.
-- tau-chatgpt: `plan_usage` unit tests (what a plan refusal says, as the
-  `Stopped` the kernel shows); tau-ui-remote: `models` unit tests, and
+- heiko-chatgpt: `plan_usage` unit tests (what a plan refusal says, as the
+  `Stopped` the kernel shows); heiko-ui-remote: `models` unit tests, and
   workspace tests for
   the composer line, the alerts, the account picker, the
   plan's models in the picker and on the model step, and the not
@@ -379,7 +379,7 @@ never a token.
 
 Each model takes its own efforts, and the server rejects any other
 with `unsupported_value`. `data/openai-reasoning-efforts.json` holds
-them, probed on 2026-09-28 through both an API key (tau took one then)
+them, probed on 2026-09-28 through both an API key (heiko took one then)
 and ChatGPT's Codex backend; the two agree on every model they share. `Model::efforts` carries them, lowest
 first:
 
@@ -399,13 +399,13 @@ The Codex backend's own model list (`GET /backend-api/codex/models`) leaves out
 Codex turns `ultra` into the model's `max` (or its
 `multi_agent_reasoning_effort`) and has the model delegate to
 sub-agents on its own (`codex-rs/protocol/src/openai_models/reasoning_effort.rs`).
-tau offers no `ultra` until it has sub-agents to delegate to.
+heiko offers no `ultra` until it has sub-agents to delegate to.
 
 An `error` frame from the server nests its `code` and `message` under
 `error`; pi's tests send them at the top. The stream reads either.
 
 ## Not done yet
 
-- `stream_id` on the plan route: unchecked, so tau keeps one run per
+- `stream_id` on the plan route: unchecked, so heiko keeps one run per
   connection.
 - A device-code flow: OpenAI documents none for this route.

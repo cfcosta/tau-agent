@@ -8,9 +8,9 @@
 
 ## Context
 
-On tau's route (`wss://api.openai.com/v1/responses` with a ChatGPT
+On heiko's route (`wss://api.openai.com/v1/responses` with a ChatGPT
 token), measured on 2026-10-03 with gpt-5.5
-(`crates/tau-ai/examples/cache_probe.rs`; the table is in
+(`crates/heiko-ai/examples/cache_probe.rs`; the table is in
 [openai-websocket.md](../reference/openai-websocket.md), "Prompt
 cache"):
 
@@ -23,14 +23,14 @@ cache"):
   the same connection. Text added at the end of the instructions still
   reads the prefix before it.
 
-tau left all of this to chance. Its pool gave a new run any idle
+heiko left all of this to chance. Its pool gave a new run any idle
 connection and closed idle ones after five minutes, so a message to a
 finished chat, which starts a new run, mostly resent the whole
 conversation uncached; a 26-turn run lost a third of its saving to one
-such resend. tau never set `prompt_cache_key`. Main had `delegate`,
+such resend. heiko never set `prompt_cache_key`. Main had `delegate`,
 chats had `vcs_land`, sub-agents had neither and no `ask`, so a chat's
 or a sub-agent's first request could never read main's cache, and
-tau-reasoning could change the effort of a long conversation at any
+heiko-reasoning could change the effort of a long conversation at any
 message.
 
 ## Decision
@@ -63,7 +63,7 @@ is the fork's.
   ("Only the main chat delegates; …", so 0016 holds), `vcs_land` on
   main and on sub-agents, `ask` on sub-agents. What differs by kind goes
   in the first message's context, never in the instructions.
-- **Sticky effort.** tau-reasoning keeps the effort a conversation last
+- **Sticky effort.** heiko-reasoning keeps the effort a conversation last
   ran at when a run goes on with or inherits a prefix of 20k tokens or
   more, even when Jev is sure of another, unless the person chose one.
   Its choice records the tokens that kept.
@@ -76,7 +76,7 @@ is the fork's.
 - The parent loses its connection to the fork it hands off to. Its next
   request goes elsewhere, in full; once the fork's run ends, its next
   run takes back the connection it served before.
-- tau may keep up to 8 idle sockets open for up to 55 minutes.
+- heiko may keep up to 8 idle sockets open for up to 55 minutes.
 - A model sees `delegate`, `vcs_land` and `ask` where they only refuse,
   at the cost of a wasted call when it tries one.
 - An effort Jev would have changed on a long conversation stays; the

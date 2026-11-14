@@ -23,25 +23,25 @@ with about 200k lines of source. The installable product is
 
 Upstream moves fast: 3,157 commits since 2026-03-27, about 15 a day in
 September. Releases come every few days, and breaking changes are
-routine. tau-agent does not track upstream (see [`../plan.md`](../plan.md)).
+routine. heiko-agent does not track upstream (see [`../plan.md`](../plan.md)).
 
-## What tau-agent takes
+## What heiko-agent takes
 
 | From pi                                       | Path                                                                                                                                | Becomes                                                                                            |
 | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Assistant event union                         | `packages/ai/src/types.ts:732`                                                                                                      | `tau-ai::AssistantEvent`, with owned deltas instead of the shared `partial`, plus an `Accumulator` |
-| Responses input conversion + stream processor | `packages/ai/src/api/openai-responses-shared.ts`                                                                                    | `tau-ai::responses`                                                                                |
-| WebSocket continuation / delta rule           | `packages/ai/src/api/openai-codex-responses.ts:1438` (`getCachedWebSocketInputDelta`), plus the cache TTL and max age around `:866` | `tau-ai::ws`                                                                                       |
+| Assistant event union                         | `packages/ai/src/types.ts:732`                                                                                                      | `heiko-ai::AssistantEvent`, with owned deltas instead of the shared `partial`, plus an `Accumulator` |
+| Responses input conversion + stream processor | `packages/ai/src/api/openai-responses-shared.ts`                                                                                    | `heiko-ai::responses`                                                                                |
+| WebSocket continuation / delta rule           | `packages/ai/src/api/openai-codex-responses.ts:1438` (`getCachedWebSocketInputDelta`), plus the cache TTL and max age around `:866` | `heiko-ai::ws`                                                                                       |
 | Strict JSON-schema rewriting                  | `packages/ai/src/api/constrained-sampling.ts`                                                                                       | typed results and strict tool schemas                                                              |
-| Tool-argument coercion + validation           | `packages/ai/src/utils/validation.ts:317`                                                                                           | `tau-agent` validation                                                                             |
-| Partial JSON repair                           | `packages/ai/src/utils/json-parse.ts`                                                                                               | incremental parser in `tau-ai`                                                                     |
-| Agent loop ordering                           | `packages/agent/src/agent-loop.ts`                                                                                                  | `tau-agent` loop (see [`agent-loop.md`](agent-loop.md))                                            |
+| Tool-argument coercion + validation           | `packages/ai/src/utils/validation.ts:317`                                                                                           | `heiko-agent` validation                                                                             |
+| Partial JSON repair                           | `packages/ai/src/utils/json-parse.ts`                                                                                               | incremental parser in `heiko-ai`                                                                     |
+| Agent loop ordering                           | `packages/agent/src/agent-loop.ts`                                                                                                  | `heiko-agent` loop (see [`agent-loop.md`](agent-loop.md))                                            |
 | Steering queue                                | `packages/agent/src/agent.ts:143`                                                                                                   | `Run::steer`                                                                                       |
-| Compaction                                    | `packages/coding-agent/src/core/compaction/`                                                                                        | `tau-agent::compaction` (see [`compaction.md`](compaction.md))                                     |
-| Faux provider                                 | `packages/ai/src/providers/faux.ts`                                                                                                 | `tau-testing::ScriptedModel`                                                                       |
-| Built-in tools                                | `packages/coding-agent/src/core/tools/`                                                                                             | `tau-tools` (see [`tools.md`](tools.md))                                                           |
+| Compaction                                    | `packages/coding-agent/src/core/compaction/`                                                                                        | `heiko-agent::compaction` (see [`compaction.md`](compaction.md))                                     |
+| Faux provider                                 | `packages/ai/src/providers/faux.ts`                                                                                                 | `heiko-testing::ScriptedModel`                                                                       |
+| Built-in tools                                | `packages/coding-agent/src/core/tools/`                                                                                             | `heiko-tools` (see [`tools.md`](tools.md))                                                           |
 
-## What tau-agent leaves
+## What heiko-agent leaves
 
 - the TUI and the CLI;
 - RPC, print and JSON modes;
@@ -71,9 +71,9 @@ routine. tau-agent does not track upstream (see [`../plan.md`](../plan.md)).
   replay it on full resends.
 - **Tool limits and error strings,** as listed in [`tools.md`](tools.md).
 
-## Bugs found in pi, and how tau-agent avoids them
+## Bugs found in pi, and how heiko-agent avoids them
 
-| Severity | Bug                                                                                                                                                                                                   | Location                                                           | tau-agent                                                |
+| Severity | Bug                                                                                                                                                                                                   | Location                                                           | heiko-agent                                                |
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------- |
 | high     | `grep` drops matches on lines containing U+2028/U+2029. Node's `readline` splits on them, and the JSON parse failure is swallowed. The splitting was reproduced in Node. `find` has the same pattern. | `coding-agent/src/core/tools/grep.ts:169`, `find.ts:217`           | Searches natively; no subprocess, no line reader         |
 | medium   | `edit` checks uniqueness in normalized space even for exact matches.                                                                                                                                  | `coding-agent/src/core/tools/edit-diff.ts:328`                     | Checks uniqueness in the space where the match was found |

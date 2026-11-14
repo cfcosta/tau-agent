@@ -1,0 +1,62 @@
+[package]
+autotests = false
+name = "heiko-agents-host"
+description = "heiko-agents' host half: each agent's agent.luau read from its repository's trunk, its events queued and delivered to its conversation (ADR 0037)."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+# A websocket's binary messages reach `parse` in base64.
+base64.workspace = true
+futures-util.workspace = true
+# Server-sent events, over heiko's TLS.
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+heiko-agent.workspace = true
+heiko-agents.workspace = true
+# heiko's TLS, which a `wss` stream dials through.
+heiko-ai.workspace = true
+# An agent's folder is read, built and tested as a Luau plugin's is.
+heiko-luau-plugins.workspace = true
+heiko-luau-plugins-host.workspace = true
+# heiko's secret store, which an agent's requests name keys from, and the
+# grants its runs read artifacts by.
+heiko-tools-host.workspace = true
+# Whose records those grants are.
+heiko-tools.workspace = true
+# An event's data too large for its message.
+heiko-artifacts.workspace = true
+heiko-ui-kit.workspace = true
+heiko-ui-plugin.workspace = true
+heiko-vcs-host.workspace = true
+# What an `mcp` trigger read last, as a digest.
+sha2.workspace = true
+tokio = { workspace = true, features = ["net"] }
+# Websocket streams.
+tokio-tungstenite.workspace = true
+tokio-util.workspace = true
+# The clock and local days its schedules go by, which Luau plugins' share.
+heiko-clock.workspace = true
+
+[dev-dependencies]
+hegeltest.workspace = true
+regex.workspace = true
+heiko-testing.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = [
+  "io-util",
+  "macros",
+  "net",
+  "rt-multi-thread",
+  "time",
+] }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

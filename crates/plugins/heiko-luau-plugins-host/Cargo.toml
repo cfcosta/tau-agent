@@ -1,0 +1,75 @@
+[package]
+autotests = false
+name = "heiko-luau-plugins-host"
+description = "heiko-luau-plugins' host half: loading plugins written in Luau and running their hooks in codemode's sandbox."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# A plugin's actor keeps its own VM (ADR 0056).
+mlua.workspace = true
+anyhow.workspace = true
+# The engine Luau property tests run on (ADR 0049).
+hegeltest-c.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+# `serde`: a loop test's events, as its check reads them (ADR 0053).
+heiko-agent = { workspace = true, features = ["serde"] }
+heiko-ai.workspace = true
+heiko-codemode.workspace = true
+heiko-codemode-host.workspace = true
+heiko-jev.workspace = true
+sqlx.workspace = true
+heiko-tools-host.workspace = true
+# The host's local time, which `ctx.now` and `ctx.time` read (ADR 0050, gap D).
+heiko-clock.workspace = true
+# The bytes of the files Luau plugins keep (`ctx.blobs`), and what
+# images they are (`ctx.files.image`, ADR 0050 gap G).
+heiko-artifacts.workspace = true
+image.workspace = true
+base64.workspace = true
+# `ctx.files.frontmatter` (ADR 0050, gap K): a skill's descriptions are often
+# YAML block scalars.
+saphyr = { version = "0.2.2", default-features = false }
+heiko-luau-plugins.workspace = true
+heiko-ui-kit.workspace = true
+heiko-ui-plugin.workspace = true
+heiko-vcs-host.workspace = true
+# A forge's repository from a Git URL in any form Git takes.
+gix.workspace = true
+# `built_in::runtime`: heiko-plugin and the app start one before anything else.
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio-util.workspace = true
+toml.workspace = true
+# `t.loop` (ADR 0053): a real run, on a scripted model and a store in
+# memory, in a folder of its own.
+futures-util.workspace = true
+heiko-scripted.workspace = true
+heiko-store.workspace = true
+heiko-store-sqlite.workspace = true
+tempfile.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+# `ctx.desktop.notice`: desktop notifications over D-Bus, in Rust (zbus):
+# no libdbus. GPUI's Linux backend already builds it with these features.
+notify-rust = { version = "4.18", default-features = false, features = ["z"] }
+
+[dev-dependencies]
+image = { workspace = true, features = ["png"] }
+hegeltest.workspace = true
+heiko-plugins.workspace = true
+async-trait.workspace = true
+heiko-ui-plugin = { workspace = true, features = ["testing"] }
+heiko-agent.workspace = true
+heiko-testing.workspace = true
+tokio-util.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

@@ -1,7 +1,7 @@
 # 0019: The agent asks the person, in the composer's place
 
-- Status: accepted. Built: `tau-ask` (`crates/plugins/tau-ask`) and the
-  `COMPOSER` point in `tau-ui-plugin`, which `tau-ui` draws in place of
+- Status: accepted. Built: `heiko-ask` (`crates/plugins/heiko-ask`) and the
+  `COMPOSER` point in `heiko-ui-plugin`, which `heiko-ui` draws in place of
   the composer. Reference: [ask.md](../reference/ask.md).
 - Date: 2026-10-01
 
@@ -19,16 +19,16 @@ one, a preview per choice, an answer of the person's own always open,
 and a note the person can add to an answer. The answer comes back as
 the tool's result, and the turn goes on.
 
-Nothing in tau held a tool call open for a person. `vcs_land` ends the
+Nothing in heiko held a tool call open for a person. `vcs_land` ends the
 turn and lets a card take the answer later
 ([0009](0009-child-runs-land-on-their-parent.md)); approvals in
-tau-mcp and the constitution are settings, not open calls. And the
+heiko-mcp and the constitution are settings, not open calls. And the
 composer had no extension point: no plugin could put anything in its
 place.
 
 ## Decision
 
-### A plugin, `tau-ask`, whose call waits
+### A plugin, `heiko-ask`, whose call waits
 
 - The `ask` tool takes `{ questions: [{ question, header, options:
 [{ label, description, preview? }], multi_select }] }`, with the
@@ -50,7 +50,7 @@ place.
 
 ### Records, so stored runs show what was asked
 
-`tau-ask` publishes `asked`, `answered` and `closed` (one `Record`
+`heiko-ask` publishes `asked`, `answered` and `closed` (one `Record`
 enum, `#[serde(tag = "kind")]`, shared by the tool and the fold). A
 run that goes on from history closes, in its `start`, the calls the
 history left waiting: an app that quit while a question waited leaves
@@ -60,8 +60,8 @@ one.
 
 `points::COMPOSER` (`Point<AtRun>`): the first contribution draws in
 place of the composer under a run's transcript; with none, the
-composer is back. tau-ui calls it in one place, where it draws the
-composer. tau-ask contributes the panel while a live run has a call
+composer is back. heiko-ui calls it in one place, where it draws the
+composer. heiko-ask contributes the panel while a live run has a call
 waiting. Other plugins can use it for input a run needs more than a
 message: an approval, a form.
 
@@ -77,7 +77,7 @@ it; the model reads it under the answer.
   steer the run until they answer or decline. The run's Cancel stays
   in its header on a computer; on a phone, the panel has its own.
 - The panel takes the keys through `Handle::focus` (`Request::Focus`),
-  which tau-ui carries out as the window draws, except while the
+  which heiko-ui carries out as the window draws, except while the
   person is writing in the composer: a key typed then is theirs, not
   an answer. Once nothing draws in the composer's place, the composer
   takes the keys back.

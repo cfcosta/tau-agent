@@ -1,0 +1,19 @@
+[package]
+name = "heiko-sqlite"
+description = "Keeps every heiko run in SQLite, as a plugin filling the heiko.store slot."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = ["host"]
+# The host half: opening the store with heiko-store-sqlite.
+host = ["dep:heiko-store-sqlite"]
+
+[dependencies]
+anyhow.workspace = true
+heiko-agent.workspace = true
+heiko-store-sqlite = { workspace = true, optional = true }
+heiko-ui-plugin.workspace = true

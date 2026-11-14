@@ -1,0 +1,470 @@
+//! Choosing models: which ones the picker offers (the ChatGPT account's
+//! own), the reasoning effort a run asks for, and the defaults the user
+//! set.
+//!
+//! A run's model and effort hold while it works, so the session can keep
+//! sending only what is new. A chat's next message can go to another
+//! model: that request sends the whole conversation, and the new model
+//! takes it from there.
+
+use serde::{Deserialize, Serialize};
+use heiko_ai::responses::request::ReasoningEffort;
+
+/// The reasoning effort a run asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Effort {
+    /// The model's default, or what a reasoning plugin picks.
+    Auto,
+    None,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
+}
+
+impl Effort {
+    pub fn label(self) -> &'static str {
+        match self.reasoning() {
+            Some(effort) => effort.as_str(),
+            None => "auto",
+        }
+    }
+
+    /// The effort to send, or `None` to leave it to the model.
+    pub fn reasoning(self) -> Option<ReasoningEffort> {
+        match self {
+            Self::Auto => None,
+            Self::None => Some(ReasoningEffort::None),
+            Self::Minimal => Some(ReasoningEffort::Minimal),
+            Self::Low => Some(ReasoningEffort::Low),
+            Self::Medium => Some(ReasoningEffort::Medium),
+            Self::High => Some(ReasoningEffort::High),
+            Self::Xhigh => Some(ReasoningEffort::Xhigh),
+            Self::Max => Some(ReasoningEffort::Max),
+        }
+    }
+
+    pub fn of(effort: ReasoningEffort) -> Self {
+        match effort {
+            ReasoningEffort::None => Self::None,
+            ReasoningEffort::Minimal => Self::Minimal,
+            ReasoningEffort::Low => Self::Low,
+            ReasoningEffort::Medium => Self::Medium,
+            ReasoningEffort::High => Self::High,
+            ReasoningEffort::Xhigh => Self::Xhigh,
+            ReasoningEffort::Max => Self::Max,
+        }
+    }
+
+    /// What a model that takes `efforts` can run at: auto, then those,
+    /// lowest first. Only auto when it takes none.
+    pub fn offered(efforts: &[ReasoningEffort]) -> Vec<Self> {
+        std::iter::once(Self::Auto)
+            .chain(efforts.iter().copied().map(Self::of))
+            .collect()
+    }
+
+    /// The effort named `label`, as [`Self::label`] spells it.
+    pub fn parse(label: &str) -> Option<Self> {
+        match label {
+            "auto" => Some(Self::Auto),
+            _ => ReasoningEffort::parse(label).map(Self::of),
+        }
+    }
+}
+
+/// A model and the effort to run it at.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ModelChoice {
+    pub model: String,
+    pub effort: Effort,
+}
+
+impl ModelChoice {
+    pub fn new(model: impl Into<String>, effort: Effort) -> Self {
+        Self {
+            model: model.into(),
+            effort,
+        }
+    }
+
+    /// The same choice, at auto when the model, which takes `efforts`,
+    /// does not take its effort: a switch of model, or a saved default,
+    /// can leave one the API would reject.
+    pub fn fitted(self, efforts: &[ReasoningEffort]) -> Self {
+        if Effort::offered(efforts).contains(&self.effort) {
+            self
+        } else {
+            Self::new(self.model, Effort::Auto)
+        }
+    }
+
+    /// `gpt-6.1-sol · auto`.
+    pub fn label(&self) -> String {
+        format!("{} · {}", self.model, self.effort.label())
+    }
+}
+
+/// No model named, at auto: the provider's first model, once
+/// [`Models::fit`] reads it.
+impl Default for ModelChoice {
+    fn default() -> Self {
+        Self::new(String::new(), Effort::Auto)
+    }
+}
+
+/// One model the picker can offer: the provider's (ADR 0045).
+pub use heiko_ui_plugin::provider::ModelOption;
+
+/// What the user decided about models. Saved by the host.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ModelSettings {
+    /// Each agent's model when a run does not pick one, by agent name.
+    pub defaults: Vec<(String, ModelChoice)>,
+    /// Models the picker leaves out.
+    pub hidden: Vec<String>,
+    /// Each plugin's settings, as it saves them, by plugin (ADR 0017).
+    pub plugins: std::collections::BTreeMap<String, serde_json::Value>,
+    /// The repositories' own copies, by repository, then plugin: they
+    /// win in that repository's runs (ADR 0029).
+    pub repo_plugins: std::collections::BTreeMap<
+        String,
+        std::collections::BTreeMap<String, serde_json::Value>,
+    >,
+}
+
+impl Default for ModelSettings {
+    fn default() -> Self {
+        Self {
+            defaults: vec![("coder".into(), ModelChoice::default())],
+            hidden: Vec::new(),
+            plugins: Default::default(),
+            repo_plugins: Default::default(),
+        }
+    }
+}
+
+impl ModelSettings {
+    pub fn set_default(&mut self, agent: &str, choice: ModelChoice) {
+        match self.defaults.iter_mut().find(|(name, _)| name == agent) {
+            Some((_, current)) => *current = choice,
+            None => self.defaults.push((agent.to_owned(), choice)),
+        }
+    }
+
+    pub fn is_hidden(&self, id: &str) -> bool {
+        self.hidden.iter().any(|hidden| hidden == id)
+    }
+
+    /// Leaves `id` out of the picker, or shows it again.
+    pub fn set_hidden(&mut self, id: &str, hidden: bool) {
+        if self.is_hidden(id) != hidden {
+            self.toggle_hidden(id);
+        }
+    }
+
+    pub fn toggle_hidden(&mut self, id: &str) {
+        match self.hidden.iter().position(|hidden| hidden == id) {
+            Some(at) => {
+                self.hidden.remove(at);
+            }
+            None => self.hidden.push(id.to_owned()),
+        }
+    }
+}
+
+/// How the host reaches models, for the picker's footer: what fills
+/// `heiko.provider` says (ADR 0045).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccessInfo {
+    /// What runs use: `ChatGPT plan`, or `signed out`.
+    pub label: String,
+    /// Runs have a model to run on.
+    pub signed_in: bool,
+}
+
+/// Everything about models the interface shows.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Models {
+    pub options: Vec<ModelOption>,
+    pub settings: ModelSettings,
+    pub access: AccessInfo,
+    /// The agents a default can be set for, with what they do.
+    pub agents: Vec<(String, String)>,
+}
+
+impl Models {
+    pub fn find(&self, id: &str) -> Option<&ModelOption> {
+        self.options.iter().find(|option| option.id == id)
+    }
+
+    /// The efforts `model` takes, as the provider offers it; every one
+    /// for a model it does not list, which nothing here can check.
+    pub fn efforts_of(&self, model: &str) -> &[ReasoningEffort] {
+        self.find(model)
+            .map_or(&ReasoningEffort::ALL, |option| option.efforts.as_slice())
+    }
+
+    /// What `model` can run at: auto, then the efforts it takes.
+    pub fn efforts(&self, model: &str) -> Vec<Effort> {
+        Effort::offered(self.efforts_of(model))
+    }
+
+    /// `choice` as it can run: no model named takes the coder's default,
+    /// and an effort the model does not take goes to auto. A model the
+    /// provider does not list keeps its effort.
+    pub fn fit(&self, choice: ModelChoice) -> ModelChoice {
+        let choice = if choice.model.is_empty() {
+            ModelChoice {
+                effort: choice.effort,
+                ..self.default_for("coder")
+            }
+        } else {
+            choice
+        };
+        let efforts = self.efforts_of(&choice.model).to_vec();
+        choice.fitted(&efforts)
+    }
+
+    /// `agent`'s default, or [`ModelChoice::default`]. A saved model the
+    /// provider no longer offers falls back to the first it does.
+    pub fn default_for(&self, agent: &str) -> ModelChoice {
+        let saved = self
+            .settings
+            .defaults
+            .iter()
+            .find(|(name, _)| name == agent)
+            .map_or_else(ModelChoice::default, |(_, choice)| choice.clone());
+        if self.find(&saved.model).is_some() {
+            return saved;
+        }
+        match self.options.first() {
+            Some(first) => ModelChoice {
+                model: first.id.clone(),
+                ..saved
+            }
+            .fitted(&first.efforts),
+            None => saved,
+        }
+    }
+
+    /// The models the picker shows for `filter`, hidden ones left out,
+    /// in the plan's order.
+    pub fn shown<'a>(&'a self, filter: &str) -> Vec<&'a ModelOption> {
+        let filter = filter.trim().to_lowercase();
+        self.options
+            .iter()
+            .filter(|option| !self.settings.is_hidden(&option.id))
+            .filter(|option| {
+                filter.is_empty()
+                    || option.id.to_lowercase().contains(&filter)
+                    || option.label().to_lowercase().contains(&filter)
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Model settings, per-agent defaults among them, come back from
+    /// their file as they were saved, and a file from before a field
+    /// existed takes that field's default.
+    #[hegel::test(test_cases = 200)]
+    fn model_settings_round_trip(tc: hegel::TestCase) {
+        use hegel::generators::{self as gs, Generator as _};
+        let models = Models {
+            options: table(),
+            ..Models::default()
+        };
+        let ids: Vec<String> = models
+            .options
+            .iter()
+            .map(|model| model.id.clone())
+            .collect();
+        let mut settings = ModelSettings::default();
+        for id in tc.draw(gs::subsequences(ids.clone())) {
+            settings.toggle_hidden(&id);
+        }
+        if tc.draw(gs::booleans()) {
+            settings.plugins.insert(
+                "heiko-reasoning".into(),
+                serde_json::json!({ "redecide": true }),
+            );
+        }
+        // Defaults are per agent: each agent set reads its own choice;
+        // any other reads the default.
+        let mut chosen = Vec::new();
+        for agent in
+            tc.draw(gs::subsequences(vec!["coder", "reviewer", "triage"]))
+        {
+            let model = tc.draw(gs::sampled_from(ids.clone()));
+            let effort = tc.draw(
+                gs::sampled_from(models.efforts(&model)).print_as_debug(),
+            );
+            let choice = ModelChoice::new(model, effort);
+            settings.set_default(agent, choice.clone());
+            chosen.push((agent, choice));
+        }
+        let with = Models {
+            settings: settings.clone(),
+            ..models.clone()
+        };
+        for (agent, choice) in &chosen {
+            assert_eq!(&with.default_for(agent), choice);
+        }
+        // An agent with none of its own reads the first model offered.
+        assert_eq!(with.default_for("nobody").model, ids[0]);
+        let text = serde_json::to_string(&settings).unwrap();
+        let back: ModelSettings = serde_json::from_str(&text).unwrap();
+        assert_eq!(back, settings);
+        let mut older: serde_json::Value = serde_json::from_str(&text).unwrap();
+        older.as_object_mut().unwrap().remove("plugins");
+        let back: ModelSettings = serde_json::from_value(older).unwrap();
+        assert!(back.plugins.is_empty());
+        assert_eq!(back.hidden, settings.hidden);
+        // A file from before any field existed reads as the defaults.
+        let old: ModelSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(old, ModelSettings::default());
+    }
+
+    fn option(id: &str) -> ModelOption {
+        ModelOption {
+            id: id.into(),
+            name: None,
+            context: 1_050_000,
+            reasoning: true,
+            efforts: vec![ReasoningEffort::Low, ReasoningEffort::High],
+        }
+    }
+
+    /// What a provider offers: the plan's models from heiko-ai's table, as
+    /// heiko-chatgpt gives them.
+    fn table() -> Vec<ModelOption> {
+        heiko_ai::model::plan_models()
+            .into_iter()
+            .map(|model| ModelOption {
+                id: model.id.clone(),
+                name: Some(model.name.clone()),
+                context: model.context_window,
+                reasoning: model.reasoning,
+                efforts: model.efforts.clone(),
+            })
+            .collect()
+    }
+
+    /// A context window reads as the design writes it: under a million,
+    /// the whole thousands and `k`; from a million, millions to two
+    /// places with no trailing zero or point, and `M`, within half a
+    /// hundredth of the count. Windows are drawn at the switch, at round
+    /// millions and tenths, and anywhere. A choice reads as its model
+    /// and effort.
+    #[hegel::test(test_cases = 300)]
+    fn labels_read_as_the_design_writes_them(tc: hegel::TestCase) {
+        use hegel::generators::{self as gs, Generator as _};
+        let context: u64 = tc.draw(hegel::one_of!(
+            gs::integers::<u64>()
+                .min_value(998_000)
+                .max_value(1_002_000),
+            gs::integers::<u64>()
+                .min_value(10)
+                .max_value(10_000)
+                .map(|tens| tens * 100_000),
+            gs::integers::<u64>().max_value(1_000_000),
+            gs::integers::<u64>().max_value(10_000_000_000),
+        ));
+        let label = ModelOption {
+            context,
+            ..option("m")
+        }
+        .context_label();
+        if context < 1_000_000 {
+            assert_eq!(label, format!("{}k", context / 1000));
+        } else {
+            let number = label.strip_suffix('M').expect("millions");
+            let millions: f64 = number.parse().unwrap();
+            let off = (millions * 1e6 - context as f64).abs();
+            assert!(
+                off <= 5_000.0 + 1e-3 * context as f64 / 1e6,
+                "{context} as {label}"
+            );
+            if let Some((_, places)) = number.split_once('.') {
+                assert!(
+                    (1..=2).contains(&places.len()) && !places.ends_with('0'),
+                    "{context} as {label}"
+                );
+            }
+            if context.is_multiple_of(1_000_000) {
+                assert_eq!(label, format!("{}M", context / 1_000_000));
+            }
+        }
+        assert_eq!(
+            ModelChoice::new("gpt-6.1-sol", Effort::Auto).label(),
+            "gpt-6.1-sol · auto"
+        );
+    }
+
+    #[test]
+    fn the_picker_hides_and_filters() {
+        let mut models = Models {
+            options: vec![option("pro"), option("mid"), option("cheap")],
+            ..Models::default()
+        };
+        let ids = |models: &Models, filter: &str| -> Vec<String> {
+            models.shown(filter).iter().map(|o| o.id.clone()).collect()
+        };
+        assert_eq!(ids(&models, ""), ["pro", "mid", "cheap"]);
+        assert_eq!(ids(&models, "PR"), ["pro"]);
+        models.settings.toggle_hidden("pro");
+        assert_eq!(ids(&models, ""), ["mid", "cheap"]);
+    }
+
+    /// The picker's names are searched; with no model named, a choice
+    /// takes the first the provider offers, and an effort its model
+    /// does not take goes to auto.
+    #[test]
+    fn a_choice_fits_what_the_provider_offers() {
+        let models = Models {
+            options: table(),
+            ..Models::default()
+        };
+        assert_eq!(models.shown("astra").len(), 1, "names are searched");
+        let first = models.options[0].id.clone();
+        assert_eq!(models.fit(ModelChoice::default()).model, first);
+        let odd = ModelChoice::new(first.clone(), Effort::Max);
+        let fitted = models.fit(odd.clone());
+        assert_eq!(
+            fitted.effort == odd.effort,
+            models.efforts(&first).contains(&odd.effort)
+        );
+        assert_eq!(
+            Models::default().efforts("unlisted"),
+            Effort::offered(&ReasoningEffort::ALL),
+            "a model the provider does not list keeps any effort"
+        );
+    }
+
+    /// A saved default the provider no longer offers falls back to the
+    /// first model it does; one it offers stays.
+    #[test]
+    fn a_default_off_the_plan_falls_back_to_the_first() {
+        let mut models = Models {
+            options: table(),
+            ..Models::default()
+        };
+        let first = models.options[0].id.clone();
+        models
+            .settings
+            .set_default("coder", ModelChoice::new("gpt-5.5", Effort::Auto));
+        assert_eq!(models.default_for("coder").model, first);
+        models
+            .settings
+            .set_default("coder", ModelChoice::new("gpt-6-luna", Effort::Auto));
+        assert_eq!(models.default_for("coder").model, "gpt-6-luna");
+    }
+}

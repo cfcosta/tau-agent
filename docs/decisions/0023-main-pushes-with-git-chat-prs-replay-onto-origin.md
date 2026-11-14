@@ -3,7 +3,7 @@
 - Status: accepted. Amends
   [0014](0014-the-model-commits-and-runs-land-as-stacked-diffs.md)
   ("A session merged into trunk is pushed only if the person pushes;
-  merging is local") and the rule that tau never needs `git`
+  merging is local") and the rule that heiko never needs `git`
   ([jj-lib.md](../research/jj-lib.md), "Fetch and push shell out";
   `docs/reference/vcs.md`, "Projects"). Reference:
   [vcs.md](../reference/vcs.md), "Pushing" and "Pull requests".
@@ -13,27 +13,27 @@
 
 Each GitHub repository has a main chat whose commits move trunk, and
 chats land on it ([0015](0015-a-main-chat-per-repository.md)). Nothing
-sent trunk back to GitHub: it moved only in tau's clone. Pull requests
+sent trunk back to GitHub: it moved only in heiko's clone. Pull requests
 re-created a chat's commits through GitHub's REST API, on the parent of
 the chat's first commit. Once the main chat had commits GitHub had never
 seen, that parent was one of them, and the pull request could not be
 made; one from the main chat itself found no commits.
 
-gix fetches and clones without `git`, but has no push that tau can use,
+gix fetches and clones without `git`, but has no push that heiko can use,
 and jj-lib's push runs `git` as a subprocess.
 
 ## Decision
 
 ### `git` is a runtime dependency, for jj-lib's push alone
 
-- tau runs `git` only through jj-lib's push (`push_updates`). Fetching
-  and cloning stay on gix. The model still never gets `git`, and tau-vcs
+- heiko runs `git` only through jj-lib's push (`push_updates`). Fetching
+  and cloning stay on gix. The model still never gets `git`, and heiko-vcs
   spawns nothing itself.
-- The Nix package's wrapper puts `git` on `tau-ui`'s `PATH`.
+- The Nix package's wrapper puts `git` on `heiko-ui`'s `PATH`.
 - The GitHub token reaches `git` through the child's environment only:
   `GIT_CONFIG_*` set an empty `credential.helper` (dropping the
   person's own, so none stores the token) and then one that answers with
-  `TAU_GIT_TOKEN`. It is never written to a file or put on a command
+  `HEIKO_GIT_TOKEN`. It is never written to a file or put on a command
   line.
 - The Git store's `origin` holds only a URL, with no fetch refspec, so
   a push never writes remote-tracking refs that jj would import as
@@ -71,7 +71,7 @@ and jj-lib's push runs `git` as a subprocess.
 
 ## Alternatives considered
 
-- **A push of our own over gix.** No `git` at all, but tau would own
+- **A push of our own over gix.** No `git` at all, but heiko would own
   the pack negotiation and the receive-pack protocol, which jj-lib and
   `git` already get right.
 - **`GIT_ASKPASS` with a script.** The script needs the token, so it is
@@ -88,7 +88,7 @@ and jj-lib's push runs `git` as a subprocess.
 ## Consequences
 
 - The packaged app needs `git` 2.41 or newer, which jj-lib asks for.
-- jj's push writes nothing tau's view would import: pushed branches are
+- jj's push writes nothing heiko's view would import: pushed branches are
   not bookmarks, and after a trunk push the Git store's branch names the
   pushed commit, as a fetch would leave it.
 - Replayed copies stay in the Git store, kept by jj's `refs/jj/keep/*`

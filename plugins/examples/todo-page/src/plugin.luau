@@ -1,9 +1,9 @@
 -- A page with actions: a run's to-do list, which the person keeps from
 -- the plugin's page and the sidebar opens.
-local tau = require("tau")
-local ui = tau.ui
+local heiko = require("heiko")
+local ui = heiko.ui
 
-return tau.plugin {
+return heiko.plugin {
 	nav = { label = "To-do", icon = "check" },
 	actions = {
 		-- An action is `(args, model, env)`, and changes the model in place.

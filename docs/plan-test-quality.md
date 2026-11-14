@@ -49,10 +49,10 @@ Merged validation passed:
 
 - 1,147 library/integration tests across the 13 affected crates; 8 existing
   opt-in tests ignored.
-- 25 `tau-ui` library tests: **1,172 passed in total**.
+- 25 `heiko-ui` library tests: **1,172 passed in total**.
 - Canonical formatting and affected-crate all-target strict Clippy.
-- Host-disabled library strict Clippy for `tau-codemode`, `tau-tools`, and
-  `tau-ui-plugin`; `tau-ui` compilation.
+- Host-disabled library strict Clippy for `heiko-codemode`, `heiko-tools`, and
+  `heiko-ui-plugin`; `heiko-ui` compilation.
 - 24 deliberately injected faults detected by the named replacements below.
 
 The final source census is 379 Hegel attributes and 1,237 ordinary
@@ -132,9 +132,9 @@ with an oracle of its own. A cluster of examples of one law was done whole.
 
 - `Display` and `Debug` pins, setter read-backs and constants checked against
   themselves.
-- Examples a property or model already checks: most of `tau-vcs-host`'s tool,
-  landing, sub-agent and project examples, `tau-tools-host`'s pi edit and
-  listing examples, `tau-ai`'s ChatGPT store, HTTP and cost examples.
+- Examples a property or model already checks: most of `heiko-vcs-host`'s tool,
+  landing, sub-agent and project examples, `heiko-tools-host`'s pi edit and
+  listing examples, `heiko-ai`'s ChatGPT store, HTTP and cost examples.
 - Clusters of one law, now one property each: leaf coercion against pi's
   table, side asks against an attempt model, text phases, the summary
   request, agent names, relative times, bounded seen-key sets, glob matching,
@@ -148,18 +148,18 @@ with an oracle of its own. A cluster of examples of one law was done whole.
 Ten nominated tests stay, each the only test of its behaviour or needing a
 seam in production code:
 
-- `tau-clock` `the_system_clock_follows_the_time_zone`, the only run of
+- `heiko-clock` `the_system_clock_follows_the_time_zone`, the only run of
   `SystemClock::offset`'s `localtime_r`.
-- `tau-tree-compaction` `the_builders_set_their_fields`, the only test of
+- `heiko-tree-compaction` `the_builders_set_their_fields`, the only test of
   `view_bytes()` and `jobs()`.
-- `tau-codemode-host` `a_call_that_never_ran_says_why` (the never-ran branch of
+- `heiko-codemode-host` `a_call_that_never_ran_says_why` (the never-ran branch of
   `ui::failure`) and `infinite_loop_times_out_with_a_persisted_failure` (the
   only test that `module_test` has a time limit, which is not injectable).
-- `tau-ui` `reduced_motion_stops_onboardings_loops`,
+- `heiko-ui` `reduced_motion_stops_onboardings_loops`,
   `settings_start_with_phones_off`, and three slow ones that need a clock seam:
   `what_waits_lands_after_a_main_turn_that_finishes_slowly` and the two
   reasoning-timer tests, which read `std::time::Instant`.
-- `tau-remote` `nothing_listening_is_unreachable`, the only test of
+- `heiko-remote` `nothing_listening_is_unreachable`, the only test of
   `ServerHandle::stop`.
 
 78 injected faults, one or more per new or strengthened property, each failed
@@ -171,7 +171,7 @@ refreshed OAuth tokens not saved, and a declined promotion activating.
 
 Open findings:
 
-- `worth_compacting` (idle compaction in `tau-ui`) compares against
+- `worth_compacting` (idle compaction in `heiko-ui`) compares against
   `window / 2` in integers, so for an odd window less than half counts. The
   property draws even windows only until the rule is decided.
 - `read_equals_pis_whole_file_read` rarely reaches the 2,000-line cut: a
@@ -179,8 +179,8 @@ Open findings:
   `structured_text_tracks_exact_and_exceeded_bounds` caught it.
 - `sp()`, `stagger()` and `SetupStep::stage()` have no test left; the old ones
   restated their formulas.
-- `tau-constitution`'s rule edits were tested from `tau-constitution-host`,
-  so `cargo mutants -p tau-constitution` alone showed survivors there. Both
+- `heiko-constitution`'s rule edits were tested from `heiko-constitution-host`,
+  so `cargo mutants -p heiko-constitution` alone showed survivors there. Both
   are Luau now (ADR 0050), tested by its own Luau tests.
 
 ### Round two
@@ -215,9 +215,9 @@ redundant examples, the round went after tests that could not fail:
 Eight rows stay, each the only test of its behaviour or needing a production
 seam: `jitter_samples_the_unit_interval`, the
 host's `Act::Prompt` reply path and the older protocol's `prompts/get` in
-`tau-mcp-host`, `every_demo_screen_opens`, the no-AGENTS-file host test,
+`heiko-mcp-host`, `every_demo_screen_opens`, the no-AGENTS-file host test,
 `Type::mono()`'s only test, the clone into a missing parent with a token, and
-the write debounce in `tau-agents-host`.
+the write debounce in `heiko-agents-host`.
 
 Fault probes: about 120, each caught by the test named for it, except two
 noted by their agents: an artificial wrap in the backoff exponent at attempts
@@ -233,23 +233,23 @@ committed, and the guide now says how to revert a probe.
 Findings:
 
 - **Fixed:** `chat_text` cut only the first `ultra` of a word, so
-  `Ultraultrathink` reached the composer as a live keyword (`tau-watcher`).
+  `Ultraultrathink` reached the composer as a live keyword (`heiko-watcher`).
 - **Fixed, to match pi:** a signature id was shortened when longer than 64
-  bytes (`tau-ai/src/responses/input.rs`), where pi counts JavaScript string
-  length, so 33 × `é` was kept by pi and shortened by tau. It now counts
+  bytes (`heiko-ai/src/responses/input.rs`), where pi counts JavaScript string
+  length, so 33 × `é` was kept by pi and shortened by heiko. It now counts
   UTF-16 code units, and `a_signature_id_is_kept_up_to_64_utf16_units` checks
   it.
 - An optional `null` inside an object held under `additionalProperties` is
   coerced, not dropped: `normalize_optional_nulls` does not walk
-  `additionalProperties` (`tau-agent`).
-- **Fixed in round three:** `field()` in `tau-agents/src/event.rs` was not
+  `additionalProperties` (`heiko-agent`).
+- **Fixed in round three:** `field()` in `heiko-agents/src/event.rs` was not
   idempotent: an id holding `· ·` kept a `·` after the replace and broke
   its line.
 - A `/goal` prompt's branch slug comes from the goal's first line only.
-- `Commit::label` (`tau-vcs`) has no test of its own; a demo test is its only
+- `Commit::label` (`heiko-vcs`) has no test of its own; a demo test is its only
   coverage.
 - The intro in [Codemode](reference/codemode.md) "The description" is older
-  than `tau_codemode::description::INTRO`, so only the closing paragraph is
+  than `heiko_codemode::description::INTRO`, so only the closing paragraph is
   pinned to the doc.
 
 ### Round three
@@ -280,13 +280,13 @@ the round strengthened tests that stay:
   publication lease is proved with a non-blocking `flock`, and the last
   wall-clock bounds on MCP calls are gone.
 
-Nothing was kept back this time; one row in `tau-vcs-host` was
+Nothing was kept back this time; one row in `heiko-vcs-host` was
 strengthened instead of deleted, because its refusals are the only check
 that `vcs_resolve` validates its paths.
 
-Fault probes: about 280. All were caught but two in `tau-ui`, which
+Fault probes: about 280. All were caught but two in `heiko-ui`, which
 removed one of two guards that refuse the same case (the queue's
-`main.busy()` check, and tau-reasoning's own gate for a picked effort),
+`main.busy()` check, and heiko-reasoning's own gate for a picked effort),
 and a few equivalent mutants the agents named. Several probes were only
 caught after a generator learned to start where the rules act or to
 draw what production passes; both are now rules in
@@ -296,23 +296,23 @@ draw what production passes; both are now rules in
 Findings:
 
 - **Fixed:** an http `timeout` of `1e20` panicked building its
-  `Duration` before the 60 s check (`tau-tools-host`).
+  `Duration` before the 60 s check (`heiko-tools-host`).
 - **Fixed:** `reach` read `10.example.com` as on the local network; it
-  now parses an IP address (`tau-ui-remote`).
+  now parses an IP address (`heiko-ui-remote`).
 - **Fixed:** a listing's size picked its unit before rounding, so
-  1,048,575 bytes read `1024 KB` (`tau-tools`).
+  1,048,575 bytes read `1024 KB` (`heiko-tools`).
 - **Fixed:** an ID token whose `exp` was within a minute of `u64::MAX`
-  read as expired (`tau-ai`).
+  read as expired (`heiko-ai`).
 - **Fixed, to match pi:** a plan refusal in an `error` frame with its
   details at the top was lost; pi's Codex client reads them there
-  (`tau-ai/src/refusal.rs`).
+  (`heiko-ai/src/refusal.rs`).
 - **Fixed:** `field()` (see round two).
 - **Fixed:** `written_titles_come_back_in_history` used `/tmp` as its
   checkout, so `/tmp` became a git repository and every temporary
   directory sat inside one.
 - An explicit `null` in a `ToolOutput`'s `details` or `structured` reads
   back from JSON as `None`.
-- The module import-cycle check in `tau-codemode-host/src/engine.rs` can
+- The module import-cycle check in `heiko-codemode-host/src/engine.rs` can
   never run: the digest it is keyed by includes the dependency pins.
 - The Luau runtime's `call_tool` guard cannot be reached from Lua, since
   `tools()` already hides the tool.
@@ -320,8 +320,8 @@ Findings:
   error frame; both tables are documented.
 - Nested `[secret:…]` marks stay as they are on purpose: a single-pass
   scrub would leave a value that occurs inside a mark's text.
-- `State::due` in `tau-watcher` is unused; the host repeats its rule.
-- `tau-ui`'s `auto_reasoning_takes_the_effort_jev_picks` failed once in
+- `State::due` in `heiko-watcher` is unused; the host repeats its rule.
+- `heiko-ui`'s `auto_reasoning_takes_the_effort_jev_picks` failed once in
   four full runs, as it did in the first round's survey, with "database is
   locked" at its second host's `start`. Alone (300 runs) and with the
   host binary in parallel copies (24 runs) it passed. Each host keeps its

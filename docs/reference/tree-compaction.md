@@ -1,14 +1,14 @@
 # Tree compaction
 
-`tau-tree-compaction` (`plugins/tau-tree-compaction`) compacts a
+`heiko-tree-compaction` (`plugins/heiko-tree-compaction`) compacts a
 run without losing what it drops. It implements OptChat's memory design
 ([the spec](https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449)),
-fitted to a run of tau's. It is a Luau plugin tau comes with (ADR 0050):
+fitted to a run of heiko's. It is a Luau plugin heiko comes with (ADR 0050):
 `src/tree.luau` holds the history and the view,
 `src/build.luau` the compactor, and `src/plugin.luau` the hooks
 and `zoom`. It is off by default: its settings switch it on, and until
-an evaluation shows it does better than tau-compaction's summary,
-tau-compaction stays the default.
+an evaluation shows it does better than heiko-compaction's summary,
+heiko-compaction stays the default.
 
 [compaction.md](compaction.md) replaces the older messages with one
 summary, and what the summary leaves out is gone for the rest of the
@@ -19,10 +19,10 @@ made from, down to a message whole.
 
 ## Using it
 
-tau-luau-plugins runs it after pruning and before tau-compaction, as
-tau comes with them. Context plugins are offered the context in order,
+heiko-luau-plugins runs it after pruning and before heiko-compaction, as
+heiko comes with them. Context plugins are offered the context in order,
 and the first that rewrites wins: when building a line fails, tree
-compaction writes nothing, and tau-compaction summarizes in the same
+compaction writes nothing, and heiko-compaction summarizes in the same
 turn. An agent of its own adds both with `Active::built_in` in a
 `LuauPlugins`, the tree first.
 
@@ -30,12 +30,12 @@ turn. An agent of its own adds both with `Active::built_in` in a
 | -------------------- | ------- | -------------------------------------------------------------- |
 | `on`                 | off     | Whether it folds, and whether the run has `zoom`               |
 | `reserve_tokens`     | 16,384  | Compacts once the estimate passes the window minus this        |
-| `keep_recent_tokens` | 20,000  | The newest messages kept as they are, as tau-compaction keeps  |
+| `keep_recent_tokens` | 20,000  | The newest messages kept as they are, as heiko-compaction keeps  |
 | `window`             | 0       | For a model the registry does not know; 0 is the model's       |
 | `view_bytes`         | 64,000  | The view's budget, in bytes of its lines (about 16,000 tokens) |
 | `jobs`               | 8       | Compactor requests at once                                     |
 
-It triggers as tau-compaction does: after a turn past the threshold,
+It triggers as heiko-compaction does: after a turn past the threshold,
 before the first request of a run on an inherited transcript, and on an
 overflow. A failed compaction waits 2, 4, 8 and up to 32 turns before
 it tries again; the failure is a line in the plugin's log.
@@ -100,7 +100,7 @@ Those parents are built a level at a time, `jobs` at once.
 Each line is one request to the run's model, at the effort the run
 started at, with `COMPACT_PROMPT` as instructions: `infer` with its own
 `instructions`, `jobs` of them at once in `parallel`. It asks what OptChat's compactor
-prompt asks, in tau's own words and for a run: the user's words first,
+prompt asks, in heiko's own words and for a run: the user's words first,
 in their own wording, then lasting effects and failures, then findings
 and replies, and tool output last, described rather than copied. The request is one user message with two
 text blocks:
@@ -155,8 +155,8 @@ other message.
 
 ## What is stored
 
-- **The rewrite** is a `context` entry from `tau-luau-plugins`, naming
-  `tau-tree-compaction`, whose details are the view (its nodes), how
+- **The rewrite** is a `context` entry from `heiko-luau-plugins`, naming
+  `heiko-tree-compaction`, whose details are the view (its nodes), how
   many entries it covers and the tokens before.
 - **The plugin's state** holds the history: its entries, the lines built
   over them and the view; and what the last compaction did, for the
@@ -169,9 +169,9 @@ first message is the person's with the view message's text.
 ## Deviations from OptChat
 
 - **Within a run.** OptChat answers every user message with a fresh
-  call on the view alone. A tau run is one conversation whose tool loop
+  call on the view alone. A heiko run is one conversation whose tool loop
   needs its latest messages whole, so the view replaces only what falls
-  before tau-compaction's cut, and the kept tail stays as it was.
+  before heiko-compaction's cut, and the kept tail stays as it was.
 - **Built when compacting**, not in the background as messages arrive.
   So a level-0 line's context is the view before the batch plus
   `<recent>`, not the view up to the line, which would build the

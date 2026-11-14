@@ -5,9 +5,9 @@
 
 ## Context
 
-On 2026-10-05, 190 `block_on` calls sat in tau's non-test code:
+On 2026-10-05, 190 `block_on` calls sat in heiko's non-test code:
 
-- `tau-ui`'s `Host` is synchronous: 185 of its methods are plain
+- `heiko-ui`'s `Host` is synchronous: 185 of its methods are plain
   functions, which wrap the async store, network and `Vcs` calls in
   `self.runtime.block_on`. The interface reaches it through
   `off_thread`, which runs a method on tokio's blocking pool, so every
@@ -18,7 +18,7 @@ On 2026-10-05, 190 `block_on` calls sat in tau's non-test code:
   GPUI's thread from `cx.spawn` and from `Push::Catalog`. While SQLite
   waits for its lock (up to the 5-second busy timeout), the window
   cannot draw.
-- `tau-vcs`'s `Vcs` gives callers an async API: one thread per
+- `heiko-vcs`'s `Vcs` gives callers an async API: one thread per
   workspace owns jj-lib, which is blocking and whose futures are not
   `Send`, and runs each job in order. That thread sits idle between
   jobs, one per workspace. `Project`, the repository level, is
@@ -26,7 +26,7 @@ On 2026-10-05, 190 `block_on` calls sat in tau's non-test code:
   it in `spawn_blocking`.
 - Multi-step repository work holds std mutexes across blocking calls:
   `draining` is held for a whole landing.
-- The plugins' host half (`tau-ui-plugin`: `starting`, `catalog`,
+- The plugins' host half (`heiko-ui-plugin`: `starting`, `catalog`,
   `repo_data`, `act`) is synchronous and gets a runtime handle, so
   plugins `block_on` the store and Jev in it.
 - Sign-in and GitHub calls run on threads of their own, each with its
@@ -109,14 +109,14 @@ A std `MutexGuard` held across `.await` makes a spawned future not
 
 ### Enforced by clippy
 
-The demo host (`tau-ui`'s `demo`) is the one exception: a scripted
+The demo host (`heiko-ui`'s `demo`) is the one exception: a scripted
 stand-in for a host, over an in-memory store, that answers each step
 of its script at once so its screens come out the same every time.
 
 `clippy.toml` disallows `tokio::runtime::Runtime::block_on`,
 `tokio::runtime::Handle::block_on`, `pollster::block_on` and
 `futures::executor::block_on`. The jj jobs that run in
-`spawn_blocking` and `tau-testing`'s helpers allow it where they use
+`spawn_blocking` and `heiko-testing`'s helpers allow it where they use
 it, each with its reason. While the migration runs, a crate not yet
 migrated allows it crate-wide; removing that allow marks the crate
 done.
@@ -126,7 +126,7 @@ done.
 - No request holds a thread while it waits, and nothing on GPUI's
   thread waits for SQLite, jj or the network.
 - `Host` stops being callable from synchronous code. Tests drive it
-  with `tau_testing::block_on`, as they drive the agent loop.
+  with `heiko_testing::block_on`, as they drive the agent loop.
 - jj operations on one repository run one at a time, which they
   effectively had to anyway; forecasts and landings queue behind each
   other instead of retrying on jj's divergence.
@@ -142,7 +142,7 @@ Each step lands on its own, with the tests passing:
 1. The lint, with crate-wide allows where `block_on` is still used,
    and the bridge, `on_host`, beside `off_thread`.
 2. `Vcs` on the lock and `spawn_blocking`; `Project`'s async handle;
-   `tau-vcs` without `pollster` outside its jobs.
+   `heiko-vcs` without `pollster` outside its jobs.
 3. The plugins' host half to async. It comes before the host: once a
    host function runs on the runtime, a hook that still blocks would
    panic there. Until the host is async, its synchronous functions wait

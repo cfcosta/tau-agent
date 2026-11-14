@@ -69,12 +69,12 @@ updates.
 ## Rust Code
 
 The complete implementations are in
-[`sub_agent_finalization.rs`](../../crates/plugins/tau-vcs-host/tests/sub_agent_finalization.rs),
-[`conflict_snapshots.rs`](../../crates/plugins/tau-vcs-host/tests/conflict_snapshots.rs),
-[`runs_model.rs`](../../crates/plugins/tau-vcs-host/tests/runs_model.rs), and
-[`diff.rs`](../../crates/plugins/tau-vcs-host/src/diff.rs).
+[`sub_agent_finalization.rs`](../../crates/plugins/heiko-vcs-host/tests/sub_agent_finalization.rs),
+[`conflict_snapshots.rs`](../../crates/plugins/heiko-vcs-host/tests/conflict_snapshots.rs),
+[`runs_model.rs`](../../crates/plugins/heiko-vcs-host/tests/runs_model.rs), and
+[`diff.rs`](../../crates/plugins/heiko-vcs-host/src/diff.rs).
 The independent history algebra is in
-[`common/merge.rs`](../../crates/plugins/tau-vcs-host/tests/common/merge.rs).
+[`common/merge.rs`](../../crates/plugins/heiko-vcs-host/tests/common/merge.rs).
 
 ### Native implementation boundary
 
@@ -84,7 +84,7 @@ a normal or limited run outcome alone is not evidence of committed work.
 
 Snapshots, merge resolution, conflict materialization, tree construction,
 transactions, checkout, path matching, and undo remain jj-lib operations.
-Tau does not parse markers, rewrite working-copy state, or implement a
+Heiko does not parse markers, rewrite working-copy state, or implement a
 merge engine. Diff comparison flattens the native delta
 `before - after + absent` and uses `Merge::simplify()` to cancel terms.
 This handles both redundant pairs and reordered addends without custom
@@ -105,10 +105,10 @@ tests now check both paths and conflict state.
 ### Execution and replay
 
 ```sh
-nix develop -c cargo nextest run --release -p tau-vcs-host --lib tree_values_match_the_signed_term_model
-nix develop -c cargo nextest run --release -p tau-vcs-host sub_agent_finalization::
-nix develop -c cargo nextest run --release -p tau-vcs-host conflict_snapshots:: runs_model::
-nix develop -c cargo nextest run --release -p tau-ui host:: workspace::
+nix develop -c cargo nextest run --release -p heiko-vcs-host --lib tree_values_match_the_signed_term_model
+nix develop -c cargo nextest run --release -p heiko-vcs-host sub_agent_finalization::
+nix develop -c cargo nextest run --release -p heiko-vcs-host conflict_snapshots:: runs_model::
+nix develop -c cargo nextest run --release -p heiko-ui host:: workspace::
 ```
 
 The shipped `hegel.toml` profiles are unchanged. Local failures use Hegel's
@@ -118,7 +118,7 @@ an additional fixed-seed local run:
 
 ```sh
 HEGEL_DERANDOMIZE=true HEGEL_DATABASE=disabled \
-  nix develop -c cargo nextest run --release -p tau-vcs-host sub_agent_finalization::
+  nix develop -c cargo nextest run --release -p heiko-vcs-host sub_agent_finalization::
 ```
 
 The owned Agent/Store/jj property has 12 cases because each history runs

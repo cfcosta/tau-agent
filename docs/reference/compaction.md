@@ -5,19 +5,19 @@ This is ported from pi's coding-agent compaction
 implementations, and its summarization prompts have drifted apart. This
 one is the version pi ships.
 
-Compaction is a Luau plugin tau comes with (ADR 0050), in
-`plugins/tau-compaction`: `src/compaction.luau` holds the
-rules, `src/plugin.luau` the hooks. tau-luau-plugins runs it in every
-run of tau's, after fast pruning and the tree, so cheaper rewrites get
+Compaction is a Luau plugin heiko comes with (ADR 0050), in
+`plugins/heiko-compaction`: `src/compaction.luau` holds the
+rules, `src/plugin.luau` the hooks. heiko-luau-plugins runs it in every
+run of heiko's, after fast pruning and the tree, so cheaper rewrites get
 the first chance. An agent of its own, such as an evaluation's, adds it
-with `Active::built_in(tau_compaction::NAME)` in its `LuauPlugins`.
+with `Active::built_in(heiko_compaction::NAME)` in its `LuauPlugins`.
 The token estimate it compacts by is the loop's, in
-`tau_agent::context`, which the hook reads as each message's `tokens`.
+`heiko_agent::context`, which the hook reads as each message's `tokens`.
 
-In tau, which compactions rewrite is the `tau.compaction` slot's (ADR
-0045): tau-compaction-chain, a Luau plugin too, fills it with fast
-pruning, the tree and the summary, in that turn. tau-luau-plugins fills
-the slot for it, and runs its own plugins in the order tau comes with
+In heiko, which compactions rewrite is the `heiko.compaction` slot's (ADR
+0045): heiko-compaction-chain, a Luau plugin too, fills it with fast
+pruning, the tree and the summary, in that turn. heiko-luau-plugins fills
+the slot for it, and runs its own plugins in the order heiko comes with
 them.
 
 Its settings are `idle` (on), `reserve_tokens` (16,384),
@@ -51,12 +51,12 @@ shows the switch for idle chats.
 ## Idle compaction
 
 As Claude Code does ("Compacted while idle, before the prompt cache
-expired"), tau compacts a long chat left idle shortly before the prompt
+expired"), heiko compacts a long chat left idle shortly before the prompt
 cache that holds it lapses. Compacting then reads the chat from cache,
 and the person's next message starts from the summary instead of
-resending the whole chat uncached. Claude Code's rules, and tau's:
+resending the whole chat uncached. Claude Code's rules, and heiko's:
 
-|                     | Claude Code                                                                                                                                  | tau                                                                                |
+|                     | Claude Code                                                                                                                                  | heiko                                                                                |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
 | What lapses         | the 1-hour prompt cache (`ttl: "1h"` requests only)                                                                                          | the connection's cache: [openai-websocket.md](openai-websocket.md), "Prompt cache" |
 | When it fires       | 0.9 of the way from the last request to the lapse                                                                                            | the same                                                                           |
@@ -64,7 +64,7 @@ resending the whole chat uncached. Claude Code's rules, and tau's:
 | Worth it            | 200,000 tokens of context or more (at least 100,000 if set)                                                                                  | half the model's window or more (136,000 of 272,000)                               |
 | Not when            | a turn is in flight, a newer request was made, near a usage limit, the person typed in the last minute, or another process holds the session | the chat is working, a later turn ended, or it landed or was dropped               |
 | A message meanwhile | the compaction is dropped if a newer turn began                                                                                              | stops the compaction; the chat goes on as it was                                   |
-| Switch              | `idleCompaction` setting                                                                                                                     | "Compact idle chats" in tau-compaction's settings                                  |
+| Switch              | `idleCompaction` setting                                                                                                                     | "Compact idle chats" in heiko-compaction's settings                                  |
 | Shown               | "Compacted while idle, before the prompt cache expired"                                                                                      | the same, on the rewrite's line with its tokens before and after                   |
 
 - **The summary is asked in the chat's own conversation.** A summary
@@ -84,14 +84,14 @@ resending the whole chat uncached. Claude Code's rules, and tau's:
 - **The cut and the record are compaction's usual ones** ("Cut point",
   "After compaction"); the rewrite's trigger is stored as `idle`.
 - **Which plugins take part.** Only those whose `start_idle` runs:
-  tau-luau-plugins, whose plugins rewrite (tau-compaction summarizes
-  when idle compaction is on), and tau-memory, which keeps what the
+  heiko-luau-plugins, whose plugins rewrite (heiko-compaction summarizes
+  when idle compaction is on), and heiko-memory, which keeps what the
   summary drops. No plugin's `start` runs, so nothing changes the
-  settings: tau-reasoning picks no effort, and nothing is searched or
-  recorded. Pruning (tau-fast-compaction) and the tree
-  (tau-tree-compaction) decline it: a rewrite before the summary would
+  settings: heiko-reasoning picks no effort, and nothing is searched or
+  recorded. Pruning (heiko-fast-compaction) and the tree
+  (heiko-tree-compaction) decline it: a rewrite before the summary would
   change what it reads from cache.
-- **Where it runs.** tau-ui's host notes each chat turn's context
+- **Where it runs.** heiko-ui's host notes each chat turn's context
   (`TurnEnd` usage) and its last request's settings, and watches the
   chat from its `RunEnd` (`host/idle.rs`). The pool says when the
   chat's cache lapses (`OpenAi::cache_lapse`). The chat's events,
@@ -167,7 +167,7 @@ estimated with `chars / 4`.
 
 ## What the prompts add
 
-The prompts are pi's, format and all, with three rules of tau's, in
+The prompts are pi's, format and all, with three rules of heiko's, in
 its own words, after the compactor prompt of OptChat
 (<https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449>,
 section 5), which was tuned over many iterations for summaries that
@@ -191,16 +191,16 @@ stand in for a conversation:
   included, which also keeps an injected command in a tool result from
   steering the summary.
 
-tau-memory's flush and consolidation prompts carry the same rules for
+heiko-memory's flush and consolidation prompts carry the same rules for
 the notes they write. Thinking stays in the serialized conversation:
 OptChat leaves it out because one vendor's reasoning safeguard refused
-its compactor on it, which does not apply to the models tau uses.
+its compactor on it, which does not apply to the models heiko uses.
 
 ## After compaction
 
 - Compaction's rewrite ([plugins.md](plugins.md)) is stored as a
   `messages` row with `kind = 'context'` and `plugin =
-'tau-luau-plugins'`. Its body names `tau-compaction` and holds its
+'heiko-luau-plugins'`. Its body names `heiko-compaction` and holds its
   details: the summary, the token count before compaction, the file
   lists and a timestamp. The summary message and the kept messages are
   written after it, in the same transaction, because loading a
@@ -213,6 +213,6 @@ its compactor on it, which does not apply to the models tau uses.
   it ("The conversation history before this point was compacted into
   the following summary: <summary>…</summary>"). A later compaction
   passes it to the "update" prompt and never summarizes it again.
-- A `ContextRewritten` event from `tau-luau-plugins` is emitted.
+- A `ContextRewritten` event from `heiko-luau-plugins` is emitted.
 - The next turn sends a full request, because the transcript changed. The
   WebSocket continuation chain restarts from there.

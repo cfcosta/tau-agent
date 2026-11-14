@@ -1,0 +1,1487 @@
+//! One connection per server, shared by every run
+//! (`docs/reference/mcp.md`, "Connections").
+//!
+//! A [`Connection`] starts connecting in the background when the plugin
+//! is built, keeps the server's tools and instructions, lists the tools
+//! again when the server says they changed, and connects again, lazily,
+//! when a call finds it dropped. HTTP connects retry transient errors
+//! after 250 ms and 1 s; tool calls are never retried.
+
+mod phase;
+
+use std::{
+    collections::BTreeMap,
+    fmt,
+    path::PathBuf,
+    sync::{
+        Arc,
+        Mutex,
+        Weak,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+    time::Duration,
+};
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use heiko_ui_plugin::RepoLauncher;
+use tokio::sync::{mpsc, watch};
+use tokio_util::sync::CancellationToken;
+
+use crate::{
+    auth::{GrantKey, SignInRequest, TokenStore},
+    client::{
+        CallError,
+        ConnectError,
+        Endpoint,
+        Features,
+        HttpAuth,
+        ResourceSub,
+        Session,
+        SessionEvent,
+    },
+    config::{
+        EnvLookup,
+        HttpConfig,
+        Origin,
+        ServerConfig,
+        Transport,
+        expand_home,
+        expand_vars,
+    },
+    info::{Annotations, PromptInfo, ResourceInfo, TemplateInfo},
+};
+
+/// The delays before the second and third try of an HTTP connect.
+pub const HTTP_RETRY_DELAYS: [Duration; 2] =
+    [Duration::from_millis(250), Duration::from_secs(1)];
+
+/// How long one connect may take, listing the tools included.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Where a connection is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum State {
+    /// Connecting, or listing its tools.
+    Connecting,
+    Connected,
+    /// Was connected and dropped; the next call connects again.
+    Disconnected,
+    /// Could not connect; the next call tries again.
+    Failed,
+    /// The server asked for a sign-in (or for more scopes). Calls fail
+    /// at once until someone signs in, here or in another process;
+    /// nothing opens a browser on its own.
+    #[serde(rename = "needs-auth")]
+    NeedsAuth,
+    /// Closed with the plugin, or disabled.
+    Closed,
+}
+
+impl fmt::Display for State {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Connecting => "connecting",
+            Self::Connected => "connected",
+            Self::Disconnected => "disconnected",
+            Self::Failed => "failed",
+            Self::NeedsAuth => "needs-auth",
+            Self::Closed => "closed",
+        })
+    }
+}
+
+/// Why a server wants a sign-in.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct AuthNeed {
+    /// The server's `WWW-Authenticate` challenge, when it gave one.
+    pub challenge: Option<String>,
+    /// Scopes it said it needs beyond those granted
+    /// (`insufficient_scope`).
+    pub scope: Option<String>,
+}
+
+impl AuthNeed {
+    pub(crate) fn challenged(challenge: &str) -> Self {
+        Self {
+            challenge: Some(challenge.trim().to_owned()),
+            scope: None,
+        }
+    }
+
+    /// What the connection's error says.
+    pub fn message(&self) -> String {
+        match &self.scope {
+            Some(scope) => format!(
+                "the server needs more access ({scope}): sign in again on \
+                 the MCP servers page"
+            ),
+            None => "the server asks you to sign in: sign in on the MCP \
+                     servers page"
+                .to_owned(),
+        }
+    }
+}
+
+/// A connection's state and its last error.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Status {
+    pub state: State,
+    pub error: Option<String>,
+}
+
+/// A tool as its server lists it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolInfo {
+    /// The server's name for it.
+    pub name: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub input_schema: Value,
+    pub output_schema: Option<Value>,
+    pub annotations: Annotations,
+}
+
+/// A progress notification for a call.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Progress {
+    pub progress: f64,
+    pub total: Option<f64>,
+    pub message: Option<String>,
+}
+
+/// Why a call failed before the server gave a result. Its `Display` is
+/// what the model reads.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CallFailure {
+    /// The server could not be reached.
+    NotConnected { server: String, error: String },
+    /// The server no longer lists the tool.
+    Withdrawn { server: String, tool: String },
+    /// The connection ended during the call. The call is not sent again:
+    /// it may have had its effect.
+    Disconnected { server: String, tool: String },
+    /// No result and no progress within the server's timeout.
+    TimedOut {
+        server: String,
+        tool: String,
+        after: Duration,
+    },
+    /// The run's token fired; the server was told.
+    Cancelled { server: String, tool: String },
+    /// The server answered with a protocol error.
+    Protocol {
+        server: String,
+        tool: String,
+        message: String,
+    },
+}
+
+impl fmt::Display for CallFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotConnected { server, error } => {
+                write!(f, "MCP server {server} is not connected: {error}")
+            }
+            Self::Withdrawn { server, tool } => {
+                write!(f, "Tool {tool} is no longer offered by server {server}")
+            }
+            Self::Disconnected { server, tool } => write!(
+                f,
+                "MCP server {server} closed the connection during the call to {tool}; the call was not retried, and it may have had its effect"
+            ),
+            Self::TimedOut {
+                server,
+                tool,
+                after,
+            } => write!(
+                f,
+                "MCP tool {server}/{tool} gave no result or progress in {} s",
+                after.as_secs_f64()
+            ),
+            Self::Cancelled { server, tool } => {
+                write!(f, "The call to MCP tool {server}/{tool} was cancelled")
+            }
+            Self::Protocol {
+                server,
+                tool,
+                message,
+            } => write!(f, "MCP tool {server}/{tool} failed: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for CallFailure {}
+
+/// What resolving a server's entry needs: heiko's environment for
+/// `${VAR}`, the home directory for `~/`, and the repository, which
+/// relative `cwd`s start from and which servers get as their root.
+#[derive(Clone)]
+pub struct Environment {
+    pub env: EnvLookup,
+    pub home: Option<PathBuf>,
+    pub repo: Option<PathBuf>,
+    /// Where sign-ins are kept; without it, OAuth does not apply and a
+    /// 401 fails the server.
+    pub auth: Option<TokenStore>,
+    /// What stdio servers start through: the repository's launcher, once
+    /// a run gave it. Shared by the clones, so a pool's connections
+    /// take it when it comes.
+    pub launcher: Arc<Mutex<Option<RepoLauncher>>>,
+    /// Why stdio servers may not start here, when they may not: a
+    /// repository whose servers start only in a sandbox it lacks.
+    pub refused: Arc<Mutex<Option<String>>>,
+}
+
+impl Environment {
+    /// The process's environment and `$HOME`, without a grants file.
+    pub fn process(repo: Option<PathBuf>) -> Self {
+        Self {
+            env: crate::config::process_env(),
+            home: std::env::var_os("HOME").map(PathBuf::from),
+            repo,
+            auth: None,
+            launcher: Arc::default(),
+            refused: Arc::default(),
+        }
+    }
+
+    /// Starts stdio servers through `launcher` from now on.
+    pub fn set_launcher(&self, launcher: RepoLauncher) {
+        *self.launcher.lock().expect("launcher lock") = Some(launcher);
+    }
+
+    /// Starts no stdio server from now on, each failing with `why`.
+    pub fn refuse_stdio(&self, why: String) {
+        *self.refused.lock().expect("refused lock") = Some(why);
+    }
+
+    /// The same, keeping sign-ins in `store`.
+    pub fn with_auth(mut self, store: Option<TokenStore>) -> Self {
+        self.auth = store;
+        self
+    }
+}
+
+impl Environment {
+    /// The entry's endpoint, or why it cannot be reached.
+    pub(crate) fn endpoint(
+        &self,
+        config: &ServerConfig,
+    ) -> Result<Endpoint, String> {
+        let expand = |pairs: &[(String, String)]| {
+            pairs
+                .iter()
+                .map(|(key, value)| {
+                    expand_vars(value, &*self.env)
+                        .map(|value| (key.clone(), value))
+                        .map_err(|name| {
+                            format!(
+                                "the environment variable `{name}` is not set"
+                            )
+                        })
+                })
+                .collect::<Result<Vec<_>, String>>()
+        };
+        let home = self.home.as_deref();
+        if let Transport::Stdio(_) = &config.transport
+            && let Some(why) =
+                self.refused.lock().expect("refused lock").clone()
+        {
+            return Err(why);
+        }
+        Ok(match &config.transport {
+            Transport::Stdio(stdio) => Endpoint::Stdio {
+                program: expand_home(&stdio.command, home),
+                args: stdio
+                    .args
+                    .iter()
+                    .map(|arg| expand_home(arg, home))
+                    .collect(),
+                env: expand(&stdio.env)?,
+                launcher: self.launcher.lock().expect("launcher lock").clone(),
+                cwd: stdio.cwd.as_ref().map(|cwd| {
+                    let cwd = PathBuf::from(expand_home(cwd, home));
+                    match &self.repo {
+                        Some(repo) if cwd.is_relative() => repo.join(cwd),
+                        _ => cwd,
+                    }
+                }),
+            },
+            Transport::Http(http) => Endpoint::Http {
+                url: http.url.clone(),
+                headers: expand(&http.headers)?,
+                auth: match self.oauth(config) {
+                    Some((store, key)) => Some(HttpAuth {
+                        store,
+                        key,
+                        client_secret: self.client_secret(http)?,
+                    }),
+                    None => None,
+                },
+            },
+            Transport::Stream(dial) => Endpoint::Stream(dial.clone()),
+        })
+    }
+}
+
+impl Environment {
+    /// Where `config`'s sign-in is kept, when OAuth applies: an HTTP
+    /// server without an `Authorization` header, and a grants file.
+    pub fn oauth(
+        &self,
+        config: &ServerConfig,
+    ) -> Option<(TokenStore, GrantKey)> {
+        let Transport::Http(http) = &config.transport else {
+            return None;
+        };
+        let store = self.auth.clone().filter(|_| http.uses_oauth())?;
+        let key = GrantKey {
+            url: http.url.clone(),
+            client: http.oauth.as_ref().and_then(|o| o.client_id.clone()),
+        };
+        Some((store, key))
+    }
+
+    /// The configured client's secret, `${VAR}` expanded.
+    fn client_secret(
+        &self,
+        http: &HttpConfig,
+    ) -> Result<Option<String>, String> {
+        http.oauth
+            .as_ref()
+            .and_then(|oauth| oauth.client_secret.as_deref())
+            .map(|secret| {
+                expand_vars(secret, &*self.env).map_err(|name| {
+                    format!("the environment variable `{name}` is not set")
+                })
+            })
+            .transpose()
+    }
+}
+
+#[derive(Default)]
+struct Inner {
+    session: Option<Arc<Session>>,
+    /// The last tools listed; kept while disconnected, so a call to one
+    /// connects again.
+    tools: Vec<ToolInfo>,
+    /// What the server offers besides tools, and the lists of it; kept
+    /// while disconnected, like the tools.
+    features: Features,
+    resources: Vec<ResourceInfo>,
+    templates: Vec<TemplateInfo>,
+    prompts: Vec<PromptInfo>,
+    instructions: Option<String>,
+    /// The protocol version of the last session.
+    protocol: Option<String>,
+    phase: phase::Phase,
+}
+
+/// What a connect lists: tools always, resources, templates and prompts
+/// when the server offers them.
+struct Lists {
+    tools: Vec<ToolInfo>,
+    resources: Vec<ResourceInfo>,
+    templates: Vec<TemplateInfo>,
+    prompts: Vec<PromptInfo>,
+}
+
+/// What a connect brings: its session, what it listed and the session's
+/// events; or why it failed, and what sign-in the server asked for.
+type Opened = Result<
+    (Arc<Session>, Lists, mpsc::UnboundedReceiver<SessionEvent>),
+    (String, Option<AuthNeed>),
+>;
+
+/// A read-only request: reading a resource or getting a prompt.
+enum ReadOnly<'a> {
+    Resource(&'a str),
+    Prompt(&'a str, serde_json::Map<String, Value>),
+}
+
+impl ReadOnly<'_> {
+    fn what(&self) -> String {
+        match self {
+            Self::Resource(uri) => format!("the read of {uri}"),
+            Self::Prompt(name, _) => format!("the prompt {name}"),
+        }
+    }
+}
+
+/// One server's connection.
+pub struct Connection {
+    config: ServerConfig,
+    origin: Origin,
+    environment: Environment,
+    status: watch::Sender<Status>,
+    inner: Mutex<Inner>,
+    /// Bumped whenever the tools or the instructions change.
+    generation: AtomicU64,
+    /// Whether it ever started connecting.
+    started: AtomicBool,
+    /// Why it waits for a sign-in, and the sign-in it last connected
+    /// under ([`TokenStore::fingerprint`]).
+    auth: Mutex<(Option<AuthNeed>, Option<String>)>,
+    /// Bumped whenever anything [`Self::watch`] reports changes.
+    revision: watch::Sender<u64>,
+    /// The resources watched, by URI: one subscription each, however
+    /// many watch it.
+    watched: Mutex<BTreeMap<String, Watched>>,
+    /// Held while a watch subscribes, so two watches of one resource
+    /// share a subscription.
+    subscribing: tokio::sync::Mutex<()>,
+    /// Names each watch.
+    watches: AtomicU64,
+    /// Whether it is listing and subscribing again on a renewed session
+    /// ([`Self::renew`]): a call waits for that, so the two never race
+    /// to repair the same thing, such as a token the server turned down.
+    renewing: watch::Sender<bool>,
+}
+
+/// One resource's subscription, on one session, and who watches it.
+struct Watched {
+    session: Arc<Session>,
+    subscription: ResourceSub,
+    watchers: BTreeMap<u64, mpsc::UnboundedSender<()>>,
+}
+
+pub use heiko_ui_plugin::{ResourceWatch, WatchError};
+
+/// Stops one watch when it drops.
+struct Unwatch {
+    connection: Arc<Connection>,
+    uri: String,
+    id: u64,
+}
+
+impl Drop for Unwatch {
+    fn drop(&mut self) {
+        self.connection.unwatch(&self.uri, self.id);
+    }
+}
+
+impl Drop for Connection {
+    /// Closes the session once nothing holds the connection: a pool let
+    /// go of it, and the last run that used it ended.
+    fn drop(&mut self) {
+        let session = self
+            .inner
+            .get_mut()
+            .ok()
+            .and_then(|inner| inner.session.take());
+        if let (Some(session), Ok(runtime)) =
+            (session, tokio::runtime::Handle::try_current())
+        {
+            runtime.spawn(async move { session.close().await });
+        }
+    }
+}
+
+impl Connection {
+    /// A connection to `config`'s server, not started: see
+    /// [`Self::connect`]. A disabled server's is closed.
+    pub fn new(
+        config: ServerConfig,
+        origin: Origin,
+        environment: Environment,
+    ) -> Arc<Self> {
+        let (state, phase) = if config.enabled {
+            (State::Disconnected, phase::Phase::default())
+        } else {
+            (State::Closed, phase::Phase::closed())
+        };
+        Arc::new(Self {
+            config,
+            origin,
+            environment,
+            status: watch::channel(Status { state, error: None }).0,
+            inner: Mutex::new(Inner {
+                phase,
+                ..Inner::default()
+            }),
+            generation: AtomicU64::new(0),
+            started: AtomicBool::new(false),
+            auth: Mutex::default(),
+            revision: watch::channel(0).0,
+            watched: Mutex::default(),
+            subscribing: tokio::sync::Mutex::default(),
+            watches: AtomicU64::new(0),
+            renewing: watch::channel(false).0,
+        })
+    }
+
+    /// Where its sign-in is kept, when OAuth applies to it.
+    pub fn oauth(&self) -> Option<(TokenStore, GrantKey)> {
+        self.environment.oauth(&self.config)
+    }
+
+    /// Why it waits for a sign-in, while it does.
+    pub fn auth_need(&self) -> Option<AuthNeed> {
+        (self.status().state == State::NeedsAuth)
+            .then(|| self.auth.lock().expect("auth lock").0.clone())
+            .flatten()
+    }
+
+    /// What signing in to it needs: the grants file, the server, its
+    /// `oauth` block (`clientSecret` expanded) and what it asked for.
+    pub fn sign_in_request(
+        &self,
+    ) -> Result<(TokenStore, SignInRequest), String> {
+        let name = &self.config.name;
+        let Transport::Http(http) = &self.config.transport else {
+            return Err(format!(
+                "`{name}` is not an HTTP server: it has no sign-in"
+            ));
+        };
+        let (store, _) = self.oauth().ok_or_else(|| {
+            format!(
+                "`{name}` sends an Authorization header of its own, or heiko has \
+                 no configuration directory to keep a sign-in in"
+            )
+        })?;
+        let mut oauth = http.oauth.clone().unwrap_or_default();
+        oauth.client_secret = self.environment.client_secret(http)?;
+        let need = self.auth_need().unwrap_or_default();
+        Ok((
+            store,
+            SignInRequest {
+                url: http.url.clone(),
+                oauth,
+                challenge: need.challenge,
+                scope: need.scope,
+            },
+        ))
+    }
+
+    /// Whether its grant changed (a sign-in or sign-out, here or in
+    /// another process) since it last connected.
+    fn grant_changed(&self) -> bool {
+        let Some((store, key)) = self.oauth() else {
+            return false;
+        };
+        let now = store.fingerprint(&key);
+        self.auth.lock().expect("auth lock").1 != now
+    }
+
+    /// Drops the session, if any, and connects again: after a sign-in
+    /// or a sign-out. A connect under way began under the grant before,
+    /// so it connects again once it ends.
+    pub fn restart(self: &Arc<Self>) {
+        let mut inner = self.inner.lock().expect("connection lock");
+        if let Some(session) = inner.session.take() {
+            tokio::spawn(async move { session.close().await });
+        }
+        if inner.phase.take(phase::Input::Restart) != phase::Answer::Connect {
+            // Closed, or a connect under way connects again once it ends.
+            return;
+        }
+        if self.status().state == State::Connected {
+            self.set_status(&inner, State::Disconnected, None);
+        }
+        if self.begin_connect(&mut inner) {
+            drop(inner);
+            let this = self.clone();
+            tokio::spawn(async move { this.run_connect().await });
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.config.name
+    }
+
+    pub fn config(&self) -> &ServerConfig {
+        &self.config
+    }
+
+    pub fn origin(&self) -> Origin {
+        self.origin
+    }
+
+    /// A number that grows whenever the tools or instructions change.
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
+    }
+
+    pub fn status(&self) -> Status {
+        self.status.borrow().clone()
+    }
+
+    /// Publishes the status. It takes the connection's state, so it is
+    /// only published under its lock; a closed connection stays closed.
+    fn set_status(&self, inner: &Inner, state: State, error: Option<String>) {
+        if inner.phase.is_closed() && state != State::Closed {
+            return;
+        }
+        self.status.send_replace(Status { state, error });
+        self.revision.send_modify(|revision| *revision += 1);
+    }
+
+    fn changed(&self) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        self.revision.send_modify(|revision| *revision += 1);
+    }
+
+    /// A receiver that sees a change whenever the status, the tools, the
+    /// instructions, the resources, the templates or the prompts change,
+    /// for an interface that shows them. It ends when the connection is
+    /// dropped.
+    pub fn watch(&self) -> watch::Receiver<u64> {
+        self.revision.subscribe()
+    }
+
+    /// The tools last listed.
+    pub fn tools(&self) -> Vec<ToolInfo> {
+        self.inner.lock().expect("connection lock").tools.clone()
+    }
+
+    pub fn instructions(&self) -> Option<String> {
+        self.inner
+            .lock()
+            .expect("connection lock")
+            .instructions
+            .clone()
+    }
+
+    /// The protocol version the last session agreed on with the server,
+    /// such as `2025-11-25`; none before the first connect.
+    pub fn protocol(&self) -> Option<String> {
+        self.inner.lock().expect("connection lock").protocol.clone()
+    }
+
+    /// Whether the server lists `tool` now.
+    pub fn offers(&self, tool: &str) -> bool {
+        self.inner
+            .lock()
+            .expect("connection lock")
+            .tools
+            .iter()
+            .any(|info| info.name == tool)
+    }
+
+    /// Whether the server offers resources.
+    pub fn offers_resources(&self) -> bool {
+        self.inner
+            .lock()
+            .expect("connection lock")
+            .features
+            .resources
+    }
+
+    /// Whether the server offers prompts.
+    pub fn offers_prompts(&self) -> bool {
+        self.inner.lock().expect("connection lock").features.prompts
+    }
+
+    /// The resources last listed, but MCP apps' (`ui://`).
+    pub fn resources(&self) -> Vec<ResourceInfo> {
+        self.inner
+            .lock()
+            .expect("connection lock")
+            .resources
+            .clone()
+    }
+
+    /// The resource templates last listed, but MCP apps'.
+    pub fn templates(&self) -> Vec<TemplateInfo> {
+        self.inner
+            .lock()
+            .expect("connection lock")
+            .templates
+            .clone()
+    }
+
+    /// The prompts last listed.
+    pub fn prompts(&self) -> Vec<PromptInfo> {
+        self.inner.lock().expect("connection lock").prompts.clone()
+    }
+
+    /// Whether it ever started connecting.
+    pub fn started(&self) -> bool {
+        self.started.load(Ordering::SeqCst)
+    }
+
+    /// Starts connecting in the background if it never did: a server
+    /// that failed is not tried again here, only by a call,
+    /// [`Self::connect`] or a reconnect.
+    pub fn start(self: &Arc<Self>) {
+        if !self.started() {
+            self.connect();
+        }
+    }
+
+    /// Starts connecting in the background, unless the connection is
+    /// connected, connecting, or closed.
+    pub fn connect(self: &Arc<Self>) {
+        let mut inner = self.inner.lock().expect("connection lock");
+        if self.begin_connect(&mut inner) {
+            drop(inner);
+            let this = self.clone();
+            tokio::spawn(async move { this.run_connect().await });
+        }
+    }
+
+    /// Marks a connect under way, unless the connection is connected,
+    /// connecting, or closed. Whether one began; the caller runs it.
+    fn begin_connect(&self, inner: &mut Inner) -> bool {
+        let live = inner.session.as_ref().is_some_and(|s| !s.is_closed());
+        if live || inner.phase.take(phase::Input::Begin) != phase::Answer::Run {
+            return false;
+        }
+        self.started.store(true, Ordering::SeqCst);
+        self.set_status(inner, State::Connecting, None);
+        let seen = self
+            .oauth()
+            .and_then(|(store, key)| store.fingerprint(&key));
+        *self.auth.lock().expect("auth lock") = (None, seen);
+        true
+    }
+
+    /// Runs the connect [`Self::begin_connect`] marked, and the ones a
+    /// restart asks for meanwhile.
+    async fn run_connect(self: Arc<Self>) {
+        loop {
+            let outcome = tokio::time::timeout(CONNECT_TIMEOUT, self.open())
+                .await
+                .unwrap_or_else(|_| {
+                    Err((
+                        format!("no answer in {} s", CONNECT_TIMEOUT.as_secs()),
+                        None,
+                    ))
+                });
+            if !self.land(outcome) {
+                return;
+            }
+        }
+    }
+
+    /// Takes what a connect brought, under the lock. True when a restart
+    /// came meanwhile: what it brought is dropped, and another connect
+    /// is marked for the caller to run.
+    fn land(self: &Arc<Self>, outcome: Opened) -> bool {
+        let mut inner = self.inner.lock().expect("connection lock");
+        let answer = inner.phase.take(phase::Input::Land);
+        if answer != phase::Answer::Keep {
+            if let Ok((session, ..)) = outcome {
+                tokio::spawn(async move { session.close().await });
+            }
+            return answer == phase::Answer::Again
+                && self.begin_connect(&mut inner);
+        }
+        match outcome {
+            Ok((session, lists, events)) => {
+                inner.instructions = session.instructions().map(str::to_owned);
+                inner.protocol = session.protocol().map(str::to_owned);
+                inner.features = session.features();
+                inner.tools = lists.tools;
+                inner.resources = lists.resources;
+                inner.templates = lists.templates;
+                inner.prompts = lists.prompts;
+                inner.session = Some(session.clone());
+                // The generation first: whoever sees `Connected` (a run
+                // waiting in `ready`) must not read the tools cached for
+                // the generation before.
+                self.changed();
+                self.set_status(&inner, State::Connected, None);
+                drop(inner);
+                tokio::spawn(watch_session(
+                    Arc::downgrade(self),
+                    session,
+                    events,
+                ));
+            }
+            Err((error, None)) => {
+                self.set_status(&inner, State::Failed, Some(error));
+            }
+            Err((_, Some(need))) => {
+                let message = need.message();
+                self.auth.lock().expect("auth lock").0 = Some(need);
+                self.set_status(&inner, State::NeedsAuth, Some(message));
+            }
+        }
+        false
+    }
+
+    /// Connects, retrying an HTTP server's transient errors, and lists
+    /// the tools, and the resources, templates and prompts it offers.
+    /// A server that asks for a sign-in fails with why.
+    async fn open(&self) -> Opened {
+        let endpoint = self
+            .environment
+            .endpoint(&self.config)
+            .map_err(|error| (error, None))?;
+        let mut attempt = 0;
+        let (session, events) = loop {
+            let (sender, events) = mpsc::unbounded_channel();
+            let result = Session::connect(
+                &self.config.name,
+                &endpoint,
+                self.environment.repo.as_deref(),
+                sender,
+            )
+            .await;
+            match result {
+                Ok(session) => break (Arc::new(session), events),
+                Err(ConnectError {
+                    transient: true, ..
+                }) if endpoint.is_http()
+                    && attempt < HTTP_RETRY_DELAYS.len() =>
+                {
+                    tokio::time::sleep(HTTP_RETRY_DELAYS[attempt]).await;
+                    attempt += 1;
+                }
+                Err(error) => return Err((error.message, error.auth)),
+            }
+        };
+        let tools = match session.list_tools().await {
+            Ok(tools) => tools,
+            Err(error) => {
+                session.close().await;
+                return Err((error, None));
+            }
+        };
+        // A list that fails leaves it empty: the tools still work.
+        let (resources, templates) =
+            list_resources(&self.config.name, &session).await;
+        let prompts = list_prompts(&self.config.name, &session).await;
+        Ok((
+            session,
+            Lists {
+                tools,
+                resources,
+                templates,
+                prompts,
+            },
+            events,
+        ))
+    }
+
+    /// A live session, connecting first when there is none. Waits for a
+    /// connect under way. Fails when the connect fails, the connection is
+    /// closed, or `cancel` fires.
+    pub(crate) async fn session(
+        self: &Arc<Self>,
+        cancel: &CancellationToken,
+    ) -> Result<Arc<Session>, String> {
+        loop {
+            if self.grant_changed() {
+                // Signed in or out since: the session's authorization is
+                // not the grant's any more.
+                let session =
+                    self.inner.lock().expect("connection lock").session.take();
+                if let Some(session) = session {
+                    tokio::spawn(async move { session.close().await });
+                }
+            } else if self.status().state == State::NeedsAuth {
+                return Err(self
+                    .status()
+                    .error
+                    .unwrap_or_else(|| AuthNeed::default().message()));
+            }
+            let live = {
+                let inner = self.inner.lock().expect("connection lock");
+                inner
+                    .session
+                    .as_ref()
+                    .filter(|session| !session.is_closed())
+                    .cloned()
+            };
+            if let Some(session) = live {
+                let mut renewing = self.renewing.subscribe();
+                tokio::select! {
+                    _ = renewing.wait_for(|renewing| !renewing) => {}
+                    () = cancel.cancelled() => return Err("cancelled".into()),
+                }
+                return Ok(session);
+            }
+            let mut status = self.status.subscribe();
+            self.connect();
+            let settled = tokio::select! {
+                status = status.wait_for(|status| status.state != State::Connecting) => {
+                    status.map(|status| status.clone()).ok()
+                }
+                () = cancel.cancelled() => return Err("cancelled".into()),
+            };
+            match settled {
+                Some(Status {
+                    state: State::Connected,
+                    ..
+                }) => {}
+                Some(Status {
+                    state: State::Closed,
+                    ..
+                })
+                | None => {
+                    return Err("the connection is closed".into());
+                }
+                Some(Status { error, .. }) => {
+                    return Err(
+                        error.unwrap_or_else(|| "cannot connect".into())
+                    );
+                }
+            }
+        }
+    }
+
+    /// Calls the server's tool `tool` with `args` (a JSON object, or
+    /// null for none) and returns its `CallToolResult` as JSON. Connects
+    /// first when the connection dropped; never sends the call twice.
+    /// The server's timeout starts again at each progress notification,
+    /// which also goes to `on_progress`. `cancel` sends
+    /// `notifications/cancelled`; the server may still finish the call.
+    pub async fn call(
+        self: &Arc<Self>,
+        tool: &str,
+        args: Value,
+        on_progress: &(dyn Fn(Progress) + Send + Sync),
+        cancel: &CancellationToken,
+    ) -> Result<Value, CallFailure> {
+        let server = self.config.name.clone();
+        let session = self.session(cancel).await.map_err(|error| {
+            if cancel.is_cancelled() {
+                CallFailure::Cancelled {
+                    server: server.clone(),
+                    tool: tool.to_owned(),
+                }
+            } else {
+                CallFailure::NotConnected {
+                    server: server.clone(),
+                    error,
+                }
+            }
+        })?;
+        if !self.offers(tool) {
+            return Err(CallFailure::Withdrawn {
+                server,
+                tool: tool.to_owned(),
+            });
+        }
+        let arguments = match args {
+            Value::Object(map) => Some(map),
+            Value::Null => None,
+            _ => {
+                return Err(CallFailure::Protocol {
+                    server,
+                    tool: tool.to_owned(),
+                    message: "the arguments must be a JSON object".into(),
+                });
+            }
+        };
+        let result = session
+            .call(tool, arguments, self.config.timeout(), on_progress, cancel)
+            .await;
+        let tool = tool.to_owned();
+        result.map_err(|error| match error {
+            CallError::Disconnected => {
+                self.lost(&session);
+                CallFailure::Disconnected { server, tool }
+            }
+            CallError::Timeout(after) => CallFailure::TimedOut {
+                server,
+                tool,
+                after,
+            },
+            CallError::Cancelled => CallFailure::Cancelled { server, tool },
+            CallError::Protocol(message) => CallFailure::Protocol {
+                server,
+                tool,
+                message,
+            },
+        })
+    }
+
+    /// Reads the resource `uri` and returns its `ReadResourceResult` as
+    /// JSON. Read-only, so a connection that drops under it is connected
+    /// again and the read sent once more.
+    pub async fn read_resource(
+        self: &Arc<Self>,
+        uri: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Value, String> {
+        self.read_only(ReadOnly::Resource(uri), cancel).await
+    }
+
+    /// Gets the prompt `name` with `arguments` and returns its
+    /// `GetPromptResult` as JSON. Read-only: tried twice, as
+    /// [`Self::read_resource`].
+    pub async fn get_prompt(
+        self: &Arc<Self>,
+        name: &str,
+        arguments: serde_json::Map<String, Value>,
+        cancel: &CancellationToken,
+    ) -> Result<Value, String> {
+        self.read_only(ReadOnly::Prompt(name, arguments), cancel)
+            .await
+    }
+
+    async fn read_only(
+        self: &Arc<Self>,
+        request: ReadOnly<'_>,
+        cancel: &CancellationToken,
+    ) -> Result<Value, String> {
+        let server = self.config.name.clone();
+        let timeout = self.config.timeout();
+        let mut tries = 0;
+        loop {
+            tries += 1;
+            let session = self.session(cancel).await.map_err(|error| {
+                if cancel.is_cancelled() {
+                    format!("{} was cancelled", request.what())
+                } else {
+                    format!("MCP server {server} is not connected: {error}")
+                }
+            })?;
+            let features = session.features();
+            let result = match &request {
+                ReadOnly::Resource(uri) => {
+                    if !features.resources {
+                        return Err(format!(
+                            "MCP server {server} does not offer resources"
+                        ));
+                    }
+                    session.read_resource(uri, timeout, cancel).await
+                }
+                ReadOnly::Prompt(name, arguments) => {
+                    if !features.prompts {
+                        return Err(format!(
+                            "MCP server {server} does not offer prompts"
+                        ));
+                    }
+                    session
+                        .get_prompt(name, arguments.clone(), timeout, cancel)
+                        .await
+                }
+            };
+            match result {
+                Ok(value) => return Ok(value),
+                Err(CallError::Disconnected) => {
+                    self.lost(&session);
+                    if tries >= 2 {
+                        return Err(format!(
+                            "MCP server {server} closed the connection during {}",
+                            request.what()
+                        ));
+                    }
+                }
+                Err(CallError::Timeout(after)) => {
+                    return Err(format!(
+                        "MCP server {server} gave no answer to {} in {} s",
+                        request.what(),
+                        after.as_secs_f64()
+                    ));
+                }
+                Err(CallError::Cancelled) => {
+                    return Err(format!("{} was cancelled", request.what()));
+                }
+                Err(CallError::Protocol(message)) => {
+                    return Err(format!(
+                        "MCP server {server} failed {}: {message}",
+                        request.what()
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Watches the resource `uri`, connecting first when there is no
+    /// session: each time the server says it changed, the watch says so.
+    /// Watches of one resource share one subscription.
+    pub async fn watch_resource(
+        self: &Arc<Self>,
+        uri: &str,
+        cancel: &CancellationToken,
+    ) -> Result<ResourceWatch, WatchError> {
+        let server = self.config.name.clone();
+        let session = self.session(cancel).await.map_err(|error| {
+            WatchError::Failed(format!(
+                "MCP server {server} is not connected: {error}"
+            ))
+        })?;
+        let features = session.features();
+        if !features.resources {
+            return Err(WatchError::Unsupported(format!(
+                "MCP server {server} offers no resources"
+            )));
+        }
+        if !features.subscribe {
+            return Err(WatchError::Unsupported(format!(
+                "MCP server {server} does not say when a resource changes: \
+                 a poll can read it instead"
+            )));
+        }
+        let id = self.watches.fetch_add(1, Ordering::SeqCst);
+        let (sender, updates) = mpsc::unbounded_channel();
+        let _subscribing = self.subscribing.lock().await;
+        let joined = {
+            let mut watched = self.watched.lock().expect("watch lock");
+            match watched.get_mut(uri) {
+                Some(watched) if Arc::ptr_eq(&watched.session, &session) => {
+                    watched.watchers.insert(id, sender.clone());
+                    true
+                }
+                _ => false,
+            }
+        };
+        if !joined {
+            let subscription = session
+                .subscribe_resource(uri, self.config.timeout(), cancel)
+                .await
+                .map_err(|error| {
+                    WatchError::Failed(match error {
+                        CallError::Disconnected => format!(
+                            "MCP server {server} closed the connection as it \
+                             subscribed to {uri}"
+                        ),
+                        CallError::Timeout(after) => format!(
+                            "MCP server {server} gave no answer to the \
+                             subscription to {uri} in {} s",
+                            after.as_secs_f64()
+                        ),
+                        CallError::Cancelled => {
+                            format!("the subscription to {uri} was cancelled")
+                        }
+                        CallError::Protocol(message) => format!(
+                            "MCP server {server} would not subscribe to \
+                             {uri}: {message}"
+                        ),
+                    })
+                })?;
+            // A session lost meanwhile already ended its watches.
+            if session.is_closed() {
+                return Err(WatchError::Failed(format!(
+                    "MCP server {server} closed the connection"
+                )));
+            }
+            self.watched.lock().expect("watch lock").insert(
+                uri.to_owned(),
+                Watched {
+                    session,
+                    subscription,
+                    watchers: BTreeMap::from([(id, sender)]),
+                },
+            );
+        }
+        Ok(ResourceWatch::new(
+            updates,
+            Unwatch {
+                connection: self.clone(),
+                uri: uri.to_owned(),
+                id,
+            },
+        ))
+    }
+
+    /// How many resources it subscribes to now.
+    pub fn subscriptions(&self) -> usize {
+        self.watched.lock().expect("watch lock").len()
+    }
+
+    /// Tells `uri`'s watches on `session` that it changed.
+    fn resource_updated(&self, session: &Arc<Session>, uri: &str) {
+        let mut watched = self.watched.lock().expect("watch lock");
+        if let Some(watched) = watched.get_mut(uri)
+            && Arc::ptr_eq(&watched.session, session)
+        {
+            watched
+                .watchers
+                .retain(|_, watcher| watcher.send(()).is_ok());
+        }
+    }
+
+    /// Ends the watch `id` of `uri`; the last one unsubscribes.
+    fn unwatch(&self, uri: &str, id: u64) {
+        let mut watched = self.watched.lock().expect("watch lock");
+        if let Some(entry) = watched.get_mut(uri) {
+            entry.watchers.remove(&id);
+            if entry.watchers.is_empty() {
+                watched.remove(uri);
+            }
+        }
+    }
+
+    /// Waits until the connection is not connecting, or `cancel`.
+    pub async fn settled(&self, cancel: &CancellationToken) {
+        let mut status = self.status.subscribe();
+        tokio::select! {
+            _ = status.wait_for(|status| status.state != State::Connecting) => {}
+            () = cancel.cancelled() => {}
+        }
+    }
+
+    /// Forgets `session` after it failed under a call: the next call
+    /// connects again.
+    pub(crate) fn lost(&self, session: &Arc<Session>) {
+        // Its subscriptions went with it: their watches end, and watch
+        // again on a new one.
+        self.watched
+            .lock()
+            .expect("watch lock")
+            .retain(|_, watched| !Arc::ptr_eq(&watched.session, session));
+        let mut inner = self.inner.lock().expect("connection lock");
+        if inner
+            .session
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, session))
+        {
+            inner.session = None;
+            if self.status().state == State::Connected {
+                self.set_status(
+                    &inner,
+                    State::Disconnected,
+                    Some("the server closed the connection".into()),
+                );
+            }
+        }
+    }
+
+    /// Closes the connection for good.
+    pub async fn shutdown(&self) {
+        self.watched.lock().expect("watch lock").clear();
+        let session = {
+            let mut inner = self.inner.lock().expect("connection lock");
+            inner.phase.take(phase::Input::Close);
+            self.set_status(&inner, State::Closed, None);
+            inner.session.take()
+        };
+        if let Some(session) = session {
+            session.close().await;
+        }
+    }
+
+    /// Lists the tools again, after the server said they changed.
+    async fn relist(&self, session: &Arc<Session>) {
+        let Ok(tools) = session.list_tools().await else {
+            return;
+        };
+        let mut inner = self.inner.lock().expect("connection lock");
+        if inner
+            .session
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, session))
+        {
+            inner.tools = tools;
+            drop(inner);
+            self.changed();
+        }
+    }
+}
+
+impl Connection {
+    /// The server forgot `session` and it goes on anew, as when an HTTP
+    /// server restarts (`docs/reference/mcp.md`, "Lost HTTP sessions"):
+    /// lists what it offers again, listens for list changes again, and
+    /// subscribes every watched resource again, so their watches go on
+    /// and read it again.
+    async fn renew(&self, session: &Arc<Session>) {
+        session.idle().await;
+        if !self.is_current(session) {
+            return;
+        }
+        /// Clears [`Connection::renewing`] however the renewal ends.
+        struct Renewing<'a>(&'a watch::Sender<bool>);
+        impl Drop for Renewing<'_> {
+            fn drop(&mut self) {
+                self.0.send_replace(false);
+            }
+        }
+        self.renewing.send_replace(true);
+        let _renewing = Renewing(&self.renewing);
+        session.listen_for_changes();
+        // Only lists the server gave: the session may be ending too, and
+        // a list that fails would empty what heiko shows.
+        self.relist(session).await;
+        if session.features().resources
+            && let Ok(lists) = try_list_resources(session).await
+        {
+            self.update(session, |inner| {
+                (inner.resources, inner.templates) = lists;
+            });
+        }
+        if session.features().prompts
+            && let Ok(prompts) = session.list_prompts().await
+        {
+            self.update(session, |inner| inner.prompts = prompts);
+        }
+        self.resubscribe(session).await;
+    }
+
+    fn is_current(&self, session: &Arc<Session>) -> bool {
+        self.inner
+            .lock()
+            .expect("connection lock")
+            .session
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, session))
+    }
+
+    /// Subscribes again every resource watched on `session`. One the
+    /// server refuses now ends its watches, as a lost session's do.
+    async fn resubscribe(&self, session: &Arc<Session>) {
+        let _subscribing = self.subscribing.lock().await;
+        let uris: Vec<String> = self
+            .watched
+            .lock()
+            .expect("watch lock")
+            .iter()
+            .filter(|(_, watched)| Arc::ptr_eq(&watched.session, session))
+            .map(|(uri, _)| uri.clone())
+            .collect();
+        for uri in uris {
+            let subscribed = session
+                .subscribe_resource(
+                    &uri,
+                    self.config.timeout(),
+                    &CancellationToken::new(),
+                )
+                .await;
+            let mut watched = self.watched.lock().expect("watch lock");
+            let Some(entry) = watched
+                .get_mut(&uri)
+                .filter(|entry| Arc::ptr_eq(&entry.session, session))
+            else {
+                // Its watches went meanwhile; a new subscription drops,
+                // and unsubscribes.
+                continue;
+            };
+            match subscribed {
+                Ok(subscription) => {
+                    std::mem::replace(&mut entry.subscription, subscription)
+                        .forget();
+                    // What changed before this subscription reached no
+                    // one: its watchers read it again.
+                    entry
+                        .watchers
+                        .retain(|_, watcher| watcher.send(()).is_ok());
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        target: "heiko_mcp::server",
+                        server = self.config.name.as_str(),
+                        "cannot subscribe to {uri} again: {error:?}"
+                    );
+                    if let Some(entry) = watched.remove(&uri) {
+                        entry.subscription.forget();
+                    }
+                }
+            }
+        }
+    }
+
+    /// Lists the resources and templates again, after the server said
+    /// they changed.
+    async fn relist_resources(&self, session: &Arc<Session>) {
+        let (resources, templates) =
+            list_resources(&self.config.name, session).await;
+        self.update(session, |inner| {
+            inner.resources = resources;
+            inner.templates = templates;
+        });
+    }
+
+    /// Lists the prompts again, after the server said they changed.
+    async fn relist_prompts(&self, session: &Arc<Session>) {
+        let prompts = list_prompts(&self.config.name, session).await;
+        self.update(session, |inner| inner.prompts = prompts);
+    }
+
+    /// Applies `change` if `session` is still the connection's.
+    fn update(&self, session: &Arc<Session>, change: impl FnOnce(&mut Inner)) {
+        let mut inner = self.inner.lock().expect("connection lock");
+        if inner
+            .session
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, session))
+        {
+            change(&mut inner);
+            drop(inner);
+            self.changed();
+        }
+    }
+}
+
+/// The server's resources and templates, but MCP apps', when it offers
+/// resources; empty when it does not, or when listing fails.
+async fn list_resources(
+    server: &str,
+    session: &Session,
+) -> (Vec<ResourceInfo>, Vec<TemplateInfo>) {
+    if !session.features().resources {
+        return (Vec::new(), Vec::new());
+    }
+    try_list_resources(session).await.unwrap_or_else(|error| {
+        tracing::warn!(target: "heiko_mcp::server", server, "{error}");
+        (Vec::new(), Vec::new())
+    })
+}
+
+/// The server's resources and templates, but MCP apps'; templates empty
+/// when listing them fails, as a server may offer resources without.
+async fn try_list_resources(
+    session: &Session,
+) -> Result<(Vec<ResourceInfo>, Vec<TemplateInfo>), String> {
+    let resources = session.list_resources().await?;
+    let templates = session.list_templates().await.unwrap_or_default();
+    Ok((
+        resources
+            .into_iter()
+            .filter(|r| {
+                !crate::resources::is_app(&r.uri, r.mime_type.as_deref())
+            })
+            .collect(),
+        templates
+            .into_iter()
+            .filter(|t| {
+                !crate::resources::is_app(
+                    &t.uri_template,
+                    t.mime_type.as_deref(),
+                )
+            })
+            .collect(),
+    ))
+}
+
+/// The server's prompts when it offers them; empty when it does not, or
+/// when listing fails.
+async fn list_prompts(server: &str, session: &Session) -> Vec<PromptInfo> {
+    if !session.features().prompts {
+        return Vec::new();
+    }
+    session.list_prompts().await.unwrap_or_else(|error| {
+        tracing::warn!(target: "heiko_mcp::server", server, "{error}");
+        Vec::new()
+    })
+}
+
+/// Follows a session's events for as long as its connection lives.
+async fn watch_session(
+    connection: Weak<Connection>,
+    session: Arc<Session>,
+    mut events: mpsc::UnboundedReceiver<SessionEvent>,
+) {
+    while let Some(event) = events.recv().await {
+        let Some(connection) = connection.upgrade() else {
+            return;
+        };
+        match event {
+            SessionEvent::ToolsChanged => connection.relist(&session).await,
+            SessionEvent::ResourcesChanged => {
+                connection.relist_resources(&session).await
+            }
+            SessionEvent::PromptsChanged => {
+                connection.relist_prompts(&session).await
+            }
+            SessionEvent::ResourceUpdated(uri) => {
+                connection.resource_updated(&session, &uri);
+            }
+            SessionEvent::Renewed => connection.renew(&session).await,
+            SessionEvent::Stale => {
+                session.ping(connection.config.timeout()).await;
+            }
+            SessionEvent::Closed => {
+                connection.lost(&session);
+                return;
+            }
+        }
+    }
+}

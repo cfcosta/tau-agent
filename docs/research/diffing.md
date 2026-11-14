@@ -3,17 +3,17 @@
 - Status: research
 - Date: 2026-09-28
 
-tau makes diffs in two places today. The `edit` tool
-(`crates/plugins/tau-tools-host/src/edit.rs`, `generate_diff`) uses `similar` to
+heiko makes diffs in two places today. The `edit` tool
+(`crates/plugins/heiko-tools-host/src/edit.rs`, `generate_diff`) uses `similar` to
 build a unified diff with 4 lines of context, and returns it to the
 model. The GPUI app reads that text back (`parse_diff` in
-`crates/tau-ui-remote/src/view.rs`) and draws it line by line in
-`crates/tau-ui-remote/src/ui/transcript.rs`. It drops hunk headers, has no line
+`crates/heiko-ui-remote/src/view.rs`) and draws it line by line in
+`crates/heiko-ui-remote/src/ui/transcript.rs`. It drops hunk headers, has no line
 numbers, no intra-line highlights and no syntax colors.
 
 This note surveys the Rust options and says which to use for each job.
 
-## What tau needs
+## What heiko needs
 
 1. **The edit tool's diff for the model.** A unified diff. It must be
    compact (tokens cost money) and stable: the same edit must give the
@@ -211,7 +211,7 @@ This note surveys the Rust options and says which to use for each job.
   bat's extra grammars. Easier to set up than tree-sitter (one crate, no
   per-language C grammars), slower, and no parse tree.
 - **gpui-component** 0.7.0 (Apache-2.0) has a tree-sitter code view for
-  GPUI. It pins `gpui-pre =0.3.7`, the GPUI tau-ui uses since
+  GPUI. It pins `gpui-pre =0.3.7`, the GPUI heiko-ui uses since
   2026-09-30.
 
 A structural diff is useful for review, not for the model. The model
@@ -290,7 +290,7 @@ The bench code is not in the repo. It is 80 lines and easy to redo.
 
 ## Recommendation
 
-Use different crates for different jobs, behind one small tau type.
+Use different crates for different jobs, behind one small heiko type.
 
 1. **Edit tool (model-facing): keep `similar`, pin the algorithm.**
    Speed does not matter at this size, and `similar` has the smallest
@@ -307,7 +307,7 @@ Use different crates for different jobs, behind one small tau type.
    tree-sitter-highlight, one grammar per language we care about (Rust,
    TOML, Markdown, JSON, shell to start); syntect only if we want many
    languages fast and accept regex speed.
-3. **Fork comparison: use jj-lib.** If tau adopts jj-lib for workspaces,
+3. **Fork comparison: use jj-lib.** If heiko adopts jj-lib for workspaces,
    `MergedTree::diff_stream` gives tree diffs with copies, and
    `jj_core::diff` gives line and word hunks in one pass. Its n-way
    `Merge<T>` also covers "merge fork B back into A". Without jj-lib,
@@ -336,7 +336,7 @@ alone.
    `generate_diff`. Add snapshot tests (insta-style, or plain string
    asserts) for a few edits: one-line change, insert at top, delete at
    end, no trailing newline, CRLF. Record the choice in `tools.md`.
-2. **Add a diff model.** In `tau-ai` or a small `tau-diff` module:
+2. **Add a diff model.** In `heiko-ai` or a small `heiko-diff` module:
    `FileDiff { path, hunks: Vec<Hunk> }`, `Hunk { old_start, new_start,
 lines: Vec<Line> }`, `Line { kind, old_no, new_no, text, spans }`,
    where `spans` are changed byte ranges. Build it from `similar` ops.
@@ -344,11 +344,11 @@ lines: Vec<Line> }`, `Line { kind, old_no, new_no, text, spans }`,
 3. **Return it from `edit`.** Put the hunks in the tool result details
    (not in the model-facing text). Keep `diff` as text for pi
    compatibility.
-4. **Use it in tau-ui.** Replace `parse_diff` with the structured
+4. **Use it in heiko-ui.** Replace `parse_diff` with the structured
    hunks. Add line numbers, hunk headers, and highlighted spans. Keep
    `parse_diff` as a fallback for stored runs that only have text.
 5. **Syntax colors.** Add `tree-sitter-highlight` with a few grammars
-   in tau-ui only, behind a feature so the library stays light. Map
+   in heiko-ui only, behind a feature so the library stays light. Map
    highlight names to theme colors.
 6. **Side-by-side.** A second layout over the same hunks: removed lines
    left, added lines right, context on both, blank rows to align.
@@ -363,7 +363,7 @@ lines: Vec<Line> }`, `Line { kind, old_no, new_no, text, spans }`,
 - Should the model see Histogram or Myers output? Histogram hunks read
   better in code, but we have no evaluation of model edit accuracy
   either way.
-- Does tau-ui take `gpui-component`, or keep its own widgets and add
+- Does heiko-ui take `gpui-component`, or keep its own widgets and add
   tree-sitter directly?
 - How big are real fork diffs? If they are small, jj's diff is enough
   and imara-diff is never needed.

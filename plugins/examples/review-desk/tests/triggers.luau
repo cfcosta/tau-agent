@@ -1,5 +1,5 @@
-local tau = require("tau")
-local t = tau.test
+local heiko = require("heiko")
+local t = heiko.test
 
 t.case("other agents can send it work", function()
   local triggers = t.agent({}):describe().triggers

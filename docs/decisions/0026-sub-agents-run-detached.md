@@ -6,7 +6,7 @@
   `delegate` gives way to `spawn` and `wait`, and a sub-agent outlives
   the call that started it. Amends
   [0024](0024-landings-queue-while-the-parent-works.md): sub-agents
-  join the main chat's landing queue, and tau's turn after a drain
+  join the main chat's landing queue, and heiko's turn after a drain
   reports what they did.
 - Date: 2026-10-04
 
@@ -21,7 +21,7 @@ back", not "stop everything until it is done".
 0015 turned down spawn and wait tools because a sub-agent that
 outlives its call would land while its caller works, and landings then
 happened only between turns. 0024 changed that: landings onto a busy
-main chat wait in its queue, and tau starts main's turn when a landing
+main chat wait in its queue, and heiko starts main's turn when a landing
 leaves conflicts. A detached sub-agent can use that queue.
 
 ## Decision
@@ -48,11 +48,11 @@ leaves conflicts. A detached sub-agent can use that queue.
 
 - A sub-agent that finishes, or stops at a limit, with nobody waiting
   joins main's landing queue (0024), with any conflicts already
-  confirmed. Main asked for the work, so tau lands it whatever it
+  confirmed. Main asked for the work, so heiko lands it whatever it
   conflicts in, as `delegate` did.
 - When main is idle, the queue drains: consecutive sub-agents land one
   after another, and the drain stops after a landing that leaves
-  conflicts. Then **tau starts main's turn with a report**: each
+  conflicts. Then **heiko starts main's turn with a report**: each
   sub-agent's title, its answer, and what landed, with a final line
   asking main to resolve conflicts when there are any. That turn is a
   resolving turn (0024) when there are conflicts.
@@ -69,7 +69,7 @@ leaves conflicts. A detached sub-agent can use that queue.
 - Stopping main's turn does not stop its sub-agents. Each one has its
   own chat with its own Stop.
 - When the person stops main's turn, nothing lands on main right then,
-  and tau starts no turn on it, so Stop means stop. What waits lands,
+  and heiko starts no turn on it, so Stop means stop. What waits lands,
   and is reported, after main's next turn or when another sub-agent
   ends.
 - A sub-agent's chat sits under main as before and closes when it
@@ -78,19 +78,19 @@ leaves conflicts. A detached sub-agent can use that queue.
   person wrote to one that it ended before reading goes to main, whose
   work it is now (decided 2026-10-07): quoted in main's report when
   nobody waited, steered into main's turn when main waited for it, or,
-  with main idle, as the text of tau's turn on main. A message for a
+  with main idle, as the text of heiko's turn on main. A message for a
   sub-agent that ended but has not landed goes to main the same way,
   and the person is told it was sent there. A sub-agent the person
   stopped takes what it never read with it: Stop means stop.
 
 ### Restarts
 
-- A sub-agent cut off by tau closing is dropped at the next start, as
+- A sub-agent cut off by heiko closing is dropped at the next start, as
   before.
 - One that finished and waits in the queue is stored there. It lands,
   and is reported, when the next start drains main.
-- One that finished as tau closed, before tau took its end, joins
-  main's queue at the next start, as if tau had not closed: it lands,
+- One that finished as heiko closed, before heiko took its end, joins
+  main's queue at the next start, as if heiko had not closed: it lands,
   and is reported, as the start drains main.
 
 ### Below main
@@ -120,11 +120,11 @@ both tools refuse.
 - Main's stack can move while a sub-agent works, so its landing can
   conflict where `delegate`'s could not. Main resolves the conflicts in
   the report turn.
-- tau starts main's turns more often: one after each drain that landed
+- heiko starts main's turns more often: one after each drain that landed
   or dropped a sub-agent.
 - A sub-agent's usage no longer counts toward main's turn. It is its
   own run's.
-- `tau-agent` gains a detached start for a forking sub-agent, with its
+- `heiko-agent` gains a detached start for a forking sub-agent, with its
   own events and cancel token. The host follows it like any of its
   runs, and `SubAgentStops` goes.
 - Queued sub-agents carry how they ended (a limit, or a failure) in

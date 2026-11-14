@@ -1,0 +1,95 @@
+# heiko-luau-plugins
+
+The interface half of Luau plugins. A Luau plugin is a package (ADR 0051) in
+heiko's own plugins repository: `heiko.toml`, `src/plugin.luau`, which returns
+`heiko.plugin { ... }`, modules beside it, tests under `tests/` and a README. heiko runs all of
+them as one heiko plugin, each hook in a fresh codemode VM. This crate
+holds what every interface shows of them: what a plugin declares, where
+it stands, the records a run keeps, and the views drawn from them. It
+runs no Luau, so the phone draws what the computer does.
+
+## What it provides
+
+| Item                            | What it is                                                  |
+| ------------------------------- | ----------------------------------------------------------- |
+| `LuauPluginsUi`                 | The `UiPlugin`: the Plugins page, status line, tool cards   |
+| `Declaration`                   | What a plugin declares, read without running its hooks      |
+| `Uses`, `ToolSpec`, `Hooks`     | What it may reach, the tools it adds, the hooks it has      |
+| `Declaration::grown_from`       | What a new version reaches that the allowed one did not     |
+| `Standing`, `Entry`, `Overview` | Where each plugin stands at trunk                           |
+| `TestResult`                    | One case of a plugin's tests                                |
+| `Record`                        | What the host publishes about a run's plugins               |
+| `Act`, `SettingsPage`           | What the page asks the host, and a drawn settings page      |
+| `LuauSettings`                  | The person's settings for each plugin                       |
+| `settings`                      | Settings schemas: `check`, `effective`, `fields`            |
+| `pane`                          | A plugin's settings pane: its own page, or a form           |
+| `repository`                    | The plugins repository's directory (`ROOT`) and first files |
+| `HEIKO_MODULE`                    | The `heiko` Luau module every plugin requires                 |
+| `NAME`, `REPO`, `SKILL`         | `heiko-luau-plugins`, `heiko-plugins`, and the skill's name     |
+
+A plugin's `view`, `settings.view` and tool cards return JSON view
+trees. `ui::draw` turns them into heiko-ui-kit pieces, so drawing needs no
+Luau.
+
+## How it fits
+
+This is the interface half (decisions 0017, 0027 and 0030). Its partner
+is `heiko-luau-plugins-host`, which reads the plugins repository, loads
+each plugin, runs its hooks and publishes the `Record`s this crate
+folds.
+
+It builds on `heiko-ui-plugin` and `heiko-ui-kit`: its views return trees
+the interface draws. It does not depend on `heiko-codemode` or `heiko-agent`.
+
+Used by:
+
+- `heiko-luau-plugins-host`, the host half;
+- `heiko-ui-remote`, which registers `LuauPluginsUi` after the
+  repository's rules and the goal, so theirs hold first;
+- `heiko-ui`, which lists the plugins repository (`REPO`) and creates it
+  under `repository::ROOT` with `repository::first_files`.
+
+## Usage
+
+A plugin's `src/plugin.luau`, shortened from the skill's worked example in
+`plugins/examples/no-friday-deploys`:
+
+```lua
+local heiko = require("heiko")
+
+return heiko.plugin {
+	settings = { default = { days = { "Friday" } } },
+	before_tool = function(call, ctx)
+		local command = call.args.cmd
+		if call.name == "exec_command" and type(command) == "string" and command:find("deploy") then
+			if heiko.contains(ctx.settings.days, ctx.now.weekday) then
+				return heiko.block("No deploys on " .. ctx.now.weekday .. ".")
+			end
+		end
+	end,
+}
+```
+
+Its `Declaration` has `hooks.before_tool` set. A hook that can block a
+call is new reach, so its first version waits on the Plugins screen
+until the person allows it.
+
+## Testing
+
+```sh
+cargo nextest run --release -p heiko-luau-plugins
+```
+
+The tests are unit tests in `src/`: what counts as growth between
+versions, settings checked against their schema and drawn as a form,
+and records folded by plugin. Loading and running plugins is tested in
+`heiko-luau-plugins-host`.
+
+## Further reading
+
+- [0027: Luau plugins, written and rewritten through heiko](../../../docs/decisions/0027-luau-plugins.md)
+- [0029: Every plugin's settings in a pane of their own](../../../docs/decisions/0029-every-plugins-settings-in-a-pane.md)
+- [0017: Plugins bring their own UI](../../../docs/decisions/0017-plugins-bring-their-ui.md)
+- [0030: Host halves are crates](../../../docs/decisions/0030-host-halves-are-crates.md)
+- [Codemode reference](../../../docs/reference/codemode.md), for the
+  sandbox the hooks run in

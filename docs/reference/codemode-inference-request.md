@@ -1,6 +1,6 @@
 # Codemode inference request
 
-`tau_codemode_host::inference::InferRequest` is the host-side request
+`heiko_codemode_host::inference::InferRequest` is the host-side request
 contract for the nested `infer` tool.
 
 The argument object has `task` (required string), `context` (required JSON
@@ -23,7 +23,7 @@ Integer literals in schema-bearing answers outside Luau's exact ±2^53 range
 also fail before conversion to Luau.
 
 `input_text()` contains only the explicit task and serialized context. For a
-schema supported by `tau_agent::schema::inline_refs` and `to_strict`,
+schema supported by `heiko_agent::schema::inline_refs` and `to_strict`,
 `text_format()` supplies the provider's strict JSON schema format. Before
 inlining, a nonmaterializing walk caps the estimated expansion at 4,096 nodes,
 64 levels, and 256 KiB of conservative serialized bytes. It follows local

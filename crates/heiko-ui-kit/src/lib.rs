@@ -1,0 +1,32 @@
+//! heiko's design language, shared by `heiko-ui` and every plugin's UI (ADR
+//! 0017): the theme's tokens, the bundled icons and fonts, the shared
+//! components, the text field, and marked-up text.
+//!
+//! Screens take their look from here and never write their own sizes or
+//! colors; [`design::check`] keeps each crate that way.
+
+pub mod assets;
+pub mod components;
+pub mod design;
+pub mod diff;
+pub mod format;
+pub mod input;
+pub mod markdown;
+pub mod prose;
+pub mod select;
+pub mod syntax;
+pub mod theme;
+pub mod ticker;
+
+use gpui::App;
+
+/// Sets up what the design language needs once per app: the fonts, the
+/// theme, the text field's keys and copying selected text.
+pub fn init(cx: &mut App) {
+    if let Err(error) = assets::load_fonts(cx) {
+        eprintln!("heiko-ui-kit: could not load the bundled fonts: {error}");
+    }
+    cx.set_global(theme::Theme::tokyo_night());
+    input::bind_keys(cx);
+    select::init(cx);
+}

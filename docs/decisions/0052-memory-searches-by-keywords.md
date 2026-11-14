@@ -1,22 +1,22 @@
 # 0052: memory searches by keywords
 
-- Status: accepted. With ColBERT gone, tau-memory moved to Luau
-  ([0050](0050-tau-s-plugins-in-luau.md), gap L, 2026-11-10); its
-  BM25 is `plugins/tau-memory/src/bm25.luau`.
+- Status: accepted. With ColBERT gone, heiko-memory moved to Luau
+  ([0050](0050-heiko-s-plugins-in-luau.md), gap L, 2026-11-10); its
+  BM25 is `plugins/heiko-memory/src/bm25.luau`.
 - Date: 2026-11-09
 
 ## Context
 
-tau-memory searched its notes with ColBERT: docbert's model
+heiko-memory searched its notes with ColBERT: docbert's model
 (`lightonai/GTE-ModernColBERT-v1`, through `docbert-pylate` and candle)
 encoded each note, the embeddings were cached beside the notes, and a
 query ranked them by MaxSim. It replaced BM25 on 2026-09-29, after the
 retrieval evaluation (`eval/harbor.toml`) showed it finding paraphrased
 queries that BM25 missed. BM25 stayed behind the `Index` seam for tests,
-and the host picked one through the `tau.memory-search` service.
+and the host picked one through the `heiko.memory-search` service.
 
-ADR 0050 moved every portable plugin of tau's to Luau and kept
-tau-memory in Rust, for its embeddings and its files. The embeddings
+ADR 0050 moved every portable plugin of heiko's to Luau and kept
+heiko-memory in Rust, for its embeddings and its files. The embeddings
 are the part Luau cannot reach: a model loaded in process, run on
 candle, with a cache of tensors on disk. Files are a reach Luau can be
 given. While memory encodes notes with a model, it cannot move.
@@ -28,14 +28,14 @@ note's title, description, tags and body. The embedding goes, whole:
 
 - `colbert` (the MaxSim index, its encoder trait and its cache) and
   `docbert` (the model as an encoder), and the `docbert` feature.
-- `Search` and the `tau.memory-search` service: there is one way to
+- `Search` and the `heiko.memory-search` service: there is one way to
   search, so nothing chooses one.
 - The `Index` trait: BM25 is the only index, and `Memory` holds it
   directly.
 - The retrieval evaluation (`eval.rs`, `eval/harbor.toml`,
-  `tau-memory-eval`): it compared BM25, ColBERT and the two fused, and
+  `heiko-memory-eval`): it compared BM25, ColBERT and the two fused, and
   with one of them left it measures nothing to choose between.
-- In tau-memory-e2e, the ColBERT arm, its `docbert` feature and
+- In heiko-memory-e2e, the ColBERT arm, its `docbert` feature and
   `--keywords`: memory and transcript search are BM25 there too.
 - `docbert-pylate` and candle, from the workspace, `deny.toml` and the
   flake.
@@ -45,7 +45,7 @@ links reaches what search did not.
 
 ## Consequences
 
-- tau-memory no longer needs anything Luau lacks but its files, and
+- heiko-memory no longer needs anything Luau lacks but its files, and
   can be ported once Luau reaches them.
 - A query worded unlike the note it wants finds it less often. The
   agent writes the queries and can try other words; links carry what

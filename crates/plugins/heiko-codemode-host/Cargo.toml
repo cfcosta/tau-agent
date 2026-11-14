@@ -1,0 +1,44 @@
+[package]
+autotests = false
+name = "heiko-codemode-host"
+description = "The codemode tool: a Luau sandbox that calls heiko's tools and Jev, as a plugin; codemode's host half."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+futures-util.workspace = true
+jsonschema.workspace = true
+libc.workspace = true
+mlua.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+heiko-agent = { workspace = true, features = ["serde"] }
+heiko-ai.workspace = true
+heiko-codemode.workspace = true
+heiko-jev.workspace = true
+heiko-ui-plugin.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+tokio-util.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+heiko-ui-plugin = { workspace = true, features = ["testing"] }
+heiko-store-sqlite.workspace = true
+hegeltest.workspace = true
+heiko-store.workspace = true
+heiko-testing.workspace = true
+heiko-ui-kit.workspace = true
+tokio = { workspace = true, features = [
+  "rt-multi-thread",
+  "time",
+  "test-util",
+] }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

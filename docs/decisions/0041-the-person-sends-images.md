@@ -1,9 +1,9 @@
 # 0041: The person sends images, which the model reads and every interface draws
 
-- Status: accepted. Built: images in `tau_agent::agent::Input` and
+- Status: accepted. Built: images in `heiko_agent::agent::Input` and
   `Prompt`; the composer's attachments, paste and drop in
-  `tau-ui-remote`; the host's uploads in `tau-ui`; `Down::Transient` in
-  `tau-remote`. Reference: [uploads.md](../reference/uploads.md).
+  `heiko-ui-remote`; the host's uploads in `heiko-ui`; `Down::Transient` in
+  `heiko-remote`. Reference: [uploads.md](../reference/uploads.md).
 - Date: 2026-10-13
 
 ## Context

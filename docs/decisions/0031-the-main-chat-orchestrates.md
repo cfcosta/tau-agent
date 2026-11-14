@@ -20,15 +20,15 @@ needs it", so each round of results tended to end the work.
 
 The pieces for main to work as an orchestrator were already there.
 Sub-agents land through main's queue as they end (0024, 0026), a
-landing that conflicts starts tau's turn on main to resolve it, and each
+landing that conflicts starts heiko's turn on main to resolve it, and each
 drain reports to main.
 
 ## Decision
 
 - **No `wait`.** Main spawns and ends its turn. Every sub-agent lands
-  through main's queue, and tau's turn after the drain reports it. The
+  through main's queue, and heiko's turn after the drain reports it. The
   tool, its refusing twin below main, its card and its landing path in
-  `tau-vcs-host` go.
+  `heiko-vcs-host` go.
 - **Main leads.** Each run of a main chat starts with context, ahead of
   the person's message, that says it orchestrates. It splits the
   request into tasks that can go on side by side, spawns a sub-agent for
@@ -51,7 +51,7 @@ drain reports to main.
   call and cost, and those spawned since the person's last message,
   faded, with how they ended. History keeps them all.
 - **8 at once.** `MAX_RUNNING` goes from 4 to 8. A ninth `spawn` is
-  refused and told to end the turn and spawn again when tau reports
+  refused and told to end the turn and spawn again when heiko reports
   one.
 
 ## Alternatives considered

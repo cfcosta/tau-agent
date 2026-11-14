@@ -1,0 +1,706 @@
+//! The host's half of the plugins with their UI (ADR 0017): each one's
+//! state on this host, the context it gets, and what it is asked.
+
+use std::collections::BTreeMap;
+
+use serde_json::Value;
+use heiko_ui_plugin::{
+    ConfigDir,
+    ErasedPlugin,
+    HostCx,
+    PluginValue,
+    Push,
+    RepoCtx,
+    RunCtx,
+    RunKind,
+    SavedSettings,
+    Services,
+    services::names,
+};
+
+use super::*;
+use crate::hosted;
+pub(super) use crate::hosted::Hosted;
+
+impl Host {
+    /// Makes each plugin's host state, takes the slots' fillers from
+    /// them with the person's picks as saved, then asks each to start again the jobs a restart cut off
+    /// (`HostHalf::resume`): once, as the host starts.
+    pub(super) fn host_plugins(&mut self) {
+        let cx = self.host_cx();
+        self.hosted = self.setting_up(hosted::host_all(&cx));
+        let mut fills = hosted::fills(&self.hosted);
+        fills.picks_from(&self.ui_state());
+        *self.slots.lock().expect("not poisoned") = fills;
+        self.setting_up(hosted::resume(&self.hosted, &cx));
+    }
+
+    /// The jobs the host keeps for plugins (ADR 0044), reading the
+    /// repositories as they are listed at each call.
+    pub(super) fn plugin_jobs(
+        runtime: &Runtime,
+        config: &HostConfig,
+        repos: &Arc<Mutex<Vec<RepoSlot>>>,
+        pushes: &mpsc::UnboundedSender<Push>,
+    ) -> heiko_ui_plugin::Jobs {
+        let (live, config) = (repos.clone(), config.clone());
+        let pushes = pushes.clone();
+        heiko_ui_plugin::Jobs::new(
+            runtime.handle().clone(),
+            config.shared_dir(),
+            heiko_ui_plugin::LiveRepos::new(move || {
+                live.lock()
+                    .expect("not poisoned")
+                    .iter()
+                    .map(|slot| repo_ctx_of(&config, slot))
+                    .collect()
+            }),
+            Arc::new(move |push| {
+                let _ = pushes.send(push);
+            }),
+        )
+    }
+
+    /// The person's model as plugins' host halves ask it outside any run
+    /// (ADR 0044): the plan's client while an account is signed in.
+    ///
+    /// It holds the slots weakly: what fills them, such as heiko-titles'
+    /// titler, keeps a [`HostCx`] with this model, and a strong hold
+    /// would keep the slots, the store and its connections' threads
+    /// alive past the host.
+    fn plugin_model(&self) -> heiko_ui_plugin::Model {
+        let (slots, over) =
+            (Arc::downgrade(&self.slots), self.provider_override.clone());
+        heiko_ui_plugin::Model::new(
+            move || {
+                let over = over.lock().expect("not poisoned").clone();
+                over.or_else(|| {
+                    slots
+                        .upgrade()?
+                        .lock()
+                        .expect("not poisoned")
+                        .get(&heiko_ui_plugin::provider::PROVIDER)
+                })?
+                .llm()
+            },
+            self.store.clone(),
+        )
+    }
+
+    /// What every plugin reaches of this host now.
+    pub fn host_cx(&self) -> HostCx {
+        let (settings, path, saving) = (
+            self.settings.clone(),
+            self.config.settings.clone(),
+            self.settings_saving.clone(),
+        );
+        let read = settings.clone();
+        let saved = SavedSettings::new(
+            move |plugin, repo| {
+                let settings = read.lock().expect("not poisoned");
+                repo.and_then(|repo| {
+                    settings.repo_plugins.get(repo)?.get(plugin)
+                })
+                .or_else(|| settings.plugins.get(plugin))
+                .cloned()
+            },
+            move |plugin, repo, value| {
+                {
+                    let mut settings = settings.lock().expect("not poisoned");
+                    match repo {
+                        Some(repo) => {
+                            settings
+                                .repo_plugins
+                                .entry(repo.to_owned())
+                                .or_default()
+                                .insert(plugin.to_owned(), value);
+                        }
+                        None => {
+                            settings.plugins.insert(plugin.to_owned(), value);
+                        }
+                    }
+                }
+                let (settings, path, saving) =
+                    (settings.clone(), path.clone(), saving.clone());
+                Box::pin(async move {
+                    saving
+                        .save(
+                            || settings.lock().expect("not poisoned").clone(),
+                            async move |settings| {
+                                write_settings(&path, &settings).await
+                            },
+                        )
+                        .await
+                })
+            },
+        );
+        // What the app gives (`HostConfig::services`), then the host's
+        // own.
+        let mut services = self
+            .config
+            .services
+            .clone()
+            .offer(names::OUTSIDE_TOOLS, self.outside_tools.clone())
+            .offer(names::OUTSIDE_RESOURCES, self.outside_resources.clone())
+            .offer(names::UNATTENDED, self.unattended.clone())
+            .with(saved)
+            .with(ConfigDir(self.config.credentials.dir.clone()))
+            .with(heiko_ui_plugin::Interrupted(self.interrupted.clone()))
+            .offer(names::MODEL, self.plugin_model())
+            .with(self.plugin_jobs.clone());
+        if let Some(home) = &self.config.home {
+            services = services.with(heiko_ui_plugin::HomeDir(home.clone()));
+        }
+        let conversations: Arc<dyn heiko_ui_plugin::Conversations> =
+            Arc::new(super::conversations::HostConversations {
+                runs: self.runs.clone(),
+                list: self.list.clone(),
+                asks: self.asks.clone(),
+            });
+        let app: Arc<dyn heiko_ui_plugin::app::App> = self.mirror.clone();
+        services = self.provided(
+            services
+                .offer(names::CONVERSATIONS, conversations)
+                .offer(names::APP, app),
+        );
+        let repos = self
+            .repos
+            .lock()
+            .expect("not poisoned")
+            .iter()
+            .map(|slot| self.repo_ctx(slot))
+            .collect();
+        let pushes = self.pushes.clone();
+        HostCx::new(
+            self.store.clone(),
+            self.runtime.handle().clone(),
+            services,
+            self.config.shared_dir(),
+            repos,
+            Arc::new(move |push| {
+                let _ = pushes.send(push);
+            }),
+        )
+    }
+
+    pub(super) fn repo_ctx(&self, slot: &RepoSlot) -> RepoCtx {
+        repo_ctx_of(&self.config, slot)
+    }
+
+    /// The run (or sub-agent) `kind` in `repo` on `choice`, as plugins
+    /// see it.
+    pub(super) fn run_ctx(
+        &self,
+        kind: RunKind,
+        repo: &RepoSlot,
+        choice: &ModelChoice,
+    ) -> RunCtx {
+        let services = self.provided(Services::default());
+        RunCtx {
+            kind,
+            repo: self.repo_ctx(repo),
+            model: choice.model.clone(),
+            effort: choice
+                .effort
+                .reasoning()
+                .map(|effort| effort.as_str().to_owned()),
+            services,
+        }
+    }
+
+    /// This host's conversations, as plugins' host halves drive them
+    /// (ADR 0037).
+    pub fn conversations(&self) -> Arc<dyn heiko_ui_plugin::Conversations> {
+        self.host_cx()
+            .conversations()
+            .expect("the host gives its conversations to every plugin")
+    }
+
+    /// The listed repository `name`, as plugins' host halves see it.
+    pub fn repo(&self, name: &str) -> Option<RepoCtx> {
+        self.slot(name).map(|slot| self.repo_ctx(&slot))
+    }
+
+    /// Where `plugin` keeps its own files on this host.
+    pub fn plugin_dir(&self, plugin: &str) -> PathBuf {
+        self.host_cx().plugin_dir(plugin)
+    }
+
+    /// The saved settings of `plugin`, or its defaults.
+    pub(super) fn plugin_settings(
+        &self,
+        plugin: &dyn ErasedPlugin,
+        repo: Option<&str>,
+    ) -> PluginValue {
+        let settings = self.settings.lock().expect("not poisoned");
+        repo.and_then(|repo| {
+            settings.repo_plugins.get(repo)?.get(plugin.name())
+        })
+        .or_else(|| settings.plugins.get(plugin.name()))
+        .cloned()
+        .map(PluginValue::from_json)
+        .unwrap_or_else(|| plugin.default_settings())
+    }
+
+    /// The repositories' own copies of plugins' settings, by repository,
+    /// then plugin.
+    pub(super) fn repo_plugin_settings(
+        &self,
+    ) -> BTreeMap<String, BTreeMap<String, PluginValue>> {
+        self.settings
+            .lock()
+            .expect("not poisoned")
+            .repo_plugins
+            .iter()
+            .map(|(repo, plugins)| {
+                let plugins = plugins
+                    .iter()
+                    .map(|(plugin, value)| {
+                        (plugin.clone(), PluginValue::from_json(value.clone()))
+                    })
+                    .collect();
+                (repo.clone(), plugins)
+            })
+            .collect()
+    }
+
+    /// What commands in `repo` start through: every plugin's launcher,
+    /// joined in the registry's order; none when no plugin gives one.
+    /// An agent's repository takes heiko-agents' alone, its sandbox (ADR
+    /// 0037): nothing of another plugin's (direnv's `.envrc`) runs
+    /// outside it, and none means its runs have no `bash`.
+    pub(super) async fn launcher_of(
+        &self,
+        repo: &RepoSlot,
+    ) -> Option<Arc<dyn heiko_agent::launch::Launcher>> {
+        let ctx = self.repo_ctx(repo);
+        // A kept-in kind's runs start only through its own plugin's.
+        let only = self
+            .config
+            .kind_of(&repo.path)
+            .filter(|(_, kind)| kind.sandboxed)
+            .map(|(plugin, _)| plugin);
+        let mut launchers: Vec<Arc<dyn heiko_agent::launch::Launcher>> =
+            Vec::new();
+        for hosted in &self.hosted {
+            if only.is_some_and(|plugin| hosted.plugin.name() != plugin) {
+                continue;
+            }
+            let settings =
+                self.plugin_settings(hosted.plugin.as_ref(), Some(&ctx.name));
+            launchers.extend(
+                hosted.plugin.launcher(&hosted.state, &ctx, &settings).await,
+            );
+        }
+        match launchers.len() {
+            0 => None,
+            1 => launchers.pop(),
+            _ => Some(Arc::new(heiko_agent::launch::Launchers(launchers))),
+        }
+    }
+
+    /// Whether a plugin lets a chat in `repo`, working in `workspace`,
+    /// land by itself (ADR 0034).
+    pub(super) async fn lands_itself(
+        &self,
+        repo: &RepoSlot,
+        workspace: &Path,
+    ) -> bool {
+        let ctx = self.repo_ctx(repo);
+        for hosted in &self.hosted {
+            if hosted
+                .plugin
+                .lands_itself(&hosted.state, &ctx, workspace)
+                .await
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Each plugin's part of the agents in `repo`, with its settings
+    /// there: what builds a run's agent, and its sub-agents'.
+    pub(super) async fn registered(&self, repo: &RepoSlot) -> Registered {
+        // A kind of heiko's own repository may leave plugins out of its
+        // runs: an agent asks through heiko-agents' own `ask`, not heiko-ask's,
+        // which holds the turn open for a person who is not watching
+        // (ADR 0037).
+        let without = self
+            .config
+            .kind_of(&repo.path)
+            .map_or(&[][..], |(_, kind)| kind.without);
+        let hosted: Vec<(Hosted, PluginValue)> = self
+            .hosted
+            .iter()
+            .filter(|hosted| !without.contains(&hosted.plugin.name()))
+            .map(|hosted| {
+                (
+                    hosted.clone(),
+                    self.plugin_settings(
+                        hosted.plugin.as_ref(),
+                        Some(&repo.name),
+                    ),
+                )
+            })
+            .collect();
+        // The repository's own commands (its MCP servers) start through
+        // what the plugins give it, in its main workspace.
+        let repo_launcher = self.launcher_of(repo).await.and_then(|launcher| {
+            let repository = repo.project.ready()?;
+            Some(heiko_ui_plugin::RepoLauncher {
+                launcher,
+                dir: repository.workspace_dir(repository.main_workspace()),
+            })
+        });
+        Registered {
+            hosted: Arc::new(hosted),
+            repo: self.repo_ctx(repo),
+            // A plugin that runs others leaves out those the kind names.
+            provided: self
+                .provided(Services::default())
+                .with(heiko_ui_plugin::LeftOut(without)),
+            repo_launcher,
+        }
+    }
+
+    /// Tells every plugin that the workspace at `dir` of `run`'s
+    /// repository closed (`HostHalf::workspace_closed`): what it kept
+    /// there, such as the commands left running, ends.
+    pub(super) async fn workspace_closed(&self, run: &RunId, dir: &Path) {
+        let Ok(slot) = self.slot_of_run(run).await else {
+            return;
+        };
+        let repo = self.repo_ctx(&slot);
+        for hosted in &self.hosted {
+            hosted
+                .plugin
+                .workspace_closed(&hosted.state, &repo, dir)
+                .await;
+        }
+    }
+
+    /// What plugins say as `run` starts or goes on, by plugin, to fold
+    /// into its view.
+    pub(super) async fn starting(&self, run: &RunCtx) -> Vec<(String, Value)> {
+        let mut said = Vec::new();
+        for hosted in &self.hosted {
+            let settings = self
+                .plugin_settings(hosted.plugin.as_ref(), Some(&run.repo.name));
+            said.extend(
+                hosted
+                    .plugin
+                    .starting(&hosted.state, run, &settings)
+                    .await
+                    .into_iter()
+                    .map(|body| (hosted.plugin.name().to_owned(), body)),
+            );
+        }
+        said
+    }
+
+    /// Each plugin's catalog entry, its data, and its settings.
+    pub(super) async fn registered_catalog(&self) -> hosted::Catalogued {
+        hosted::catalog(&self.hosted, &self.host_cx(), |plugin| {
+            self.plugin_settings(plugin, None)
+        })
+        .await
+    }
+
+    /// Each plugin's data for the repository in `slot`.
+    pub(super) async fn registered_repo_data(
+        &self,
+        slot: &RepoSlot,
+    ) -> BTreeMap<String, PluginValue> {
+        hosted::repo_data(&self.hosted, &self.repo_ctx(slot), &self.host_cx())
+            .await
+    }
+
+    /// The model and effort the person's messages in the repository in
+    /// `slot` go to unless they pick others, when a plugin sets them.
+    pub(super) async fn conversation_model(
+        &self,
+        slot: &RepoSlot,
+    ) -> Option<ModelChoice> {
+        hosted::conversation_model(&self.hosted, &self.repo_ctx(slot))
+            .await
+            .map(|pick| {
+                self.models().fit(ModelChoice::new(
+                    pick.model,
+                    Effort::parse(&pick.effort).unwrap_or(Effort::Auto),
+                ))
+            })
+    }
+
+    /// Tells every plugin that first-run setup ended with `repos` picked.
+    pub async fn setup_finished(
+        &self,
+        repos: &[heiko_ui_plugin::points::SetupRepo],
+    ) {
+        hosted::setup_finished(&self.hosted, repos, &self.host_cx()).await
+    }
+
+    /// Carries out what `plugin`'s UI asked; its answer, if any, goes
+    /// back to the UI.
+    pub async fn plugin_act(
+        &self,
+        plugin: &str,
+        action: Value,
+    ) -> anyhow::Result<Option<Value>> {
+        hosted::act(&self.hosted, plugin, action, &self.host_cx()).await
+    }
+
+    /// Starts with `value` as `plugin`'s settings everywhere, unsaved:
+    /// for a host that must not take a plugin's defaults, as in tests
+    /// whose scripted model answers only the requests they script.
+    pub fn with_plugin_settings(self, plugin: &str, value: Value) -> Self {
+        self.settings
+            .lock()
+            .expect("not poisoned")
+            .plugins
+            .insert(plugin.to_owned(), value);
+        self
+    }
+
+    /// Saves `plugin`'s settings with the model settings; runs started
+    /// from now on take them.
+    pub async fn save_plugin_settings(
+        &self,
+        plugin: &str,
+        repo: Option<String>,
+        value: Option<Value>,
+    ) -> anyhow::Result<()> {
+        let plugin = plugin.to_owned();
+        self.change_settings(move |settings| match (repo, value) {
+            (None, Some(value)) => {
+                settings.plugins.insert(plugin, value);
+            }
+            (Some(repo), Some(value)) => {
+                settings
+                    .repo_plugins
+                    .entry(repo)
+                    .or_default()
+                    .insert(plugin, value);
+            }
+            (Some(repo), None) => {
+                if let Some(plugins) = settings.repo_plugins.get_mut(&repo) {
+                    plugins.remove(&plugin);
+                    if plugins.is_empty() {
+                        settings.repo_plugins.remove(&repo);
+                    }
+                }
+            }
+            (None, None) => {}
+        })
+        .await
+    }
+
+    /// Stores `body` as `plugin`'s record with `run`: a change the
+    /// interface made and folded already.
+    pub async fn store_plugin_record(
+        &self,
+        run: &RunId,
+        plugin: &str,
+        body: &Value,
+    ) -> anyhow::Result<()> {
+        let entry = Entry::Plugin {
+            plugin: plugin.to_owned(),
+            body: body.to_string(),
+        };
+        self.store
+            .append_turn(&run.0, &[entry], heiko_store::TurnUsage::default())
+            .await?;
+        Ok(())
+    }
+
+    /// What plugins say as `run` goes on, on `choice`.
+    pub async fn starting_of(
+        &self,
+        run: &RunId,
+        choice: &ModelChoice,
+    ) -> Vec<(String, Value)> {
+        let Ok(slot) = self.slot_of_run(run).await else {
+            return Vec::new();
+        };
+        let kind = if self.is_main(run) {
+            RunKind::Main
+        } else {
+            RunKind::Chat
+        };
+        self.starting(&self.run_ctx(kind, &slot, choice)).await
+    }
+}
+
+/// Each plugin's part of the agents in one repository, in the
+/// registry's order, with its settings there ([`Host::registered`]).
+#[derive(Clone)]
+pub(super) struct Registered {
+    hosted: Arc<Vec<(Hosted, PluginValue)>>,
+    repo: RepoCtx,
+    /// What the plugins provided as it was made (`HostHalf::provide`).
+    provided: Services,
+    repo_launcher: Option<heiko_ui_plugin::RepoLauncher>,
+}
+
+impl Registered {
+    /// The run (or sub-agent) `kind` on `choice`, with what its
+    /// workspace offers (`services`), as plugins see it.
+    pub(super) fn run(
+        &self,
+        kind: RunKind,
+        choice: &ModelChoice,
+        mut services: Services,
+    ) -> RunCtx {
+        services = services.and(&self.provided);
+        if let Some(launcher) = &self.repo_launcher {
+            services = services.offer(names::REPO_LAUNCHER, launcher.clone());
+        }
+        RunCtx {
+            kind,
+            repo: self.repo.clone(),
+            model: choice.model.clone(),
+            effort: choice
+                .effort
+                .reasoning()
+                .map(|effort| effort.as_str().to_owned()),
+            services,
+        }
+    }
+
+    /// A run's instructions: heiko's first sentence, each plugin's part
+    /// (`HostHalf::prompt`), then heiko's last. They do not hang on the
+    /// run's kind, so every run reads the others' prompt cache (ADR
+    /// 0022).
+    pub(super) fn instructions(&self, kind: RunKind) -> String {
+        let mut parts = vec![LEAD.to_owned()];
+        for (hosted, settings) in self.hosted.iter() {
+            parts.extend(
+                hosted
+                    .plugin
+                    .prompt(&hosted.state, kind, settings)
+                    .instructions,
+            );
+        }
+        parts.push(CLOSING.to_owned());
+        parts.join(" ")
+    }
+
+    /// `agent` with what plugins put before a run of `kind`'s first
+    /// message (`Prompt::context`), when any does.
+    pub(super) fn with_context(&self, agent: Agent, kind: RunKind) -> Agent {
+        let context: Vec<String> = self
+            .hosted
+            .iter()
+            .filter_map(|(hosted, settings)| {
+                hosted.plugin.prompt(&hosted.state, kind, settings).context
+            })
+            .collect();
+        if context.is_empty() {
+            agent
+        } else {
+            agent.plugin(PluginContext(context))
+        }
+    }
+
+    /// `agent` with what the workspace of `run` brings, in the order
+    /// every run declares them (ADR 0022): each plugin's tools with
+    /// state per workspace (`HostHalf::run_tools`), the VCS's parts,
+    /// then the repository's instructions, which come after the
+    /// workspace, as it makes the directory when the run starts.
+    pub(super) async fn on_workspace(
+        &self,
+        agent: Agent,
+        workspace: &dyn RunWorkspace,
+        run: &RunCtx,
+    ) -> anyhow::Result<Agent> {
+        let mut agent = agent;
+        for (hosted, settings) in self.hosted.iter() {
+            agent = hosted
+                .plugin
+                .run_tools(&hosted.state, run, settings)
+                .await?
+                .into_iter()
+                .fold(agent, Agent::boxed_plugin);
+        }
+        Ok(workspace
+            .agent_plugins()
+            .into_iter()
+            .fold(agent, Agent::boxed_plugin)
+            .plugin(RepoInstructions {
+                dir: workspace.dir(),
+            }))
+    }
+
+    /// `agent` with each plugin's agent plugins
+    /// (`HostHalf::agent_plugins`), after the rest: the repository's
+    /// rules check what the tools do, heiko-goal's hold of a stop comes
+    /// after theirs, and context compaction goes by the run's model. A
+    /// plugin that cannot build its own fails the run.
+    pub(super) async fn agent_plugins(
+        &self,
+        agent: Agent,
+        run: &RunCtx,
+    ) -> anyhow::Result<Agent> {
+        let mut agent = agent;
+        for (hosted, settings) in self.hosted.iter() {
+            agent = hosted
+                .plugin
+                .agent_plugins(&hosted.state, run, settings)
+                .await?
+                .into_iter()
+                .fold(agent, Agent::boxed_plugin);
+        }
+        Ok(agent)
+    }
+}
+
+/// What a push from a plugin's host half does to the interface.
+pub(super) fn apply_push(
+    host: &Arc<Host>,
+    push: Push,
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) {
+    match push {
+        Push::Record { run, plugin, body } => workspace.update(cx, |ws, cx| {
+            ws.apply(HostUpdate::PluginRecord { run, plugin, body }, cx)
+        }),
+        Push::Catalog => host.catalog_changed(),
+        Push::Alert { title, message } => workspace.update(cx, |ws, cx| {
+            ws.apply(HostUpdate::alert(title, message), cx)
+        }),
+        Push::OpenUrl(url) => cx.open_url(&url),
+    }
+}
+
+/// The repository in `slot`, as plugins see it. A local repository
+/// (ADR 0043) is the person's folder, and heiko's directory for it, which
+/// holds its workspaces too, is under [`HostConfig::local_dir`].
+fn repo_ctx_of(config: &HostConfig, slot: &RepoSlot) -> RepoCtx {
+    if let Some(local) = &slot.local {
+        let dir = config.local_dir(&slot.id);
+        return RepoCtx {
+            id: slot.id.clone(),
+            name: slot.name.clone(),
+            remote: slot.remote.clone(),
+            folder: Some(local.folder.clone()),
+            checkout: slot.path.clone(),
+            dir: dir.clone(),
+            workspaces: dir,
+        };
+    }
+    RepoCtx {
+        id: slot.id.clone(),
+        name: slot.name.clone(),
+        remote: slot.remote.clone(),
+        folder: None,
+        checkout: slot.path.clone(),
+        dir: config.project_dir_of(&slot.path),
+        // The project's root once imported; until then, where it
+        // will be.
+        workspaces: match slot.project.ready() {
+            Some(repository) => repository.root().to_owned(),
+            None => config.project_dir_of(&slot.path),
+        },
+    }
+}

@@ -1,8 +1,8 @@
 [workspace]
 # The app, core crates, then plugins (docs/decisions/0006-plugin-crates.md),
-# then evaluations that run agents end to end. `crates/tau-terminal`
-# stands alone: it depends on no other tau crate.
-members = ["crates/tau", "crates/tau-*", "crates/plugins/*", "crates/evals/*"]
+# then evaluations that run agents end to end. `crates/heiko-terminal`
+# stands alone: it depends on no other heiko crate.
+members = ["crates/heiko", "crates/heiko-*", "crates/plugins/*", "crates/evals/*"]
 resolver = "3"
 
 [workspace.package]
@@ -10,7 +10,7 @@ version = "0.1.0"
 edition = "2024"
 repository = "https://github.com/cfcosta/tau-agent"
 license = "MIT"
-# Not on crates.io: tau is an app, and it depends on git crates.
+# Not on crates.io: heiko is an app, and it depends on git crates.
 publish = false
 
 [workspace.dependencies]
@@ -21,7 +21,7 @@ futures-util = { version = "0.3.34", default-features = false, features = [
   "std",
 ] }
 base64 = "0.23.1"
-# tau-vcs's own git work: cloning a source and reading its blobs. Kept
+# heiko-vcs's own git work: cloning a source and reading its blobs. Kept
 # at the gix jj-lib builds on, so the two share one copy; move it only
 # when jj-lib does.
 gix = { version = "0.90.0", default-features = false }
@@ -32,10 +32,10 @@ hegeltest = { version = "0.48.1", features = ["serde_json", "static-engine"] }
 # hegel's engine, which Luau plugins' property tests drive (ADR 0049):
 # the version hegeltest links.
 hegeltest-c = "=0.44.1"
-# The computer's addresses a phone could reach it at (tau-ui's Phones).
+# The computer's addresses a phone could reach it at (heiko-ui's Phones).
 if-addrs = "0.15.0"
 ignore = "0.4.33"
-# Syntax highlighting of code in cards and replies (tau-ui-kit's
+# Syntax highlighting of code in cards and replies (heiko-ui-kit's
 # `syntax`): the highlighter, which brings the parser, and one grammar
 # per language.
 tree-sitter-highlight = "0.27.0"
@@ -55,7 +55,7 @@ libc = "0.2.189"
 mlua = { version = "0.12.2", features = ["luau", "async", "send", "serde"] }
 # Codemode's cards show scripts formatted; the library half, for Luau.
 stylua = { version = "2.5.2", default-features = false, features = ["luau"] }
-# The terminal emulator behind tau-terminal
+# The terminal emulator behind heiko-terminal
 # (docs/decisions/0010-terminal-rendering.md). The -sys crate finds the
 # library through pkg-config (the flake's `libghostty-vt`), never git or
 # Zig. Its version pins a Ghostty commit, and flake.nix's `ghostty`
@@ -73,19 +73,19 @@ image = { version = "0.25.10", default-features = false, features = [
 ] }
 jj-lib = "=0.47.0"
 # Where jj's config is, and the computer's and the person's names, found
-# as jj-cli 0.47 finds them (tau-vcs-host's `config`). The rng is
+# as jj-cli 0.47 finds them (heiko-vcs-host's `config`). The rng is
 # jj-lib's, for the repository config ids it reads.
 etcetera = "0.11.0"
 rand = "0.10.1"
 rand_chacha = "0.10.0"
 whoami = { version = "2.1.3", default-features = false, features = ["std"] }
 # The time a revset's dates count from, in jj-lib's own type
-# (tau-vcs-host's `revsets`); the version jj-lib builds with.
+# (heiko-vcs-host's `revsets`); the version jj-lib builds with.
 jiff = "0.2.37"
 jsonschema = { version = "0.58.2", default-features = false }
 pollster = "1.0.1"
 # Model replies are CommonMark with GitHub's tables; only the parser, no
-# HTML output (tau-ui).
+# HTML output (heiko-ui).
 pulldown-cmark = { version = "0.13.4", default-features = false }
 # The pairing code, drawn as a QR code; only its matrix, no images.
 qrcode = { version = "0.14.1", default-features = false }
@@ -124,7 +124,7 @@ unicode-normalization = "0.1.25"
 turmoil = "0.7.2"
 uuid = { version = "1.26.1", features = ["v7"] }
 webpki-roots = "1.0.9"
-# tau-remote: the host's self-signed certificate, its fingerprint, and
+# heiko-remote: the host's self-signed certificate, its fingerprint, and
 # the random pairing secrets and device tokens.
 rcgen = { version = "0.14", default-features = false, features = [
   "crypto",
@@ -142,37 +142,37 @@ tokio-tungstenite = { version = "0.30.0", default-features = false, features = [
 ] }
 tokio-util = { version = "0.7.19", default-features = false }
 tokio = { version = "1.53.1", features = ["macros", "rt", "sync", "time"] }
-tau-agent = { path = "crates/tau-agent", version = "0.1.0" }
-tau-direnv = { path = "crates/plugins/tau-direnv", version = "0.1.0" }
-tau-phones = { path = "crates/plugins/tau-phones", version = "0.1.0" }
-tau-sqlite = { path = "crates/plugins/tau-sqlite", version = "0.1.0" }
-tau-chatgpt = { path = "crates/plugins/tau-chatgpt", version = "0.1.0" }
-tau-codemode = { path = "crates/plugins/tau-codemode", version = "0.1.0" }
-tau-codemode-host = { path = "crates/plugins/tau-codemode-host", version = "0.1.0" }
-tau-agents = { path = "crates/plugins/tau-agents", version = "0.1.0" }
-tau-agents-host = { path = "crates/plugins/tau-agents-host", version = "0.1.0" }
-tau-clock = { path = "crates/tau-clock", version = "0.1.0" }
-tau-scripted = { path = "crates/tau-scripted", version = "0.1.0" }
-tau-luau-plugins = { path = "crates/plugins/tau-luau-plugins", version = "0.1.0" }
-tau-luau-plugins-host = { path = "crates/plugins/tau-luau-plugins-host", version = "0.1.0" }
-tau-jev = { path = "crates/plugins/tau-jev", version = "0.1.0" }
-tau-mcp = { path = "crates/plugins/tau-mcp", version = "0.1.0" }
-tau-mcp-host = { path = "crates/plugins/tau-mcp-host", version = "0.1.0" }
-tau-ai = { path = "crates/tau-ai", version = "0.1.0" }
-tau-artifacts = { path = "crates/tau-artifacts", version = "0.1.0" }
-tau-store = { path = "crates/tau-store", version = "0.1.0" }
-tau-store-sqlite = { path = "crates/tau-store-sqlite", version = "0.1.0" }
-tau-terminal = { path = "crates/tau-terminal", version = "0.1.0" }
-tau-testing = { path = "crates/tau-testing", version = "0.1.0" }
-tau-tools = { path = "crates/plugins/tau-tools", version = "0.1.0" }
-tau-tools-host = { path = "crates/plugins/tau-tools-host", version = "0.1.0" }
-tau-vcs = { path = "crates/plugins/tau-vcs", version = "0.1.0" }
-tau-vcs-host = { path = "crates/plugins/tau-vcs-host", version = "0.1.0" }
-tau-remote = { path = "crates/tau-remote", version = "0.1.0" }
-tau = { path = "crates/tau", version = "0.1.0" }
-tau-ui = { path = "crates/tau-ui", version = "0.1.0" }
-tau-ui-kit = { path = "crates/tau-ui-kit", version = "0.1.0" }
-tau-ui-plugin = { path = "crates/tau-ui-plugin", version = "0.1.0" }
-tau-ui-remote = { path = "crates/tau-ui-remote", version = "0.1.0" }
-tau-plugins = { path = "crates/tau-plugins", version = "0.1.0" }
-tau-demo = { path = "crates/tau-demo", version = "0.1.0" }
+heiko-agent = { path = "crates/heiko-agent", version = "0.1.0" }
+heiko-direnv = { path = "crates/plugins/heiko-direnv", version = "0.1.0" }
+heiko-phones = { path = "crates/plugins/heiko-phones", version = "0.1.0" }
+heiko-sqlite = { path = "crates/plugins/heiko-sqlite", version = "0.1.0" }
+heiko-chatgpt = { path = "crates/plugins/heiko-chatgpt", version = "0.1.0" }
+heiko-codemode = { path = "crates/plugins/heiko-codemode", version = "0.1.0" }
+heiko-codemode-host = { path = "crates/plugins/heiko-codemode-host", version = "0.1.0" }
+heiko-agents = { path = "crates/plugins/heiko-agents", version = "0.1.0" }
+heiko-agents-host = { path = "crates/plugins/heiko-agents-host", version = "0.1.0" }
+heiko-clock = { path = "crates/heiko-clock", version = "0.1.0" }
+heiko-scripted = { path = "crates/heiko-scripted", version = "0.1.0" }
+heiko-luau-plugins = { path = "crates/plugins/heiko-luau-plugins", version = "0.1.0" }
+heiko-luau-plugins-host = { path = "crates/plugins/heiko-luau-plugins-host", version = "0.1.0" }
+heiko-jev = { path = "crates/plugins/heiko-jev", version = "0.1.0" }
+heiko-mcp = { path = "crates/plugins/heiko-mcp", version = "0.1.0" }
+heiko-mcp-host = { path = "crates/plugins/heiko-mcp-host", version = "0.1.0" }
+heiko-ai = { path = "crates/heiko-ai", version = "0.1.0" }
+heiko-artifacts = { path = "crates/heiko-artifacts", version = "0.1.0" }
+heiko-store = { path = "crates/heiko-store", version = "0.1.0" }
+heiko-store-sqlite = { path = "crates/heiko-store-sqlite", version = "0.1.0" }
+heiko-terminal = { path = "crates/heiko-terminal", version = "0.1.0" }
+heiko-testing = { path = "crates/heiko-testing", version = "0.1.0" }
+heiko-tools = { path = "crates/plugins/heiko-tools", version = "0.1.0" }
+heiko-tools-host = { path = "crates/plugins/heiko-tools-host", version = "0.1.0" }
+heiko-vcs = { path = "crates/plugins/heiko-vcs", version = "0.1.0" }
+heiko-vcs-host = { path = "crates/plugins/heiko-vcs-host", version = "0.1.0" }
+heiko-remote = { path = "crates/heiko-remote", version = "0.1.0" }
+heiko = { path = "crates/heiko", version = "0.1.0" }
+heiko-ui = { path = "crates/heiko-ui", version = "0.1.0" }
+heiko-ui-kit = { path = "crates/heiko-ui-kit", version = "0.1.0" }
+heiko-ui-plugin = { path = "crates/heiko-ui-plugin", version = "0.1.0" }
+heiko-ui-remote = { path = "crates/heiko-ui-remote", version = "0.1.0" }
+heiko-plugins = { path = "crates/heiko-plugins", version = "0.1.0" }
+heiko-demo = { path = "crates/heiko-demo", version = "0.1.0" }

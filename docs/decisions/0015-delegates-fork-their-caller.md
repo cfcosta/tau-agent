@@ -32,8 +32,8 @@ about it get in the way:
   needs them to wait.
 
 Codex has both (a `fork_context` flag, concurrent children), but its
-children share one checkout, and edits race. tau's workspaces already
-keep children apart, so tau can have both without that problem.
+children share one checkout, and edits race. heiko's workspaces already
+keep children apart, so heiko can have both without that problem.
 
 ## Decision
 

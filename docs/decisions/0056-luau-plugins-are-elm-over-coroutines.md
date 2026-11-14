@@ -13,7 +13,7 @@ answers. The host reads the state back when the hook ends and stores it.
 
 That shape caused the bugs the last sweeps found (ADR 0054):
 
-- **A hook that waits holds a copy.** tau-goal's check asked Jev, and a
+- **A hook that waits holds a copy.** heiko-goal's check asked Jev, and a
   Pause pressed meanwhile was written over when the check stored its
   state. The host now replays such an action on what the hook left
   (`Record::Acted` with its action and args). A replayed action that
@@ -22,7 +22,7 @@ That shape caused the bugs the last sweeps found (ADR 0054):
 - **State is shared by compare and swap.** An action's result is taken
   only `still_on` the state it began on, so a second key pressed before
   the first came back is dropped. Every reader folds the same rule.
-- **Staleness is each plugin's job.** tau-memory's import carries a
+- **Staleness is each plugin's job.** heiko-memory's import carries a
   generation so a tick that read before a stop does not write after it.
   Each plugin that waits wrote its own guard, or did not.
 - **Tests imitate the host's timing.** `t.hooks` runs hooks as
@@ -30,19 +30,19 @@ That shape caused the bugs the last sweeps found (ADR 0054):
   It works because a Luau hook is already a coroutine under the host. It
   is a model of the host, not the host.
 
-An inventory of the 24 plugins (17 of tau's, 7 examples) found 12 that
+An inventory of the 24 plugins (17 of heiko's, 7 examples) found 12 that
 wait on the outside world. Fifteen hooks give the loop an answer that
-depends on what they waited for: before_stop in tau-goal and
-tau-constitution, before_tool in tau-constitution, start and
-before_request in tau-reasoning, rewrite_context in the three
-compactions, after_tool_result in tau-fast-compaction, title in
-tau-titles, four forge hooks in tau-github, and word-count's tool. Eight
+depends on what they waited for: before_stop in heiko-goal and
+heiko-constitution, before_tool in heiko-constitution, start and
+before_request in heiko-reasoning, rewrite_context in the three
+compactions, after_tool_result in heiko-fast-compaction, title in
+heiko-titles, four forge hooks in heiko-github, and word-count's tool. Eight
 more wait and then change only their state. The other 12 plugins only
 read and write their store and files.
 
 On 2026-11-09 the person chose a full Elm model for plugins: messages,
 one update, commands for every effect, tools and hooks pure too. On
-2026-11-14 they confirmed it after `tau.machine` and `t.hooks` were
+2026-11-14 they confirmed it after `heiko.machine` and `t.hooks` were
 built, with two refinements: every effect is a command, a local read
 too, and plugins write it in direct style on Luau's coroutines.
 
@@ -73,7 +73,7 @@ comes back as a message, and the step that waited on it goes on.
 ### Coroutines on top
 
 A plugin does not write messages and an update function by hand. It
-writes its hooks as today, in direct style, and waits with `tau.await`:
+writes its hooks as today, in direct style, and waits with `heiko.await`:
 
 ```lua
 before_stop = function(stop, model)
@@ -81,7 +81,7 @@ before_stop = function(stop, model)
   if g == nil or g.status ~= "active" then
     return nil
   end
-  local answers, cost = tau.await(cmd.jev.ask({
+  local answers, cost = heiko.await(cmd.jev.ask({
     state = { goal = g.condition, final_answer = stop.text },
     questions = { met = QUESTION },
   }))
@@ -91,11 +91,11 @@ before_stop = function(stop, model)
     return nil
   end
   goal.check(model, verdict(answers, cost))
-  return tau.continue(goal.continuation(g))
+  return heiko.continue(goal.continuation(g))
 end,
 ```
 
-- A hook is a coroutine. `tau.await(command)` yields the command; the
+- A hook is a coroutine. `heiko.await(command)` yields the command; the
   host carries it out, and resumes the coroutine with the answer, in a
   later step. What the hook returns is its answer to the loop, as now:
   the loop waits for it, within the hook's limit.
@@ -108,7 +108,7 @@ end,
   reached becomes `cmd`.
 - `view`, `card` and `settings.view` stay plain functions of a frozen
   copy of the model. Awaiting in them is an error.
-- `tau.all({ ... })` awaits several commands at once and answers them
+- `heiko.all({ ... })` awaits several commands at once and answers them
   together (today's `parallel`).
 
 ### Every effect is a command
@@ -125,19 +125,19 @@ end,
 | `ctx.tools.infer`, `ctx.tools.<tool>`                | `cmd.infer`, `cmd.tool(name, args)`                | a model, a tool |
 | `ctx.chats.wake`, `ctx.desktop.notice`               | `cmd.chats.wake`, `cmd.notice`                     | another run     |
 | `ctx.blobs.put_file`, `ctx.archive.*`                | `cmd.blobs.put_file`, `cmd.archive.*`              | the disk        |
-| `ctx.log`                                            | `tau.log` (given, not awaited)                     | nothing         |
+| `ctx.log`                                            | `heiko.log` (given, not awaited)                     | nothing         |
 
-A command that needs no answer is given with `tau.give(command)` and does
+A command that needs no answer is given with `heiko.give(command)` and does
 not end the step. A read is awaited like any other: it costs a word,
-`tau.await`, and keeps replay exact.
+`heiko.await`, and keeps replay exact.
 
-`infer` with the plugin's own tools (tau-memory's distill) asks the
+`infer` with the plugin's own tools (heiko-memory's distill) asks the
 plugin for each tool call as a tool message, handled in its own steps;
 the answers go back to the model, and the infer's answer ends the await.
 
-`tau.start_chat`, `tau.steer_chat`, `tau.allow` and `tau.ask` return to
+`heiko.start_chat`, `heiko.steer_chat`, `heiko.allow` and `heiko.ask` return to
 their first form: commands awaited where they are asked, not a `then`
-action named for the answer. `tau.ask` in a tool awaits the person's
+action named for the answer. `heiko.ask` in a tool awaits the person's
 answers in the tool's own coroutine.
 
 ### The log, and durable hooks
@@ -175,7 +175,7 @@ interface carries out an action itself any more, so `Record::Acted`,
 `still_on`, `catch_up` and the action replay go. Two keys pressed at
 once are two messages, both handled, in order.
 
-### `tau.machine` and effects
+### `heiko.machine` and effects
 
 A machine's `step` stays pure and gives effects as data (ADR 0054). The
 hook that steps it carries the effects out as commands. That answers ADR
@@ -227,22 +227,22 @@ In one feature workspace, landed when every plugin passes, so main never
 holds half of it:
 
 1. The runtime: a VM per model, kept while the model lives; the mailbox;
-   steps; commands and their executor; `tau.await`, `tau.give`,
-   `tau.all`; the log and checkpoints; determinism in the VM.
+   steps; commands and their executor; `heiko.await`, `heiko.give`,
+   `heiko.all`; the log and checkpoints; determinism in the VM.
 2. The harness: `t.run` with pending commands, `t.hooks` on steps, replay
    as a property, log fixtures.
 3. The port, one commit per plugin: the 12 that only read and write
    first, then the 12 that wait.
 4. Removal: `ctx`, `Record::Acted`, `still_on`, `catch_up`, the action
-   replay, the `then` actions, the generation in tau-memory's import.
-5. Docs: the plugins skill, the reference, `tau-plugin new`'s template.
+   replay, the `then` actions, the generation in heiko-memory's import.
+5. Docs: the plugins skill, the reference, `heiko-plugin new`'s template.
 
 ## Alternatives considered
 
 - **Hand-written messages and update.** The plain Elm form: a plugin
   writes `update(msg, model)` and threads each wait through a message of
-  its own. It is what the runtime does underneath, but tau-constitution's
-  before_tool or tau-tree-compaction's levels become chains of messages
+  its own. It is what the runtime does underneath, but heiko-constitution's
+  before_tool or heiko-tree-compaction's levels become chains of messages
   and a state for each link. Coroutines give the same steps in the code
   people write.
 - **Local reads stay synchronous.** Reading the store or a file inside a
@@ -250,7 +250,7 @@ holds half of it:
   makes the step's input larger than its message, and replay has to trust
   the log of reads. The person chose every effect a command.
 - **No durable hooks.** Dropping a suspended hook on restart, with no
-  log. Simpler, but determinism becomes a habit, the `tau.ask` form open
+  log. Simpler, but determinism becomes a habit, the `heiko.ask` form open
   for hours is lost on a restart, and fixtures stay hand-written.
 - **A message log for readers.** Records as messages, every reader
   running update. Smaller records, but every phone needs the Luau VM and
@@ -263,7 +263,7 @@ holds half of it:
   model, and steps do not overlap.
 - Every hook that waits gains a rule: read the model again after an
   await. The tests find a hook that does not.
-- Store-heavy plugins (tau-todo, tau-memory) gain an `await` per read.
+- Store-heavy plugins (heiko-todo, heiko-memory) gain an `await` per read.
 - A plugin's VM lives as long as its model, not one hook: memory per run
   and plugin, released when the run ends and its checkpoint is taken.
 - The host gains the log's storage and its replay, and loses the CAS,
@@ -272,8 +272,8 @@ holds half of it:
 
 ## As built, 2026-11-14
 
-- **The actor is Luau** (`tau_actor.luau`, installed by `tau`): `tau.cmd`,
-  `tau.await`, `tau.give`, `tau.all`, `tau.log`, and `tau._actor`, whose
+- **The actor is Luau** (`heiko_actor.luau`, installed by `heiko`): `heiko.cmd`,
+  `heiko.await`, `heiko.give`, `heiko.all`, `heiko.log`, and `heiko._actor`, whose
   `deliver` takes one message a step. The host and the test harness run
   the same steps.
 - **Hooks are `(input, model, env)`**, `view` is `(model, env)` and a
@@ -292,12 +292,12 @@ holds half of it:
   are gone.
 - **Replay works and is tested**: a mailbox comes back from the model it
   kept when quiet and the messages taken since, its hooks under way again.
-- All 24 plugins are ported, with the tests of the host, tau-ui and the
+- All 24 plugins are ported, with the tests of the host, heiko-ui and the
   built-ins; the plugins skill and the reference teach the new API.
 
 Not yet built, each to come on this:
 
-- `tau.start_chat`, `tau.steer_chat`, `tau.allow` and `tau.ask` are still
+- `heiko.start_chat`, `heiko.steer_chat`, `heiko.allow` and `heiko.ask` are still
   answers with a "then" action, not commands awaited where they are asked.
 - The harness has no `run:hook` with pending commands, no replay as a
   property and no log fixtures; `t.run` runs a hook to its end against
@@ -330,13 +330,13 @@ each other's, are all kept, where the compare and swap kept one.
 
 A hook holds its store a step at a time, so two runs of one repository
 can each read, await and write, and one write the other over: two
-issues of tau-todo made at once took one id, and two claims of one
+issues of heiko-todo made at once took one id, and two claims of one
 issue both won. The person chose a commit with expectations:
 `cmd.store.commit({ expect, put, delete })` writes all of it in one
 turn with the store, only while each key of `expect` still holds its
 value (`json.null` for a key the store does not have), and answers true;
 else it writes nothing and answers false, and the hook reads again and
-tries again. tau-todo keeps a hook's writes until it ends and commits
+tries again. heiko-todo keeps a hook's writes until it ends and commits
 them while its `rev` is what it read first; every change bumps `rev`.
 
 ## Settled at review, 2026-11-14

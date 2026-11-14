@@ -1,0 +1,40 @@
+[package]
+autotests = false
+name = "heiko-ui-plugin"
+description = "The interface a heiko plugin brings its UI through (ADR 0017): extension points, manifests, and the registry heiko-ui builds from them."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+gpui = { package = "gpui-pre", version = "=0.3.7" }
+anyhow.workspace = true
+async-trait.workspace = true
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+statig.workspace = true
+heiko-agent = { workspace = true, features = ["serde"] }
+heiko-ai.workspace = true
+heiko-store.workspace = true
+heiko-ui-kit.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+tokio-util.workspace = true
+uuid.workspace = true
+
+[features]
+# Fakes for testing a plugin's UI half: `heiko_ui_plugin::testing`.
+testing = []
+
+[dev-dependencies]
+heiko-testing.workspace = true
+gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
+heiko-store-sqlite.workspace = true
+hegeltest.workspace = true
+tokio = { workspace = true, features = ["rt", "time", "macros", "test-util"] }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

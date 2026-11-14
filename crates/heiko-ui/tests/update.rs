@@ -1,0 +1,88 @@
+//! What the host sends an interface reads back the same: the demo's
+//! runs and its updates. (What an interface sends up crosses the wire in
+//! `sync_model`, and which events a phone may send is `heiko_ui_remote`'s
+//! `phones` table.)
+
+use serde::{Deserialize, Serialize};
+use heiko_demo as demo;
+use heiko_ui_remote::{
+    update::HostUpdate,
+    view::{CodeState, RunUpdate},
+    workspace::Synced,
+};
+
+fn round_trip<T>(value: &T) -> T
+where
+    T: Serialize + for<'de> Deserialize<'de>,
+{
+    serde_json::from_str(&serde_json::to_string(value).unwrap()).unwrap()
+}
+
+#[test]
+fn a_snapshot_of_the_demo_round_trips() {
+    let mut runs = vec![demo::retry_after()];
+    runs.extend(demo::history());
+    let (main, fork) = (demo::run_id(), demo::fork_id());
+    let synced = Synced {
+        runs,
+        catalog: demo::catalog(),
+        queued: [(main.clone(), vec!["and the docs".to_owned()])].into(),
+        closed: [fork.clone()].into(),
+        // A comparison is keyed by two runs, which JSON keys cannot be.
+        branch_code: [((main, fork), CodeState::Ready(demo::branch_code()))]
+            .into(),
+        ..Synced::default()
+    };
+    let snapshot = HostUpdate::Snapshot(Box::new(synced));
+    assert_eq!(round_trip(&snapshot), snapshot);
+}
+
+#[test]
+fn updates_round_trip() {
+    let run = demo::run_id();
+    let updates = [
+        HostUpdate::alert("Could not start the run", "no model"),
+        HostUpdate::PullRequest {
+            run: run.clone(),
+            pr: Box::new(demo::pull_request()),
+        },
+        HostUpdate::PullRequestState {
+            run: run.clone(),
+            state: demo::opened(),
+        },
+        HostUpdate::Dropped {
+            run: run.clone(),
+            result: Err("it has children".into()),
+        },
+        HostUpdate::ResumeFailed(run.clone()),
+        HostUpdate::Pushed {
+            repo: "heiko-agent".into(),
+            result: Ok(demo::pushed()),
+        },
+        HostUpdate::Pushed {
+            repo: "heiko-agent".into(),
+            result: Err(heiko_ui_remote::push::PushFailure::Moved {
+                branch: "main".into(),
+                ahead: 3,
+            }),
+        },
+        HostUpdate::Titled {
+            run,
+            title: "Fix the retry loop".into(),
+        },
+    ];
+    for update in updates {
+        assert_eq!(round_trip(&update), update);
+    }
+    let events =
+        demo::script()
+            .into_iter()
+            .filter_map(|(_, update)| match update {
+                RunUpdate::Event(event) => Some(event),
+                _ => None,
+            });
+    for event in events {
+        let update = HostUpdate::Event(event);
+        assert_eq!(round_trip(&update), update);
+    }
+}

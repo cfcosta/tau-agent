@@ -1,9 +1,9 @@
-# tau-goal
+# heiko-goal
 
 Keeps a conversation going until a goal holds. Each time the model
 would stop, Jev (TypeSafe's System One model) is asked whether the
 goal is met; if not, the model is sent back with the goal. It is a
-Luau plugin tau comes with (ADR 0050): `plugins/tau-goal`, its
+Luau plugin heiko comes with (ADR 0050): `plugins/heiko-goal`, its
 code in `src/plugin.luau` and `src/goal.luau`. Design:
 [plugins.md](plugins.md).
 
@@ -17,7 +17,7 @@ A run's input sets it:
 ```
 
 - The condition is plain words, checkable from what the model runs:
-  "cargo nextest run -p tau-ai passes and clippy is clean". Its words
+  "cargo nextest run -p heiko-ai passes and clippy is clean". Its words
   are joined by single spaces, so line breaks and runs of spaces go.
 - A condition written as one quoted string, `"..."`, is read exactly:
   `\"` is a quote, `\\` a backslash, `\n` a line feed and `\r` a
@@ -29,7 +29,7 @@ A run's input sets it:
   the run's turns and the checks, from when it was set.
 - The model does not see the command. Its input is `/goal <condition>`
   and a paragraph on how goals work (`goal.INSTRUCTIONS`), which
-  `start` gives it in place of the message (`tau.start{ input }`). The
+  `start` gives it in place of the message (`heiko.start{ input }`). The
   condition is written as is when it reads back as itself, and quoted
   when it does not (it is `clear`, starts with a limit, spans lines,
   has runs of white space, or is itself one quoted string), so every
@@ -47,7 +47,7 @@ When the model answers without tool calls, and the goal is active:
    where a result backs them.
 2. At 0.7 or more the goal is **met**, and the run stops.
 3. Below it, the model is sent back, as a user message that starts with
-   `tau-goal: ` and names the goal and the continuation. Out of
+   `heiko-goal: ` and names the goal and the continuation. Out of
    continuations, or past the budget, the goal **stops** instead, and
    so does the run.
 4. When Jev gives no answer, the run stops unchecked, and the error is
@@ -68,9 +68,9 @@ on Jev reads the model again once Jev answers: a Pause, an edit or a
 Clear pressed meanwhile stands, and the answer, which was for a goal no
 longer active, is dropped.
 
-## In tau-ui
+## In heiko-ui
 
-- tau-goal checks a run only with a TypeSafe key, and never a
+- heiko-goal checks a run only with a TypeSafe key, and never a
   sub-agent; the state says whether the run did (`checks`).
 - Without a key, `/goal` and Keep going say a goal needs Jev and do
   nothing, and the banner of a goal still to be met says it is not

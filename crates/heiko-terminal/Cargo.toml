@@ -1,0 +1,38 @@
+[package]
+autotests = false
+name = "heiko-terminal"
+description = "A terminal for tool output: libghostty-vt emulation, a PTY command runner, plain text, styled snapshots and a GPUI view."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# No other heiko crate: this one is reusable on its own
+# (docs/decisions/0010-terminal-rendering.md).
+[dependencies]
+# The same spec as heiko-ui's.
+gpui = { package = "gpui-pre", version = "=0.3.7" }
+libc.workspace = true
+libghostty-vt.workspace = true
+libghostty-vt-sys.workspace = true
+rustix.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net", "process"] }
+
+[dev-dependencies]
+gpui = { package = "gpui-pre", version = "=0.3.7", features = ["test-support"] }
+# Only the example opens a window; an app picks its own platform, and a
+# phone's is not this one.
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = [
+  "wayland",
+  "x11",
+  "font-kit",
+] }
+hegeltest.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+
+[[test]]
+name = "tests"
+path = "tests/main.rs"

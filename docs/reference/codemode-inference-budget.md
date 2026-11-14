@@ -1,6 +1,6 @@
 # Codemode inference budget
 
-`tau_codemode_host::inference_budget` provides a host-side budget for
+`heiko_codemode_host::inference_budget` provides a host-side budget for
 inference attempts. Create one `Arc<Budget>` at the start of an agent run and
 share it across every script and retry in that run. The budget does not itself
 call a provider or charge `PluginCtx`.
@@ -13,7 +13,7 @@ allowance; inherited parent traces do not spend it. The monotonic deadline is
 new for each activation, while call and reported-usage allowances persist.
 
 ```rust
-use tau_codemode_host::{
+use heiko_codemode_host::{
     CancellationToken,
     inference_budget::{Budget, Limits},
 };

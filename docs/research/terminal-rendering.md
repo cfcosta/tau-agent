@@ -7,7 +7,7 @@
 
 ## Question
 
-`tau-ui` shows `bash` results as plain text lines. Can it always show
+`heiko-ui` shows `bash` results as plain text lines. Can it always show
 them as a real terminal view instead, with ANSI colors, cursor
 movement, progress bars and wide characters? Is libghostty the right
 engine for that, and what else would have to change?
@@ -16,9 +16,9 @@ This note covers libghostty as it is in September 2026, how it would
 fit a Rust and GPUI app, what the `bash` tool would need, and the Rust
 alternatives. It ends with a recommendation and a staged plan.
 
-## What tau does today
+## What heiko does today
 
-- `tau_tools_host::bash` (`crates/plugins/tau-tools-host/src/bash.rs`) runs
+- `heiko_tools_host::bash` (`crates/plugins/heiko-tools-host/src/bash.rs`) runs
   `$SHELL -c <command>` with `stdin` set to null and `stdout`/`stderr`
   on pipes. The child sees no TTY, so most programs turn colors and
   progress bars off.
@@ -29,7 +29,7 @@ alternatives. It ends with a recommendation and a staged plan.
 - The model sees the last 2000 lines or 50 KiB. The spec in
   `docs/reference/tools.md` says limits and strings follow pi, and any
   change is a behaviour change.
-- `tau-ui` (`src/view.rs`) keeps the last 6 lines of each update and
+- `heiko-ui` (`src/view.rs`) keeps the last 6 lines of each update and
   the last 4 lines of the result, as `ToolBody::Output(Vec<String>)`.
   `ui/transcript.rs::output` draws each line as a monospace `div`, with
   one special case: lines starting with `PASS` are green.
@@ -125,7 +125,7 @@ the Nix sandbox. There are three ways around it:
    commit `libghostty-vt-sys` pins, take
    `ghostty.packages.${system}.libghostty-vt`, add it to
    `buildInputs`, and build with the `libghostty-vt-sys/pkg-config`
-   feature. The libghostty-rs flake does exactly this. No Zig in tau's
+   feature. The libghostty-rs flake does exactly this. No Zig in heiko's
    own build.
 2. **Build from a local source.** Set `GHOSTTY_SOURCE_DIR` to the
    Ghostty flake input, `GHOSTTY_ZIG_SYSTEM_DIR` to pre-fetched Zig
@@ -133,7 +133,7 @@ the Nix sandbox. There are three ways around it:
    `mitchellh/zig-overlay`). More moving parts.
 3. **Ghostty's binary cache.** `ghostty.cachix.org` serves Ghostty
    flake outputs, which saves the Zig build for common systems.
-   Unverified whether it has `libghostty-vt` for every system tau
+   Unverified whether it has `libghostty-vt` for every system heiko
    builds.
 
 The Ghostty input and the crate version must move together. A crate
@@ -147,7 +147,7 @@ same commit.
 This is the only route that exists today.
 
 1. Bytes arrive from the tool (see below) on the async runtime.
-2. The `tau-ui` view that owns the card calls `vt_write` on the GPUI
+2. The `heiko-ui` view that owns the card calls `vt_write` on the GPUI
    main thread. This matches the `!Send` rule, because GPUI entities
    already live on the foreground thread.
 3. On each frame that has dirty rows, call `RenderState::update` and
@@ -191,7 +191,7 @@ pane, and only after libghostty ships a renderer API.
 A transcript can hold hundreds of `bash` cards. Keep one live
 `Terminal` per running card only. When a command ends, freeze the card
 into a plain value (rows of styled runs, capped to the lines shown) and
-drop the `Terminal`. Old runs loaded from `tau-store` start frozen, so
+drop the `Terminal`. Old runs loaded from `heiko-store` start frozen, so
 the UI never replays their bytes unless the card is expanded.
 
 ## Changes to the `bash` tool
@@ -271,7 +271,7 @@ The model must still get plain text, and the limits must stay pi's.
   Their final text is whatever the primary screen shows after exit,
   which is usually right.
 
-This emulator runs in `tau-tools`, a library crate. Adding libghostty
+This emulator runs in `heiko-tools`, a library crate. Adding libghostty
 there puts a Zig build on every user of the coding tools, against
 [0001](../decisions/0001-library-not-product.md) and the "users do not
 pay for what they do not use" rule in
@@ -282,13 +282,13 @@ behind a cargo feature.
 ### 4. Record it
 
 Store the raw bytes, or a compact VT snapshot, with the tool result in
-`tau-store`, so a reopened run shows the same terminal. libghostty-vt
+`heiko-store`, so a reopened run shows the same terminal. libghostty-vt
 has a "Terminal Snapshot" API for this, but its format is not stable.
 Raw bytes (capped) are the safer format.
 
 ## Alternatives
 
-| Crate                | Version, date      | License                          | Scope                                               | Pure Rust | Used by                      | Fit for tau                                                                                   |
+| Crate                | Version, date      | License                          | Scope                                               | Pure Rust | Used by                      | Fit for heiko                                                                                   |
 | -------------------- | ------------------ | -------------------------------- | --------------------------------------------------- | --------- | ---------------------------- | --------------------------------------------------------------------------------------------- |
 | `libghostty-vt`      | 0.2.1, 2026-07-18  | MIT OR Apache-2.0 (Ghostty: MIT) | Parser, state, render state, formatter, encoders    | No (Zig)  | cmux, Ghostling ports        | Best emulation. Unstable API, Zig build, `!Send`.                                             |
 | `alacritty_terminal` | 0.26.0, 2026-04-06 | Apache-2.0                       | Parser, grid, scrollback, selection, PTY event loop | Yes       | Alacritty, Zed terminal      | Mature. Proven with GPUI in Zed. Built for interactive terminals.                             |
@@ -319,14 +319,14 @@ Notes:
   changing. It adds a Zig build and a pinned Ghostty input to the Nix
   flake, and its types cannot cross threads. The emulation gain over
   `alacritty_terminal` does not matter much for command output.
-- Use `alacritty_terminal` in `tau-ui` for the terminal view, and draw
+- Use `alacritty_terminal` in `heiko-ui` for the terminal view, and draw
   with GPUI following Zed's approach. It is pure Rust, stable and
   already proven inside GPUI.
-- Use `vt100` in `tau-tools` for the model-facing text. It is small,
+- Use `vt100` in `heiko-tools` for the model-facing text. It is small,
   pure Rust, and its `contents()` is exactly the plain text needed.
   (`alacritty_terminal` would also work; `vt100` keeps the library
   lighter.)
-- Hide the emulator behind a small trait in `tau-ui`
+- Hide the emulator behind a small trait in `heiko-ui`
   (`write(&[u8])`, `resize`, `rows() -> styled runs`, `cursor`), so
   libghostty-vt can replace `alacritty_terminal` later without touching
   the drawing code.
@@ -335,14 +335,14 @@ Notes:
 
 ## Staged plan
 
-1. **Styled text without a PTY.** In `tau-ui`, feed the existing text
+1. **Styled text without a PTY.** In `heiko-ui`, feed the existing text
    through a VT emulator and draw colored runs instead of the `PASS`
    special case. Set `CLICOLOR_FORCE=1`, `FORCE_COLOR=1` and
    `CARGO_TERM_COLOR=always` in the tool, and strip escapes from the
    model text with the emulator. Model text for plain output stays the
    same.
 2. **Raw byte stream.** Send ordered byte chunks in `details.term`,
-   flush them before the tool returns, and make `tau-ui` replay them
+   flush them before the tool returns, and make `heiko-ui` replay them
    into a live emulator per running card. Freeze cards on `ToolEnd`.
 3. **PTY behind an option.** Add a `rustix` PTY mode with fixed size,
    null stdin, pager variables and CRLF handling. Add property tests
@@ -352,7 +352,7 @@ Notes:
    a grid element: runs, backgrounds, wide characters, cursor while
    running, expand to full scrollback, text selection and copy.
 5. **Persistence.** Store capped raw bytes with the tool result in
-   `tau-store`, so reopened runs render the same.
+   `heiko-store`, so reopened runs render the same.
 6. **Re-evaluate libghostty.** Try `libghostty-vt` behind the trait
    from the recommendation, built through the Ghostty flake and
    pkg-config. Switch only if it is stable and shows a visible gain.

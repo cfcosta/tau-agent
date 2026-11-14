@@ -1,15 +1,15 @@
 # Research: gpui-mobile, GPUI on iOS and Android
 
-- Status: research only; tau-ui moved to `gpui-pre =0.3.7` on
+- Status: research only; heiko-ui moved to `gpui-pre =0.3.7` on
   2026-09-30, the first step below
 - Date: 2026-09-30
 
 ## Question
 
-tau-ui already has a phone layout: one column below 720 px, with the
+heiko-ui already has a phone layout: one column below 720 px, with the
 side panel in a bottom sheet. Could it run natively on iOS and Android
 through gpui-mobile? What is gpui-mobile, how mature is it, and what
-would tau have to change?
+would heiko have to change?
 
 ## Answer, in short
 
@@ -23,21 +23,21 @@ The line to follow is longbridge's fork, published as
 `gpui-pre-mobile`. It builds on `gpui-pre`, weekly crates.io snapshots
 of Zed's GPUI, rather than on a Zed Git pin.
 
-For tau, two things stand in the way, and neither of them is
+For heiko, two things stand in the way, and neither of them is
 gpui-mobile:
 
-1. **GPUI version.** tau-ui and tau-terminal are on `gpui 0.2.2`
+1. **GPUI version.** heiko-ui and heiko-terminal are on `gpui 0.2.2`
    (crates.io, 2025-10-22). gpui-mobile needs the GPUI of 2026
    (`gpui-pre 0.3.x`), with the same exact version pinned across the
-   app, the platform and the renderer. tau would move to `gpui-pre`
+   app, the platform and the renderer. heiko would move to `gpui-pre`
    first, on the desktop, and that is a migration of its own.
-2. **Where the agent runs.** A phone cannot run tau as it is today.
+2. **Where the agent runs.** A phone cannot run heiko as it is today.
    iOS forbids spawning processes, so `bash` cannot run. On Android,
    processes run in a sandbox with no developer toolchain.
-   tau-terminal's libghostty (a Zig build), docbert's embedding model,
+   heiko-terminal's libghostty (a Zig build), docbert's embedding model,
    and the repository checkouts are all built for a workstation. A
-   mobile tau would be a client of a tau host running elsewhere, and
-   tau has no remote host protocol yet.
+   mobile heiko would be a client of a heiko host running elsewhere, and
+   heiko has no remote host protocol yet.
 
 ## What gpui-mobile is
 
@@ -72,7 +72,7 @@ gpui-mobile:
   view embedding (`PlatformView`, after Flutter's platform views),
   and about thirty Flutter-style device packages behind features, all
   on by default: camera, location, notifications, clipboard, and
-  others. tau would turn them off.
+  others. heiko would turn them off.
 - **Build.** iOS needs macOS, Xcode 15 and XcodeGen
   (`aarch64-apple-ios`, iOS 13+). Android needs the SDK, NDK r25+ and
   `cargo-ndk` (arm64 tested, API 26+; armv7 and x86_64 untested).
@@ -113,23 +113,23 @@ it, gpui-component 0.7 among them.
   accessibility, or the mobile lifecycle hooks". Screen readers are
   still a TODO.
 - **Android `open_url`.** It logs the request instead of starting an
-  `ACTION_VIEW` Intent. tau opens pull requests and sign-in pages in
+  `ACTION_VIEW` Intent. heiko opens pull requests and sign-in pages in
   the browser, so this would matter.
 - **One window.** Android's window comes from the system, not from
-  the app (`open_window` hands back the system's). tau-ui uses one
+  the app (`open_window` hands back the system's). heiko-ui uses one
   window, so this fits.
 - **Menus and dock.** No-ops, as expected on a phone.
 - **Credentials.** They go to the Android Keystore under a fixed user
   name, since GPUI's trait only passes a URL.
 
-## What tau would need
+## What heiko would need
 
 1. **Move to `gpui-pre`, on the desktop first.**
-   - Replace `gpui 0.2.2` in tau-ui and tau-terminal with `gpui-pre`
+   - Replace `gpui 0.2.2` in heiko-ui and heiko-terminal with `gpui-pre`
      at one exact version (`package = "gpui-pre"` keeps `use gpui::`).
      Desktop windows then come from `gpui-pre-platform`.
    - Tried on 2026-09-30 with `gpui-pre =0.3.7`: 26 changed lines in
-     13 files, and every tau-ui and tau-terminal test passes (205).
+     13 files, and every heiko-ui and heiko-terminal test passes (205).
      The changes: `focus` takes the app context, `ShapedLine::paint`
      takes an alignment, `flex_grow` takes a factor, `Corner` is
      `Anchor`, a list's `max_offset_for_scrollbar` is a point, the
@@ -144,44 +144,44 @@ it, gpui-component 0.7 among them.
    - Because the versions are pinned exactly, gpui-pre-mobile and
      gpui-pre only move together.
 2. **Decide where the agent runs on a phone.** Each option has a cost:
-   - **A client of a remote tau host.** Runs, events and the
-     transcript would stream from a desktop or a server. tau-ui
+   - **A client of a remote heiko host.** Runs, events and the
+     transcript would stream from a desktop or a server. heiko-ui
      already draws everything from `RunEvent`s and the store, so the
      screens carry over. The work is a host protocol: authentication,
      event streaming, starting and steering runs.
    - **A local agent without the coding tools.** Chat, memory search
-     and the model client (tau-ai speaks WebSocket over rustls, which
+     and the model client (heiko-ai speaks WebSocket over rustls, which
      works on both platforms) could run on the device. `bash`, the
      terminal and the repository tools could not.
 3. **Leave out the desktop-only crates** from a mobile build, behind
    features or targets:
-   - tau-terminal's libghostty (its Zig build has not been tried for
+   - heiko-terminal's libghostty (its Zig build has not been tried for
      mobile targets);
    - `bash`, which spawns processes;
    - docbert's model: memory can use its keyword index, as tests do;
    - the GitHub device flow's browser launch, until Android `open_url`
      works.
-4. **Use the layout tau already has.** The one-column phone layout,
+4. **Use the layout heiko already has.** The one-column phone layout,
    the bottom sheet, and a frame for previewing it on the desktop
    (`--phone`) exist today. Touch-to-mouse translation means clicks
    work unchanged. Hover states, and targets under 44 px, need a pass.
 
 ## A spike, if we want one
 
-1. On a branch, move tau-ui and tau-terminal to `gpui-pre =0.3.7` and
+1. On a branch, move heiko-ui and heiko-terminal to `gpui-pre =0.3.7` and
    get the desktop app building and its tests passing. This is the
    real cost, and it pays off even without mobile.
 2. Build gpui-pre-mobile's example for Android (`cargo-ndk`,
    `aarch64-linux-android`) from this machine, to confirm the
    toolchain. iOS needs a Mac.
-3. Put tau-ui's phone layout in an Android build, with
+3. Put heiko-ui's phone layout in an Android build, with
    `--demo`-style data and no agent, to judge text, scrolling and
    input on a device.
 
 ## Licenses
 
 gpui-mobile and gpui-pre-mobile are GPL-3.0-or-later, AGPL-3.0-or-later
-or Apache-2.0, at the user's choice. Under Apache-2.0, tau stays
+or Apache-2.0, at the user's choice. Under Apache-2.0, heiko stays
 under its own MIT license. gpui-pre carries Zed's GPUI license
 (Apache-2.0).
 

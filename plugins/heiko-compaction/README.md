@@ -1,0 +1,42 @@
+# heiko-compaction
+
+Summarizing compaction for heiko runs, a port of pi's coding-agent
+compaction. When a run's context nears the model's window, the older
+messages are summarized in a request of their own and replaced by the
+summary, the newest kept as they are. A context overflow summarizes at
+once, and an idle chat is summarized in its own conversation, before its
+prompt cache lapses.
+
+It is a Luau plugin heiko comes with (ADR 0050): `src/plugin.luau`
+declares its hooks, `src/compaction.luau` holds the rules, and
+heiko-luau-plugins loads it as always active, after fast pruning and the
+tree. Its rules are in
+[compaction.md](../../docs/reference/compaction.md).
+
+## What it provides
+
+| Item               | What it is                                      |
+| ------------------ | ----------------------------------------------- |
+| `NAME`             | `"heiko-compaction"`                              |
+| `FILES`            | The Luau files, by their paths in its folder    |
+| `DEMO_DECLARATION` | What it declares, as the demo lists it, as JSON |
+
+An agent of its own, as an evaluation's, runs it with
+`heiko_luau_plugins_host::agent::Active::built_in(NAME)` in a
+`LuauPlugins`.
+
+## Testing
+
+```sh
+target/release/heiko-plugin test plugins/heiko-compaction   # its Luau tests, no compiling
+```
+
+`tests/rules.luau` holds properties of the threshold, the cut point
+and the plan, the serialized conversation, the file lists and the
+prompts, and pi's known cases. `tests/plugin.luau` runs the hooks
+against fake runs. `heiko-plugin test` loads the plugin as heiko does and
+runs them, and checks the demo's fixture of its declaration.
+`tests/loop.luau` runs it in a real agent loop on a scripted model
+(`t.loop`): threshold and overflow compaction,
+split turns, rejected summaries and their wait, forks, retries and idle
+chats.

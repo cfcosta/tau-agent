@@ -1,6 +1,6 @@
 # Code Mode artifact storage
 
-`tau-artifacts` stores raw byte artifacts in a private directory. `Bytes::new`
+`heiko-artifacts` stores raw byte artifacts in a private directory. `Bytes::new`
 opens a directory with the `Quotas` it is given: `Quotas::default()` is a
 64 MiB per-artifact limit and a 512 MiB total limit. Callers can supply
 smaller ones. Each `Bytes` handle is cheap to clone.

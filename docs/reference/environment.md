@@ -1,26 +1,26 @@
 # Agent commands' environment
 
-What agent commands start through, and tau-direnv, the plugin that runs
-them in the repository's direnv environment. Crates: `tau-agent`
-(`launch`), `crates/plugins/tau-direnv`. Decision:
+What agent commands start through, and heiko-direnv, the plugin that runs
+them in the repository's direnv environment. Crates: `heiko-agent`
+(`launch`), `crates/plugins/heiko-direnv`. Decision:
 [0025](../decisions/0025-agent-commands-run-in-an-environment-plugins-give.md).
 
 ## The extension point
 
-- `tau_agent::launch::Launch { prefix, env }`: the process started is
+- `heiko_agent::launch::Launch { prefix, env }`: the process started is
   `prefix… program args…`, with `env` set over what it inherits.
   `Launch::default()` starts the program as it is.
 - `Launcher::launch(dir)` answers the `Launch` for a command in `dir`.
   It may wait; callers bound the wait. `Launchers` joins several: their
   words in order, their variables in order (a later one wins).
 - `UiPlugin::launcher(host, repo, settings)` gives a repository's.
-  tau-ui's host joins every plugin's in the registry's order
+  heiko-ui's host joins every plugin's in the registry's order
   (`Host::launcher_of`).
 - Consumers:
   - `exec_command` (`CodingTools::with_launcher`), under a terminal
-    (`tau_terminal::Command::through`). A cancel while waiting ends the
+    (`heiko_terminal::Command::through`). A cancel while waiting ends the
     call (`Operation aborted`), and nothing ran.
-  - tau-mcp: the run's services carry the repository's `RepoLauncher`
+  - heiko-mcp: the run's services carry the repository's `RepoLauncher`
     (the joined launcher and the main workspace); the repository
     scope's pool keeps it, and each stdio server starts through it, in
     the main workspace. The entry's own `env` comes after the
@@ -29,11 +29,11 @@ them in the repository's direnv environment. Crates: `tau-agent`
   `RepoCtx::workspaces` is the directory that holds a repository's
   workspaces.
 
-## tau-direnv
+## heiko-direnv
 
 ### When it applies
 
-- direnv is on tau's `PATH` (`Direnv::find`). Without it the plugin
+- direnv is on heiko's `PATH` (`Direnv::find`). Without it the plugin
   gives no launcher, and the repository menu's entry says "direnv is
   not installed".
 - The workspace a command runs in has an `.envrc`. Without one,
@@ -70,14 +70,14 @@ them in the repository's direnv environment. Crates: `tau-agent`
 ### Commands
 
 - Loaded and allowed (`launch_for`): `direnv exec <workspace> <shell>
--c <command>`, with `DIRENV_CONFIG=<tau's>`, `DIRENV_LOG_FORMAT=`
+-c <command>`, with `DIRENV_CONFIG=<heiko's>`, `DIRENV_LOG_FORMAT=`
   (direnv's own lines silenced; the `.envrc`'s output still shows) and
-  `direnv_layout_dir=<tau's data>/plugins/tau-direnv/layouts/<hash>`.
+  `direnv_layout_dir=<heiko's data>/plugins/heiko-direnv/layouts/<hash>`.
   Anything else: as it is.
 
-### tau's direnv configuration
+### heiko's direnv configuration
 
-`<tau's data>/plugins/tau-direnv/config`, written at start and on
+`<heiko's data>/plugins/heiko-direnv/config`, written at start and on
 every decision:
 
 - `direnv.toml`: the person's (`$DIRENV_CONFIG`, else
@@ -88,27 +88,27 @@ prefix`. A file that does not parse fails the loads.
 - `lib` and `direnvrc`: links to the person's, when they have them, so
   nix-direnv still loads.
 - The person's allow and deny records (`$XDG_DATA_HOME/direnv`) are
-  read by direnv as always and never written by tau.
+  read by direnv as always and never written by heiko.
 
 ## Agents' sandbox
 
-An agent's repository (ADR 0037) takes one launcher, tau-agents', and
+An agent's repository (ADR 0037) takes one launcher, heiko-agents', and
 no other plugin's: its commands, and its stdio MCP servers, start inside
-`bwrap` (`tau_agents_host::sandbox`), one sandbox per command. Its MCP
-servers take the sandbox through `tau_ui_plugin::Unattended`, also when
+`bwrap` (`heiko_agents_host::sandbox`), one sandbox per command. Its MCP
+servers take the sandbox through `heiko_ui_plugin::Unattended`, also when
 no run asks for them; without a sandbox they do not start.
 
 - **Seen:** the command's workspace, read-write, where it starts;
   `/nix`, `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/etc`,
   `/run/current-system` and `/run/systemd/resolve`, read-only, where
   they exist; a private `/tmp`, `/dev` and `/proc`; the agent's home,
-  `<data>/plugins/tau-agents/homes/<agent>`, at `/home/agent`.
-- **Not seen:** the person's home, their other repositories, tau's data
+  `<data>/plugins/heiko-agents/homes/<agent>`, at `/home/agent`.
+- **Not seen:** the person's home, their other repositories, heiko's data
   and settings (secrets included), `/run/user`.
 - **Shared:** the network only (`--unshare-all --share-net`). The
-  command dies with tau (`--die-with-parent`) and has a session of its
+  command dies with heiko (`--die-with-parent`) and has a session of its
   own (`--new-session`).
-- **Variables:** tau's own are dropped (`--unsetenv`) but for `PATH`,
+- **Variables:** heiko's own are dropped (`--unsetenv`) but for `PATH`,
   `LANG`, `LANGUAGE`, `LC_*`, `TZ`, `TZDIR`, `TERM`, `COLORTERM`, the
   pagers, `SHELL`, `USER`, `LOGNAME`, `LOCALE_ARCHIVE` and the
   certificate files. `HOME` is `/home/agent` and `TMPDIR` `/tmp`. What a
@@ -116,9 +116,9 @@ no run asks for them; without a sandbox they do not start.
 - `/etc` is there whole: it holds nothing the person's own processes
   cannot read, and DNS, certificates and users need it.
 - **Without `bwrap`** on `PATH` there is no launcher, the host gives the
-  agent's runs no `bash`, and the agent's page says why. tau's Nix
+  agent's runs no `bash`, and the agent's page says why. heiko's Nix
   package puts `bwrap` on its `PATH`; the dev shell has it.
-- **A `bwrap` that cannot make a sandbox** counts as none. As tau
+- **A `bwrap` that cannot make a sandbox** counts as none. As heiko
   starts, `bwrap` runs `true` with an agent's namespaces
   (`sandbox::check`); if that fails, the page gives bwrap's words. On
   Ubuntu 24.04 and later, AppArmor keeps unprivileged processes out of
@@ -127,24 +127,24 @@ no run asks for them; without a sandbox they do not start.
 
 ## Tests
 
-- `tau-agent`: `Launch::argv`, and `Launchers` joining in order.
-- `tau-terminal`: a launcher's words run before the program.
-- `tau-tools-host` (`tests/exec_launch.rs`): the words and variables
+- `heiko-agent`: `Launch::argv`, and `Launchers` joining in order.
+- `heiko-terminal`: a launcher's words run before the program.
+- `heiko-tools-host` (`tests/exec_launch.rs`): the words and variables
   reach the command; no launcher, or a direct one, changes nothing; a
   held command starts once answered; a cancel ends the wait.
-- `tau-mcp-host` (`tests/stdio.rs`): a stdio server starts through the
+- `heiko-mcp-host` (`tests/stdio.rs`): a stdio server starts through the
   launcher, asked for the main workspace.
-- `tau-direnv`: the `direnv.toml` merge (every key kept, the person's
+- `heiko-direnv`: the `direnv.toml` merge (every key kept, the person's
   prefixes then each root once, idempotent), the `launch_for` table,
   the host against a fake direnv (`tests/fixtures/fake-direnv.sh`), and
   the real direnv when it is on `PATH`, with its data in a temporary
   directory.
-- `tau-ui`: `tests/direnv.rs` (the host with the fake first on `PATH`)
+- `heiko-ui`: `tests/direnv.rs` (the host with the fake first on `PATH`)
   and `tests/direnv_ui.rs` (the question, cards and menu entry).
-- `tau-agents-host` (`tests/sandbox.rs`): `bwrap`'s words, the variables
+- `heiko-agents-host` (`tests/sandbox.rs`): `bwrap`'s words, the variables
   dropped and kept, a real command in a real sandbox when `bwrap` is on
   `PATH`, and a `bwrap` that cannot make one saying why;
   (`tests/agents.rs`) a sandbox for agents' repositories
   only, and none, said why, without `bwrap`.
-- `tau-ui` (`tests/host.rs`): an agent's runs without a sandbox declare
+- `heiko-ui` (`tests/host.rs`): an agent's runs without a sandbox declare
   no `bash`; the person's keep it.

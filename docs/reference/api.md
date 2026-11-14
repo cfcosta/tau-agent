@@ -6,15 +6,15 @@ examples double as the acceptance tests for M4.
 ## Clients and store
 
 ```rust
-let chatgpt = tau_ai::chatgpt::ChatGpt::new(tau_ai::chatgpt::Store::open_default()?);
+let chatgpt = heiko_ai::chatgpt::ChatGpt::new(heiko_ai::chatgpt::Store::open_default()?);
 let account = chatgpt.active()?.expect("signed in"); // an AccountId from a finished sign-in
-let llm = tau_ai::client::OpenAi::chatgpt(chatgpt, account); // the plan; one WebSocket pool per client
-let store = tau_store_sqlite::open("runs.db").await?; // a tau_store::Store
-let test_store = tau_store_sqlite::memory().await?;
+let llm = heiko_ai::client::OpenAi::chatgpt(chatgpt, account); // the plan; one WebSocket pool per client
+let store = heiko_store_sqlite::open("runs.db").await?; // a heiko_store::Store
+let test_store = heiko_store_sqlite::memory().await?;
 ```
 
-`Agent::new` accepts anything implementing `tau_ai::llm::Llm`, by value.
-Two types do: `OpenAi` and `tau_testing::ScriptedModel`; both are cheap to
+`Agent::new` accepts anything implementing `heiko_ai::llm::Llm`, by value.
+Two types do: `OpenAi` and `heiko_testing::ScriptedModel`; both are cheap to
 clone and share their state between clones. `OpenAi::chatgpt` is the
 only way to reach OpenAI: a ChatGPT plan through Sign in with ChatGPT,
 with plan usage enabled. There is no API-key client
@@ -36,8 +36,8 @@ impl Agent {
     pub fn instructions(self, text: impl Into<String>) -> Self;
     pub fn reasoning(self, effort: ReasoningEffort) -> Self;
     pub fn tool(self, t: impl AgentTool) -> Self;
-    pub fn tools(self, ts: impl IntoIterator<Item = Arc<dyn AgentTool>>) -> Self;  // e.g. tau_tools_host::coding_tools(&root)
-    pub fn plugin(self, p: impl Plugin) -> Self;      // e.g. tau_compaction::Compaction, tau_tools_host::plugin::CodingTools
+    pub fn tools(self, ts: impl IntoIterator<Item = Arc<dyn AgentTool>>) -> Self;  // e.g. heiko_tools_host::coding_tools(&root)
+    pub fn plugin(self, p: impl Plugin) -> Self;      // e.g. heiko_compaction::Compaction, heiko_tools_host::plugin::CodingTools
     pub fn limits(self, l: Limits) -> Self;
     pub fn retry(self, p: RetryPolicy) -> Self;       // 3 attempts, 2 s base
     pub fn warmup(self, on: bool) -> Self;            // generate:false on first use
@@ -148,7 +148,7 @@ pub struct ToolCtx { pub cancel: CancellationToken, pub updates: ToolUpdates, pu
 // tools, in plugins.md, "Nested calls".
 ```
 
-A tool's error is a `ToolError` (`tau_agent::error`, re-exported from
+A tool's error is a `ToolError` (`heiko_agent::error`, re-exported from
 `tool`). `?` converts io, JSON and `JoinError`s, a sub-agent's error,
 and a `String` or `&str` message into it; anything else goes in with
 `ToolError::other`. The model reads its `Display` as the tool result.
@@ -162,7 +162,7 @@ reports it as `RunEvent::PluginError`, with its chain of sources.
 ## Plugins
 
 An agent is extended only through `Plugin` and `PluginRun`, in
-`tau_agent::plugin` ([`plugins.md`](plugins.md)). The tool call a plugin
+`heiko_agent::plugin` ([`plugins.md`](plugins.md)). The tool call a plugin
 sees and its answer live there too:
 
 ```rust
@@ -278,12 +278,12 @@ impl PluginRun for NoProdWritesRun {
 
 #[tokio::test]
 async fn triage_opens_one_ticket() {
-    let llm = tau_testing::ScriptedModel::new()
+    let llm = heiko_testing::ScriptedModel::new()
         .turn(|t| t.tool_call("create_ticket", json!({"title": "Crash on start", "body": "…"})))
         .turn(|t| t.text("Opened one ticket."));
     let tracker = FakeTracker::default();
     let agent = Agent::new(llm).tool(typed(CreateTicket(tracker.clone()))).plugin(NoProdWrites);
-    agent.run("Triage: …", &tau_store_sqlite::memory().await.unwrap()).await.unwrap();
+    agent.run("Triage: …", &heiko_store_sqlite::memory().await.unwrap()).await.unwrap();
     assert_eq!(tracker.created().len(), 1);
 }
 ```

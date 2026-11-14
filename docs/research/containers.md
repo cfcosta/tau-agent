@@ -3,13 +3,13 @@
 - Status: research. Nothing here is built.
 - Date: 2026-09-28
 
-Today the coding tools in `tau-tools` (`crates/plugins/tau-tools`) run on
+Today the coding tools in `heiko-tools` (`crates/plugins/heiko-tools`) run on
 the host, as the user. `bash` spawns `/bin/bash -c <command>` in the
 tool's root directory. `read`, `write`, `edit`, `grep`, `find` and `ls`
 run in-process. A model that runs `rm -rf ~`, reads `~/.ssh`, or sends
 the repository to a server can do so.
 
-This document looks at how tau could run those tools, and the code
+This document looks at how heiko could run those tools, and the code
 under edit, inside an isolated environment on Linux and macOS. It ends
 with a recommendation and a staged plan.
 
@@ -23,7 +23,7 @@ with a recommendation and a staged plan.
   cancel or timeout. A grandchild that calls `setsid` leaves the group
   and survives the kill.
 - When output is truncated, `bash` spills the full output to
-  `$TMPDIR/tau-bash-<hex>.log` and tells the model the path. The model
+  `$TMPDIR/heiko-bash-<hex>.log` and tells the model the path. The model
   then reads that file with `read`.
 - Tools are built once per agent (`Plugin::tools` is read once, by
   `Agent::plugin`). Per-run state lives in `PluginRun`, and a tool sees
@@ -36,7 +36,7 @@ not stop `read ~/.ssh/id_ed25519`.
 ## Requirements
 
 - **No root.** Setup and every tool call run as the user. No setuid
-  helper that tau ships, no daemon that runs as root.
+  helper that heiko ships, no daemon that runs as root.
 - **NixOS works.** The host toolchain lives in `/nix/store`, and
   `/bin`, `/usr/bin` hold almost nothing (`/bin/sh`, `/usr/bin/env`).
   `/etc` is mostly symlinks into the store.
@@ -167,7 +167,7 @@ rootless mode.
   (0.7.0, Apache-2.0), which a Rust program can link to create
   containers without a subprocess.
 
-Calling a runtime directly skips images, conmon and networking. tau
+Calling a runtime directly skips images, conmon and networking. heiko
 would write the `config.json` itself: the same mounts as the `bwrap`
 line above, plus `linux.resources` for cgroups. That is more work than
 `bwrap` for the same result, and a rootless runtime still needs a
@@ -196,7 +196,7 @@ are the workloads it is slowest at (no numbers measured here).
 
 ### Doing it natively from Rust
 
-tau could create the namespaces itself instead of spawning a helper.
+heiko could create the namespaces itself instead of spawning a helper.
 
 | Crate           | Version   | What it does                                                                   | Notes                                                       |
 | --------------- | --------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------- |
@@ -211,7 +211,7 @@ tau could create the namespaces itself instead of spawning a helper.
 Doing it natively has two costs:
 
 - **Multi-threading.** `unshare(CLONE_NEWUSER)` fails in a
-  multi-threaded process, and tau runs on tokio. The setup has to happen
+  multi-threaded process, and heiko runs on tokio. The setup has to happen
   in a freshly forked child before `exec`, where only async-signal-safe
   code is allowed. `hakoniwa` and `bwrap` both handle this, which is
   the main reason to use one of them.
@@ -356,7 +356,7 @@ Driving it from Rust:
   recommended.
 - **Swift bridge.** A small Swift static library over
   `ContainerClient` or Containerization, exposed through `swift-bridge`
-  (0.1.59) or a C ABI. It adds Xcode 26 to tau's macOS build. Worth it
+  (0.1.59) or a C ABI. It adds Xcode 26 to heiko's macOS build. Worth it
   only if CLI latency turns out to matter.
 
 The catch for a coding agent: the code runs on Linux, not macOS. A
@@ -385,14 +385,14 @@ figure; named volumes are documented as faster than bind mounts).
 - Start cost is one `exec` plus profile compilation: milliseconds
   (unverified figure).
 - No PID or mount namespace. Processes are not hidden, and a child can
-  outlive a killed parent unless tau tracks the tree. No resource
+  outlive a killed parent unless heiko tracks the tree. No resource
   limits beyond `setrlimit`.
 - Runs the macOS toolchain natively, which is what most Mac users need
   from a coding agent.
 
 ### Virtualization.framework, Lima, Colima, OrbStack
 
-- `objc2-virtualization` (0.3.2) binds Virtualization.framework, so tau
+- `objc2-virtualization` (0.3.2) binds Virtualization.framework, so heiko
   could boot its own guest with virtiofs and a vsock agent. That means
   owning a kernel, an init, images and networking, which is what
   Containerization already does. Not worth it.
@@ -400,7 +400,7 @@ figure; named volumes are documented as faster than bind mounts).
   Lima plus a container runtime) and OrbStack (commercial) each keep one
   long-lived VM shared by everything. Isolation between runs would come
   from containers inside it. They fit a user who already runs one and
-  points tau at it, not a default.
+  points heiko at it, not a default.
 
 ## Comparison
 
@@ -449,7 +449,7 @@ Two families cover the needs:
 
 ### API shape
 
-A `Sandbox` lives in `tau-tools`, next to the tools that use it.
+A `Sandbox` lives in `heiko-tools`, next to the tools that use it.
 
 ```rust
 /// What a run's sandbox may touch. Built by the caller.
@@ -553,7 +553,7 @@ How it plugs into the existing seams:
    `$HOME`), `--unshare-net` for `Network::None`, and a seccomp filter
    built with `seccompiler`. Probe at `open`: if user namespaces are
    blocked (Ubuntu's AppArmor rule), fail with a message that names the
-   fix. Tests: the `bash` tests in `crates/plugins/tau-tools-host/tests/bash.rs`
+   fix. Tests: the `bash` tests in `crates/plugins/heiko-tools-host/tests/bash.rs`
    run under both providers, plus escape tests (write outside the
    project, `connect` to a socket in `/run`, a `setsid` child that must
    die on timeout).
@@ -594,7 +594,7 @@ needs a Mac with macOS 26 to test.
   per-call sandbox. The image backend could allow them, which makes the
   two backends behave differently.
 - `bwrap` is an external binary. Vendoring it as Codex does removes the
-  runtime dependency but adds a C build step to `tau-tools`.
+  runtime dependency but adds a C build step to `heiko-tools`.
 
 ## Unverified
 
