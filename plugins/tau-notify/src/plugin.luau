@@ -1,5 +1,5 @@
 -- Desktop notices (ADR 0045, 0050): it fills `tau.notify`, showing each
--- of tau's notices with `ctx.desktop.notice`, whose click opens the
+-- of tau's notices with a notice command, whose click opens the
 -- notice's chat; its setting switches them off.
 local tau = require("tau")
 
@@ -18,11 +18,11 @@ return tau.plugin({
 		},
 		default = { on = true },
 	},
-	notify = function(notice, ctx)
-		if not ctx.settings.on then
+	notify = function(notice, _, env)
+		if not env.settings.on then
 			return nil
 		end
-		ctx.desktop.notice({ title = notice.title, body = notice.body })
+		tau.give(tau.cmd.notice({ title = notice.title, body = notice.body }))
 		return nil
 	end,
 })
