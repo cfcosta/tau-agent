@@ -260,14 +260,6 @@ function test.run(spec)
 		end
 		return f(args.request)
 	end
-	-- A host tool, as `spec.tools` answers it.
-	fakes.tool = function(args)
-		local f = fakes[args.name]
-		if f == nil or args.name == "tool" or args.name == "jev" then
-			error("this test's run gives no tool " .. tostring(args.name), 0)
-		end
-		return f(args.args)
-	end
 	-- The store, kept in the fake run: `spec.store` to start from.
 	local kept = spec.store or {}
 	local offset = spec.offset or 0

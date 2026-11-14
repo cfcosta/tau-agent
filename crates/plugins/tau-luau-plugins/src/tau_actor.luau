@@ -172,9 +172,17 @@ cmd.chats = {
 	end,
 }
 
--- A host tool `uses.tools` names, with its args.
+-- The ops that are not a host tool's name.
+local OPS = { all = true, jev = true }
+
+-- A host tool `uses.tools` names, with its args: its name is the op, as
+-- every host call's is.
 function cmd.tool(name, args)
-	return command("tool", { name = tostring(name), args = args or {} })
+	name = tostring(name)
+	if OPS[name] then
+		error("`" .. name .. "` is a command's op, not a tool's name", 2)
+	end
+	return command(name, args)
 end
 
 -- The model: one answer, or with `tools`, rounds in which it calls the
