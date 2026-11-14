@@ -421,9 +421,13 @@ t.property("the fold marks what the checks decided", function(draw)
 	local view = tau.test.load().view(state, {})
 	for _, id in ipairs({ "c1", "c2" }) do
 		local verdict, scores
+		local grave = { flagged = 1, blocked = 2 }
 		for _, r in ipairs(records) do
 			if r.call_id == id and (r.kind == "blocked" or r.kind == "flagged") then
-				verdict = r
+				-- The gravest verdict stands, the first of those.
+				if verdict == nil or grave[r.kind] > grave[verdict.kind] then
+					verdict = r
+				end
 			elseif r.call_id == id and r.kind == "checked" then
 				scores = r.scores
 			end
@@ -434,7 +438,7 @@ t.property("the fold marks what the checks decided", function(draw)
 		else
 			t.equal(call.scores, scores or {}, id)
 			t.equal(call.verdict and { call.verdict.rule, call.verdict.score }, verdict and { verdict.rule, verdict.score }, id)
-			-- Its card is marked as its last verdict says.
+			-- Its card is marked as its gravest verdict says.
 			local drawn = view.calls[id] or {}
 			t.equal(drawn.mark, verdict and verdict.kind, id)
 			if verdict and verdict.kind == "blocked" then
@@ -504,3 +508,24 @@ t.property("a repository's totals are its runs' counts together", function(draw)
 	end
 	t.equal(checks.totals(reversed), totals)
 end, { cases = 200 })
+
+-- Two rules read the same call: one blocks it, the next only flags it.
+-- The call was refused, so its card says blocked, by the rule that
+-- blocked it, whichever verdict came last.
+t.case("a blocked call stays blocked when a later rule only flags it", function()
+	for _, order in ipairs({ { "blocked", "flagged" }, { "flagged", "blocked" } }) do
+		local state = checks.state({})
+		for n, kind in ipairs(order) do
+			checks.fold(state, {
+				kind = kind,
+				call_id = "c1",
+				tool = "bash",
+				rule = kind == "blocked" and "no-rm" or "careful",
+				score = 0.9 - n / 10,
+				reason = kind,
+			}, nil, "rm -rf /")
+		end
+		t.equal(state.calls.c1.verdict.kind, "blocked", table.concat(order, " then "))
+		t.equal(state.calls.c1.verdict.rule, "no-rm")
+	end
+end)

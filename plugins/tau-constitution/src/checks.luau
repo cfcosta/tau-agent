@@ -344,6 +344,9 @@ local function note(state, text, detail, tone)
 	state.notes["c" .. n] = { text = text, detail = detail, tone = tone }
 end
 
+-- How grave a call's verdict is: a block refused it.
+local SEVERITY = { flagged = 1, blocked = 2 }
+
 -- The call `id` as the state keeps it.
 local function call_of(state, id, tool, shown)
 	local call = state.calls[id]
@@ -383,7 +386,13 @@ function checks.fold(state, record, answer, shown)
 		return
 	end
 	if record.call_id ~= nil then
-		call_of(state, record.call_id, record.tool, shown).verdict = {
+		local call = call_of(state, record.call_id, record.tool, shown)
+		-- Rules read a call one after another: the call was refused if any
+		-- blocked it, so the gravest verdict stands, the first of those.
+		if call.verdict ~= nil and (SEVERITY[call.verdict.kind] or 0) >= (SEVERITY[kind] or 0) then
+			return
+		end
+		call.verdict = {
 			kind = kind,
 			rule = record.rule,
 			score = record.score,
