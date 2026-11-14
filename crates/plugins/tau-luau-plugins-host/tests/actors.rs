@@ -516,4 +516,93 @@ return tau.plugin({
             assert!(error.contains("it was cancelled"), "{error}");
         });
     }
+
+    /// What a mailbox took, and its model when it was last quiet.
+    #[derive(Default)]
+    struct Journal {
+        log: std::sync::Mutex<Vec<tau_luau_plugins_host::actor::Message>>,
+        quiet: std::sync::Mutex<Option<serde_json::Value>>,
+    }
+
+    #[async_trait]
+    impl tau_luau_plugins_host::mailbox::Keep for Journal {
+        async fn taken(&self, message: &tau_luau_plugins_host::actor::Message) {
+            self.log.lock().unwrap().push(message.clone());
+        }
+        async fn quiet(&self, model: &serde_json::Value) {
+            *self.quiet.lock().unwrap() = Some(model.clone());
+            self.log.lock().unwrap().clear();
+        }
+    }
+
+    /// The run stops while the check awaits Jev, after a Pause was taken.
+    /// Made again from its journal, the mailbox has the check under way,
+    /// awaiting Jev as it did, and the Pause in its model; going on, the
+    /// check ends as it would have.
+    #[test]
+    fn a_hook_under_way_comes_back_from_the_journal() {
+        block_on_io(async {
+            let files = Files {
+                source: CHECKS.into(),
+                ..Files::named("checks")
+            };
+            let modules = files.modules().unwrap();
+            let (_, executor, _, jev) = set_up(true).await;
+            let journal = Arc::new(Journal::default());
+            let actor = Actor::new(&modules, "plugin", &json!({})).unwrap();
+            let mailbox = Arc::new(Mailbox::new(actor, journal.clone()));
+            let check = {
+                let (mailbox, executor) = (mailbox.clone(), executor.clone());
+                tokio::spawn(async move {
+                    mailbox
+                        .call(
+                            path(&["before_stop"]),
+                            json!({}),
+                            json!({}),
+                            &executor,
+                            LIMIT,
+                            &CancellationToken::new(),
+                        )
+                        .await
+                })
+            };
+            jev.asked.notified().await;
+            mailbox
+                .call(
+                    path(&["actions", "pause"]),
+                    json!({}),
+                    json!({}),
+                    &executor,
+                    LIMIT,
+                    &CancellationToken::new(),
+                )
+                .await;
+            // The restart: the check's call and its mailbox are gone.
+            check.abort();
+            drop(mailbox);
+            let log = journal.log.lock().unwrap().clone();
+            assert_eq!(log.len(), 2, "{log:?}");
+            let quiet =
+                journal.quiet.lock().unwrap().clone().unwrap_or(json!({}));
+            let actor = Actor::new(&modules, "plugin", &quiet).unwrap();
+            let again =
+                Mailbox::replayed(actor, &log, Arc::new(KeepNothing), LIMIT)
+                    .unwrap();
+            let waiting = again.waiting().await.unwrap();
+            assert_eq!(waiting.keys().collect::<Vec<_>>(), ["h1"]);
+            assert_eq!(waiting["h1"].op, "jev");
+            assert_eq!(again.model().await.unwrap(), json!({ "paused": true }));
+            jev.go.notify_one();
+            let (_, free, _, _) = set_up(false).await;
+            assert_eq!(
+                again
+                    .resume("h1", &free, LIMIT, &CancellationToken::new())
+                    .await,
+                Ended::Value {
+                    value: json!("paused")
+                }
+            );
+            assert!(again.waiting().await.unwrap().is_empty());
+        });
+    }
 }

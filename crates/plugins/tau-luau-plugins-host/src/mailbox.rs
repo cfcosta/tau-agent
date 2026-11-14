@@ -80,12 +80,25 @@ impl Mailbox {
         cancel: &CancellationToken,
     ) -> Ended {
         let id = format!("h{}", self.next.fetch_add(1, Ordering::SeqCst));
-        let mut message = Message::Call {
+        let message = Message::Call {
             id: id.clone(),
             path,
             input,
             env,
         };
+        self.drive(&id, message, executor, limit, cancel).await
+    }
+
+    /// Takes `message` for the hook `id`, then what it awaits, to its end.
+    async fn drive(
+        &self,
+        id: &str,
+        mut message: Message,
+        executor: &Executor,
+        limit: Duration,
+        cancel: &CancellationToken,
+    ) -> Ended {
+        let id = id.to_owned();
         loop {
             let waits = match self.step(&message, executor, limit).await {
                 Ok(step) => {
@@ -146,6 +159,66 @@ impl Mailbox {
     /// The model as it is.
     pub async fn model(&self) -> Result<Value, String> {
         self.actor.lock().await.model()
+    }
+
+    /// The mailbox of `actor`, made from the model it kept when no hook
+    /// was under way, after taking again each of `log`, the messages taken
+    /// since, in order: the same steps, so the hooks under way then are
+    /// under way again, awaiting the same commands. What those steps gave
+    /// was carried out already, and is not again; what they did is not
+    /// kept again.
+    pub fn replayed(
+        actor: Actor,
+        log: &[Message],
+        keep: Arc<dyn Keep>,
+        limit: Duration,
+    ) -> Result<Self, String> {
+        let mut highest = 0;
+        for message in log {
+            actor.deliver(message, limit)?;
+            if let Some(n) = message
+                .id()
+                .strip_prefix('h')
+                .and_then(|n| n.parse::<u64>().ok())
+            {
+                highest = highest.max(n);
+            }
+        }
+        let mailbox = Self::new(actor, keep);
+        mailbox.next.store(highest + 1, Ordering::SeqCst);
+        Ok(mailbox)
+    }
+
+    /// The hooks under way, by id, and what each awaits.
+    pub async fn waiting(
+        &self,
+    ) -> Result<std::collections::BTreeMap<String, crate::actor::Command>, String>
+    {
+        self.actor.lock().await.waiting()
+    }
+
+    /// Goes on with the hook `id`, under way with no call to drive it (as
+    /// after a replay): carries out what it awaits, and what it awaits
+    /// next, to its end.
+    pub async fn resume(
+        &self,
+        id: &str,
+        executor: &Executor,
+        limit: Duration,
+        cancel: &CancellationToken,
+    ) -> Ended {
+        let Some(command) = self
+            .waiting()
+            .await
+            .ok()
+            .and_then(|mut waiting| waiting.remove(id))
+        else {
+            return Ended::Error {
+                error: format!("no hook {id} awaits"),
+            };
+        };
+        let answer = executor.run(&command).await;
+        self.drive(id, answer.to(id), executor, limit, cancel).await
     }
 
     /// The answer `answer` to what `id` awaits, from outside a call: a
