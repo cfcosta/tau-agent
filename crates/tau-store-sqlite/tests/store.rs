@@ -816,6 +816,46 @@ fn spend_counts_the_runs_asked_from_a_time_on() {
     });
 }
 
+/// A run row in a shape the store never writes (a root with a parent,
+/// which the schema's checks let through) is refused when read, where it
+/// read as a root run.
+#[test]
+fn a_run_row_the_store_never_writes_is_refused() {
+    use sqlx::Connection as _;
+    block_on_io(async {
+        let dir = std::env::temp_dir()
+            .join(format!("tau-store-shape-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("runs.db");
+        let _ = std::fs::remove_file(&path);
+        let store = tau_store_sqlite::open(&path).await.unwrap();
+        store.create_run(&new_run("parent")).await.unwrap();
+        store.create_run(&new_run("odd")).await.unwrap();
+        let mut raw = sqlx::SqliteConnection::connect(&format!(
+            "sqlite://{}",
+            path.display()
+        ))
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE runs SET parent_run_id = 'parent' WHERE id = 'odd'",
+        )
+        .execute(&mut raw)
+        .await
+        .unwrap();
+        let read = store.run("odd").await;
+        assert!(
+            matches!(&read, Err(StoreError::CorruptRun(id)) if id == "odd"),
+            "{read:?}"
+        );
+        assert!(matches!(
+            store.recent_runs(10).await,
+            Err(StoreError::CorruptRun(_))
+        ));
+        std::fs::remove_dir_all(&dir).unwrap();
+    });
+}
+
 fn new_run(id: &str) -> NewRun<'_> {
     NewRun {
         id,

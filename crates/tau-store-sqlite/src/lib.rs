@@ -84,17 +84,18 @@ fn status_name(status: Status) -> &'static str {
     }
 }
 
-/// The status a `runs.status` value names.
-fn parse_status(value: &str) -> Status {
-    match value {
+/// The status a `runs.status` value names; `None` for one the store
+/// never writes.
+fn parse_status(value: &str) -> Option<Status> {
+    Some(match value {
         "running" => Status::Running,
         "done" => Status::Done,
         "failed" => Status::Failed,
         "cancelled" => Status::Cancelled,
+        "limit" => Status::Limit,
         "interrupted" => Status::Interrupted,
-        // The CHECK constraint allows nothing else.
-        _ => Status::Limit,
-    }
+        _ => return None,
+    })
 }
 
 /// One value of a row, as text: `NULL` for none, numbers as written,
@@ -695,25 +696,31 @@ impl Backend for SqliteStore {
         .fetch_all(&self.reader)
         .await
         .map_err(database)?;
-        Ok(rows
-            .into_iter()
-            .map(|row| RunRecord {
-                kind: run_kind(&row.kind, row.parent_run_id, row.fork_seq),
-                id: row.id,
-                workflow_id: row.workflow_id,
-                agent: row.agent,
-                model: row.model,
-                status: parse_status(&row.status),
-                input_tokens: row.input_tokens,
-                output_tokens: row.output_tokens,
-                cost_usd: row.cost_usd,
-                turns: row.turns,
-                result: row.result,
-                error: row.error,
-                title: row.title,
-                created_at: row.created_at,
+        rows.into_iter()
+            .map(|row| {
+                Ok(RunRecord {
+                    kind: run_kind(&row.kind, row.parent_run_id, row.fork_seq)
+                        .ok_or_else(|| {
+                            StoreError::CorruptRun(row.id.clone())
+                        })?,
+                    status: parse_status(&row.status).ok_or_else(|| {
+                        StoreError::CorruptRun(row.id.clone())
+                    })?,
+                    id: row.id,
+                    workflow_id: row.workflow_id,
+                    agent: row.agent,
+                    model: row.model,
+                    input_tokens: row.input_tokens,
+                    output_tokens: row.output_tokens,
+                    cost_usd: row.cost_usd,
+                    turns: row.turns,
+                    result: row.result,
+                    error: row.error,
+                    title: row.title,
+                    created_at: row.created_at,
+                })
             })
-            .collect())
+            .collect()
     }
 
     async fn run(&self, run: &str) -> Result<Option<RunRecord>> {
@@ -728,22 +735,27 @@ impl Backend for SqliteStore {
         .fetch_optional(&self.reader)
         .await
         .map_err(database)?;
-        Ok(row.map(|row| RunRecord {
-            kind: run_kind(&row.kind, row.parent_run_id, row.fork_seq),
-            id: row.id,
-            workflow_id: row.workflow_id,
-            agent: row.agent,
-            model: row.model,
-            status: parse_status(&row.status),
-            input_tokens: row.input_tokens,
-            output_tokens: row.output_tokens,
-            cost_usd: row.cost_usd,
-            turns: row.turns,
-            result: row.result,
-            error: row.error,
-            title: row.title,
-            created_at: row.created_at,
-        }))
+        row.map(|row| {
+            Ok(RunRecord {
+                kind: run_kind(&row.kind, row.parent_run_id, row.fork_seq)
+                    .ok_or_else(|| StoreError::CorruptRun(row.id.clone()))?,
+                status: parse_status(&row.status)
+                    .ok_or_else(|| StoreError::CorruptRun(row.id.clone()))?,
+                id: row.id,
+                workflow_id: row.workflow_id,
+                agent: row.agent,
+                model: row.model,
+                input_tokens: row.input_tokens,
+                output_tokens: row.output_tokens,
+                cost_usd: row.cost_usd,
+                turns: row.turns,
+                result: row.result,
+                error: row.error,
+                title: row.title,
+                created_at: row.created_at,
+            })
+        })
+        .transpose()
     }
 
     async fn recent_runs(&self, limit: u32) -> Result<Vec<RunRecord>> {
@@ -760,25 +772,31 @@ impl Backend for SqliteStore {
         .fetch_all(&self.reader)
         .await
         .map_err(database)?;
-        Ok(rows
-            .into_iter()
-            .map(|row| RunRecord {
-                kind: run_kind(&row.kind, row.parent_run_id, row.fork_seq),
-                id: row.id,
-                workflow_id: row.workflow_id,
-                agent: row.agent,
-                model: row.model,
-                status: parse_status(&row.status),
-                input_tokens: row.input_tokens,
-                output_tokens: row.output_tokens,
-                cost_usd: row.cost_usd,
-                turns: row.turns,
-                result: row.result,
-                error: row.error,
-                title: row.title,
-                created_at: row.created_at,
+        rows.into_iter()
+            .map(|row| {
+                Ok(RunRecord {
+                    kind: run_kind(&row.kind, row.parent_run_id, row.fork_seq)
+                        .ok_or_else(|| {
+                            StoreError::CorruptRun(row.id.clone())
+                        })?,
+                    status: parse_status(&row.status).ok_or_else(|| {
+                        StoreError::CorruptRun(row.id.clone())
+                    })?,
+                    id: row.id,
+                    workflow_id: row.workflow_id,
+                    agent: row.agent,
+                    model: row.model,
+                    input_tokens: row.input_tokens,
+                    output_tokens: row.output_tokens,
+                    cost_usd: row.cost_usd,
+                    turns: row.turns,
+                    result: row.result,
+                    error: row.error,
+                    title: row.title,
+                    created_at: row.created_at,
+                })
             })
-            .collect())
+            .collect()
     }
 
     async fn retained_runs(&self) -> Result<Vec<RunRecord>> {
@@ -794,22 +812,19 @@ impl Backend for SqliteStore {
         .map_err(database)?;
         rows.into_iter()
             .map(|row| {
-                let valid = matches!(
-                    (&*row.kind, &row.parent_run_id, row.fork_seq),
-                    ("root", None, None)
-                        | ("fork", Some(_), Some(_))
-                        | ("subagent", Some(_), _)
-                );
-                if !valid {
+                let (Some(kind), Some(status)) = (
+                    run_kind(&row.kind, row.parent_run_id, row.fork_seq),
+                    parse_status(&row.status),
+                ) else {
                     return Err(StoreError::CorruptHistory(row.id));
-                }
+                };
                 Ok(RunRecord {
-                    kind: run_kind(&row.kind, row.parent_run_id, row.fork_seq),
+                    kind,
                     id: row.id,
                     workflow_id: row.workflow_id,
                     agent: row.agent,
                     model: row.model,
-                    status: parse_status(&row.status),
+                    status,
                     input_tokens: row.input_tokens,
                     output_tokens: row.output_tokens,
                     cost_usd: row.cost_usd,
@@ -900,19 +915,22 @@ impl Backend for SqliteStore {
     }
 }
 
+/// The kind a row's `kind`, `parent_run_id` and `fork_seq` name; `None`
+/// for a shape the store never writes, such as a root with a parent.
 fn run_kind(
     kind: &str,
     parent: Option<String>,
     fork_seq: Option<i64>,
-) -> RunKind {
+) -> Option<RunKind> {
     match (kind, parent, fork_seq) {
+        ("root", None, None) => Some(RunKind::Root),
         ("fork", Some(parent), Some(fork_seq)) => {
-            RunKind::Fork { parent, fork_seq }
+            Some(RunKind::Fork { parent, fork_seq })
         }
         ("subagent", Some(parent), fork_seq) => {
-            RunKind::Subagent { parent, fork_seq }
+            Some(RunKind::Subagent { parent, fork_seq })
         }
-        _ => RunKind::Root,
+        _ => None,
     }
 }
 

@@ -25,6 +25,8 @@ pub enum StoreError {
     StillRunning(String),
     #[error("retained run history is malformed: {0}")]
     CorruptHistory(String),
+    #[error("run {0} is stored in a shape the store never writes")]
+    CorruptRun(String),
 }
 
 pub type Result<T> = std::result::Result<T, StoreError>;
