@@ -93,8 +93,9 @@ local sign_in = tau.machine({
   and exactly that tag's fields. A field left over from an earlier state
   is an error in the hook, which keeps nothing of what it wrote, and the
   plugin's tests find it.
-- **Effects are data** (`{ "check_token" }`, `{ "save", batch }`), which
-  the hook carries out after `step`. This is the Elm shape the plugin
+- **Effects are data**: a list of them, each a name or a table whose
+  first value names it (`{ "check_token" }`, `{ { "save", batch } }`),
+  which the hook carries out after `step`. This is the Elm shape the plugin
   model already has: the machine decides, the hook does the IO.
 
 `machine:is(state, tag)` and `machine:tags()` read a state, and
@@ -120,7 +121,7 @@ local import = tau.machine({
 				if e.gen ~= s.gen then
 					return s
 				end
-				return { state = "running", gen = s.gen, reading = s.reading + 1 }, { "save", e.batch }
+				return { state = "running", gen = s.gen, reading = s.reading + 1 }, { { "save", e.batch } }
 			end,
 		},
 	},
@@ -171,9 +172,10 @@ told each event, as the Rust models are, and `spec.invariant(state,
 model, effects)`, the rule that matters: "a saved token is always
 checked", "after Stop, nothing is saved".
 
-A failure prints its shrunk events as a `t.case` that steps the machine
-through them and checks what failed, ready to paste into the tests: what
-the model finds becomes a plain test, as for the Rust models.
+A failure notes its shrunk events as a `t.case` that steps the machine
+through them, with what failed as a comment, ready to paste into the
+tests and give its own check: what the model finds becomes a plain test,
+as for the Rust models.
 
 #### `t.hooks(name, plugin, spec)`: a plugin through its hooks
 
@@ -202,7 +204,39 @@ have and miss those it can:
 
 `spec.invariant(world)` holds after every step: the stores, the files,
 each run's state, what was published and what the host was asked to do.
-A failure prints its steps as a `t.case`, as above.
+A failure notes its steps, which waits each way in reached and how each
+was answered; the inputs are drawn inside the test's own functions, so
+the case to keep is written from those notes.
+
+## As built
+
+- `tau.machine` is in `tau.luau`: `step`, `shape`, `is`, `handles`,
+  `tags` and `events`. A field marked `name?` may be absent. Effects are
+  checked against `effects` when the machine declares them.
+- `t.machine_of` and `t.hooks` are in `tau_test.luau`, on `t.machine`.
+  `t.hooks` splits a wait with a coroutine: the functions of `spec.run`'s
+  `jev`, `tools`, `http` and `infer` yield when a hook calls them, and the
+  rules `answer` (the function called with `draw` after its arguments)
+  and `fail` let one go on. A hook that raises fails the test unless
+  `spec.may_fail(hook, why)`. Each way in gets the world as a third
+  argument, to note what it did.
+- The fake run follows the host for what ways in under way share, which
+  it needed before they could be under way at once. A call no longer
+  swaps the run's data or state while it runs: each says which state it
+  uses (the run's, or a job's) and what `ctx.run` it sees. A hook gets
+  its own copy of the state, kept when it ends well and changed something,
+  over an action that came meanwhile, as `catch_up` and the published
+  state do on the host; an action's state is kept only while the state is
+  the one it began on (`still_on`), and `run.dropped` counts the rest. A
+  hook that fails now keeps none of what it wrote to its state, as on the
+  host; before, its writes stood.
+- `tests/machines.rs` holds them: a stray field, the missing `failed`
+  edge of tau-github's sign-in (three events, its case noted), an impure
+  transition, store hooks taking turns (they lose a write without turns),
+  a failed wait, and a Pause pressed while a check waits on Jev, which the
+  check's state then overwrites. That last is what the host does today:
+  tau-goal's Pause, pressed while its check asks Jev, is lost when the
+  check ends.
 
 ## Alternatives considered
 
