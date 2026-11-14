@@ -2,6 +2,10 @@
 //! started, its nested calls, and its result through
 //! `after_tool_result`.
 
+mod calls;
+
+use calls::Calls;
+
 use super::{
     toolbox::{Ready, schedule},
     *,
@@ -57,22 +61,7 @@ pub(super) struct Scope {
     children: CancellationToken,
     /// How many nested calls it made: the last one's number.
     made: u32,
-    calls: Calls,
-}
-
-/// What a scope's nested calls are doing.
-pub(super) enum Calls {
-    /// The call runs: its nested calls run as their tools allow.
-    Open {
-        running: usize,
-        /// A sequential tool's call is running, alone.
-        exclusive: bool,
-        /// Prepared calls waiting for a sequential one, or to be one.
-        waiting: VecDeque<Queued>,
-    },
-    /// The call ended: what it left running is cancelled, and the scope
-    /// goes once those are done.
-    Ending { running: usize },
+    calls: Calls<Queued>,
 }
 
 /// A prepared nested call that has not started.
@@ -98,9 +87,11 @@ pub(super) struct Batch {
 impl Batch {
     /// Drops a scope that has ended and has no calls left.
     pub(super) fn forget(&mut self, key: u64) {
-        if self.scopes.get(&key).is_some_and(|scope| {
-            matches!(scope.calls, Calls::Ending { running: 0 })
-        }) {
+        if self
+            .scopes
+            .get(&key)
+            .is_some_and(|scope| scope.calls.is_done())
+        {
             self.scopes.remove(&key);
         }
     }
@@ -237,23 +228,25 @@ impl Runner {
                 let _ = reply.send(Err(ToolError::output(output)));
             }
             Prepared::Ready { tool, call } => {
-                match batch.scopes.get_mut(&key).map(|scope| &mut scope.calls) {
-                    Some(Calls::Open { waiting, .. }) => {
-                        waiting.push_back(Queued { tool, call, reply });
-                    }
-                    // Its caller ended while it was prepared.
-                    Some(Calls::Ending { .. }) | None => {
-                        let output = ToolOutput::text(CANCELLED);
-                        self.emit_end(
-                            &call.id,
-                            &output,
-                            true,
-                            Some(parent.to_string()),
-                        )
-                        .await;
-                        let _ = reply.send(Err(ToolError::output(output)));
-                        return;
-                    }
+                let sequential =
+                    tool.tool.execution_mode() == ExecutionMode::Sequential;
+                let queued = Queued { tool, call, reply };
+                let refused = match batch.scopes.get_mut(&key) {
+                    Some(scope) => scope.calls.queue(queued, sequential),
+                    None => Some(queued),
+                };
+                // Its caller ended while it was prepared.
+                if let Some(Queued { call, reply, .. }) = refused {
+                    let output = ToolOutput::text(CANCELLED);
+                    self.emit_end(
+                        &call.id,
+                        &output,
+                        true,
+                        Some(parent.to_string()),
+                    )
+                    .await;
+                    let _ = reply.send(Err(ToolError::output(output)));
+                    return;
                 }
                 self.start_waiting(batch, key);
             }
@@ -263,41 +256,22 @@ impl Runner {
     /// Starts the scope's waiting calls in order, while its calls are
     /// running: a sequential tool's call starts alone and runs alone.
     pub(super) fn start_waiting(&self, batch: &mut Batch, key: u64) {
-        loop {
-            let Some(scope) = batch.scopes.get_mut(&key) else {
-                return;
-            };
-            if !scope.open.load(Ordering::SeqCst) {
-                // The caller has returned; its end cancels these.
-                return;
-            }
-            let Calls::Open {
-                running,
-                exclusive,
-                waiting,
-            } = &mut scope.calls
-            else {
-                return;
-            };
-            let Some(front) = waiting.front() else {
-                return;
-            };
-            let sequential =
-                front.tool.tool.execution_mode() == ExecutionMode::Sequential;
-            if *exclusive || (sequential && *running > 0) {
-                return;
-            }
-            let Queued { tool, call, reply } =
-                waiting.pop_front().expect("a front");
-            *running += 1;
-            *exclusive = sequential;
-            let cancel = scope.children.clone();
+        let Some(scope) = batch.scopes.get_mut(&key) else {
+            return;
+        };
+        if !scope.open.load(Ordering::SeqCst) {
+            // The caller has returned; its end cancels these.
+            return;
+        }
+        let starting = scope.calls.start();
+        let (cancel, parent) = (scope.children.clone(), scope.id.clone());
+        for Queued { tool, call, reply } in starting {
             let origin = Origin::Nested {
                 scope: key,
-                parent: scope.id.clone(),
+                parent: parent.clone(),
                 reply,
             };
-            self.start_call(batch, tool, call, cancel, origin);
+            self.start_call(batch, tool, call, cancel.clone(), origin);
         }
     }
 
@@ -310,16 +284,7 @@ impl Runner {
         scope.open.store(false, Ordering::SeqCst);
         scope.children.cancel();
         let parent = scope.id.to_string();
-        let waiting = match &mut scope.calls {
-            Calls::Open {
-                running, waiting, ..
-            } => {
-                let waiting = std::mem::take(waiting);
-                scope.calls = Calls::Ending { running: *running };
-                waiting
-            }
-            Calls::Ending { .. } => VecDeque::new(),
-        };
+        let waiting = scope.calls.end();
         for queued in waiting {
             let output = ToolOutput::text(CANCELLED);
             self.emit_end(&queued.call.id, &output, true, Some(parent.clone()))
@@ -379,15 +344,7 @@ impl Runner {
                     Ok(output)
                 });
                 if let Some(parent) = batch.scopes.get_mut(&scope) {
-                    match &mut parent.calls {
-                        Calls::Open {
-                            running, exclusive, ..
-                        } => {
-                            *running -= 1;
-                            *exclusive = false;
-                        }
-                        Calls::Ending { running } => *running -= 1,
-                    }
+                    parent.calls.returned();
                 }
                 self.start_waiting(batch, scope);
                 batch.forget(scope);
@@ -511,11 +468,7 @@ impl Runner {
                 open: open.clone(),
                 children: cancel.child_token(),
                 made: 0,
-                calls: Calls::Open {
-                    running: 0,
-                    exclusive: false,
-                    waiting: VecDeque::new(),
-                },
+                calls: Calls::default(),
             },
         );
         let ctx = ToolCtx {
