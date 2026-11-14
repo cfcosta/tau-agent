@@ -232,6 +232,17 @@ impl Backend for FusedStore {
             .await
     }
 
+    async fn append_idle(
+        &self,
+        run: &str,
+        entries: &[Entry],
+        usage: TurnUsage,
+        plugins: &[(&str, TurnUsage)],
+    ) -> tau_store::Result<i64> {
+        self.write("idle entries")?;
+        self.inner.append_idle(run, entries, usage, plugins).await
+    }
+
     async fn plugin_costs(
         &self,
         run: &str,

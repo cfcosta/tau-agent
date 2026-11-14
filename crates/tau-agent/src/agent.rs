@@ -806,6 +806,7 @@ impl Resumed {
             children: Arc::default(),
             retry: agent.0.retry,
             warmup: false,
+            idle: true,
             turns_before: u32::try_from(record.turns).unwrap_or(u32::MAX),
         };
         Ok(agent
@@ -1301,6 +1302,7 @@ async fn run_task(
         children: Arc::default(),
         retry: agent.0.retry,
         warmup: agent.0.warmup,
+        idle: false,
         turns_before,
     };
     let result = match agent

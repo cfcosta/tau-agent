@@ -1910,3 +1910,76 @@ fn an_idle_compaction_starts_only_the_plugins_that_take_part() {
         let _ = going.outcome().await;
     });
 }
+
+/// Takes part in idle compactions, and resumes the run while it works,
+/// as a host's resume could: then rewrites it to its last message.
+#[derive(Clone)]
+struct ResumedMeanwhile(Store, String);
+
+#[async_trait]
+impl Plugin for ResumedMeanwhile {
+    fn name(&self) -> &str {
+        "resumed-meanwhile"
+    }
+
+    async fn start_idle(
+        &self,
+        _plan: &RunPlan,
+        _ctx: &PluginCtx,
+    ) -> Result<Option<Box<dyn PluginRun>>, PluginError> {
+        Ok(Some(Box::new(self.clone())))
+    }
+}
+
+#[async_trait]
+impl PluginRun for ResumedMeanwhile {
+    async fn rewrite_context(
+        &mut self,
+        view: &tau_agent::plugin::ContextView<'_>,
+        _ctx: &PluginCtx,
+    ) -> Result<Option<tau_agent::plugin::Rewrite>, PluginError> {
+        self.0
+            .reopen_run(&self.1, "gpt-5.5")
+            .await
+            .map_err(PluginError::other)?;
+        Ok(Some(tau_agent::plugin::Rewrite {
+            messages: view.transcript[view.transcript.len() - 1..].to_vec(),
+            details: json!({}),
+            drops_conversation: true,
+        }))
+    }
+}
+
+/// A run resumed while an idle compaction worked on it is not rewritten:
+/// the rewrite was made over the transcript before the resume, so the
+/// compaction is refused as for a run going on, and stores nothing.
+#[test]
+fn an_idle_compaction_of_a_run_resumed_meanwhile_stores_nothing() {
+    block_on(async {
+        let model = ScriptedModel::new()
+            .turn(|t| t.text("first"))
+            .turn(|t| t.text("done"));
+        let store = tau_store_sqlite::memory().await.unwrap();
+        let agent = Agent::new(model.clone());
+        let (_, outcome) = run_to_end(&agent, &store, "go", Some("more")).await;
+        let before = store.transcript(&outcome.run.0).await.unwrap();
+        let refused = agent
+            .plugin(ResumedMeanwhile(store.clone(), outcome.run.0.to_string()))
+            .resume(&outcome.run)
+            .compact_idle(
+                outcome.request,
+                &store,
+                None,
+                CancellationToken::new(),
+            )
+            .await;
+        assert!(
+            matches!(
+                refused,
+                Err(AgentError::Store(tau_store::StoreError::StillRunning(_)))
+            ),
+            "{refused:?}"
+        );
+        assert_eq!(store.transcript(&outcome.run.0).await.unwrap(), before);
+    });
+}

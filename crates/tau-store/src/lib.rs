@@ -216,6 +216,18 @@ pub trait Backend: Debug + Send + Sync {
         plugins: &[(&str, TurnUsage)],
     ) -> Result<i64>;
 
+    /// [`Backend::append_charged`] for a run at rest: refused with
+    /// [`StoreError::StillRunning`] if it is running, in the same write
+    /// transaction, so what was made over the transcript at rest (an
+    /// idle compaction) never lands on a run resumed meanwhile.
+    async fn append_idle(
+        &self,
+        run: &str,
+        entries: &[Entry],
+        usage: TurnUsage,
+        plugins: &[(&str, TurnUsage)],
+    ) -> Result<i64>;
+
     /// What each plugin charged to the run itself, by plugin name.
     async fn plugin_costs(&self, run: &str) -> Result<Vec<PluginCost>>;
 

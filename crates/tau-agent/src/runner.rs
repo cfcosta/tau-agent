@@ -180,6 +180,9 @@ pub(crate) struct Runner {
     pub retry: RetryPolicy,
     /// Warm the session up before the first turn.
     pub warmup: bool,
+    /// An idle compaction's: the run is at rest, and its writes are
+    /// refused once the run goes on.
+    pub idle: bool,
     /// Turns the run took before this start: a resumed run keeps
     /// counting. Limits apply to the turns of this start alone.
     pub turns_before: u32,
@@ -709,16 +712,17 @@ impl Runner {
             .iter()
             .map(|(plugin, usage)| (&**plugin, *usage))
             .collect();
-        let last = match self
-            .store
-            .append_charged(
-                &self.run.0,
-                &entries,
-                turn_usage(&usage, turns),
-                &plugins,
-            )
-            .await
-        {
+        let usage = turn_usage(&usage, turns);
+        let appended = if self.idle {
+            self.store
+                .append_idle(&self.run.0, &entries, usage, &plugins)
+                .await
+        } else {
+            self.store
+                .append_charged(&self.run.0, &entries, usage, &plugins)
+                .await
+        };
+        let last = match appended {
             Ok(last) => last,
             Err(error) => {
                 // Not stored: charge it again with the next write.

@@ -142,6 +142,149 @@ pub struct SqliteStore {
 }
 
 impl SqliteStore {
+    /// Appends `entries` and adds `usage`, in one write transaction;
+    /// with `idle`, only to a run that is not running.
+    async fn append(
+        &self,
+        run: &str,
+        entries: &[Entry],
+        usage: TurnUsage,
+        plugins: &[(&str, TurnUsage)],
+        idle: bool,
+    ) -> Result<i64> {
+        // The wait covers the connection and the write lock, which
+        // another process can hold.
+        let started = Instant::now();
+        let mut connection = self.writer.acquire().await.map_err(database)?;
+        let mut tx = connection
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .map_err(database)?;
+        self.record_wait(started.elapsed());
+        if idle {
+            let status = sqlx::query_scalar!(
+                "SELECT status FROM runs WHERE id = ?1",
+                run
+            )
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(database)?;
+            if status.as_deref() == Some("running") {
+                return Err(StoreError::StillRunning(run.to_owned()));
+            }
+        }
+
+        let input_tokens = i64::from(usage.input_tokens);
+        let output_tokens = i64::from(usage.output_tokens);
+        let turns = i64::from(usage.turns);
+
+        let updated = sqlx::query!(
+            "UPDATE runs SET input_tokens = input_tokens + ?2,
+                             output_tokens = output_tokens + ?3,
+                             cost_usd = cost_usd + ?4,
+                             turns = turns + ?5,
+                             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ?1",
+            run,
+            input_tokens,
+            output_tokens,
+            usage.cost_usd,
+            turns,
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(database)?;
+        if updated.rows_affected() == 0 {
+            return Err(StoreError::UnknownRun(run.to_owned()));
+        }
+
+        let next = sqlx::query_scalar!(
+            r#"SELECT COALESCE(MAX(seq), -1) + 1 AS "next!: i64"
+               FROM messages WHERE run_id = ?1"#,
+            run
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(database)?;
+
+        for (offset, entry) in entries.iter().enumerate() {
+            let seq = next + offset as i64;
+            let (kind, role, plugin, body) = match entry {
+                Entry::Message { role, body } => (
+                    "message",
+                    Some(role.as_str()),
+                    None,
+                    Cow::Borrowed(body.as_str()),
+                ),
+                Entry::Context {
+                    plugin,
+                    body,
+                    layout,
+                    stats,
+                } => (
+                    "context",
+                    None,
+                    Some(plugin.as_str()),
+                    Cow::Owned(context_row(body, layout, stats.as_ref())?),
+                ),
+                Entry::Plugin { plugin, body } => (
+                    "plugin",
+                    None,
+                    Some(plugin.as_str()),
+                    Cow::Borrowed(body.as_str()),
+                ),
+            };
+            let body: &str = &body;
+            sqlx::query!(
+                "INSERT INTO messages (run_id, seq, kind, role, plugin, body, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                run,
+                seq,
+                kind,
+                role,
+                plugin,
+                body,
+            )
+            .execute(&mut *tx)
+            .await.map_err(database)?;
+        }
+
+        if usage.cost_usd != 0.0 {
+            sqlx::query!(
+                "INSERT INTO spend (run_id, at, cost_usd)
+                 VALUES (?1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?2)",
+                run,
+                usage.cost_usd,
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(database)?;
+        }
+
+        for (plugin, usage) in plugins {
+            let input_tokens = i64::from(usage.input_tokens);
+            let output_tokens = i64::from(usage.output_tokens);
+            sqlx::query!(
+                "INSERT INTO plugin_costs (run_id, plugin, input_tokens, output_tokens, cost_usd)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT (run_id, plugin) DO UPDATE SET
+                   input_tokens = input_tokens + excluded.input_tokens,
+                   output_tokens = output_tokens + excluded.output_tokens,
+                   cost_usd = cost_usd + excluded.cost_usd",
+                run,
+                plugin,
+                input_tokens,
+                output_tokens,
+                usage.cost_usd,
+            )
+            .execute(&mut *tx)
+            .await.map_err(database)?;
+        }
+
+        tx.commit().await.map_err(database)?;
+        Ok(next + entries.len() as i64 - 1)
+    }
+
     /// Opens (creating if needed) the database at `path` and runs the
     /// migrations.
     pub async fn open(path: impl AsRef<Path>) -> Result<Self> {
@@ -351,124 +494,17 @@ impl Backend for SqliteStore {
         usage: TurnUsage,
         plugins: &[(&str, TurnUsage)],
     ) -> Result<i64> {
-        // The wait covers the connection and the write lock, which
-        // another process can hold.
-        let started = Instant::now();
-        let mut connection = self.writer.acquire().await.map_err(database)?;
-        let mut tx = connection
-            .begin_with("BEGIN IMMEDIATE")
-            .await
-            .map_err(database)?;
-        self.record_wait(started.elapsed());
-        let input_tokens = i64::from(usage.input_tokens);
-        let output_tokens = i64::from(usage.output_tokens);
-        let turns = i64::from(usage.turns);
+        self.append(run, entries, usage, plugins, false).await
+    }
 
-        let updated = sqlx::query!(
-            "UPDATE runs SET input_tokens = input_tokens + ?2,
-                             output_tokens = output_tokens + ?3,
-                             cost_usd = cost_usd + ?4,
-                             turns = turns + ?5,
-                             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-             WHERE id = ?1",
-            run,
-            input_tokens,
-            output_tokens,
-            usage.cost_usd,
-            turns,
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(database)?;
-        if updated.rows_affected() == 0 {
-            return Err(StoreError::UnknownRun(run.to_owned()));
-        }
-
-        let next = sqlx::query_scalar!(
-            r#"SELECT COALESCE(MAX(seq), -1) + 1 AS "next!: i64"
-               FROM messages WHERE run_id = ?1"#,
-            run
-        )
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(database)?;
-
-        for (offset, entry) in entries.iter().enumerate() {
-            let seq = next + offset as i64;
-            let (kind, role, plugin, body) = match entry {
-                Entry::Message { role, body } => (
-                    "message",
-                    Some(role.as_str()),
-                    None,
-                    Cow::Borrowed(body.as_str()),
-                ),
-                Entry::Context {
-                    plugin,
-                    body,
-                    layout,
-                    stats,
-                } => (
-                    "context",
-                    None,
-                    Some(plugin.as_str()),
-                    Cow::Owned(context_row(body, layout, stats.as_ref())?),
-                ),
-                Entry::Plugin { plugin, body } => (
-                    "plugin",
-                    None,
-                    Some(plugin.as_str()),
-                    Cow::Borrowed(body.as_str()),
-                ),
-            };
-            let body: &str = &body;
-            sqlx::query!(
-                "INSERT INTO messages (run_id, seq, kind, role, plugin, body, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
-                run,
-                seq,
-                kind,
-                role,
-                plugin,
-                body,
-            )
-            .execute(&mut *tx)
-            .await.map_err(database)?;
-        }
-
-        if usage.cost_usd != 0.0 {
-            sqlx::query!(
-                "INSERT INTO spend (run_id, at, cost_usd)
-                 VALUES (?1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?2)",
-                run,
-                usage.cost_usd,
-            )
-            .execute(&mut *tx)
-            .await
-            .map_err(database)?;
-        }
-
-        for (plugin, usage) in plugins {
-            let input_tokens = i64::from(usage.input_tokens);
-            let output_tokens = i64::from(usage.output_tokens);
-            sqlx::query!(
-                "INSERT INTO plugin_costs (run_id, plugin, input_tokens, output_tokens, cost_usd)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT (run_id, plugin) DO UPDATE SET
-                   input_tokens = input_tokens + excluded.input_tokens,
-                   output_tokens = output_tokens + excluded.output_tokens,
-                   cost_usd = cost_usd + excluded.cost_usd",
-                run,
-                plugin,
-                input_tokens,
-                output_tokens,
-                usage.cost_usd,
-            )
-            .execute(&mut *tx)
-            .await.map_err(database)?;
-        }
-
-        tx.commit().await.map_err(database)?;
-        Ok(next + entries.len() as i64 - 1)
+    async fn append_idle(
+        &self,
+        run: &str,
+        entries: &[Entry],
+        usage: TurnUsage,
+        plugins: &[(&str, TurnUsage)],
+    ) -> Result<i64> {
+        self.append(run, entries, usage, plugins, true).await
     }
 
     async fn plugin_costs(&self, run: &str) -> Result<Vec<PluginCost>> {
