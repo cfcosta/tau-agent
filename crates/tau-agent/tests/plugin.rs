@@ -363,6 +363,30 @@ fn a_failed_start_fails_the_run() {
     });
 }
 
+/// A plugin that started before a later one failed to start gets its
+/// `finish`, with the failure as the run's stop: what it set up for the
+/// run is let go as for any run that ends.
+#[test]
+fn a_failed_start_finishes_the_plugins_started_before() {
+    block_on(async {
+        let earlier = Probe::named("earlier");
+        let broken = Probe {
+            fail_start: Some("no key"),
+            ..Probe::named("broken")
+        };
+        let agent = Agent::new(ScriptedModel::new())
+            .plugin(earlier.clone())
+            .plugin(broken);
+        let store = tau_store_sqlite::memory().await.unwrap();
+        let error = agent.start("hi", &store).outcome().await.unwrap_err();
+        let finished = earlier.finished.lock().unwrap().clone();
+        assert_eq!(
+            finished,
+            vec![(0, StopReason::Error(error.to_string()), String::new())]
+        );
+    });
+}
+
 /// A plugin's tools join the agent's, and its tool hooks see only its own
 /// run's calls: two concurrent runs each count from one.
 #[test]

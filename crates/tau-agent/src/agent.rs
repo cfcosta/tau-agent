@@ -39,7 +39,7 @@ use crate::{
     context::{estimate_context_tokens, estimate_message_tokens},
     event::{RunEvent, StopReason},
     limits::Limits,
-    plugin::{Plugin, RunPlan, RunShared},
+    plugin::{FinishedRun, Plugin, RunPlan, RunShared},
     record::RunRecord,
     runner::{ActivePlugin, Clock, LoopTool, Runner, Toolbox, system_clock},
     schema::to_strict,
@@ -1224,7 +1224,11 @@ async fn run_task(
         let ctx = shared.ctx(plugin.name());
         let records = match plugin_records(&store, &id, plugin.name()).await {
             Ok(records) => records,
-            Err(error) => return Err(record.fail(error).await),
+            Err(error) => {
+                return Err(
+                    fail_start(&record, &mut plugins, &history, error).await
+                );
+            }
         };
         plan.set_records(records);
         plan.set_last_rewrite(
@@ -1240,7 +1244,9 @@ async fn run_task(
                     plugin: plugin.name().to_owned(),
                     message: error.to_string(),
                 };
-                return Err(record.fail(error).await);
+                return Err(
+                    fail_start(&record, &mut plugins, &history, error).await
+                );
             }
         }
     }
@@ -1253,7 +1259,15 @@ async fn run_task(
             Some(schema) => schema,
             None => match compile(tool.as_ref()) {
                 Ok(schema) => Arc::new(schema),
-                Err(error) => return Err(record.fail(error).await),
+                Err(error) => {
+                    return Err(fail_start(
+                        &record,
+                        &mut plugins,
+                        &history,
+                        error,
+                    )
+                    .await);
+                }
             },
         };
         tools.push(LoopTool {
@@ -1273,7 +1287,10 @@ async fn run_task(
     let session = match agent.0.llm.open(settings).await {
         Ok(session) => session,
         Err(error) => {
-            return Err(record.fail(AgentError::Llm(error)).await);
+            let error = AgentError::Llm(error);
+            return Err(
+                fail_start(&record, &mut plugins, &history, error).await
+            );
         }
     };
     plan.images = input.images;
@@ -1324,6 +1341,28 @@ async fn run_task(
         last_seq: result.last_seq,
         request: result.request,
     })
+}
+
+/// Fails a run that could not start: its record, then the `finish` of
+/// each plugin that started, with the failure as the run's stop.
+async fn fail_start(
+    record: &RunRecord,
+    plugins: &mut [ActivePlugin],
+    transcript: &[Message],
+    error: AgentError,
+) -> AgentError {
+    let stop = StopReason::Error(error.to_string());
+    let error = record.fail(error).await;
+    let finished = FinishedRun {
+        transcript,
+        stop: &stop,
+        usage: &Usage::default(),
+        text: "",
+    };
+    for plugin in plugins {
+        plugin.run.finish(&finished, &plugin.ctx).await;
+    }
+    error
 }
 
 /// A tool's compiled argument schema.
