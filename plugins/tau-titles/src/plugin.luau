@@ -21,19 +21,16 @@ return tau.plugin({
 		},
 		default = { on = true },
 	},
-	title = function(run, ctx)
-		if not ctx.settings.on then
+	title = function(run, _, env)
+		if not env.settings.on then
 			return nil
 		end
-		local answer = ctx.tools.infer({
+		local answer = tau.await(tau.cmd.infer({
 			task = titles.request(run.task),
 			context = json.null,
 			schema = titles.SCHEMA,
 			effort = "low",
-		})
-		if not answer.ok then
-			error(answer.error, 0)
-		end
-		return titles.clean(answer.value.title)
+		}))
+		return titles.clean(answer.title)
 	end,
 })
