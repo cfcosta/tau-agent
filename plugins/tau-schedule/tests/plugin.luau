@@ -149,6 +149,35 @@ t.case("the job wakes each chat on all that came due, in order", function()
 	t.equal(#run.woken, 1)
 end)
 
+-- The turn a wake starts begins before the job lets go of what woke it:
+-- its start lists what still waits, not what it woke on, though the
+-- store keeps those until the job ends. One scheduled again for later
+-- under the same name stays listed.
+t.case("a woken turn does not list what woke it", function()
+	local store = {}
+	due_in(store, "r1", "first", 60)
+	due_in(store, "r1", "later", 3600)
+	local turn = chat({ store = store })
+	turn:at("2026-01-05T09:01:30Z")
+	local listed
+	local host = chat({
+		id = "host",
+		store = store,
+		stores = {},
+		wake = function(run, text)
+			turn:start({ input = text })
+			listed = {}
+			for _, one in ipairs(turn.state.waiting) do
+				table.insert(listed, one.name)
+			end
+			return "started"
+		end,
+	})
+	host:at("2026-01-05T09:01:30Z")
+	host:job("wake")
+	t.equal(listed, { "later" })
+end)
+
 t.case("the job wakes chats in every repository", function()
 	local there = {}
 	due_in(there, "r9", "deploy", 60)

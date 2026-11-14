@@ -24,9 +24,21 @@ local function waiting(store, run)
 	return wake.sort(list)
 end
 
--- The chat's state again from what the store holds of it.
-local function refresh(ctx)
-	ctx.state.waiting = waiting(ctx.store, ctx.run.id)
+-- The chat's state again from what the store holds of it. A turn woken
+-- on `woken` leaves out what woke it, though due: the job that woke it
+-- lets go of those once the turn started, after this.
+local function refresh(ctx, woken)
+	local gone = {}
+	for _, one in ipairs(woken or {}) do
+		gone[one.name] = true
+	end
+	local list = {}
+	for _, one in ipairs(waiting(ctx.store, ctx.run.id)) do
+		if not (gone[one.name] and one.at <= ctx.now.unix) then
+			table.insert(list, one)
+		end
+	end
+	ctx.state.waiting = list
 end
 
 -- `at` when the model gave `in` or `on`, or why not.
@@ -267,8 +279,8 @@ return tau.plugin({
 	-- Each turn: what the chat has waiting, as the store has it now, and
 	-- the card of the message it woke on, if it did.
 	start = function(plan, ctx)
-		refresh(ctx)
 		local woken = type(plan.input) == "string" and wake.parse(plan.input) or nil
+		refresh(ctx, woken)
 		if woken ~= nil then
 			ctx.state.cards = ctx.state.cards or {}
 			ctx.state.cards[plan.input] = woken
