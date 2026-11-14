@@ -141,6 +141,10 @@ struct State {
     refresh_grants: u32,
     revocations: Vec<Vec<(String, String)>>,
     violations: Vec<String>,
+    /// The JWKS endpoint never answers.
+    jwks_held: bool,
+    /// Refreshes answer with a new ID token too.
+    refresh_id_token: bool,
 }
 
 /// A fake auth server and API. Clones share state.
@@ -177,6 +181,8 @@ impl FakeChatGpt {
                 refresh_grants: 0,
                 revocations: Vec::new(),
                 violations: Vec::new(),
+                jwks_held: false,
+                refresh_id_token: false,
             })),
             clock: Arc::new(AtomicU64::new(START)),
         }
@@ -228,6 +234,17 @@ impl FakeChatGpt {
             .borrow_mut()
             .refresh_replies
             .push_back((status, body));
+    }
+
+    /// Whether the JWKS endpoint holds its requests unanswered, as a
+    /// stalled network would.
+    pub fn hold_jwks(&self, held: bool) {
+        self.state.borrow_mut().jwks_held = held;
+    }
+
+    /// Whether refreshes answer with a new ID token, as OpenAI's may.
+    pub fn id_token_on_refresh(&self, on: bool) {
+        self.state.borrow_mut().refresh_id_token = on;
     }
 
     /// Statuses for the next revocations, in order; then 200.
@@ -433,6 +450,11 @@ impl FakeChatGpt {
         let Some(request) = read_request(&mut stream).await? else {
             return Ok(());
         };
+        if request.path == "/.well-known/jwks.json"
+            && self.state.borrow().jwks_held
+        {
+            std::future::pending::<()>().await;
+        }
         let (status, body) = self.answer(host, &request);
         let text = body.map(|body| body.to_string()).unwrap_or_default();
         let request_id = {
@@ -568,8 +590,21 @@ impl FakeChatGpt {
                     old.live = false;
                 }
                 state.refresh_grants += 1;
-                let reply =
-                    issue(&mut state, &grant.client_id, &grant.scopes, None);
+                let id_token = state.refresh_id_token.then(|| {
+                    sign_id_token(
+                        &state,
+                        &grant.client_id,
+                        "",
+                        self.now(),
+                        None,
+                    )
+                });
+                let reply = issue(
+                    &mut state,
+                    &grant.client_id,
+                    &grant.scopes,
+                    id_token,
+                );
                 (200, Some(reply))
             }
             _ => error(400, "unsupported_grant_type"),

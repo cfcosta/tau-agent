@@ -634,27 +634,20 @@ impl<D: Dialer> ChatGpt<D> {
             .map_err(|error| {
                 ChatGptError::Protocol(format!("token response: {error}"))
             })?;
-        let access_token = tokens.access_token.ok_or_else(|| {
-            ChatGptError::Protocol(
-                "the refresh response has no access token".into(),
-            )
-        })?;
-        // A new ID token replaces the hint only if it validates as the
-        // same account.
-        if let Some(id_token) = tokens.id_token
-            && self
-                .validate_id_token(&id_token, &credentials.client_id, None)
-                .await
-                .is_ok_and(|identity| identity.subject == credentials.subject)
-        {
-            credentials.id_token = Some(id_token);
-        }
-        let now = self.now();
-        let expires_in = tokens.expires_in.unwrap_or(DEFAULT_EXPIRES_IN);
-        credentials.access_token = Some(access_token);
+        // The old refresh token is spent: the new one is saved before
+        // anything else can fail, or wait on the network.
         if let Some(refresh) = tokens.refresh_token {
             credentials.refresh_token = Some(refresh);
         }
+        let Some(access_token) = tokens.access_token else {
+            store.save(&credentials)?;
+            return Err(ChatGptError::Protocol(
+                "the refresh response has no access token".into(),
+            ));
+        };
+        let now = self.now();
+        let expires_in = tokens.expires_in.unwrap_or(DEFAULT_EXPIRES_IN);
+        credentials.access_token = Some(access_token);
         if let Some(scope) = tokens.scope {
             credentials.scopes = sorted_scopes(&scope);
         }
@@ -666,6 +659,17 @@ impl<D: Dialer> ChatGpt<D> {
         credentials.earliest_refresh_at = tokens.earliest_refresh_at;
         credentials.saved_at = crate::time::rfc3339(now);
         store.save(&credentials)?;
+        // A new ID token replaces the hint only if it validates as the
+        // same account.
+        if let Some(id_token) = tokens.id_token
+            && self
+                .validate_id_token(&id_token, &credentials.client_id, None)
+                .await
+                .is_ok_and(|identity| identity.subject == credentials.subject)
+        {
+            credentials.id_token = Some(id_token);
+            store.save(&credentials)?;
+        }
         Ok(credentials)
     }
 

@@ -335,6 +335,34 @@ fn an_expiring_token_is_refreshed_and_rotated() {
     });
 }
 
+/// A rotated refresh token is saved as soon as it comes: a refresh
+/// given up while it checks the new ID token (the keys it fetches after
+/// a start) leaves the new token stored, where the old one is dead.
+#[test]
+fn a_refresh_given_up_mid_check_keeps_the_rotated_token() {
+    simulate(FakeChatGpt::new(), |fake, chatgpt, dir| async move {
+        let account = sign_in(&chatgpt, &fake, None).await.unwrap().account;
+        let before = chatgpt.store().load(&account).unwrap();
+        // A new process: it has not fetched the keys yet.
+        let restarted = client(&fake, &dir);
+        fake.id_token_on_refresh(true);
+        fake.hold_jwks(true);
+        fake.advance(3600);
+        let given_up = tokio::time::timeout(
+            Duration::from_secs(10),
+            restarted.access_token(&account),
+        )
+        .await;
+        assert!(given_up.is_err(), "{given_up:?}");
+        assert_eq!(fake.refresh_grants(), 1);
+        let after = chatgpt.store().load(&account).unwrap();
+        assert_ne!(after.refresh_token, before.refresh_token);
+        assert!(
+            fake.refresh_token_is_live(after.refresh_token.as_deref().unwrap())
+        );
+    });
+}
+
 #[test]
 fn concurrent_refreshes_take_turns() {
     simulate(FakeChatGpt::new(), |fake, chatgpt, dir| async move {
