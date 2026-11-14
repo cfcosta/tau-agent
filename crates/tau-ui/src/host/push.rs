@@ -71,9 +71,24 @@ impl Host {
             Err(PushError::Moved { branch, ahead }) => {
                 Err(PushFailure::Moved { branch, ahead })
             }
+            // A forge that refused it says why, in place of Git's answer.
+            Err(PushError::Failed(error)) if refused(&error) => {
+                let why = match (self.forge(), self.forge_of(repo)) {
+                    (Some(forge), Some(full_name)) => {
+                        forge.push_refused(&full_name).await
+                    }
+                    _ => format!("{error:#}"),
+                };
+                Err(PushFailure::Failed(why))
+            }
             Err(PushError::Failed(error)) => Err(failed(error)),
         }
     }
+}
+
+/// Whether Git's answer is the forge refusing the push: an HTTP 403.
+fn refused(error: &anyhow::Error) -> bool {
+    format!("{error:#}").contains("The requested URL returned error: 403")
 }
 
 /// A description's first line, or `(no description set)`.
@@ -81,5 +96,25 @@ fn first_line(description: &str) -> String {
     match description.lines().next().map(str::trim) {
         Some(line) if !line.is_empty() => line.to_owned(),
         _ => "(no description set)".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// A push the forge refused is Git's HTTP 403, as jj-lib's push
+    /// relays it; another failure is not.
+    #[test]
+    fn a_refused_push_is_the_forges_403() {
+        let refused = anyhow::anyhow!(
+            "Cannot push: Git process failed: External git program failed:\n\
+             fatal: unable to access 'https://github.com/cfcosta/rust-dev-tools.nix.git/': \
+             The requested URL returned error: 403"
+        );
+        assert!(super::refused(&refused));
+        let gone = anyhow::anyhow!(
+            "Cannot push: fatal: unable to access 'https://github.com/o/r.git/': \
+             Could not resolve host: github.com"
+        );
+        assert!(!super::refused(&gone));
     }
 }

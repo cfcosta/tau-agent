@@ -493,6 +493,21 @@ impl tau_ui_plugin::forge::Forge for LuauForge {
         })
     }
 
+    fn push_refused<'a>(
+        &'a self,
+        full_name: &'a str,
+    ) -> tau_ui_plugin::registry::HostFuture<'a, String> {
+        Box::pin(async move {
+            match self.ask("refused", json!({ "repo": full_name })).await {
+                Ok(serde_json::Value::String(why)) => why,
+                _ => format!(
+                    "{} refused the push to {full_name}: the sign-in may not write to it",
+                    self.name()
+                ),
+            }
+        })
+    }
+
     fn can_push<'a>(
         &'a self,
         full_name: &'a str,

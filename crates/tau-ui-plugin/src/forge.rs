@@ -82,6 +82,21 @@ pub trait Forge: Send + Sync {
         full_name: &'a str,
     ) -> HostFuture<'a, anyhow::Result<Remote>>;
 
+    /// Why a push to `full_name` the forge refused (an HTTP 403) was
+    /// refused, and what lets it through: what a person reads in place of
+    /// Git's answer.
+    fn push_refused<'a>(
+        &'a self,
+        full_name: &'a str,
+    ) -> HostFuture<'a, String> {
+        Box::pin(async move {
+            format!(
+                "{} refused the push to {full_name}: the sign-in may not write to it",
+                self.name()
+            )
+        })
+    }
+
     /// Whether the sign-in can push to `full_name`; false signed out.
     fn can_push<'a>(
         &'a self,
