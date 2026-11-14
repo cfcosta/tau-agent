@@ -148,8 +148,8 @@ end
 -- follows, "stay", "write_other", "write_note" or "send"; nil does
 -- nothing at all. What changed is kept; Send answers the call.
 local function acting(step)
-	return function(args, ctx)
-		local call = waiting(ctx.state)
+	return function(args, model, env)
+		local call = waiting(model)
 		if call == nil then
 			return nil
 		end
@@ -200,10 +200,10 @@ return tau.plugin({
 			-- A script's call would end with the script, the person still
 			-- answering.
 			model_only = true,
-			call = function(args, ctx)
+			call = function(args, model, env)
 				-- A sub-agent has no one to ask: its `ask` is there so its
 				-- tools match its caller's and it reads their prompt cache.
-				if ctx.run.kind == "sub_agent" then
+				if env.run.kind == "sub_agent" then
 					error(ask.NO_ONE_TO_ASK, 0)
 				end
 				local questions, why = ask.read(args)
@@ -214,8 +214,8 @@ return tau.plugin({
 				if why ~= nil then
 					error(why, 0)
 				end
-				table.insert(calls_of(ctx.state), {
-					call = ctx.run.call,
+				table.insert(calls_of(model), {
+					call = env.run.call,
 					ask = questions,
 					draft = ask.draft(questions),
 					focus = focus_start(),
@@ -226,13 +226,13 @@ return tau.plugin({
 	},
 	-- The calls the run's history left waiting: a run that went on from
 	-- there cannot answer them any more.
-	start = function(_, ctx)
-		close_waiting(ctx.state)
+	start = function(_, model, env)
+		close_waiting(model)
 		return nil
 	end,
 	-- A run that ended, cancelled too, answers nothing more.
-	run_end = function(_, ctx)
-		close_waiting(ctx.state)
+	run_end = function(_, model, env)
+		close_waiting(model)
 	end,
 	actions = {
 		-- The keys, while the panel has them; in a field, only Esc,
@@ -280,16 +280,16 @@ return tau.plugin({
 		send = acting(function()
 			return "send"
 		end),
-		decline = function(_, ctx)
-			local call = waiting(ctx.state)
+		decline = function(_, model, env)
+			local call = waiting(model)
 			if call == nil then
 				return nil
 			end
 			return tau.answer({ call = call.call, declined = true })
 		end,
 		-- The answers reached the call: the model reads them.
-		answered = function(args, ctx)
-			local call = call_of(ctx.state, args.call)
+		answered = function(args, model, env)
+			local call = call_of(model, args.call)
 			if call == nil then
 				error("no call " .. tostring(args.call) .. " asked", 0)
 			end
@@ -303,7 +303,7 @@ return tau.plugin({
 			return ask.reply_text(call.ask, reply)
 		end,
 	},
-	view = function(state, ctx)
+	view = function(state, env)
 		local view = {}
 		local calls = {}
 		for _, call in ipairs(state.calls or {}) do
@@ -321,7 +321,7 @@ return tau.plugin({
 		-- The run asks the person: its first question says what.
 		view.asks = call.ask.questions[1].question
 		view.composer = panel.tree(
-			{ run = tostring(ctx.run.id), call = call.call },
+			{ run = tostring(env.run.id), call = call.call },
 			call.ask,
 			call.draft or ask.draft(call.ask),
 			call.focus or focus_start()
