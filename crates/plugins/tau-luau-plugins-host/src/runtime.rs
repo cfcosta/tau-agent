@@ -490,6 +490,53 @@ pub enum Hook {
 }
 
 impl Hook {
+    /// Where it is in the plugin's table, as its actor finds it (ADR
+    /// 0056).
+    pub fn path(&self) -> Vec<String> {
+        let keys: &[&str] = match self {
+            Self::Tool(name) => {
+                return vec!["tools".into(), name.clone(), "call".into()];
+            }
+            Self::Card(name) => {
+                return vec!["tools".into(), name.clone(), "card".into()];
+            }
+            Self::Forge(name) => return vec!["forge".into(), name.clone()],
+            Self::Job(name) => {
+                return vec!["jobs".into(), name.clone(), "run".into()];
+            }
+            Self::Page(name) => return vec!["pages".into(), name.clone()],
+            Self::Action(name) => return vec!["actions".into(), name.clone()],
+            Self::Start => &["start"],
+            Self::BeforeTool => &["before_tool"],
+            Self::BeforeRequest => &["before_request"],
+            Self::AfterToolResult => &["after_tool_result"],
+            Self::RewriteContext => &["rewrite_context"],
+            Self::Rewritten => &["rewritten"],
+            Self::BeforeStop => &["before_stop"],
+            Self::TurnEnd => &["turn_end"],
+            Self::OnEvent => &["on_event"],
+            Self::Title => &["title"],
+            Self::Notify => &["notify"],
+            Self::RepoData => &["repo_data"],
+            Self::App => &["app"],
+            Self::AppPage => &["page"],
+            Self::ListCommands => &["listed", "_list"],
+            Self::AppSetup => &["setup"],
+            Self::AppModels => &["models"],
+            Self::Recover => &["recover"],
+            Self::RunEnd => &["run_end"],
+            Self::View => &["view"],
+            Self::SettingsView => &["settings", "view"],
+        };
+        keys.iter().map(|key| (*key).to_owned()).collect()
+    }
+
+    /// Whether it draws from a frozen copy of the model, waiting on
+    /// nothing, rather than taking a step.
+    pub fn draws(&self) -> bool {
+        matches!(self, Self::View | Self::Card(_) | Self::SettingsView)
+    }
+
     /// How long it may run (ADR 0027).
     pub fn limit(&self) -> Duration {
         Duration::from_millis(match self {
@@ -552,43 +599,6 @@ impl Hook {
         match self {
             Self::RewriteContext => REWRITE_LIMIT,
             _ => Self::Tool(String::new()).limit(),
-        }
-    }
-
-    /// The Luau expression that calls it, with `p`, `input` and `ctx`.
-    fn expression(&self) -> String {
-        match self {
-            Self::Tool(name) => format!("p.tools[\"{name}\"].call(input, ctx)"),
-            Self::Card(name) => format!(
-                "p.tools[\"{name}\"].card(input.call, input.result, ctx)"
-            ),
-            Self::Start => "p.start(input, ctx)".into(),
-            Self::BeforeTool => "p.before_tool(input, ctx)".into(),
-            Self::BeforeRequest => "p.before_request(input, ctx)".into(),
-            Self::AfterToolResult => "p.after_tool_result(input, ctx)".into(),
-            Self::RewriteContext => "p.rewrite_context(input, ctx)".into(),
-            Self::Rewritten => "p.rewritten(input, ctx)".into(),
-            Self::BeforeStop => "p.before_stop(input, ctx)".into(),
-            Self::TurnEnd => "p.turn_end(input, ctx)".into(),
-            Self::OnEvent => "p.on_event(input, ctx)".into(),
-            Self::Title => "p.title(input, ctx)".into(),
-            Self::Notify => "p.notify(input, ctx)".into(),
-            Self::Job(name) => format!("p.jobs[\"{name}\"].run(ctx)"),
-            Self::RepoData => "p.repo_data(ctx)".into(),
-            Self::App => "p.app(ctx)".into(),
-            Self::AppPage => "p.page(input, ctx)".into(),
-            Self::AppSetup => "p.setup(input, ctx)".into(),
-            Self::AppModels => "p.models(input, ctx)".into(),
-            Self::ListCommands => {
-                "require(\"tau\")._commands(p.listed.list(input))".into()
-            }
-            Self::Recover => "p.recover(input, ctx)".into(),
-            Self::Page(name) => format!("p.pages[\"{name}\"](input, ctx)"),
-            Self::Forge(name) => format!("p.forge[\"{name}\"](input, ctx)"),
-            Self::RunEnd => "p.run_end(input, ctx)".into(),
-            Self::View => "p.view(ctx.state, ctx)".into(),
-            Self::SettingsView => "p.settings.view(input, ctx)".into(),
-            Self::Action(name) => format!("p.actions[\"{name}\"](input, ctx)"),
         }
     }
 
@@ -812,7 +822,7 @@ pub struct Loaded {
     /// [`Files::digest`].
     pub digest: String,
     pub declaration: Declaration,
-    modules: Arc<Modules>,
+    pub(crate) modules: Arc<Modules>,
 }
 
 impl std::fmt::Debug for Loaded {
@@ -987,109 +997,95 @@ impl Loaded {
                 wall: Duration::ZERO,
             };
         }
-        // The input and the context are globals, given as values: never
-        // source for the compiler, nor a text `json.decode` would bound,
-        // however large a transcript is (ADR 0050, gap B).
-        let script = format!(
-            "local tau = require(\"tau\")\n\
-             local p = require(\"plugin\")\n\
-             local input = __input\n\
-             local ctx = tau._ctx(__context)\n\
-             local value = {call}\n\
-             if value == nil then value = json.null end\n\
-             return {{ value = value, state = ctx.state, logs = ctx._logs }}\n",
-            call = hook.expression(),
-        );
-        let inputs = vec![
-            ("__input".to_owned(), input),
-            ("__context".to_owned(), {
-                let mut context = json!(context);
-                context["models"] = plan_models();
-                context
-            }),
-        ];
+        // A hook alone (ADR 0056): an actor made from the context's state,
+        // taking the hook's steps, what it awaits carried out on `reach`,
+        // and what it leaves of the model given back.
         let started = std::time::Instant::now();
-        // Its turn with the store, from here to the end of the hook.
-        let session = match (&context.store, self.declaration.uses.store) {
-            (Some(store), true) => {
-                Some(Arc::new(tokio::sync::Mutex::new(store.0.session().await)))
-            }
-            _ => None,
+        let failed = |error: String| Outcome {
+            value: Value::Null,
+            state: context.state.clone(),
+            logs: Vec::new(),
+            raised: !(error.contains("it ran past its")
+                || error.contains("it was cancelled")),
+            error: Some(error),
+            wall: started.elapsed(),
         };
-        let mut reaches =
-            Reaches::of(&self.declaration, context.secrets.as_deref());
-        reaches.store = session.clone();
-        let job = context
-            .job
-            .as_ref()
-            .filter(|_| self.declaration.uses.chats)
-            .map(|job| {
-                Arc::new(JobReaches {
-                    plugin: self.declaration.name.clone(),
-                    stores: job.stores.clone(),
-                    conversations: job.conversations.clone(),
-                    sessions: Default::default(),
-                })
-            });
-        reaches.job = job.clone();
-        let (value, failed) = run(
-            self.modules.clone(),
-            reach,
-            reaches,
-            script,
-            inputs,
-            hook.limit_for(&self.declaration),
-            cancel,
-        )
-        .await;
-        let raised = failed.as_ref().is_some_and(|failed| failed.raised);
-        let mut error = failed.map(|failed| without_caller(failed.why));
-        // What it wrote goes in whole once it ends well, and not at all
-        // when it fails.
-        if let (Some(job), None) = (&job, &error)
-            && let Err(why) = job.commit().await
-        {
-            error = Some(format!("its stores: {why}"));
-        }
-        if let (Some(session), None) = (session, &error) {
-            let committed = match Arc::into_inner(session) {
-                Some(session) => session.into_inner().commit().await,
-                None => Err("the hook's store was still in use".into()),
-            };
-            if let Err(why) = committed {
-                error = Some(format!("its store: {why}"));
-            }
-        }
-        let wall = started.elapsed();
-        if let Some(error) = error {
-            return Outcome {
-                value: Value::Null,
-                state: context.state.clone(),
-                logs: Vec::new(),
-                error: Some(error),
-                raised,
-                wall,
+        let model = match &context.state {
+            Value::Null => json!({}),
+            state => state.clone(),
+        };
+        let actor = match crate::actor::Actor::new(
+            &self.modules,
+            self.files.root.module,
+            &model,
+        ) {
+            Ok(actor) => actor,
+            Err(error) => return failed(error),
+        };
+        let logs = Arc::new(Logs::default());
+        let mailbox = crate::mailbox::Mailbox::new(actor, logs.clone());
+        let env = json!({
+            "run": context.run,
+            "now": context.now,
+            "settings": context.settings,
+            "models": plan_models(),
+        });
+        let limit = hook.limit_for(&self.declaration);
+        if hook.draws() {
+            let input = (!matches!(hook, Hook::View)).then_some(&input);
+            return match mailbox.draw(&hook.path(), input, &env, limit).await {
+                Ok(value) => Outcome {
+                    value,
+                    state: context.state.clone(),
+                    logs: Vec::new(),
+                    error: None,
+                    raised: false,
+                    wall: started.elapsed(),
+                },
+                Err(error) => failed(error),
             };
         }
-        let logs = value["logs"]
-            .as_array()
-            .map(|logs| {
-                logs.iter()
-                    .filter_map(|log| log.as_str().map(str::to_owned))
-                    .collect()
-            })
-            .unwrap_or_default();
-        Outcome {
-            value: value["value"].clone(),
-            state: match &value["state"] {
-                Value::Array(items) if items.is_empty() => json!({}),
-                state => state.clone(),
+        let executor = Executor::new(self, context, reach);
+        let ended = mailbox
+            .call(hook.path(), input, env, &executor, limit, &cancel, None)
+            .await;
+        let logs = logs.0.lock().expect("not poisoned").clone();
+        match ended {
+            crate::actor::Ended::Value { value } => Outcome {
+                value,
+                state: match mailbox.model().await {
+                    Ok(state) => state,
+                    Err(error) => return failed(error),
+                },
+                logs,
+                error: None,
+                raised: false,
+                wall: started.elapsed(),
             },
-            logs,
-            error: None,
-            raised: false,
-            wall,
+            crate::actor::Ended::Error { error } => Outcome {
+                logs,
+                ..failed(error)
+            },
         }
+    }
+}
+
+/// The lines a hook alone logged, kept for its [`Outcome`].
+#[derive(Default)]
+struct Logs(std::sync::Mutex<Vec<String>>);
+
+#[async_trait]
+impl crate::mailbox::Keep for Logs {
+    async fn stepped(
+        &self,
+        step: &crate::actor::Step,
+        _drawn: Option<Result<Value, String>>,
+        _place: Option<&str>,
+    ) {
+        self.0
+            .lock()
+            .expect("not poisoned")
+            .extend(step.logs.iter().cloned());
     }
 }
 
@@ -1734,28 +1730,13 @@ impl Reaches {
     }
 }
 
-/// `why` without the line of the script that called the hook, which is
-/// tau's and not the plugin's: `codemode:5: x is taken` is `x is taken`.
-fn without_caller(why: String) -> String {
-    let Some(rest) = why.strip_prefix("codemode:") else {
-        return why;
-    };
-    let digits = rest.chars().take_while(char::is_ascii_digit).count();
-    match rest[digits..].strip_prefix(": ") {
-        Some(message) if digits > 0 => message.to_owned(),
-        _ => why,
-    }
-}
-
-/// Why a script failed, and whether it raised that itself: a Lua error,
-/// not a time out, a cancel or a sandbox that did not start.
+/// Why a script failed.
 struct Failed {
     why: String,
-    raised: bool,
 }
 
-/// Runs `script`, with `inputs` as its globals, and gives back
-/// the table it returned, or why it failed.
+/// Runs `script` (a test file, a property, a loop), with `inputs` as its
+/// globals, and gives back the table it returned, or why it failed.
 async fn run(
     modules: Arc<Modules>,
     reach: Arc<dyn Reach>,
@@ -1794,9 +1775,8 @@ async fn run(
     };
     let outcome = tau_codemode_host::run(host, request).await;
     if let Some(failure) = outcome.failure {
-        let raised = matches!(failure, Failure::Error(_));
         let why = failure_text(&failure);
-        return (Value::Null, Some(Failed { why, raised }));
+        return (Value::Null, Some(Failed { why }));
     }
     let returned = outcome.items.iter().rev().find_map(|item| match item {
         Item::Json(text) => serde_json::from_str(text).ok(),
@@ -1807,8 +1787,7 @@ async fn run(
         None => (
             Value::Null,
             Some(Failed {
-                why: "the hook returned nothing".into(),
-                raised: false,
+                why: "the script returned nothing".into(),
             }),
         ),
     }

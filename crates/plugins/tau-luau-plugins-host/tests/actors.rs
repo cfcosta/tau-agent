@@ -159,7 +159,7 @@ t.case("failures", function()
   step = actor.deliver({{ kind = "call", id = "m", path = {{ "actions", "many" }}, input = {{}} }})
   t.equal(step.waits.m.op, "all")
   t.equal(#step.waits.m.args, 2)
-  step = actor.deliver({{ kind = "answer", id = "m", ok = true, values = {{ {{ ok = true, values = {{ 1 }} }}, {{ ok = true, values = {{ 2 }} }} }} }})
+  step = actor.deliver({{ kind = "answer", id = "m", ok = true, values = {{ {{ {{ ok = true, values = {{ 1 }} }}, {{ ok = true, values = {{ 2 }} }} }} }} }})
   t.equal(step.ended.m.value[2].values, {{ 2 }})
   step = actor.deliver({{ kind = "call", id = "x", path = {{ "nothing" }}, input = {{}} }})
   t.equal(step.ended.x, {{ value = json.null }})
@@ -431,6 +431,7 @@ return tau.plugin({
                             &executor,
                             LIMIT,
                             &CancellationToken::new(),
+                            None,
                         )
                         .await
                 })
@@ -444,6 +445,7 @@ return tau.plugin({
                     &executor,
                     LIMIT,
                     &CancellationToken::new(),
+                    None,
                 )
                 .await;
             assert_eq!(paused, Ended::Value { value: json!(null) });
@@ -475,6 +477,7 @@ return tau.plugin({
                     &executor,
                     LIMIT,
                     &CancellationToken::new(),
+                    None,
                 )
                 .await;
             assert_eq!(
@@ -508,6 +511,7 @@ return tau.plugin({
                     &executor,
                     LIMIT,
                     &cancel,
+                    None,
                 )
                 .await;
             let Ended::Error { error } = ended else {
@@ -562,6 +566,7 @@ return tau.plugin({
                             &executor,
                             LIMIT,
                             &CancellationToken::new(),
+                            None,
                         )
                         .await
                 })
@@ -575,6 +580,7 @@ return tau.plugin({
                     &executor,
                     LIMIT,
                     &CancellationToken::new(),
+                    None,
                 )
                 .await;
             // The restart: the check's call and its mailbox are gone.

@@ -90,11 +90,6 @@ local function infer_all(requests)
 		table.insert(commands, tau.cmd.infer(request))
 	end
 	local answers = tau.all(commands)
-	-- The runtime's `tau.all` answers its list inside the answer's values
-	-- (`{ answers }`): take the list either way.
-	if type(answers[1]) == "table" and answers[1].ok == nil then
-		answers = answers[1]
-	end
 	local out = {}
 	for at = 1, #requests do
 		local answer = answers[at]

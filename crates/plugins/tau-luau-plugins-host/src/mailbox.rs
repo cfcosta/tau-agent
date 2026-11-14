@@ -32,8 +32,16 @@ use crate::{
 pub trait Keep: Send + Sync {
     /// `message`, about to be taken.
     async fn taken(&self, _message: &Message) {}
-    /// What a step did, once its commands were given.
-    async fn stepped(&self, _step: &Step) {}
+    /// What a step did, once its commands were given; what the model's
+    /// drawing drew of it, when it changed the model and the mailbox
+    /// draws; and where the call it is of places what it keeps.
+    async fn stepped(
+        &self,
+        _step: &Step,
+        _drawn: Option<Result<Value, String>>,
+        _place: Option<&str>,
+    ) {
+    }
     /// The model, with no hook under way: what a restart starts from.
     async fn quiet(&self, _model: &Value) {}
     /// The commands a step gave could not be carried out.
@@ -50,7 +58,15 @@ pub struct Mailbox {
     actor: tokio::sync::Mutex<Actor>,
     keep: Arc<dyn Keep>,
     next: AtomicU64,
+    /// What it draws after a step that changed the model, and the `env`
+    /// the drawing gets.
+    drawing: Option<(Vec<String>, Value)>,
+    /// Where each call under way places what it keeps, by hook id.
+    places: std::sync::Mutex<std::collections::HashMap<String, String>>,
 }
+
+/// How long a drawing may take.
+const DRAW_LIMIT: Duration = Duration::from_millis(200);
 
 impl std::fmt::Debug for Mailbox {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -64,7 +80,15 @@ impl Mailbox {
             actor: tokio::sync::Mutex::new(actor),
             keep,
             next: AtomicU64::new(1),
+            drawing: None,
+            places: Default::default(),
         }
+    }
+
+    /// Draws `path` with `env` after each step that changes the model.
+    pub fn drawing(mut self, path: Vec<String>, env: Value) -> Self {
+        self.drawing = Some((path, env));
+        self
     }
 
     /// Runs the hook at `path` with `input` and `env` to its end: each of
@@ -78,15 +102,24 @@ impl Mailbox {
         executor: &Executor,
         limit: Duration,
         cancel: &CancellationToken,
+        place: Option<&str>,
     ) -> Ended {
         let id = format!("h{}", self.next.fetch_add(1, Ordering::SeqCst));
+        if let Some(place) = place {
+            self.places
+                .lock()
+                .expect("not poisoned")
+                .insert(id.clone(), place.to_owned());
+        }
         let message = Message::Call {
             id: id.clone(),
             path,
             input,
             env,
         };
-        self.drive(&id, message, executor, limit, cancel).await
+        let ended = self.drive(&id, message, executor, limit, cancel).await;
+        self.places.lock().expect("not poisoned").remove(&id);
+        ended
     }
 
     /// Takes `message` for the hook `id`, then what it awaits, to its end.
@@ -138,7 +171,19 @@ impl Mailbox {
         if let Err(why) = executor.give(&step.given).await {
             self.keep.not_given(&why).await;
         }
-        self.keep.stepped(&step).await;
+        let drawn = match &self.drawing {
+            Some((path, env)) if step.changed => {
+                Some(actor.draw(path, None, env, DRAW_LIMIT))
+            }
+            _ => None,
+        };
+        let place = self
+            .places
+            .lock()
+            .expect("not poisoned")
+            .get(message.id())
+            .cloned();
+        self.keep.stepped(&step, drawn, place.as_deref()).await;
         if actor.waiting()?.is_empty() {
             self.keep.quiet(&step.model).await;
         }

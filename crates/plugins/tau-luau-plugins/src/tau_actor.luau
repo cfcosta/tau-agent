@@ -262,7 +262,11 @@ function tau.all(commands)
 		error("tau.all is for a hook", 2)
 	end
 	local answers = coroutine.yield(AWAIT, { op = "all", args = array(commands) })
-	return answers.values
+	if answers.ok == false then
+		error(answers.error, 0)
+	end
+	-- `all` answers with one value, the list of answers.
+	return answers.values[1]
 end
 
 -- Carries `command` out after the step, needing no answer.

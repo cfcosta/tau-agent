@@ -224,11 +224,6 @@ function decide.ask(requests)
 		table.insert(commands, tau.cmd.jev.ask({ state_json = request.state, questions = questions }))
 	end
 	local answers = tau.all(commands)
-	-- The runtime's `tau.all` answers its list inside the answer's values
-	-- (`{ answers }`): take the list either way.
-	if type(answers[1]) == "table" and answers[1].ok == nil then
-		answers = answers[1]
-	end
 	local results = {}
 	for _, answer in ipairs(answers) do
 		if answer.ok then

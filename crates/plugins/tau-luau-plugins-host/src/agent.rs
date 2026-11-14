@@ -60,7 +60,9 @@ use crate::{
     NAME,
     Record,
     ToolSpec,
+    actor::{Actor, Ended},
     infer::Refused,
+    mailbox::{Keep, Mailbox},
     runtime::{Context, Hook, Loaded, NoReach, Outcome, Reach},
 };
 
@@ -155,10 +157,12 @@ struct Inner {
 /// One run's state for every plugin, by name.
 #[derive(Debug, Default)]
 struct RunState {
-    states: HashMap<String, Value>,
-    /// Each plugin's state as last stored with the run, by this run or
-    /// as it started: a stored state that differs came from elsewhere.
-    stored: HashMap<String, Value>,
+    /// Each plugin's model as the run inherits it, for its mailbox to
+    /// start from.
+    models: HashMap<String, Value>,
+    /// Each plugin's mailbox (ADR 0056), with the digest of the version
+    /// its actor runs.
+    mailboxes: HashMap<String, (String, Arc<Mailbox>)>,
     failures: HashMap<String, u32>,
     /// The digest of each plugin's version the run last drew.
     drawn: HashMap<String, String>,
@@ -169,9 +173,6 @@ struct RunState {
     text: String,
     names: HashMap<String, String>,
     calls: Vec<Value>,
-    /// How many records the run had when a hook last caught up: those
-    /// after came while the hook ran.
-    seen: Option<usize>,
 }
 
 /// What a run's tool reaches once the person allows what it asked: the
@@ -463,13 +464,17 @@ impl Inner {
         if let Some(info) = info.as_object_mut() {
             info.insert("id".into(), json!(run.0.as_ref()));
             info.insert("turn".into(), json!(state.turn));
+            // As an action of the run sees them: the run goes on, and
+            // whether Jev answers.
+            info.insert("live".into(), json!(true));
+            info.insert("jev".into(), json!(self.jev.is_some()));
         }
         let name = &active.loaded.declaration.name;
         Context {
             run: info,
             now: now(),
             settings: active.settings.clone(),
-            state: state.states.get(name).cloned().unwrap_or_else(|| json!({})),
+            state: Value::Null,
             secrets: self
                 .config
                 .as_deref()
@@ -587,15 +592,39 @@ impl Inner {
         {
             return None;
         }
-        // Views and cards only draw the state; anything else may change
-        // it, so it starts from the state as stored.
-        if !matches!(hook, Hook::View | Hook::Card(_)) {
-            self.catch_up(state, ctx).await;
-        }
         let mut context = self.context(&ctx.run, state, active);
         context.store = self.store_of(active).await;
         if let (Some(call), Some(run)) = (call, context.run.as_object_mut()) {
             run.insert("call".into(), json!(call));
+        }
+        let started = std::time::Instant::now();
+        let mailbox = match self.mailbox(active, state, ctx).await {
+            Ok(mailbox) => mailbox,
+            Err(error) => return Some(failed_outcome(error, started)),
+        };
+        let env = json!({
+            "run": context.run,
+            "now": context.now,
+            "settings": context.settings,
+            "models": crate::runtime::plan_models(),
+        });
+        let limit = hook.limit_for(&active.loaded.declaration);
+        // A drawing reads a frozen copy of the model, waiting on nothing.
+        if hook.draws() {
+            let input = (!matches!(hook, Hook::View)).then_some(&input);
+            return Some(
+                match mailbox.draw(&hook.path(), input, &env, limit).await {
+                    Ok(value) => Outcome {
+                        value,
+                        state: Value::Null,
+                        logs: Vec::new(),
+                        error: None,
+                        raised: false,
+                        wall: started.elapsed(),
+                    },
+                    Err(error) => failed_outcome(error, started),
+                },
+            );
         }
         // `run_end` runs however the run ended, stopped by the person
         // too: what it lets go of goes, the run's cancel or not; an
@@ -606,31 +635,75 @@ impl Inner {
             }
             _ => ctx.cancel.child_token(),
         };
-        Some(
-            active
-                .loaded
-                .call(hook, input, &context, reach, cancel)
-                .await,
-        )
+        let executor =
+            crate::runtime::Executor::new(&active.loaded, &context, reach);
+        // What `start` leaves shows after the message the run started on,
+        // in history as live.
+        let place =
+            matches!(hook, Hook::Start).then_some(tau_ui_plugin::PLACE_MESSAGE);
+        let ended = mailbox
+            .call(hook.path(), input, env, &executor, limit, &cancel, place)
+            .await;
+        Some(match ended {
+            Ended::Value { value } => Outcome {
+                value,
+                state: Value::Null,
+                logs: Vec::new(),
+                error: None,
+                raised: false,
+                wall: started.elapsed(),
+            },
+            Ended::Error { error } => failed_outcome(error, started),
+        })
     }
 
-    /// Takes each plugin's state stored with the run since this run last
-    /// knew it: what an interface recorded meanwhile, such as an action
-    /// a button carried out (ADR 0045).
-    async fn catch_up(&self, state: &mut RunState, ctx: &PluginCtx) {
-        state.seen = None;
-        let Ok(records) = ctx.records().await else {
-            return;
-        };
-        state.seen = Some(records.len());
-        for (plugin, stored) in tau_luau_plugins::last_states(&records) {
-            if state.stored.get(&plugin) != Some(&stored) {
-                state.states.insert(plugin.clone(), stored.clone());
-                state.stored.insert(plugin, stored);
+    /// `active`'s mailbox in the run, made from the model the run
+    /// inherits the first time, and again on a new version of the plugin
+    /// once no hook of it is under way.
+    async fn mailbox(
+        &self,
+        active: &Active,
+        state: &mut RunState,
+        ctx: &PluginCtx,
+    ) -> Result<Arc<Mailbox>, String> {
+        let name = active.loaded.declaration.name.clone();
+        let model = match state.mailboxes.get(&name) {
+            Some((digest, mailbox)) => {
+                if *digest == active.loaded.digest
+                    || !mailbox.waiting().await?.is_empty()
+                {
+                    return Ok(mailbox.clone());
+                }
+                mailbox.model().await?
             }
+            None => state
+                .models
+                .get(&name)
+                .cloned()
+                .unwrap_or_else(|| json!({})),
+        };
+        let actor = Actor::new(&active.loaded.modules, "plugin", &model)?;
+        let keep = Arc::new(RunKeep {
+            ctx: ctx.clone(),
+            plugin: name.clone(),
+        });
+        let mut mailbox = Mailbox::new(actor, keep);
+        if active.loaded.declaration.hooks.view {
+            let context = self.context(&ctx.run, state, active);
+            mailbox = mailbox.drawing(
+                Hook::View.path(),
+                json!({ "run": context.run, "settings": context.settings }),
+            );
         }
+        let mailbox = Arc::new(mailbox);
+        state
+            .mailboxes
+            .insert(name, (active.loaded.digest.clone(), mailbox.clone()));
+        Ok(mailbox)
     }
 
+    /// What a hook did, done: its failure counted, or its answer given.
+    /// Its steps kept their model, log and view as they went.
     async fn apply(
         &self,
         active: &Active,
@@ -640,127 +713,11 @@ impl Inner {
         ctx: &PluginCtx,
     ) -> Option<Value> {
         let plugin = active.loaded.declaration.name.clone();
-        if !outcome.logs.is_empty() {
-            ctx.publish(&Record::Log {
-                plugin: plugin.clone(),
-                lines: outcome.logs,
-            })
-            .await;
-        }
         if let Some(error) = outcome.error {
             failed(state, ctx, plugin, hook_name(hook), error).await;
             return None;
         }
-        if state.states.get(&plugin) != Some(&outcome.state) {
-            let meanwhile = self.acted_meanwhile(&plugin, state, ctx).await;
-            state.states.insert(plugin.clone(), outcome.state.clone());
-            state.stored.insert(plugin.clone(), outcome.state.clone());
-            // What `start` left shows after the message the run started
-            // on, in history as live.
-            let place = matches!(hook, Hook::Start)
-                .then_some(tau_ui_plugin::PLACE_MESSAGE);
-            publish(
-                ctx,
-                &Record::State {
-                    plugin: plugin.clone(),
-                    state: outcome.state,
-                },
-                place,
-            )
-            .await;
-            if !matches!(hook, Hook::View) {
-                self.draw(active, state, ctx, place).await;
-            }
-            // What the person did meanwhile, carried out again on what the
-            // hook left, where the hook's state would write over it.
-            for (action, args) in meanwhile {
-                Box::pin(self.replay(active, action, args, state, ctx)).await;
-            }
-        }
         Some(outcome.value)
-    }
-
-    /// The actions an interface stored with the run while a hook of
-    /// `plugin` ran, on the state the hook began on, that the run's
-    /// readers took: in order, each with its args.
-    async fn acted_meanwhile(
-        &self,
-        plugin: &str,
-        state: &RunState,
-        ctx: &PluginCtx,
-    ) -> Vec<(String, Value)> {
-        let Some(seen) = state.seen else {
-            return Vec::new();
-        };
-        let Ok(records) = ctx.records().await else {
-            return Vec::new();
-        };
-        let mut on = state.stored.get(plugin).cloned();
-        let mut acted = Vec::new();
-        for record in records.into_iter().skip(seen) {
-            match serde_json::from_value::<Record>(record) {
-                Ok(Record::State { plugin: of, state }) if of == plugin => {
-                    on = Some(state);
-                }
-                Ok(Record::Acted {
-                    plugin: of,
-                    on: was,
-                    state,
-                    action,
-                    args,
-                    ..
-                }) if of == plugin
-                    && tau_luau_plugins::still_on(on.as_ref(), &was) =>
-                {
-                    on = Some(state);
-                    acted.extend(action.map(|action| (action, *args)));
-                }
-                _ => {}
-            }
-        }
-        acted
-    }
-
-    /// Carries out `action` of `active` with `args` again, on the state
-    /// as the run has it, as an interface carries it out on a live run.
-    async fn replay(
-        &self,
-        active: &Active,
-        action: String,
-        args: Value,
-        state: &mut RunState,
-        ctx: &PluginCtx,
-    ) {
-        let hook = Hook::Action(action);
-        if self.off(state, &active.loaded.declaration.name)
-            || !hook.declared_in(&active.loaded.declaration)
-        {
-            return;
-        }
-        let mut context = self.context(&ctx.run, state, active);
-        context.run = json!({
-            "id": ctx.run.0.as_ref(),
-            "live": true,
-            "jev": self.jev.is_some(),
-        });
-        context.store = self.store_of(active).await;
-        let reach: Arc<dyn Reach> =
-            Arc::new(crate::runtime::ActionReach(self.jev.clone()));
-        let reach: Arc<dyn Reach> = match self.files_of(active) {
-            Some(files) => Arc::new(crate::runtime::WithFiles { reach, files }),
-            None => reach,
-        };
-        let outcome = active
-            .loaded
-            .call(
-                &hook,
-                args,
-                &context,
-                reach,
-                tokio_util::sync::CancellationToken::new(),
-            )
-            .await;
-        self.apply(active, &hook, outcome, state, ctx).await;
     }
 
     /// Draws `active`'s view from its state and publishes it, at
@@ -779,17 +736,19 @@ impl Inner {
         if self.off(state, &name) || !active.loaded.declaration.hooks.view {
             return;
         }
-        let context = self.context(&ctx.run, state, active);
-        let outcome = active
-            .loaded
-            .call(
+        let outcome = self
+            .run_hook(
+                active,
                 &Hook::View,
                 Value::Null,
-                &context,
+                state,
+                ctx,
                 Arc::new(NoReach),
-                ctx.cancel.child_token(),
             )
             .await;
+        let Some(outcome) = outcome else {
+            return;
+        };
         let plugin = name;
         match outcome.error {
             Some(error) => {
@@ -803,6 +762,93 @@ impl Inner {
                 publish(ctx, &view, place).await;
             }
         }
+    }
+}
+
+/// A hook that failed with `error`: raised by the plugin unless it ran
+/// out of time or was cancelled.
+fn failed_outcome(error: String, started: std::time::Instant) -> Outcome {
+    let raised = !(error.contains("it ran past its")
+        || error.contains("it was cancelled"));
+    Outcome {
+        value: Value::Null,
+        state: Value::Null,
+        logs: Vec::new(),
+        error: Some(error),
+        raised,
+        wall: started.elapsed(),
+    }
+}
+
+/// What a plugin's mailbox in a run keeps: each step's log, its model when
+/// it changed and the view drawn from it, with the run's records.
+struct RunKeep {
+    ctx: PluginCtx,
+    plugin: String,
+}
+
+#[async_trait]
+impl Keep for RunKeep {
+    async fn stepped(
+        &self,
+        step: &crate::actor::Step,
+        drawn: Option<Result<Value, String>>,
+        place: Option<&str>,
+    ) {
+        let plugin = || self.plugin.clone();
+        if !step.logs.is_empty() {
+            self.ctx
+                .publish(&Record::Log {
+                    plugin: plugin(),
+                    lines: step.logs.clone(),
+                })
+                .await;
+        }
+        if !step.changed {
+            return;
+        }
+        publish(
+            &self.ctx,
+            &Record::State {
+                plugin: plugin(),
+                state: step.model.clone(),
+            },
+            place,
+        )
+        .await;
+        match drawn {
+            Some(Ok(view)) => {
+                publish(
+                    &self.ctx,
+                    &Record::View {
+                        plugin: plugin(),
+                        view,
+                    },
+                    place,
+                )
+                .await;
+            }
+            Some(Err(error)) => {
+                self.ctx
+                    .publish(&Record::Error {
+                        plugin: plugin(),
+                        hook: "view".into(),
+                        error,
+                    })
+                    .await;
+            }
+            None => {}
+        }
+    }
+
+    async fn not_given(&self, why: &str) {
+        self.ctx
+            .publish(&Record::Error {
+                plugin: self.plugin.clone(),
+                hook: "commands".into(),
+                error: why.to_owned(),
+            })
+            .await;
     }
 }
 
@@ -1140,8 +1186,7 @@ impl Plugin for LuauPlugins {
 /// last.
 fn inherit(plan: &RunPlan, state: &mut RunState) {
     for (plugin, kept) in tau_luau_plugins::last_states(plan.records()) {
-        state.stored.insert(plugin.clone(), kept.clone());
-        state.states.insert(plugin, kept);
+        state.models.insert(plugin, kept);
     }
 }
 

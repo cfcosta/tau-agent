@@ -24,6 +24,10 @@ function tau.plugin(spec)
 			error("listed commands need a `run`", 2)
 		end
 		spec.listed = listed
+		-- What the host lists of them, as `tau._commands` reads a table.
+		listed._list = function(input)
+			return tau._commands(listed.list(input))
+		end
 		spec.commands = nil
 		spec.actions = setmetatable(spec.actions or {}, {
 			__index = function(_, key)

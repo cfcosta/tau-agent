@@ -14,11 +14,6 @@ local compaction = require("compaction")
 -- answer was refused for, where `tau.await` keeps only its error.
 local function infer(request)
 	local answers = tau.all({ tau.cmd.infer(request) })
-	-- The runtime's `tau.all` answers its list inside the answer's values
-	-- (`{ answers }`): take the list either way.
-	if type(answers[1]) == "table" and answers[1].ok == nil then
-		answers = answers[1]
-	end
 	local answer = answers[1]
 	if not answer.ok then
 		return { ok = false, error = answer.error }
