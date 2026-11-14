@@ -282,9 +282,10 @@ impl tau_jev::Jev for GatedJev {
     }
 }
 
-/// Pause pressed while the goal's check waits on Jev is kept: the check's
-/// state is the one the run goes on with, and the run carries the Pause
-/// out again on it, where the check wrote over it and checked again.
+/// Pause pressed while the goal's check waits on Jev is kept: it is a
+/// message to the run's own mailbox (ADR 0056), taken between the check's
+/// steps, and the check, going on, finds the goal paused and neither
+/// records itself nor sends the model back.
 #[test]
 fn a_pause_pressed_while_the_goal_is_checked_is_kept() {
     let llm = ScriptedModel::new()
@@ -335,12 +336,12 @@ fn a_pause_pressed_while_the_goal_is_checked_is_kept() {
 
     let goal = goal_of(&view)["goal"].clone();
     assert_eq!(goal["status"], "paused", "the Pause is kept");
-    assert_eq!(goal["checks"].as_array().map(Vec::len), Some(1));
     assert_eq!(
-        llm.requests().len(),
-        2,
-        "sent back once by the check, then not checked while paused"
+        goal["checks"].as_array().map_or(0, Vec::len),
+        0,
+        "a check that ends on a paused goal is not recorded"
     );
+    assert_eq!(llm.requests().len(), 1, "and does not send the model back");
 }
 
 #[test]

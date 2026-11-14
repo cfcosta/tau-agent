@@ -63,6 +63,14 @@ struct Shared {
     /// reads what was allowed and writes it, so one never loses the
     /// other's.
     allowing: tokio::sync::Mutex<()>,
+    /// The mailbox of each plugin in each run going on, by run and plugin
+    /// (ADR 0056): where an interface's action goes.
+    live: std::sync::Mutex<
+        std::collections::HashMap<
+            (String, String),
+            std::sync::Weak<crate::mailbox::Mailbox>,
+        >,
+    >,
     state: RwLock<State>,
     /// Versions read from runs' workspaces, by their files' digest: how
     /// loading and testing them went, which their files alone decide.
@@ -236,6 +244,7 @@ impl Registry {
             identity,
             allowed_path: allowed,
             allowing: tokio::sync::Mutex::new(()),
+            live: Default::default(),
             state: RwLock::default(),
             tried: tokio::sync::Mutex::default(),
             built_in: Vec::new(),
@@ -1324,6 +1333,36 @@ impl Registry {
         }
     }
 
+    /// Holds `mailbox` as `plugin`'s in the run `run`, going on, for the
+    /// actions interfaces carry out on it while it lives.
+    pub fn hold_live(
+        &self,
+        run: &str,
+        plugin: &str,
+        mailbox: &Arc<crate::mailbox::Mailbox>,
+    ) {
+        let mut live = self.0.live.lock().expect("not poisoned");
+        live.retain(|_, held| held.strong_count() > 0);
+        live.insert(
+            (run.to_owned(), plugin.to_owned()),
+            Arc::downgrade(mailbox),
+        );
+    }
+
+    /// `plugin`'s mailbox in the run `run`, while the run goes on.
+    fn live(
+        &self,
+        run: &str,
+        plugin: &str,
+    ) -> Option<Arc<crate::mailbox::Mailbox>> {
+        self.0
+            .live
+            .lock()
+            .expect("not poisoned")
+            .get(&(run.to_owned(), plugin.to_owned()))
+            .and_then(std::sync::Weak::upgrade)
+    }
+
     /// Carries out `action` of `plugin`'s active version with `args`, on
     /// the `state` it has in `run`, under the person's `settings`, then
     /// draws its view from the state it left (ADR 0045). An action that
@@ -1393,25 +1432,73 @@ impl Registry {
             store: self.store_of(&loaded.declaration, repo).await,
             job: None,
         };
-        let outcome = loaded
-            .call(
-                &hook,
-                args.clone(),
-                &context,
-                self.with_files(
-                    &loaded.declaration,
-                    repo,
-                    Arc::new(crate::runtime::ActionReach(jev.clone())),
-                ),
-                CancellationToken::new(),
-            )
-            .await;
+        let reach = self.with_files(
+            &loaded.declaration,
+            repo,
+            Arc::new(crate::runtime::ActionReach(jev.clone())),
+        );
+        // On a run going on, the action is a message to the run's own
+        // mailbox (ADR 0056): it changes the one model, between the steps
+        // of the hooks under way, and the run keeps what it did.
+        let live = self.live(run, plugin);
+        let outcome = match &live {
+            Some(mailbox) => {
+                let executor =
+                    crate::runtime::Executor::new(&loaded, &context, reach);
+                let env = serde_json::json!({
+                    "run": context.run,
+                    "now": context.now,
+                    "settings": context.settings,
+                    "models": crate::runtime::plan_models(),
+                });
+                let ended = mailbox
+                    .call(
+                        hook.path(),
+                        args.clone(),
+                        env,
+                        &executor,
+                        hook.limit_for(&loaded.declaration),
+                        &CancellationToken::new(),
+                        None,
+                    )
+                    .await;
+                let model =
+                    mailbox.model().await.unwrap_or_else(|_| state.clone());
+                let (value, error) = match ended {
+                    crate::actor::Ended::Value { value } => (value, None),
+                    crate::actor::Ended::Error { error } => {
+                        (serde_json::Value::Null, Some(error))
+                    }
+                };
+                crate::runtime::Outcome {
+                    value,
+                    state: model,
+                    logs: Vec::new(),
+                    error,
+                    raised: true,
+                    wall: std::time::Duration::ZERO,
+                }
+            }
+            None => {
+                loaded
+                    .call(
+                        &hook,
+                        args.clone(),
+                        &context,
+                        reach,
+                        CancellationToken::new(),
+                    )
+                    .await
+            }
+        };
         done.logs = outcome.logs;
         if let Some(error) = outcome.error {
             done.error = Some((format!("actions.{action}"), error));
             return done;
         }
-        done.changed = outcome.state != *state;
+        // What the run's mailbox did, the run keeps; the interface keeps
+        // what an action on a run not going on did.
+        done.changed = live.is_none() && outcome.state != *state;
         done.state = outcome.state;
         // The answers to a form a call waits on, given to it: one that
         // does not fit, or comes once it is taken, is the action's error.
@@ -1459,7 +1546,7 @@ impl Registry {
                 done.error = Some((format!("actions.{action}"), error));
             }
         }
-        if loaded.declaration.hooks.view {
+        if loaded.declaration.hooks.view && live.is_none() {
             context.state = done.state.clone();
             let drawn = loaded
                 .call(

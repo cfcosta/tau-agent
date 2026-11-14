@@ -696,6 +696,9 @@ impl Inner {
             );
         }
         let mailbox = Arc::new(mailbox);
+        if let Some(dispatch) = &self.dispatch {
+            dispatch.registry.hold_live(&ctx.run.0, &name, &mailbox);
+        }
         state
             .mailboxes
             .insert(name, (active.loaded.digest.clone(), mailbox.clone()));
