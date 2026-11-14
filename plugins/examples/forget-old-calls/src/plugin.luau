@@ -10,14 +10,16 @@ return tau.plugin {
 		schema = { type = "object", properties = { after = { type = "integer", minimum = 1 } } },
 		default = { after = 20 },
 	},
-	rewrite_context = function(view, ctx)
+	-- Every hook is `(input, model, env)`: `model` is the run's own model,
+	-- changed in place, and `env` carries what the run gives it.
+	rewrite_context = function(view, model, env)
 		local results = 0
 		for _, message in ipairs(view.messages) do
 			if message.role == "toolResult" then
 				results += 1
 			end
 		end
-		if results <= ctx.settings.after then
+		if results <= env.settings.after then
 			return nil
 		end
 		local count = #view.messages
@@ -27,7 +29,7 @@ return tau.plugin {
 				table.insert(keep, message.index)
 			end
 		end
-		ctx.state.rewrites = (ctx.state.rewrites or 0) + 1
+		model.rewrites = (model.rewrites or 0) + 1
 		return tau.rewrite({
 			keep = keep,
 			insert = {
@@ -39,9 +41,10 @@ return tau.plugin {
 			drops_conversation = true,
 		})
 	end,
-	view = function(state, ctx)
-		if state.rewrites then
-			return { status = tau.ui.status("trimmed", tostring(state.rewrites) .. " times") }
+	-- `view` draws a frozen copy of the model.
+	view = function(model)
+		if model.rewrites then
+			return { status = tau.ui.status("trimmed", tostring(model.rewrites) .. " times") }
 		end
 		return {}
 	end,

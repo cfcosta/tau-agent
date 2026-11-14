@@ -18,18 +18,19 @@ return tau.plugin {
 		default = { days = { "Friday" } },
 		-- Its own settings page; without one, a form is drawn from the
 		-- schema.
-		view = function(settings, ctx)
+		view = function(settings)
 			return ui.stack({
 				ui.rich("Deploy commands are blocked on these days."),
 				ui.choice("days", DAYS, { multi = true }),
 			})
 		end,
 	},
-	before_tool = function(call, ctx)
+	-- `env.now` is the run's clock: hooks have no other.
+	before_tool = function(call, _, env)
 		local command = call.args.cmd
 		if call.name == "exec_command" and type(command) == "string" and command:find("deploy") then
-			if tau.contains(ctx.settings.days, ctx.now.weekday) then
-				return tau.block("No deploys on " .. ctx.now.weekday .. ".")
+			if tau.contains(env.settings.days, env.now.weekday) then
+				return tau.block("No deploys on " .. env.now.weekday .. ".")
 			end
 		end
 	end,

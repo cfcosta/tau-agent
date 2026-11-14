@@ -5,9 +5,9 @@ local tau = require("tau")
 local ui = tau.ui
 local gate = require("gate")
 
--- The gate's next state, kept in the run's state.
-local function step(ctx, event)
-	ctx.state.gate = gate.machine:step(ctx.state.gate, event)
+-- The gate's next state, kept in the run's model.
+local function step(model, event)
+	model.gate = gate.machine:step(model.gate, event)
 end
 
 return tau.plugin {
@@ -19,35 +19,35 @@ return tau.plugin {
 				properties = { change = { type = "string" } },
 				required = { "change" },
 			},
-			call = function(args, ctx)
-				step(ctx, { event = "ask", change = args.change })
+			call = function(args, model)
+				step(model, { event = "ask", change = args.change })
 				return "Asked the person about " .. args.change .. "."
 			end,
 		},
 	},
 	actions = {
-		approve = function(_, ctx)
-			step(ctx, { event = "approve" })
+		approve = function(_, model)
+			step(model, { event = "approve" })
 		end,
-		refuse = function(args, ctx)
-			step(ctx, { event = "refuse", why = args.why })
+		refuse = function(args, model)
+			step(model, { event = "refuse", why = args.why })
 		end,
 	},
-	before_tool = function(call, ctx)
+	before_tool = function(call, model)
 		if call.name ~= "release" then
 			return nil
 		end
-		if not gate.allows(ctx.state.gate, call.args.change) then
+		if not gate.allows(model.gate, call.args.change) then
 			return tau.block("Ask with ask_to_ship first, and wait for the person's yes.")
 		end
 	end,
-	after_tool_result = function(result, ctx)
+	after_tool_result = function(result, model)
 		if result.name == "release" and result.ok then
-			step(ctx, { event = "shipped" })
+			step(model, { event = "shipped" })
 		end
 	end,
-	view = function(state)
-		local s = state.gate
+	view = function(model)
+		local s = model.gate
 		if not gate.machine:is(s, "waiting") then
 			return {}
 		end

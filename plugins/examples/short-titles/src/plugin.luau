@@ -4,7 +4,7 @@ local tau = require("tau")
 
 return tau.plugin {
 	fills = { "tau.title" },
-	title = function(run, ctx)
+	title = function(run)
 		local task = string.match(run.task, "^%s*(.-)%s*$")
 		local first = string.match(task, "^[^%.!?\n]+")
 		if first == nil then
