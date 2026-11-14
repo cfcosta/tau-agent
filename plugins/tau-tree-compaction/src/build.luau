@@ -140,50 +140,82 @@ function build.too_long(line)
 		.. "| ← LIMIT"
 end
 
--- One line, through as many tries as it takes to fit, or the shortest
--- of `TRIES`: its text, or nil and why. `ask(request)` asks the model
--- once, as `infer` does.
-function build.line(history, node, ask, effort)
-	local label = tree.label(node)
-	local first = { build.context_block(history, node), build.step(history, node) }
-	local messages = {}
-	local task = first
-	local tries = {}
-	while true do
-		local answer = ask({
-			instructions = build.COMPACT_PROMPT,
-			messages = array(tree.copy(messages)),
-			task = task,
-			effort = effort,
+-- Lines for `nodes`, each through as many tries as it takes to fit, or
+-- the shortest of `TRIES`: `{ node, text }`, or `{ node, why }`, in
+-- order. Each round asks one request for every line still trying, all
+-- at once: `ask_all(requests)` gives each one's answer, in order, as
+-- `infer` answers, `{ ok, value, error }`.
+function build.lines(history, nodes, ask_all, effort)
+	local trying = {}
+	for _, node in ipairs(nodes) do
+		table.insert(trying, {
+			node = node,
+			label = tree.label(node),
+			messages = {},
+			task = { build.context_block(history, node), build.step(history, node) },
+			tries = {},
 		})
-		if not answer.ok then
-			return nil, "the compactor failed on " .. label .. ": " .. tostring(answer.error)
+	end
+	while true do
+		local asking = {}
+		local requests = {}
+		for _, one in ipairs(trying) do
+			if not one.done then
+				table.insert(asking, one)
+				table.insert(requests, {
+					instructions = build.COMPACT_PROMPT,
+					messages = array(tree.copy(one.messages)),
+					task = one.task,
+					effort = effort,
+				})
+			end
 		end
-		local line = tree.trim(answer.value)
-		if line == "" then
-			return nil, "the compactor gave " .. label .. " an empty line"
-		end
-		table.insert(tries, line)
-		if #line <= tree.NODE_BYTES or #tries == build.TRIES then
+		if #requests == 0 then
 			break
 		end
-		table.insert(messages, { role = "user", text = task })
-		table.insert(messages, { role = "assistant", text = answer.value })
-		task = build.too_long(line)
-	end
-	local shortest = tries[1]
-	for _, line in ipairs(tries) do
-		if #line < #shortest then
-			shortest = line
+		local answers = ask_all(requests)
+		for at, one in ipairs(asking) do
+			local answer = answers[at] or { ok = false, error = "no answer" }
+			if not answer.ok then
+				one.done, one.why = true, "the compactor failed on " .. one.label .. ": " .. tostring(answer.error)
+			else
+				local line = tree.trim(answer.value)
+				if line == "" then
+					one.done, one.why = true, "the compactor gave " .. one.label .. " an empty line"
+				else
+					table.insert(one.tries, line)
+					if #line <= tree.NODE_BYTES or #one.tries == build.TRIES then
+						one.done = true
+					else
+						table.insert(one.messages, { role = "user", text = one.task })
+						table.insert(one.messages, { role = "assistant", text = answer.value })
+						one.task = build.too_long(line)
+					end
+				end
+			end
 		end
 	end
-	return shortest
+	local out = {}
+	for _, one in ipairs(trying) do
+		if one.why ~= nil then
+			table.insert(out, { node = one.node, why = one.why })
+		else
+			local shortest = one.tries[1]
+			for _, line in ipairs(one.tries) do
+				if #line < #shortest then
+					shortest = line
+				end
+			end
+			table.insert(out, { node = one.node, text = shortest })
+		end
+	end
+	return out
 end
 
 -- Builds `nodes`, whose sources are all there: free ones at once, the
 -- rest `jobs` at a time, each against the history as it stood before any
 -- of them. Adds to `grown`; the first failure, if any.
-local function build_all(history, nodes, ask, options, grown)
+local function build_all(history, nodes, ask_all, options, grown)
 	local asked = {}
 	for _, node in ipairs(nodes) do
 		local text = tree.free(history, node)
@@ -201,13 +233,9 @@ local function build_all(history, nodes, ask, options, grown)
 	for from = 1, #asked, jobs do
 		local batch = {}
 		for at = from, math.min(from + jobs - 1, #asked) do
-			local node = asked[at]
-			table.insert(batch, function()
-				local text, why = build.line(snapshot, node, ask, options.effort)
-				return { node = node, text = text, why = why }
-			end)
+			table.insert(batch, asked[at])
 		end
-		for _, result in ipairs({ parallel(table.unpack(batch)) }) do
+		for _, result in ipairs(build.lines(snapshot, batch, ask_all, options.effort)) do
 			table.insert(results, result)
 		end
 	end
@@ -226,10 +254,11 @@ end
 
 -- Builds every unbuilt line the view holds, then merges until the view
 -- fits in `budget` bytes, building the merged lines a level at a time,
--- `options.jobs` requests at once, asking at `options.effort`. Lines that
+-- `options.jobs` requests at once through `ask_all`, asking at
+-- `options.effort`. Lines that
 -- need no model are set without a request. What it built: how many lines
 -- took a request, and every line built; or nil and why.
-function build.grow(history, budget, ask, options)
+function build.grow(history, budget, ask_all, options)
 	local grown = { asked = 0, built = {} }
 	local leaves = {}
 	for _, node in ipairs(history.view) do
@@ -237,7 +266,7 @@ function build.grow(history, budget, ask, options)
 			table.insert(leaves, node)
 		end
 	end
-	local failed = build_all(history, leaves, ask, options, grown)
+	local failed = build_all(history, leaves, ask_all, options, grown)
 	if failed ~= nil then
 		return nil, failed
 	end
@@ -256,7 +285,7 @@ function build.grow(history, budget, ask, options)
 					.. budget
 					.. ", and nothing is left to merge"
 		end
-		failed = build_all(history, ready, ask, options, grown)
+		failed = build_all(history, ready, ask_all, options, grown)
 		if failed ~= nil then
 			return nil, failed
 		end

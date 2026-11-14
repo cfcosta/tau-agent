@@ -32,16 +32,22 @@ local function line_of(request, bytes)
 	return string.sub(line, 1, bytes)
 end
 
--- A stand-in model answering each request with `answer`, keeping them.
+-- A stand-in model answering each request with `answer`, keeping them:
+-- as `build.grow` asks it, a round of requests at once.
 local function fake(answer)
 	local asked = {}
-	return function(request)
-		table.insert(asked, request)
-		local text, why = answer(request, #asked)
-		if text == nil then
-			return { ok = false, error = why, reason = "error" }
+	return function(requests)
+		local answers = {}
+		for _, request in ipairs(requests) do
+			table.insert(asked, request)
+			local text, why = answer(request, #asked)
+			if text == nil then
+				table.insert(answers, { ok = false, error = why, reason = "error" })
+			else
+				table.insert(answers, { ok = true, value = text })
+			end
 		end
-		return { ok = true, value = text }
+		return answers
 	end, asked
 end
 

@@ -82,18 +82,47 @@ local function first_kept(messages, keep)
 	return cuts[1]
 end
 
+-- The model's answers to `requests`, asked at once, in order: each as
+-- its envelope, `{ ok, value, error }`, which `tau.all` keeps whole.
+local function infer_all(requests)
+	local commands = {}
+	for _, request in ipairs(requests) do
+		table.insert(commands, tau.cmd.infer(request))
+	end
+	local answers = tau.all(commands)
+	-- The runtime's `tau.all` answers its list inside the answer's values
+	-- (`{ answers }`): take the list either way.
+	if type(answers[1]) == "table" and answers[1].ok == nil then
+		answers = answers[1]
+	end
+	local out = {}
+	for at = 1, #requests do
+		local answer = answers[at]
+		local envelope = answer and answer.ok and (answer.values or {})[1]
+		if answer == nil then
+			envelope = { ok = false, error = "the model gave no answer" }
+		elseif not answer.ok then
+			envelope = { ok = false, error = answer.error }
+		elseif type(envelope) ~= "table" then
+			envelope = { ok = false, error = "the model gave no answer" }
+		end
+		table.insert(out, envelope)
+	end
+	return out
+end
+
 -- Folds the messages before the kept tail into the history and puts the
 -- view in their place. Nothing when the tail is all there is; nil and
 -- why when a line could not be built, the history left as it was.
-local function compact(view, ctx)
-	local state, settings = ctx.state, ctx.settings
-	local history = history_of(state)
+local function compact(view, model, env)
+	local settings = env.settings
+	local history = history_of(model)
 	local messages = view.messages
 	-- The transcript opens with the last view, unless another plugin's
 	-- rewrite replaced it since; then whatever it opens with is folded
 	-- like any other message.
 	local offset = 0
-	if state.history ~= nil and messages[1] ~= nil and messages[1].role == "user" and messages[1].text == view_message(history) then
+	if model.history ~= nil and messages[1] ~= nil and messages[1].role == "user" and messages[1].text == view_message(history) then
 		offset = 1
 	end
 	local rest = table.move(messages, offset + 1, #messages, 1, {})
@@ -106,16 +135,14 @@ local function compact(view, ctx)
 			tree.push(history, entry)
 		end
 	end
-	local function ask(request)
-		return ctx.tools.infer(request)
-	end
-	local grown, why = build.grow(history, settings.view_bytes, ask, { jobs = settings.jobs, effort = state.effort })
+	local grown, why = build.grow(history, settings.view_bytes, infer_all, { jobs = settings.jobs, effort = model.effort })
 	if grown == nil then
 		return nil, why
 	end
-	state.history = kept(history)
-	state.compactions = (state.compactions or 0) + 1
-	state.compacted = {
+	-- Rewrites take turns, so the history is still the one this grew.
+	model.history = kept(history)
+	model.compactions = (model.compactions or 0) + 1
+	model.compacted = {
 		messages = kept_from - 1 - offset,
 		entries = #history.entries,
 		lines = #history.view,
@@ -160,7 +187,7 @@ return tau.plugin({
 			view_bytes = 64000,
 			jobs = 8,
 		},
-		view = function(settings, ctx)
+		view = function(settings, model, env)
 			return ui.stack({
 				ui.toggle("on", "Compact into a tree"),
 				ui.text(
@@ -181,8 +208,8 @@ return tau.plugin({
 				required = { "id", "n" },
 			},
 			when = "on",
-			call = function(args, ctx)
-				local history = history_of(ctx.state)
+			call = function(args, model, env)
+				local history = history_of(model)
 				if #history.entries == 0 then
 					error("Nothing has been compacted yet: there is no line to open.", 0)
 				end
@@ -195,18 +222,18 @@ return tau.plugin({
 		},
 	},
 	-- The effort the run starts at, which its lines are built at.
-	start = function(input, ctx)
-		ctx.state.effort = input.effort
+	start = function(input, model, env)
+		model.effort = input.effort
 	end,
-	rewrite_context = function(view, ctx)
-		local state, settings = ctx.state, ctx.settings
+	rewrite_context = function(view, model, env)
+		local settings = env.settings
 		-- An idle run is tau-compaction's to summarize, in its own
 		-- conversation, while its cache lasts.
 		if not settings.on or view.trigger == "idle" then
 			return nil
 		end
 		if view.trigger == "overflow" then
-			local rewritten, why = compact(view, ctx)
+			local rewritten, why = compact(view, model, env)
 			if why ~= nil then
 				error(why, 0)
 			end
@@ -216,27 +243,27 @@ return tau.plugin({
 		if settings.window ~= nil and settings.window > 0 then
 			window = settings.window
 		end
-		local due = view.turn >= (state.retry_at or 0)
+		local due = view.turn >= (model.retry_at or 0)
 			and window ~= nil
 			and view.tokens > math.max(window - settings.reserve_tokens, 0)
 		if not due then
 			return nil
 		end
-		local rewritten, why = compact(view, ctx)
+		local rewritten, why = compact(view, model, env)
 		-- When a line cannot be built the tree writes nothing, and the
 		-- summary after it steps in.
 		if why ~= nil then
-			state.failures = (state.failures or 0) + 1
-			state.retry_at = view.turn + math.min(2 ^ state.failures, MAX_BACKOFF_TURNS)
-			ctx.log(why)
+			model.failures = (model.failures or 0) + 1
+			model.retry_at = view.turn + math.min(2 ^ model.failures, MAX_BACKOFF_TURNS)
+			tau.log(why)
 			return nil
 		end
-		state.failures = 0
+		model.failures = 0
 		return rewritten
 	end,
-	view = function(state, ctx)
+	view = function(state, env)
 		local line
-		if not ctx.settings.on then
+		if not env.settings.on then
 			line = "off"
 		elseif (state.compactions or 0) == 0 then
 			line = "watching the window"
