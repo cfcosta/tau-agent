@@ -272,7 +272,7 @@ local function sorted_keys(map)
 end
 
 -- The conversation as the side request reads it, from
--- `ctx.transcript()`: flat text, tool results cut to their first
+-- `cmd.transcript()`: flat text, tool results cut to their first
 -- RESULT_CHARS characters.
 function watch.conversation(messages)
 	local parts = {}

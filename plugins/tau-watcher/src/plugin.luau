@@ -9,8 +9,8 @@ local watch = require("watch")
 
 -- Whether the watcher works in this run: switched on, and not for a
 -- sub-agent's.
-local function on(ctx)
-	return ctx.settings.enabled == true and ctx.run.kind ~= "sub_agent"
+local function on(env)
+	return env.settings.enabled == true and env.run.kind ~= "sub_agent"
 end
 
 -- The model the side request asks: the newest of the family the person
@@ -77,9 +77,9 @@ return tau.plugin({
 			},
 		},
 		default = { enabled = false, family = "chat" },
-		view = function(settings, ctx)
+		view = function(settings, _, env)
 			local families = { "chat" }
-			for _, model in ipairs(ctx.models) do
+			for _, model in ipairs(env.models) do
 				if model.family then
 					table.insert(families, model.family)
 				end
@@ -87,7 +87,7 @@ return tau.plugin({
 			local reads = "Reads with each chat's model."
 			if family(settings) then
 				reads = "No " .. settings.family .. " model on the plan: reads with each chat's model."
-				for _, model in ipairs(ctx.models) do
+				for _, model in ipairs(env.models) do
 					if model.family == settings.family then
 						reads = "Reads with " .. model.id .. "."
 					end
@@ -108,11 +108,11 @@ return tau.plugin({
 	},
 
 	-- A message written while a note waits is written past it.
-	start = function(input, ctx)
-		if not on(ctx) then
+	start = function(_, model, env)
+		if not on(env) then
 			return nil
 		end
-		local state = watch.state(ctx.state)
+		local state = watch.state(model)
 		if watch.unanswered(state) then
 			watch.typed_past(state)
 		end
@@ -121,45 +121,52 @@ return tau.plugin({
 
 	-- The check at every 6th step: the side request reads the
 	-- conversation, and its reply is a note, nothing, or dropped.
-	before_request = function(request, ctx)
-		if not on(ctx) then
+	before_request = function(request, model, env)
+		if not on(env) then
 			return nil
 		end
-		local state = watch.state(ctx.state)
+		local run = env.run.id
+		local state = watch.state(model)
 		local steps = request.replies + 1
 		-- Cheap tests first: most requests are not a 6th step, and a run
 		-- notes once.
-		if state.noted_in == ctx.run.id or steps % watch.EVERY ~= 0 then
+		if state.noted_in == run or steps % watch.EVERY ~= 0 then
 			return nil
 		end
 		-- This run's own last check counts, whatever it found.
 		local last = state.last_check
-		if state.checked and state.checked.run == ctx.run.id then
+		if state.checked and state.checked.run == run then
 			last = math.max(last or 0, state.checked.step)
 		end
 		if watch.band(state) ~= nil or not watch.due(steps, last, state.ignored) then
 			return nil
 		end
-		state.checked = { run = ctx.run.id, step = steps }
-		local answer = ctx.tools.infer({
+		state.checked = { run = run, step = steps }
+		local transcript = tau.await(tau.cmd.transcript())
+		-- The notes as they are now: the person may have answered one
+		-- while the transcript came.
+		state = watch.state(model)
+		local ok, answer = pcall(tau.await, tau.cmd.infer({
 			task = watch.INSTRUCTIONS
 				.. "\n\n"
-				.. watch.input(watch.conversation(ctx.transcript()), watch.seen(state), watch.known(state)),
+				.. watch.input(watch.conversation(transcript), watch.seen(state), watch.known(state)),
 			context = json.null,
-			model = family(ctx.settings),
-		})
-		if not answer.ok then
+			model = family(env.settings),
+		}))
+		-- And again, after the side request.
+		state = watch.state(model)
+		if not ok then
 			watch.dropped(state, steps)
-			ctx.log("dropped at step " .. steps .. ": " .. tostring(answer.error))
+			tau.log("dropped at step " .. steps .. ": " .. tostring(answer))
 			return nil
 		end
-		local reply, why = watch.parse(answer.value)
+		local reply, why = watch.parse(answer)
 		if reply == nil then
 			watch.dropped(state, steps)
-			ctx.log("dropped at step " .. steps .. ": " .. why)
+			tau.log("dropped at step " .. steps .. ": " .. why)
 		elseif reply.kind == "note" then
 			watch.noted(state, steps, reply)
-			state.noted_in = ctx.run.id
+			state.noted_in = run
 		end
 		return nil
 	end,
@@ -167,8 +174,8 @@ return tau.plugin({
 	-- A note's buttons: the person's answer, and for a chat the note in
 	-- the composer.
 	actions = {
-		answer = function(args, ctx)
-			watch.answered(watch.state(ctx.state), args.key, args.answer)
+		answer = function(args, model)
+			watch.answered(watch.state(model), args.key, args.answer)
 			if args.answer == "chatted" then
 				return tau.interface("composer", { text = watch.chat_text(args.line) })
 			end
@@ -176,8 +183,8 @@ return tau.plugin({
 		end,
 	},
 
-	view = function(state, ctx)
-		state = watch.state(state)
+	view = function(state)
+		state = watch.state(table.clone(state))
 		local notes = {}
 		for _, note in ipairs(state.notes) do
 			notes[note.key] = annotation(note)
