@@ -136,6 +136,9 @@ pub async fn run(
         _ => kept(dir, plugin, job).await,
     };
     let mut cx = context(registry, &active);
+    // Its plugin's store of the app, the one its actions and pages use:
+    // a job carries on what they began.
+    cx.store = registry.store_of(&active.loaded.declaration, None).await;
     cx.state = if before.state.is_null() {
         json!({})
     } else {

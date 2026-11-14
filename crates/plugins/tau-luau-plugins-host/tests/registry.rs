@@ -817,6 +817,79 @@ fn a_job_runs_at_most_every_second() {
     block_on_io(load("greet", with(1))).unwrap();
 }
 
+const STEPS: &str = r#"
+local tau = require("tau")
+return tau.plugin { uses = { store = true },
+  actions = {
+    begin = function(_, ctx) ctx.store.put("going", { n = 0 }) end,
+  },
+  jobs = {
+    step = {
+      every = 1,
+      run = function(ctx)
+        local going = ctx.store.get("going")
+        if going then
+          going.n += 1
+          ctx.store.put("going", going)
+        end
+      end,
+    },
+  },
+}
+"#;
+
+/// A job reads and writes its plugin's store of the app, the one its
+/// actions and pages use: what an action began, the job carries on, as
+/// tau-github's sign-in polls the device code its action asked for.
+#[test]
+fn a_job_shares_its_plugins_store_with_its_actions() {
+    use tau_luau_plugins_host::jobs;
+    let home = tempfile::tempdir().unwrap();
+    let registry = Registry::at(
+        home.path().join("x"),
+        home.path().join("allowed.json"),
+        Identity::default(),
+        || {},
+    );
+    let (v1, trunk) = project(home.path(), 1, STEPS, None);
+    block_on_io(registry.reload(&v1, &trunk));
+    allow(&registry).unwrap();
+    block_on_io(registry.app_action(
+        "greet",
+        "begin",
+        serde_json::Value::Null,
+        None,
+        None,
+    ))
+    .unwrap();
+    let dir = home.path().join("jobs");
+    let ticks = jobs::Ticks::default();
+    for _ in 0..2 {
+        block_on_io(jobs::run(
+            &registry,
+            "greet",
+            "step",
+            &dir,
+            &ticks,
+            tau_luau_plugins_host::runtime::JobRef {
+                stores: registry.stores(),
+                conversations: None,
+            },
+            Default::default(),
+        ))
+        .unwrap();
+    }
+    let store = block_on_io(
+        registry
+            .stores()
+            .of("greet", tau_luau_plugins_host::store::APP),
+    )
+    .unwrap();
+    let going = block_on_io(async { store.session().await.get("going").await })
+        .unwrap();
+    assert_eq!(going, Some(serde_json::json!({ "n": 2 })));
+}
+
 /// The built-in `shipped`, loaded.
 fn shipped() -> Loaded {
     let source =
