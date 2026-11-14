@@ -143,11 +143,66 @@ Luau with no host function. A package needs nothing new in `tau.toml`.
 
 ### Testing
 
-To decide: how hegel's state machines reach a `tau.machine`. `t.machine`
-(ADR 0049) already runs a model with rules and invariants on hegel's
-engine. A machine declares its events and states, so a test could be
-derived from it; what that test draws, what it checks for free, and what
-each plugin adds is the open question below.
+Two helpers in `tau.test`, both on `t.machine` (ADR 0049) and so on
+hegel's engine: one tests a machine alone, the other a plugin through its
+hooks.
+
+#### `t.machine_of(name, machine, spec)`: a machine alone
+
+The rules come from the machine. There is one rule per event in
+`machine.on`, and it fires in every state, including those with no arm
+for it: that is where inputs out of order come from. An event's data is
+drawn from `spec.events[name]`, a generator; an event with none is drawn
+with no data.
+
+After every step it checks, for every machine and with nothing written:
+
+- the step raised no error;
+- the state is in shape: a known tag, exactly its fields;
+- an event with no arm left the state as it was, and gave no effects;
+- the effects are well formed: lists whose first value names them, and
+  only names in `machine.effects` when the machine declares them;
+- stepping again from the same state with the same event gives the same
+  answer (transitions are pure);
+- the state reads back the same from JSON (it persists and replicates).
+
+A plugin adds what is its own: `spec.model`, which starts a model and is
+told each event, as the Rust models are, and `spec.invariant(state,
+model, effects)`, the rule that matters: "a saved token is always
+checked", "after Stop, nothing is saved".
+
+A failure prints its shrunk events as a `t.case` that steps the machine
+through them and checks what failed, ready to paste into the tests: what
+the model finds becomes a plain test, as for the Rust models.
+
+#### `t.hooks(name, plugin, spec)`: a plugin through its hooks
+
+The bugs the sweep found fall mostly between hooks: a job's tick and an
+act, a run's end and an undo. This helper's rules are the plugin's own
+ways in, on the fake run `t.run` already gives: a run's hooks (`start`,
+`after_tool_result`, `before_stop`, `run_end` and the rest), its actions
+and acts, and its jobs' ticks, with the inputs `spec` draws for each.
+
+A hook that waits (on Jev, the model, a tool, the network) is split in
+two: one rule starts it and runs it to its wait, another lets one waiting
+hook go on with an answer `spec` draws, or a failure. So two of them can
+be under way at once, in any order, as on the host. What they share
+follows the host's rules, or the test would find races the host cannot
+have and miss those it can:
+
+- **A store is taken in turns.** A hook holds its plugin's store from its
+  first use to its end, and another hook that uses it waits until then.
+  What a hook writes goes in when it ends well, and not at all when it
+  fails.
+- **Files are shared.** What `env.files` writes, the next read sees, from
+  any hook, at once.
+- **A run's state is the hook's to change.** A hook gets the run's
+  `ctx.state` as it is, and the run keeps what the hook leaves only when
+  it ends well.
+
+`spec.invariant(world)` holds after every step: the stores, the files,
+each run's state, what was published and what the host was asked to do.
+A failure prints its steps as a `t.case`, as above.
 
 ## Alternatives considered
 
@@ -181,11 +236,9 @@ each plugin adds is the open question below.
 
 ## Open questions
 
-- **Testing a `tau.machine` with hegel.** What `t.machine_of(machine,
-spec)` draws (events from the machine's own table, in any order, from
-  any state, with generators for their data), what it checks for every
-  machine (no step errors, every state in shape, effects well formed),
-  and how a plugin adds its own invariants and its own model.
+- **Start states and arm coverage.** Drawing any state in shape, not only
+  those reachable from `initial` (what records folded from an older
+  version hand back), and reporting arms no case took. Left for later.
 - **Effects across hooks.** Whether effects stay a plugin's own names,
   carried out by its hook, or some become host effects (`tau.start`,
   `tau.continue`, a store write) that `step`'s caller hands back as is.
