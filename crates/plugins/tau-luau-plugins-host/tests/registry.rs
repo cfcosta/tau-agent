@@ -1224,3 +1224,59 @@ fn a_plugins_page_of_the_app_reads_what_is_typed_and_the_repositories() {
     let step = block_on_io(registry.setup("greet", &picked));
     assert!(step["tree"].to_string().contains("1 picked"), "{step}");
 }
+
+/// Actions on a run not going on, each on the model an interface folded
+/// before any: every one is kept (ADR 0056). They are messages to the
+/// host's one mailbox of the run, each taken on what the last left, where
+/// a copy of the model each would keep one.
+#[test]
+fn actions_on_a_run_not_going_on_are_all_kept() {
+    const SLOW: &str = r#"
+local tau = require("tau")
+return tau.plugin { tools = { hello = { description = "Hello.", call = function() return "hi" end } },
+  actions = {
+    add = function(_, model)
+      -- What it awaits lets the other in, between its steps.
+      tau.await(tau.cmd.time["local"](0))
+      model.n = (model.n or 0) + 1
+    end,
+  },
+}
+"#;
+    let home = tempfile::tempdir().unwrap();
+    let registry = Registry::at(
+        home.path().join("x"),
+        home.path().join("allowed.json"),
+        Identity::default(),
+        || {},
+    );
+    let (v1, trunk) = project(home.path(), 1, SLOW, None);
+    block_on_io(registry.reload(&v1, &trunk));
+    let folded = serde_json::json!({ "n": 0 });
+    let act = || {
+        registry.action(tau_luau_plugins_host::registry::ActionCall {
+            plugin: "greet",
+            action: "add",
+            args: &serde_json::Value::Null,
+            run: "r1",
+            repo: None,
+            state: &folded,
+            settings: None,
+            chats: None,
+            jev: None,
+            live: false,
+            keyed: false,
+        })
+    };
+    let (first, second) =
+        block_on_io(async { futures_util::join!(act(), act()) });
+    assert_eq!((first.error.clone(), second.error.clone()), (None, None));
+    let mut left = [first.state["n"].clone(), second.state["n"].clone()];
+    left.sort_by_key(|n| n.as_i64());
+    assert_eq!(left, [serde_json::json!(1), serde_json::json!(2)]);
+    assert!(first.changed && second.changed);
+    // One after the other, an interface still showing the first model:
+    // the host's model is the one the action goes on.
+    let third = block_on_io(act());
+    assert_eq!(third.state["n"], serde_json::json!(3));
+}

@@ -57,6 +57,32 @@ pub struct KeepNothing;
 
 impl Keep for KeepNothing {}
 
+/// Keeps the lines steps log, for whoever called to take.
+#[derive(Default)]
+pub struct KeepLogs(std::sync::Mutex<Vec<String>>);
+
+impl KeepLogs {
+    /// The lines logged since last taken.
+    pub fn take(&self) -> Vec<String> {
+        std::mem::take(&mut *self.0.lock().expect("not poisoned"))
+    }
+}
+
+#[async_trait]
+impl Keep for KeepLogs {
+    async fn stepped(
+        &self,
+        step: &Step,
+        _drawn: Option<Result<Value, String>>,
+        _place: Option<&str>,
+    ) {
+        self.0
+            .lock()
+            .expect("not poisoned")
+            .extend(step.logs.iter().cloned());
+    }
+}
+
 /// A model's actor, and the hooks it drives.
 pub struct Mailbox {
     actor: tokio::sync::Mutex<Actor>,

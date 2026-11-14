@@ -71,6 +71,12 @@ struct Shared {
             std::sync::Weak<crate::mailbox::Mailbox>,
         >,
     >,
+    /// The mailbox of each plugin in each run not going on that an action
+    /// came to (ADR 0056), the latest last: made from the run's model as
+    /// the first comes, then the model every later action of it goes on,
+    /// whatever an interface folded meanwhile. The [`IDLE`] latest are
+    /// kept; one is let go as its run goes on again.
+    idle: std::sync::Mutex<Vec<(RunPlugin, Arc<Idle>)>>,
     state: RwLock<State>,
     /// Versions read from runs' workspaces, by their files' digest: how
     /// loading and testing them went, which their files alone decide.
@@ -245,6 +251,7 @@ impl Registry {
             allowed_path: allowed,
             allowing: tokio::sync::Mutex::new(()),
             live: Default::default(),
+            idle: Default::default(),
             state: RwLock::default(),
             tried: tokio::sync::Mutex::default(),
             built_in: Vec::new(),
@@ -1347,12 +1354,17 @@ impl Registry {
         plugin: &str,
         mailbox: &Arc<crate::mailbox::Mailbox>,
     ) {
+        let key = (run.to_owned(), plugin.to_owned());
+        // Its model, as the run goes on, is the run's: what was kept of it
+        // idle is not any more.
+        self.0
+            .idle
+            .lock()
+            .expect("not poisoned")
+            .retain(|(held, _)| *held != key);
         let mut live = self.0.live.lock().expect("not poisoned");
         live.retain(|_, held| held.strong_count() > 0);
-        live.insert(
-            (run.to_owned(), plugin.to_owned()),
-            Arc::downgrade(mailbox),
-        );
+        live.insert(key, Arc::downgrade(mailbox));
     }
 
     /// `plugin`'s mailbox in the run `run`, while the run goes on.
@@ -1367,6 +1379,42 @@ impl Registry {
             .expect("not poisoned")
             .get(&(run.to_owned(), plugin.to_owned()))
             .and_then(std::sync::Weak::upgrade)
+    }
+
+    /// `plugin`'s mailbox in the run `run`, not going on: the one an action
+    /// under way holds, or one made from `model`, which an interface
+    /// folded from the run's records.
+    fn idle(
+        &self,
+        run: &str,
+        plugin: &str,
+        loaded: &crate::runtime::Loaded,
+        model: &serde_json::Value,
+    ) -> Result<Arc<Idle>, String> {
+        let mut idle = self.0.idle.lock().expect("not poisoned");
+        let key = (run.to_owned(), plugin.to_owned());
+        if let Some(at) = idle.iter().position(|(held, _)| *held == key) {
+            let kept = idle.remove(at);
+            let held = kept.1.clone();
+            idle.push(kept);
+            return Ok(held);
+        }
+        let model = match model {
+            serde_json::Value::Null => serde_json::json!({}),
+            model => model.clone(),
+        };
+        let actor =
+            crate::actor::Actor::new(&loaded.modules, "plugin", &model)?;
+        let logs = Arc::new(crate::mailbox::KeepLogs::default());
+        let made = Arc::new(Idle {
+            mailbox: crate::mailbox::Mailbox::new(actor, logs.clone()),
+            logs,
+        });
+        idle.push((key, made.clone()));
+        if idle.len() > IDLE {
+            idle.remove(0);
+        }
+        Ok(made)
     }
 
     /// Carries out `action` of `plugin`'s active version with `args`, on
@@ -1393,9 +1441,6 @@ impl Registry {
         let mut done = crate::ActionDone {
             plugin: plugin.to_owned(),
             run: run.to_owned(),
-            action: Some(action.to_owned()),
-            args: args.clone(),
-            on: state.clone(),
             state: state.clone(),
             changed: false,
             view: None,
@@ -1446,56 +1491,59 @@ impl Registry {
         // On a run going on, the action is a message to the run's own
         // mailbox (ADR 0056): it changes the one model, between the steps
         // of the hooks under way, and the run keeps what it did.
+        // The action is a message to the run's mailbox (ADR 0056): the
+        // run's own while it goes on, which keeps what it did; else the
+        // host's, through which every action of the run then goes.
         let live = self.live(run, plugin);
-        let outcome = match &live {
-            Some(mailbox) => {
-                let executor =
-                    crate::runtime::Executor::new(&loaded, &context, reach);
-                let env = serde_json::json!({
-                    "run": context.run,
-                    "now": context.now,
-                    "settings": context.settings,
-                    "models": crate::runtime::plan_models(),
-                });
-                let ended = mailbox
-                    .call(
-                        hook.path(),
-                        args.clone(),
-                        env,
-                        &executor,
-                        hook.limit_for(&loaded.declaration),
-                        &CancellationToken::new(),
-                        None,
-                    )
-                    .await;
-                let model =
-                    mailbox.model().await.unwrap_or_else(|_| state.clone());
-                let (value, error) = match ended {
-                    crate::actor::Ended::Value { value } => (value, None),
-                    crate::actor::Ended::Error { error } => {
-                        (serde_json::Value::Null, Some(error))
-                    }
-                };
-                crate::runtime::Outcome {
-                    value,
-                    state: model,
-                    logs: Vec::new(),
-                    error,
-                    raised: true,
-                    wall: std::time::Duration::ZERO,
+        let idle = match &live {
+            Some(_) => None,
+            None => match self.idle(run, plugin, &loaded, state) {
+                Ok(idle) => Some(idle),
+                Err(error) => {
+                    done.error = Some((format!("actions.{action}"), error));
+                    return done;
                 }
+            },
+        };
+        let mailbox = live
+            .as_deref()
+            .or(idle.as_deref().map(|idle| &idle.mailbox))
+            .expect("one of the two");
+        let executor = crate::runtime::Executor::new(&loaded, &context, reach);
+        let env = serde_json::json!({
+            "run": context.run,
+            "now": context.now,
+            "settings": context.settings,
+            "models": crate::runtime::plan_models(),
+        });
+        let ended = mailbox
+            .call(
+                hook.path(),
+                args.clone(),
+                env,
+                &executor,
+                hook.limit_for(&loaded.declaration),
+                &CancellationToken::new(),
+                None,
+            )
+            .await;
+        let model = mailbox.model().await.unwrap_or_else(|_| state.clone());
+        let (value, error) = match ended {
+            crate::actor::Ended::Value { value } => (value, None),
+            crate::actor::Ended::Error { error } => {
+                (serde_json::Value::Null, Some(error))
             }
-            None => {
-                loaded
-                    .call(
-                        &hook,
-                        args.clone(),
-                        &context,
-                        reach,
-                        CancellationToken::new(),
-                    )
-                    .await
-            }
+        };
+        let outcome = crate::runtime::Outcome {
+            value,
+            state: model,
+            logs: idle
+                .as_ref()
+                .map(|idle| idle.logs.take())
+                .unwrap_or_default(),
+            error,
+            raised: true,
+            wall: std::time::Duration::ZERO,
         };
         done.logs = outcome.logs;
         if let Some(error) = outcome.error {
@@ -1503,7 +1551,7 @@ impl Registry {
             return done;
         }
         // What the run's mailbox did, the run keeps; the interface keeps
-        // what an action on a run not going on did.
+        // the model of a run not going on, whole.
         done.changed = live.is_none() && outcome.state != *state;
         done.state = outcome.state;
         // The answers to a form a call waits on, given to it: one that
@@ -1779,4 +1827,17 @@ pub async fn app_view(
         }
     }
     view
+}
+
+/// A run and a plugin of it, by name.
+type RunPlugin = (String, String);
+
+/// How many runs not going on keep their mailbox.
+const IDLE: usize = 64;
+
+/// A run not going on: its plugin's mailbox, and the lines its actions
+/// log.
+struct Idle {
+    mailbox: crate::mailbox::Mailbox,
+    logs: Arc<crate::mailbox::KeepLogs>,
 }

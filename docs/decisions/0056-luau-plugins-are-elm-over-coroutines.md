@@ -299,13 +299,22 @@ Not yet built, each to come on this:
 
 - The journal is not kept with a run's records, so a restart does not
   bring back a hook under way yet; replay has nothing to read.
-- An action on a run not going on still records `Record::Acted`, folded
-  with `still_on`.
 - `tau.start_chat`, `tau.steer_chat`, `tau.allow` and `tau.ask` are still
   answers with a "then" action, not commands awaited where they are asked.
 - The harness has no `run:hook` with pending commands, no replay as a
   property and no log fixtures; `t.run` runs a hook to its end against
   the fakes, and `t.hooks` pauses on them.
+
+## As built: actions on a run not going on, 2026-11-14
+
+An action on a run not going on is a message to the host's mailbox of
+it: made from the model an interface folded as the first comes, then the
+model every later action goes on, whatever an interface shows meanwhile.
+The 64 latest are kept, and one is let go as its run goes on again, whose
+mailbox starts from the run's records. The interface records the model
+whole (`Record::State`), and `Record::Acted` and `still_on` are gone:
+actions at once, or one after another from devices that had not seen
+each other's, are all kept, where the compare and swap kept one.
 
 ## As built: a store's changes go in whole, 2026-11-14
 

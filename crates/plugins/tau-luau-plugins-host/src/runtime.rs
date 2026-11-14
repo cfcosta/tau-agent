@@ -1022,7 +1022,7 @@ impl Loaded {
             Ok(actor) => actor,
             Err(error) => return failed(error),
         };
-        let logs = Arc::new(Logs::default());
+        let logs = Arc::new(crate::mailbox::KeepLogs::default());
         let mailbox = crate::mailbox::Mailbox::new(actor, logs.clone());
         let env = json!({
             "run": context.run,
@@ -1049,7 +1049,7 @@ impl Loaded {
         let ended = mailbox
             .call(hook.path(), input, env, &executor, limit, &cancel, None)
             .await;
-        let logs = logs.0.lock().expect("not poisoned").clone();
+        let logs = logs.take();
         match ended {
             crate::actor::Ended::Value { value } => Outcome {
                 value,
@@ -1067,25 +1067,6 @@ impl Loaded {
                 ..failed(error)
             },
         }
-    }
-}
-
-/// The lines a hook alone logged, kept for its [`Outcome`].
-#[derive(Default)]
-struct Logs(std::sync::Mutex<Vec<String>>);
-
-#[async_trait]
-impl crate::mailbox::Keep for Logs {
-    async fn stepped(
-        &self,
-        step: &crate::actor::Step,
-        _drawn: Option<Result<Value, String>>,
-        _place: Option<&str>,
-    ) {
-        self.0
-            .lock()
-            .expect("not poisoned")
-            .extend(step.logs.iter().cloned());
     }
 }
 

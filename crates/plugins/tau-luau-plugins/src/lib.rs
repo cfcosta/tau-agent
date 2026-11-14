@@ -862,19 +862,11 @@ pub enum Act {
 pub struct ActionDone {
     pub plugin: String,
     pub run: String,
-    /// The action carried out, and its args: a run whose hook changed the
-    /// state meanwhile carries it out again on what the hook left.
-    #[serde(default)]
-    pub action: Option<String>,
-    #[serde(default)]
-    pub args: Value,
-    /// The state the action was carried out on.
-    #[serde(default)]
-    pub on: Value,
+    /// The model it left (ADR 0056): on a run not going on, the model the
+    /// host's mailbox of it has, which every action of it went through.
     pub state: Value,
-    /// Whether the action changed the state. One that did not records
-    /// neither it nor its view: the run may have moved on meanwhile, as
-    /// when the action gave a waiting call its answers.
+    /// Whether the interface records that model. An action on a run going
+    /// on records nothing here: the run's mailbox kept what it did.
     #[serde(default)]
     pub changed: bool,
     pub view: Option<Value>,
@@ -892,14 +884,16 @@ impl ActionDone {
         let plugin = || self.plugin.clone();
         let mut records = Vec::new();
         if self.changed {
-            records.push(Record::Acted {
+            records.push(Record::State {
                 plugin: plugin(),
-                on: Box::new(self.on.clone()),
                 state: self.state.clone(),
-                view: self.view.clone(),
-                action: self.action.clone(),
-                args: Box::new(self.args.clone()),
             });
+            if let Some(view) = &self.view {
+                records.push(Record::View {
+                    plugin: plugin(),
+                    view: view.clone(),
+                });
+            }
         }
         if !self.logs.is_empty() {
             records.push(Record::Log {
@@ -918,19 +912,6 @@ impl ActionDone {
     }
 }
 
-/// Whether an action carried out `on` a state still applies to a plugin
-/// whose state is `current`. No state yet is the empty one an action is
-/// given then.
-pub fn still_on(current: Option<&Value>, on: &Value) -> bool {
-    let empty = |state: &Value| {
-        state.is_null() || state.as_object().is_some_and(|all| all.is_empty())
-    };
-    match current {
-        Some(current) if !empty(current) => current == on,
-        _ => empty(on),
-    }
-}
-
 /// Each plugin's last state as `records` leave it, oldest first: what a
 /// run reads back of what it and its interfaces stored.
 pub fn last_states<'a>(
@@ -938,16 +919,10 @@ pub fn last_states<'a>(
 ) -> std::collections::HashMap<String, Value> {
     let mut last = std::collections::HashMap::new();
     for record in records {
-        match serde_json::from_value::<Record>(record.clone()) {
-            Ok(Record::State { plugin, state }) => {
-                last.insert(plugin, state);
-            }
-            Ok(Record::Acted {
-                plugin, on, state, ..
-            }) if still_on(last.get(&plugin), &on) => {
-                last.insert(plugin, state);
-            }
-            _ => {}
+        if let Ok(Record::State { plugin, state }) =
+            serde_json::from_value::<Record>(record.clone())
+        {
+            last.insert(plugin, state);
         }
     }
     last
@@ -979,24 +954,6 @@ pub struct LuauSettings {
 pub enum Record {
     /// A plugin's state for the run, whole, after a hook changed it.
     State { plugin: String, state: Value },
-    /// An action's result: its state, and what its `view` drew from it,
-    /// taken only if the plugin's state is still the one it was carried
-    /// out `on`. Otherwise something moved the run on meanwhile, as when
-    /// another device's answers reached a waiting call, and this is
-    /// dropped: every reader of the run's records drops it alike.
-    Acted {
-        plugin: String,
-        on: Box<Value>,
-        state: Value,
-        view: Option<Value>,
-        /// The action, and its args, that the run carries out again on
-        /// what a hook left when the hook began on `on` and changed it
-        /// meanwhile: the person's action is not lost under it.
-        #[serde(default)]
-        action: Option<String>,
-        #[serde(default)]
-        args: Box<Value>,
-    },
     /// What its `view` drew from that state.
     View { plugin: String, view: Value },
     /// Lines it wrote with `ctx.log`.
