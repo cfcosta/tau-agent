@@ -653,8 +653,11 @@ function test.run(spec)
 		-- ends well and changed the state, over an action that came
 		-- meanwhile; an action's is the run's only while the state is the
 		-- one it began on (`still_on`), and is dropped otherwise.
+		-- It reads the state back from JSON, as the host's does, so a list
+		-- it kept comes back an array, whose metatable `table.clone`
+		-- refuses.
 		local started = deep_copy(run[slot])
-		data.state = deep_copy(started)
+		data.state = if started == nil then nil else json.decode(json.encode(started))
 		local was_job = in_job
 		in_job = context.job == true
 		local ctx = tau._ctx(data, fakes)
@@ -1273,7 +1276,9 @@ function test.machine_of(name, machine, spec, opts)
 				end
 				e.event = event
 				table.insert(m.events, deep_copy(e))
-				local before = deep_copy(m.state)
+				-- Each step starts from the state read back from JSON, as a
+				-- hook's does on the host.
+				local before = json.decode(json.encode(m.state))
 				local handled = machine:handles(before, event)
 				local ok, next, effects = pcall(machine.step, machine, deep_copy(before), deep_copy(e))
 				check(m, ok, "the step raised: " .. tostring(next))
