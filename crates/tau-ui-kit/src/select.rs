@@ -44,6 +44,10 @@ use gpui::{
     point,
 };
 
+mod selection;
+
+use selection::{Input, Selection};
+
 /// Where a text is, across frames: a hash of its contents and how many
 /// texts with those contents were drawn before it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -72,19 +76,9 @@ struct Drawn {
 #[derive(Default)]
 pub struct State {
     drawn: Vec<Drawn>,
-    selection: Option<Selection>,
+    selection: Selection<End>,
     /// The color the selection paints in.
     color: Option<Hsla>,
-}
-
-/// A selection: from `anchor`, where the press was, to `head`, where
-/// the pointer is or was.
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct Selection {
-    anchor: End,
-    head: End,
-    /// The press goes on: moving the pointer moves `head`.
-    dragging: bool,
 }
 
 /// The scope whose texts are being drawn now, if any.
@@ -121,7 +115,7 @@ impl State {
 
     /// The selection, in order, when it selects anything.
     fn ordered(&self) -> Option<((isize, usize), (isize, usize))> {
-        let Selection { anchor, head, .. } = self.selection?;
+        let (anchor, head) = self.selection.ends()?;
         let (a, b) = (self.place(anchor), self.place(head));
         let (start, end) = if a <= b { (a, b) } else { (b, a) };
         (start != end).then_some((start, end))
@@ -424,26 +418,19 @@ impl Element for SelectionScope {
                                     word_at(&drawn.text, end.index)
                                 }
                             });
-                        state.selection = Some(Selection {
-                            anchor: End {
+                        state.selection.take(Input::Pick(
+                            End {
                                 index: word.start,
                                 ..end
                             },
-                            head: End {
+                            End {
                                 index: word.end,
                                 ..end
                             },
-                            dragging: false,
-                        });
+                        ));
                     }
-                    Some(end) => {
-                        state.selection = Some(Selection {
-                            anchor: end,
-                            head: end,
-                            dragging: true,
-                        });
-                    }
-                    None => state.selection = None,
+                    Some(end) => state.selection.take(Input::Press(end)),
+                    None => state.selection.take(Input::Clear),
                 }
                 let has = state.ordered().is_some();
                 drop(state);
@@ -460,24 +447,17 @@ impl Element for SelectionScope {
                     return;
                 }
                 let mut state = moved.borrow_mut();
-                let nearest = state.nearest(event.position);
-                let Some(selection) = state
-                    .selection
-                    .as_mut()
-                    .filter(|selection| selection.dragging)
-                else {
-                    return;
-                };
-                if event.pressed_button != Some(MouseButton::Left) {
-                    selection.dragging = false;
+                if !state.selection.is_dragging() {
                     return;
                 }
-                // Over a scope that draws nothing, the head stays.
-                let Some(head) = nearest else {
+                if event.pressed_button != Some(MouseButton::Left) {
+                    state.selection.take(Input::Lift);
                     return;
-                };
-                if head != selection.head {
-                    selection.head = head;
+                }
+                let before = state.selection.ends();
+                let nearest = state.nearest(event.position);
+                state.selection.take(Input::Move(nearest));
+                if state.selection.ends() != before {
                     let has = state.ordered().is_some();
                     drop(state);
                     mark(&moved, has, cx);
@@ -489,9 +469,8 @@ impl Element for SelectionScope {
         window.on_mouse_event(move |event: &MouseUpEvent, phase, _, _| {
             if phase == DispatchPhase::Bubble
                 && event.button == MouseButton::Left
-                && let Some(selection) = &mut up.borrow_mut().selection
             {
-                selection.dragging = false;
+                up.borrow_mut().selection.take(Input::Lift);
             }
         });
     }
