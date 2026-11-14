@@ -107,6 +107,10 @@ fn args() -> Args {
 fn main() {
     // Every plugin's host half, the Luau ones included (ADR 0030).
     tau::install();
+    // A plugin's tests, run as it is installed, take half the cores: the
+    // window and its runs keep the rest.
+    let cores = std::thread::available_parallelism().map_or(1, usize::from);
+    tau_luau_plugins_host::pool::set_jobs((cores / 2).max(1));
     let args = args();
     let credentials = Credentials::default_dir();
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);

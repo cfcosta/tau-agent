@@ -759,7 +759,8 @@ after a change to tau-ai went from 205 s to 115 s on one machine.
 - Helpers in `tests/common/` or `tests/support/` are declared once, in
   `tests/main.rs`; a test file reaches them with `use crate::common;`.
 - A test with `harness = false`, such as tau-mcp-host's `stdio`, keeps a
-  `[[test]]` of its own.
+  `[[test]]` of its own. `tau-built-in-tests`' `packages` is one: it
+  lists a test a built-in plugin, so nextest runs them at once.
 - nextest still runs each test in a process of its own, so tests in one
   binary share no globals. A plain `cargo test` runs them as threads of
   one process, which tau-ui's do not survive: the Nix package's check

@@ -41,13 +41,13 @@ The work is in `tau_luau_plugins_host::testing` and a new
 So the in-app `plugin_test` tool, `tau-built-in-tests` and the CLI run
 the same code, and a plugin passing in one passes in all three.
 
-| Command                              | What it does                                                                         |
-| ------------------------------------ | ------------------------------------------------------------------------------------ |
-| `tau-plugin new <name> [--in <dir>]` | Writes a package that loads and passes its tests                                     |
-| `tau-plugin new --built-in <name>`   | The same under `plugins/`, with its line in `plugins/built-in.toml`                  |
-| `tau-plugin check [<folder>...]`     | Loads each and says what it declares and what it reaches                             |
-| `tau-plugin test [<folder>...]`      | Cases, properties, fixtures and loops; `--bless`, `--watch`, `--filter`, `--verbose` |
-| `tau-plugin install <folder>`        | Tests it, then commits it to the person's plugins repository                         |
+| Command                              | What it does                                                                                   |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| `tau-plugin new <name> [--in <dir>]` | Writes a package that loads and passes its tests                                               |
+| `tau-plugin new --built-in <name>`   | The same under `plugins/`, with its line in `plugins/built-in.toml`                            |
+| `tau-plugin check [<folder>...]`     | Loads each and says what it declares and what it reaches                                       |
+| `tau-plugin test [<folder>...]`      | Cases, properties, fixtures and loops; `--bless`, `--watch`, `--filter`, `--verbose`, `--jobs` |
+| `tau-plugin install <folder>`        | Tests it, then commits it to the person's plugins repository                                   |
 
 With no folder, `check` and `test` take the folder they are run in when it
 holds a `tau.toml`, else every plugin tau comes with. Each exits 0 when
@@ -262,7 +262,7 @@ passes_its_tests`;
   requests shows.
 - **What stays Rust.** `tau-built-in-tests` went from about 7,000 lines
   to 2,600: `built_ins.rs` runs `tau-plugin test`'s checks over every
-  built-in; tau-todo's store under a fuse, its model, the `br` oracle and
+  built-in (now `packages.rs`, below); tau-todo's store under a fuse, its model, the `br` oracle and
   the providers' schema rules; tau-reasoning's stored runs; tau-schedule
   waking a chat through the real host; tau-constitution against the real
   Jev; and the one-binary and package checks.
@@ -271,3 +271,31 @@ passes_its_tests`;
   script slept until its limit about one run in two: the interrupt's
   yield lost the wake-up of a call that waited. mlua 0.12.2 fixed it,
   landed on its own before this.
+
+### Tests at once, 2026-11-14
+
+`tau-plugin test` over every package took about 51 s on one core of 32,
+95% of it hegel's properties and machines, each package, file, property
+and loop one after another; in nextest, `every_built_in_passes_tau_plugin_test`
+ran all of it as one test, about 100 s under the suite's load.
+
+- **A pool of jobs** (`tau_luau_plugins_host::pool`): threads of their
+  own, each with its own runtime, taking the costliest job waiting
+  first. A job runs to its end on one thread, as hegel's error channel
+  is the thread's. Each file's cases go first, as what they register is
+  what else runs; then every property and loop, by what it took the last
+  time, or what it asks for. Results come in the order the files declare
+  them, and seeds are each property's own, so what they come to does not
+  depend on the order they ran in.
+- **Every package at once** in `tau-plugin test`, its tree drawing each
+  package going on with its tests going on. `--jobs <n>` runs n at once,
+  else one a core; what each test took is kept in tau's cache folder.
+  Inside tau, as a plugin is installed, the pool takes half the cores.
+- **A nextest test a package**: `tau-built-in-tests`' `packages` binary
+  speaks enough of libtest's command line to list one test a built-in,
+  so nextest runs them at once and `test(tau-memory)` takes one; each
+  takes a quarter of the cores for its own tests.
+- Every package went from about 92 s with `--jobs 1` to about 30 s, and
+  the built-ins in nextest from about 100 s to about 31 s: each bound by
+  tau-ask's view machine, which on this version runs to the property's
+  30 s limit by itself.
