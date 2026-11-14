@@ -1,6 +1,9 @@
 -- Reading the skills folders: each folder in one with a `SKILL.md`, its
--- frontmatter, and what a run's instructions say of them. `files` is a
--- hook's `ctx.files`.
+-- frontmatter, and what a run's instructions say of them. Each read is a
+-- command a hook awaits, so these run only inside a hook.
+local tau = require("tau")
+local cmd = tau.cmd
+
 local scan = {}
 
 -- The file in a skill's folder that holds its frontmatter and
@@ -136,7 +139,7 @@ function scan.check_name(name)
 	)
 end
 
--- What `ctx.files` raised, past the path it names: "Cannot read <path>:
+-- What a files command raised, past the path it names: "Cannot read <path>:
 -- <why>" says <why>.
 local function why_of(raised)
 	local text = tostring(raised)
@@ -144,12 +147,12 @@ local function why_of(raised)
 end
 
 -- The files under `folder`, counted up to `FILES_LIMIT`.
-local function count_files(files, folder)
+local function count_files(folder)
 	local count = 0
 	local todo = { folder }
 	while #todo > 0 do
 		local dir = table.remove(todo)
-		local ok, entries = pcall(files.list, dir)
+		local ok, entries = pcall(tau.await, cmd.files.list(dir))
 		if ok then
 			for _, entry in ipairs(entries) do
 				if entry.dir then
@@ -168,9 +171,9 @@ end
 
 -- One skill's folder, `name` in `dir`: the skill, or nil and why it is
 -- not one.
-function scan.read(files, dir, name)
+function scan.read(dir, name)
 	local folder = dir .. "/" .. name
-	local ok, front = pcall(files.frontmatter, folder .. "/" .. scan.SKILL_FILE)
+	local ok, front = pcall(tau.await, cmd.files.frontmatter(folder .. "/" .. scan.SKILL_FILE))
 	if not ok then
 		return nil, "cannot read " .. scan.SKILL_FILE .. ": " .. why_of(front)
 	end
@@ -204,7 +207,7 @@ function scan.read(files, dir, name)
 		name = skill_name,
 		description = description,
 		dir = folder,
-		files = count_files(files, folder),
+		files = count_files(folder),
 		ignored = array(ignored),
 		builtin = false,
 	}
@@ -213,9 +216,9 @@ end
 -- `dir`'s skills: every folder in it, by name, with a `SKILL.md` that has
 -- a description. A folder without one, or with a name another skill
 -- has, is a problem. A missing folder holds nothing.
-function scan.scan(files, dir)
+function scan.scan(dir)
 	local skills = { dir = dir, found = array({}), problems = array({}) }
-	local ok, entries = pcall(files.list, dir)
+	local ok, entries = pcall(tau.await, cmd.files.list(dir))
 	if not ok then
 		return skills
 	end
@@ -229,7 +232,7 @@ function scan.scan(files, dir)
 	table.sort(folders)
 	local names = {}
 	for _, name in ipairs(folders) do
-		local skill, why = scan.read(files, dir, name)
+		local skill, why = scan.read(dir, name)
 		if skill and not names[skill.name] then
 			names[skill.name] = true
 			table.insert(skills.found, skill)
@@ -250,15 +253,15 @@ end
 
 -- The person's skills in `dir`, and those tau ships in `builtins`, each
 -- folder in turn, that the person has none of the same name of.
-function scan.all(files, dir, builtins)
-	local skills = dir and scan.scan(files, dir) or { dir = nil, found = array({}), problems = array({}) }
+function scan.all(dir, builtins)
+	local skills = dir and scan.scan(dir) or { dir = nil, found = array({}), problems = array({}) }
 	local mine = {}
 	for _, skill in ipairs(skills.found) do
 		mine[skill.name] = true
 	end
 	local shipped = {}
 	for _, folder in ipairs(builtins) do
-		local found = scan.scan(files, folder)
+		local found = scan.scan(folder)
 		for _, skill in ipairs(found.found) do
 			if shipped[skill.name] then
 				-- Two folders tau ships with one name: as a folder holding

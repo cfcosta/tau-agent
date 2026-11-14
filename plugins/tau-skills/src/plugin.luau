@@ -9,6 +9,7 @@
 -- with the same name is offered instead.
 local tau = require("tau")
 local ui = tau.ui
+local cmd = tau.cmd
 local scan = require("scan")
 
 -- What the model reads of the tool.
@@ -19,15 +20,15 @@ local DESCRIPTION = "Loads a skill: its instructions, from its SKILL.md, and the
 local PERSONS = "skills"
 local SHIPPED = { "package/skills", "data/skills" }
 
-local function skills_of(ctx)
-	local roots = ctx.files.roots()
+local function skills_of()
+	local roots = tau.await(cmd.files.roots())
 	local shipped = {}
 	for _, folder in ipairs(SHIPPED) do
 		if roots[folder] then
 			table.insert(shipped, roots[folder])
 		end
 	end
-	return scan.all(ctx.files, roots[PERSONS], shipped)
+	return scan.all(roots[PERSONS], shipped)
 end
 
 local function plural(n, one, many)
@@ -116,16 +117,16 @@ return tau.plugin({
 
 	-- Lists the skills in the run's instructions, as the folders hold them
 	-- as it starts: a skill added meanwhile is listed the next time.
-	start = function(_, ctx)
-		local skills = skills_of(ctx)
+	start = function(_, model)
+		local skills = skills_of()
 		local listed = {}
 		for _, skill in ipairs(skills.found) do
 			listed[skill.name] = { dir = skill.dir, description = skill.description }
 		end
-		ctx.state.skills = listed
-		ctx.state.order = array({})
+		model.skills = listed
+		model.order = array({})
 		for _, skill in ipairs(skills.found) do
-			table.insert(ctx.state.order, skill.name)
+			table.insert(model.order, skill.name)
 		end
 		local section = scan.section(skills)
 		if section == nil then
@@ -146,26 +147,27 @@ return tau.plugin({
 				additionalProperties = false,
 			},
 			-- A listed skill's instructions, as its SKILL.md has them now.
-			call = function(args, ctx)
+			call = function(args, model, env)
 				local name = tostring(args.name or "")
-				local skill = (ctx.state.skills or {})[name]
+				local skill = (model.skills or {})[name]
 				if skill == nil then
 					error(
 						"There is no skill "
 							.. scan.quoted(name)
 							.. ". The skills are: "
-							.. table.concat(ctx.state.order or {}, ", ")
+							.. table.concat(model.order or {}, ", ")
 							.. ".",
 						0
 					)
 				end
 				local file = skill.dir .. "/" .. scan.SKILL_FILE
-				local text = ctx.files.read(file)
-				local front = ctx.files.frontmatter(file)
+				local text = tau.await(cmd.files.read(file))
+				local front = tau.await(cmd.files.frontmatter(file))
 				local body = front.body or text
 				local instructions = scan.trim(body)
-				ctx.state.loaded = ctx.state.loaded or {}
-				ctx.state.loaded[ctx.run.call] = {
+				-- Read after the awaits: another call may have loaded one meanwhile.
+				model.loaded = model.loaded or {}
+				model.loaded[env.run.call] = {
 					name = name,
 					description = skill.description,
 					file = file,
@@ -183,9 +185,9 @@ return tau.plugin({
 
 	-- Each loaded skill's card: which, what it is for, and what the model
 	-- read, the file and its instructions.
-	view = function(state)
+	view = function(model)
 		local calls = {}
-		for call, loaded in pairs(state.loaded or {}) do
+		for call, loaded in pairs(model.loaded or {}) do
 			calls[call] = {
 				head = ui.row({ ui.icon("skill", "info"), ui.mono(loaded.name), ui.text(loaded.description) }),
 				body = ui.stack({ ui.mono(loaded.file), ui.text(loaded.instructions) }),
@@ -199,8 +201,8 @@ return tau.plugin({
 
 	-- What the folders hold, for the sidebar, the page and the commands:
 	-- how many skills, and a badge for the folders that are not one.
-	app = function(ctx)
-		local skills = skills_of(ctx)
+	app = function()
+		local skills = skills_of()
 		local problems = #skills.problems
 		return {
 			skills = skills,
