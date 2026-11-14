@@ -302,3 +302,218 @@ return tau.plugin({
         assert_eq!(actor.model().unwrap(), json!({}));
     }
 }
+
+mod mailbox {
+    //! A mailbox on the host's own reaches: a hook awaits Jev outside it,
+    //! an action taken meanwhile is the model the hook goes on with, and
+    //! what a step gives goes into the store with it.
+
+    use std::{sync::Arc, time::Duration};
+
+    use async_trait::async_trait;
+    use serde_json::json;
+    use tau_jev::{Jev, JevError, Request, Response};
+    use tau_luau_plugins_host::{
+        actor::{Actor, Ended},
+        mailbox::{KeepNothing, Mailbox},
+        runtime::{Context, Executor, Files, Reach, StoreRef, load},
+        store::{Fuse, Kv},
+    };
+    use tau_testing::block_on_io;
+    use tokio::sync::{Mutex, Notify};
+    use tokio_util::sync::CancellationToken;
+
+    const CHECKS: &str = r#"
+local tau = require("tau")
+local cmd = tau.cmd
+return tau.plugin({
+  uses = { jev = true, store = true },
+  before_stop = function(_, model)
+    local p = tau.await(cmd.jev.noul({ question = "Is it done?" }))
+    if model.paused then
+      return "paused"
+    end
+    tau.give(cmd.store.put("p", p))
+    local kept = tau.await(cmd.store.get("p"))
+    return { p = p, kept = kept }
+  end,
+  actions = {
+    pause = function(_, model) model.paused = true end,
+  },
+})
+"#;
+
+    /// A Jev that answers 0.75 once let go, and says when it is asked.
+    struct Held {
+        asked: Notify,
+        go: Notify,
+        held: Mutex<bool>,
+    }
+
+    #[async_trait]
+    impl Jev for Held {
+        async fn ask(&self, request: &Request) -> Result<Response, JevError> {
+            if *self.held.lock().await {
+                self.asked.notify_one();
+                self.go.notified().await;
+            }
+            let answers = request
+                .questions
+                .keys()
+                .map(|id| (id.clone(), tau_jev::Answer::Noul { noul: 0.75 }))
+                .collect();
+            Ok(tau_jev::fake::response(answers, request))
+        }
+    }
+
+    struct WithJev(Arc<Held>);
+
+    #[async_trait]
+    impl Reach for WithJev {
+        fn jev(&self) -> Option<Arc<dyn Jev>> {
+            Some(self.0.clone())
+        }
+    }
+
+    const LIMIT: Duration = Duration::from_secs(2);
+
+    async fn set_up(
+        held: bool,
+    ) -> (Arc<Mailbox>, Arc<Executor>, Arc<Kv>, Arc<Held>) {
+        let files = Files {
+            source: CHECKS.into(),
+            ..Files::named("checks")
+        };
+        let modules = files.modules().unwrap();
+        let loaded = load("checks", files).await.unwrap();
+        let kv = Arc::new(Kv::memory(Fuse::never()).await.unwrap());
+        let context = Context {
+            store: Some(StoreRef(kv.clone())),
+            ..Context::default()
+        };
+        let jev = Arc::new(Held {
+            asked: Notify::new(),
+            go: Notify::new(),
+            held: Mutex::new(held),
+        });
+        let executor = Arc::new(Executor::new(
+            &loaded,
+            &context,
+            Arc::new(WithJev(jev.clone())),
+        ));
+        let actor = Actor::new(&modules, "plugin", &json!({})).unwrap();
+        (
+            Arc::new(Mailbox::new(actor, Arc::new(KeepNothing))),
+            executor,
+            kv,
+            jev,
+        )
+    }
+
+    fn path(keys: &[&str]) -> Vec<String> {
+        keys.iter().map(|key| (*key).to_owned()).collect()
+    }
+
+    /// The check awaits Jev; a Pause pressed meanwhile is taken at once
+    /// and kept, and the check, going on, sees it.
+    #[test]
+    fn an_action_while_a_hook_awaits_is_taken_and_kept() {
+        block_on_io(async {
+            let (mailbox, executor, _, jev) = set_up(true).await;
+            let check = {
+                let (mailbox, executor) = (mailbox.clone(), executor.clone());
+                tokio::spawn(async move {
+                    mailbox
+                        .call(
+                            path(&["before_stop"]),
+                            json!({}),
+                            json!({}),
+                            &executor,
+                            LIMIT,
+                            &CancellationToken::new(),
+                        )
+                        .await
+                })
+            };
+            jev.asked.notified().await;
+            let paused = mailbox
+                .call(
+                    path(&["actions", "pause"]),
+                    json!({}),
+                    json!({}),
+                    &executor,
+                    LIMIT,
+                    &CancellationToken::new(),
+                )
+                .await;
+            assert_eq!(paused, Ended::Value { value: json!(null) });
+            jev.go.notify_one();
+            assert_eq!(
+                check.await.unwrap(),
+                Ended::Value {
+                    value: json!("paused")
+                }
+            );
+            assert_eq!(
+                mailbox.model().await.unwrap(),
+                json!({ "paused": true })
+            );
+        });
+    }
+
+    /// What a step gives is in the store before the hook's next await
+    /// reads it.
+    #[test]
+    fn what_a_step_gives_is_kept_before_the_next() {
+        block_on_io(async {
+            let (mailbox, executor, kv, _) = set_up(false).await;
+            let ended = mailbox
+                .call(
+                    path(&["before_stop"]),
+                    json!({}),
+                    json!({}),
+                    &executor,
+                    LIMIT,
+                    &CancellationToken::new(),
+                )
+                .await;
+            assert_eq!(
+                ended,
+                Ended::Value {
+                    value: json!({
+                        "p": { "probability": 0.75 },
+                        "kept": { "probability": 0.75 },
+                    })
+                }
+            );
+            assert_eq!(
+                kv.everything().await.unwrap()["p"],
+                json!({ "probability": 0.75 })
+            );
+        });
+    }
+
+    /// A call cancelled while its hook awaits ends it there, with why.
+    #[test]
+    fn a_cancel_reaches_the_hook_where_it_awaits() {
+        block_on_io(async {
+            let (mailbox, executor, _, _) = set_up(true).await;
+            let cancel = CancellationToken::new();
+            cancel.cancel();
+            let ended = mailbox
+                .call(
+                    path(&["before_stop"]),
+                    json!({}),
+                    json!({}),
+                    &executor,
+                    LIMIT,
+                    &cancel,
+                )
+                .await;
+            let Ended::Error { error } = ended else {
+                panic!("{ended:?}");
+            };
+            assert!(error.contains("it was cancelled"), "{error}");
+        });
+    }
+}

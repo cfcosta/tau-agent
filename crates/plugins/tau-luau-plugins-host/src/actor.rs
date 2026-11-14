@@ -68,6 +68,48 @@ pub struct Step {
     pub logs: Vec<String>,
 }
 
+/// A command's answer, as the hook that awaits it gets it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Answer {
+    pub ok: bool,
+    #[serde(default)]
+    pub values: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl Answer {
+    pub fn values(values: Vec<Value>) -> Self {
+        Self {
+            ok: true,
+            values,
+            error: None,
+        }
+    }
+
+    pub fn of(value: Value) -> Self {
+        Self::values(vec![value])
+    }
+
+    pub fn failed(error: impl Into<String>) -> Self {
+        Self {
+            ok: false,
+            values: Vec::new(),
+            error: Some(error.into()),
+        }
+    }
+
+    /// The message that gives it to the hook `id`.
+    pub fn to(self, id: &str) -> Message {
+        Message::Answer {
+            id: id.to_owned(),
+            ok: self.ok,
+            values: self.values,
+            error: self.error,
+        }
+    }
+}
+
 /// A message for a model's mailbox.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]

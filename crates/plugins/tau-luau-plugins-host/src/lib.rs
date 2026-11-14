@@ -21,6 +21,7 @@ pub mod hegel;
 pub mod infer;
 pub mod jobs;
 pub mod looping;
+pub mod mailbox;
 
 pub mod packages;
 pub mod parity;

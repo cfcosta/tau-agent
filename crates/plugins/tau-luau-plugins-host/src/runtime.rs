@@ -2305,3 +2305,177 @@ impl JobReaches {
         Ok(())
     }
 }
+
+/// What a plugin's commands reach (ADR 0056): what its hooks reached
+/// through `ctx`, now carried out by the host for one awaited command at
+/// a time, or for the commands a step gave, in one turn with the store.
+pub struct Executor {
+    declaration: Declaration,
+    modules: Arc<Modules>,
+    reach: Arc<dyn Reach>,
+    secrets: Option<std::path::PathBuf>,
+    store: Option<StoreRef>,
+    job: Option<JobRef>,
+}
+
+impl std::fmt::Debug for Executor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Executor")
+            .field("plugin", &self.declaration.name)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Executor {
+    /// What `loaded`'s commands reach in `context`, through `reach`.
+    pub fn new(
+        loaded: &Loaded,
+        context: &Context,
+        reach: Arc<dyn Reach>,
+    ) -> Self {
+        Self {
+            declaration: loaded.declaration.clone(),
+            modules: loaded.modules.clone(),
+            reach,
+            secrets: context.secrets.clone(),
+            store: context.store.clone(),
+            job: context.job.clone(),
+        }
+    }
+
+    /// A host for one turn, with the store's session for it.
+    async fn host(
+        &self,
+    ) -> (Arc<PluginHost>, Option<SessionRef>, Option<Arc<JobReaches>>) {
+        let session = match (&self.store, self.declaration.uses.store) {
+            (Some(store), true) => {
+                Some(Arc::new(tokio::sync::Mutex::new(store.0.session().await)))
+            }
+            _ => None,
+        };
+        let job = self
+            .job
+            .as_ref()
+            .filter(|_| self.declaration.uses.chats)
+            .map(|job| {
+                Arc::new(JobReaches {
+                    plugin: self.declaration.name.clone(),
+                    stores: job.stores.clone(),
+                    conversations: job.conversations.clone(),
+                    sessions: Default::default(),
+                })
+            });
+        let reaches = Reaches::of(&self.declaration, self.secrets.as_deref());
+        let host = Arc::new(PluginHost {
+            modules: self.modules.clone(),
+            reach: self.reach.clone(),
+            tools: reaches.tools,
+            infer: reaches.infer,
+            jev: reaches.jev,
+            network: reaches.network,
+            store: session.clone(),
+            transcript: reaches.transcript,
+            archive: reaches.archive,
+            files: reaches.files,
+            hegel: None,
+            job: job.clone(),
+        });
+        (host, session, job)
+    }
+
+    /// What it writes to its stores goes in whole.
+    async fn commit(
+        session: Option<SessionRef>,
+        job: Option<Arc<JobReaches>>,
+    ) -> Result<(), String> {
+        if let Some(job) = job {
+            job.commit().await?;
+        }
+        if let Some(session) = session {
+            match Arc::into_inner(session) {
+                Some(session) => session.into_inner().commit().await?,
+                None => return Err("the store was still in use".into()),
+            }
+        }
+        Ok(())
+    }
+
+    /// Carries out `command` and gives its answer.
+    pub async fn run(
+        &self,
+        command: &crate::actor::Command,
+    ) -> crate::actor::Answer {
+        if command.op == "all" {
+            let commands: Vec<crate::actor::Command> =
+                serde_json::from_value(command.args.clone())
+                    .unwrap_or_default();
+            let answers = futures_util::future::join_all(
+                commands.iter().map(|command| Box::pin(self.run(command))),
+            )
+            .await;
+            return crate::actor::Answer::of(json!(answers));
+        }
+        let (host, session, job) = self.host().await;
+        let answer = execute(&host, command).await;
+        drop(host);
+        match (answer, Self::commit(session, job).await) {
+            (Ok(values), Ok(())) => crate::actor::Answer::values(values),
+            (Err(error), _) | (Ok(_), Err(error)) => {
+                crate::actor::Answer::failed(error)
+            }
+        }
+    }
+
+    /// Carries out the commands a step gave, in order, in one turn with
+    /// the store: they go in whole, or none does.
+    pub async fn give(
+        &self,
+        commands: &[crate::actor::Command],
+    ) -> Result<(), String> {
+        if commands.is_empty() {
+            return Ok(());
+        }
+        let (host, session, job) = self.host().await;
+        for command in commands {
+            execute(&host, command).await?;
+        }
+        drop(host);
+        Self::commit(session, job).await
+    }
+}
+
+/// One command on `host`: the values it answers with.
+async fn execute(
+    host: &Arc<PluginHost>,
+    command: &crate::actor::Command,
+) -> Result<Vec<Value>, String> {
+    if command.op == "jev" {
+        let function = command.args["fn"].as_str().unwrap_or("ask");
+        let Some(client) = host.reach.jev().filter(|_| host.jev) else {
+            return Err("Jev is not available in this run".into());
+        };
+        let (request, shape) = tau_codemode_host::jev::request(
+            function,
+            &command.args["request"],
+        )?;
+        let response = client
+            .ask(&request)
+            .await
+            .map_err(|error| error.to_string())?;
+        let usage = response.usage();
+        host.reach.charge(&usage);
+        let value = tau_codemode_host::jev::answer(&shape, &response)
+            .map_err(|error| error.to_string())?;
+        return Ok(vec![value, json!(usage.cost.total)]);
+    }
+    let call = ToolCall {
+        id: format!("plugin:{}", command.op),
+        name: command.op.clone(),
+        args: command.args.clone(),
+    };
+    let reply = host.call_tool(call).await?;
+    match reply.error {
+        Some(error) => Err(error),
+        None => Ok(vec![reply.value]),
+    }
+}
