@@ -450,6 +450,63 @@ t.case("an import stops when asked, and carries on after a restart", function()
 	t.equal(w:checkpoint().running, nil)
 end)
 
+-- What the person does while the model reads a chunk: the act lands while
+-- the tick waits on the model, as on the host, where the job and the
+-- interface do not take turns over the import's files.
+t.case("a stop while the model reads is kept", function()
+	local w
+	w = world(function(request)
+		if #request.turns == 0 then
+			w:act({ act = "stop" })
+		end
+		return { text = "thinking" }
+	end)
+	local shop = w:folder("shop")
+	local projects = HOME .. "/.claude/projects/" .. read.encode(shop)
+	local long = string.rep("remember repository: X and more words. ", 1200)
+	w.files[projects .. "/c1.jsonl"] = claude_chat(shop, { long })
+	w:list("shop", nil, shop)
+	w:act({ act = "import" })
+	w:run(function(env)
+		import.tick(env)
+		import.tick(env)
+	end)
+	t.equal(#w.requests, 1, "the model was asked")
+	t.equal(w:checkpoint().running, nil, "the stop stands")
+	t.equal(w:imports().progress, json.null)
+	w:run(function(env)
+		import.tick(env)
+	end)
+	t.equal(#w.requests, 1, "it does not go on")
+end)
+
+t.case("a proposal kept while the model reads stays kept", function()
+	local w
+	local kept = false
+	w = world(function(request)
+		if #request.turns == 0 and not kept then
+			kept = true
+			local ids = {}
+			for _, p in ipairs(w:imports().pending) do
+				table.insert(ids, p.id)
+			end
+			t.equal(#ids, 1, "the saved note waits")
+			w:act({ act = "keep", ids = ids })
+		end
+		return { text = "thinking" }
+	end)
+	local shop = w:folder("shop")
+	local projects = HOME .. "/.claude/projects/" .. read.encode(shop)
+	w.files[projects .. "/memory/make-check.md"] =
+		note_file("Tests run with make check", "project", "Run `make check`, not cargo test.")
+	w.files[projects .. "/c1.jsonl"] = claude_chat(shop, { "remember repository: Y." })
+	w:list("shop", nil, shop)
+	t.equal(w:import(), nil)
+	t.equal(kept, true, "the model read while the note waited")
+	t.equal(#w:notes_in(repo_notes("shop")), 1, "kept")
+	t.equal(titles(w:imports().pending), {}, "nothing kept comes back")
+end)
+
 t.case("signed out, only the saved notes are proposed", function()
 	local w = world()
 	w.signed_in = false

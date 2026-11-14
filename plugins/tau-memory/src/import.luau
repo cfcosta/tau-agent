@@ -529,7 +529,7 @@ end
 -- being read and the chunk it is at.
 function import.checkpoint(env)
 	local found = load(env, "checkpoint.json") or {}
-	return { running = found.running, done = found.done or {}, reading = found.reading }
+	return { running = found.running, done = found.done or {}, reading = found.reading, gen = found.gen or 0 }
 end
 
 -- A place as JSON: no key for what it lacks.
@@ -567,6 +567,7 @@ local function save_checkpoint(env, checkpoint)
 		running = null(checkpoint.running),
 		done = checkpoint.done,
 		reading = null(checkpoint.reading),
+		gen = checkpoint.gen or 0,
 	})
 end
 
@@ -848,6 +849,8 @@ function import.act(env, act)
 		end
 		checkpoint.running = request_of(act)
 		checkpoint.reading = nil
+		-- A tick of an import before this one keeps nothing of its own.
+		checkpoint.gen = (checkpoint.gen or 0) + 1
 		remove(env, "todo.json")
 		save_checkpoint(env, checkpoint)
 	elseif kind == "stop" then
@@ -1221,6 +1224,61 @@ local function copy(env, proposals, checkpoint, item)
 	mark(checkpoint, item, 0)
 end
 
+-- What a tick keeps, once what it waited on is back: nothing when the
+-- import it began on was stopped or another began meanwhile (the person
+-- and the job do not take turns over these files); else the checkpoint,
+-- and the proposals as they are now with what the tick changed of them:
+-- the ones it made, those it changed that are still there (their keep as
+-- the person left it), what it counted and the files that failed. False
+-- when it kept nothing.
+local function keep_going(env, tick)
+	local now = import.checkpoint(env)
+	if now.running == nil or now.gen ~= tick.checkpoint.gen then
+		return false
+	end
+	local fresh = import.proposals(env)
+	local was = {}
+	for _, proposal in ipairs(tick.start.proposals) do
+		was[proposal.id] = proposal
+	end
+	local at = {}
+	for n, proposal in ipairs(fresh.proposals) do
+		at[proposal.id] = n
+	end
+	for _, proposal in ipairs(tick.proposals.proposals) do
+		local before = was[proposal.id]
+		if before == nil then
+			if at[proposal.id] == nil then
+				table.insert(fresh.proposals, proposal)
+			end
+		elseif json.encode(before) ~= json.encode(proposal) and at[proposal.id] ~= nil then
+			local changed = table.clone(proposal)
+			changed.keep = fresh.proposals[at[proposal.id]].keep
+			fresh.proposals[at[proposal.id]] = changed
+		end
+	end
+	fresh.next = math.max(fresh.next, tick.proposals.next)
+	for key, value in pairs(tick.proposals.tally) do
+		if type(value) == "number" then
+			fresh.tally[key] = (fresh.tally[key] or 0) + value - (tick.start.tally[key] or 0)
+		end
+	end
+	for key, value in pairs(tick.proposals.tally.read) do
+		fresh.tally.read[key] = (fresh.tally.read[key] or 0) + value - (tick.start.tally.read[key] or 0)
+	end
+	for _, shown in ipairs(tick.proposals.failed) do
+		if not table.find(fresh.failed, shown) then
+			table.insert(fresh.failed, shown)
+		end
+	end
+	save_proposals(env, fresh)
+	save_checkpoint(env, tick.checkpoint)
+	-- What comes after in this tick builds on what is kept.
+	tick.proposals = fresh
+	tick.start = plain(fresh)
+	return true
+end
+
 -- The chunk `n` of the item being read.
 local function part_name(n)
 	return "reading/" .. tostring(n) .. ".txt"
@@ -1228,13 +1286,14 @@ end
 
 -- One chunk of the item first in `todo` to the model; the item read, its
 -- chunks gone, when it was the last.
-local function read_with_model(env, todo, proposals, checkpoint)
+local function read_with_model(env, todo, tick)
+	local checkpoint = tick.checkpoint
 	local item = todo.items[1]
 	local reading = checkpoint.reading
 	if reading == nil or reading.key ~= item.key then
 		local found = read.item(env.files, item, item.offset or 0)
 		if found == nil or found.text == nil then
-			failed(env, proposals, item)
+			failed(env, tick.proposals, item)
 			mark(checkpoint, item, item.size)
 			return true
 		end
@@ -1248,7 +1307,7 @@ local function read_with_model(env, todo, proposals, checkpoint)
 	end
 	if reading.part <= reading.parts then
 		local chunk = env.files.read(read.join(env.dir, part_name(reading.part)))
-		local search, propose = tools_for(env, item, proposals)
+		local search, propose = tools_for(env, item, tick.proposals)
 		local answer = env.infer({
 			task = import.material(item, chunk, reading.part, reading.parts),
 			instructions = import.PROMPT,
@@ -1258,16 +1317,20 @@ local function read_with_model(env, todo, proposals, checkpoint)
 			wait_for = { "memory_search" },
 			rounds = ROUNDS,
 		})
+		-- Stopped, or another import begun, while the model read.
+		local now = import.checkpoint(env)
+		if now.running == nil or now.gen ~= checkpoint.gen then
+			return "stale"
+		end
 		if not answer.ok then
-			save_proposals(env, proposals)
-			save_checkpoint(env, checkpoint)
+			keep_going(env, tick)
 			error("the import stopped: " .. tostring(answer.error), 0)
 		end
 		pcall(env.files.remove, read.join(env.dir, part_name(reading.part)))
 		reading.part += 1
 	end
 	if reading.part > reading.parts then
-		count_read(proposals, item)
+		count_read(tick.proposals, item)
 		mark(checkpoint, item, reading["end"])
 		checkpoint.reading = nil
 		return true
@@ -1293,6 +1356,7 @@ function import.tick(env)
 	end
 	todo.items = list_of(todo.items)
 	local proposals = import.proposals(env)
+	local tick = { checkpoint = checkpoint, proposals = proposals, start = plain(proposals) }
 	-- Claude Code's notes, as they are, a batch a tick.
 	local copied = 0
 	while #todo.items > 0 and todo.items[1].tool == read.CLAUDE and todo.items[1].material == read.SAVED do
@@ -1302,12 +1366,13 @@ function import.tick(env)
 		copied += 1
 		local item = table.remove(todo.items, 1)
 		todo.done += 1
-		copy(env, proposals, checkpoint, item)
+		copy(env, tick.proposals, checkpoint, item)
 		todo.line = string.format("Reading Claude Code notes · %d of %d", todo.done, todo.saved)
 	end
 	if copied > 0 then
-		save_proposals(env, proposals)
-		save_checkpoint(env, checkpoint)
+		if not keep_going(env, tick) then
+			return
+		end
 		if #todo.items > 0 then
 			report(env, todo, todo.line)
 			return
@@ -1328,7 +1393,11 @@ function import.tick(env)
 		error("the plan offers no model to write notes with", 0)
 	end
 	local item = todo.items[1]
-	if read_with_model(env, todo, proposals, checkpoint) then
+	local read_all = read_with_model(env, todo, tick)
+	if read_all == "stale" then
+		return
+	end
+	if read_all then
 		table.remove(todo.items, 1)
 		todo.done += 1
 		local key = item.tool .. "." .. item.material
@@ -1336,8 +1405,9 @@ function import.tick(env)
 		local what = item.material == read.SAVED and "memories" or "chats"
 		todo.line = string.format("Reading %s %s · %d of %d", LABELS[item.tool], what, todo.read[key], todo.counts[key] or todo.read[key])
 	end
-	save_proposals(env, proposals)
-	save_checkpoint(env, checkpoint)
+	if not keep_going(env, tick) then
+		return
+	end
 	if #todo.items == 0 then
 		finish(env, checkpoint)
 		return
