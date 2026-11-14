@@ -267,14 +267,53 @@ end
 -- Whether the sign-in can push to `full_name`.
 function github.can_push(full_name)
 	local status, value = api("GET", "/repos/" .. full_name)
-	if status >= 200 and status < 300 then
-		return type(value) == "table" and type(value.permissions) == "table" and value.permissions.push == true
-	elseif status == 403 or status == 404 then
+	if status == 403 or status == 404 then
 		return false
 	elseif status == 401 then
 		error("GitHub did not accept the token.", 0)
+	elseif status < 200 or status >= 300 then
+		error("GitHub answered " .. tostring(status) .. " for " .. full_name, 0)
 	end
-	error("GitHub answered " .. tostring(status) .. " for " .. full_name, 0)
+	-- The person's own right first: `permissions` is theirs, not the app's.
+	if not (type(value) == "table" and type(value.permissions) == "table" and value.permissions.push == true) then
+		return false
+	end
+	return github.app_writes(full_name)
+end
+
+-- Whether one of the app's installations reaches `full_name` and may
+-- write its contents: what a push through the sign-in needs, as the
+-- token is the app's on the person's behalf.
+function github.app_writes(full_name)
+	local installations = all_pages("/user/installations", "installations")
+	if installations == nil then
+		return false
+	end
+	for _, installation in ipairs(installations) do
+		local permissions = type(installation.permissions) == "table" and installation.permissions or {}
+		if permissions.contents == "write" and type(installation.id) == "number" then
+			local id = string.format("%d", installation.id)
+			local repositories = all_pages("/user/installations/" .. id .. "/repositories", "repositories") or {}
+			for _, repo in ipairs(repositories) do
+				if repo.full_name == full_name then
+					return true
+				end
+			end
+		end
+	end
+	return false
+end
+
+-- Why a push to `full_name` is refused, when GitHub refuses it (403):
+-- the sign-in is the app's, which pushes only where it is installed and
+-- may write.
+function github.push_refused(full_name)
+	return "GitHub refused the push to "
+		.. full_name
+		.. ": tau signs in through its GitHub app, which pushes only to repositories it is installed on with read and write access to their contents. Add "
+		.. full_name
+		.. " to the app, or give it write access, at "
+		.. github.install_url()
 end
 
 -- A request that must succeed: its answer, or why GitHub would not `what`.

@@ -165,7 +165,7 @@ end
 -- hooks it has.
 function tau._forge(forge)
 	local hooks = array({})
-	for _, name in ipairs({ "account", "repos", "can_push", "open_pull", "checks" }) do
+	for _, name in ipairs({ "account", "repos", "can_push", "open_pull", "checks", "refused" }) do
 		if type(forge[name]) == "function" then
 			table.insert(hooks, name)
 		end

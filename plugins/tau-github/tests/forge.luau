@@ -77,16 +77,36 @@ t.case("a failed page is an error", function()
 	t.equal(string.find(tostring(why), "GitHub answered 502 for the repositories of installation 7", 1, true) ~= nil, true, why)
 end)
 
-t.case("can push is what GitHub says of the repository", function()
+t.case("can push needs the person's right and the app's, which writes only where it is installed", function()
 	local http = route({
 		["GET /repos/o/yes"] = { json = { permissions = { push = true } } },
 		["GET /repos/o/read"] = { json = { permissions = { push = false } } },
+		-- The person may push, but the app is not installed on it.
+		["GET /repos/o/elsewhere"] = { json = { permissions = { push = true } } },
+		-- The person may push, and the app is installed, but reads only.
+		["GET /repos/o/reads"] = { json = { permissions = { push = true } } },
 		["GET /repos/o/gone"] = { status = 404, json = {} },
 		["GET /repos/o/bad"] = { status = 401, json = {} },
+		["GET /user/installations?per_page=100&page=1"] = {
+			json = {
+				installations = {
+					{ id = 7, permissions = { contents = "write" } },
+					{ id = 8, permissions = { contents = "read" } },
+				},
+			},
+		},
+		["GET /user/installations/7/repositories?per_page=100&page=1"] = {
+			json = { repositories = { repo("o/yes", "2026-01-01") } },
+		},
+		["GET /user/installations/8/repositories?per_page=100&page=1"] = {
+			json = { repositories = { repo("o/reads", "2026-01-01") } },
+		},
 	})
 	local r = t.run({ http = http, secrets = { github = true } })
 	t.equal(r:forge("can_push", { repo = "o/yes" }), true)
 	t.equal(r:forge("can_push", { repo = "o/read" }), false)
+	t.equal(r:forge("can_push", { repo = "o/elsewhere" }), false)
+	t.equal(r:forge("can_push", { repo = "o/reads" }), false)
 	t.equal(r:forge("can_push", { repo = "o/gone" }), false)
 	local ok, why = pcall(r.forge, r, "can_push", { repo = "o/bad" })
 	t.equal(ok, false)
@@ -146,4 +166,11 @@ t.property("a form value encodes to unreserved characters and escapes, and back"
 		local char = string.char(tonumber(hex, 16))
 		t.equal(string.find(char, "[A-Za-z0-9%-_%.~]") == nil, true, "needless escape of " .. char)
 	end
+end)
+
+t.case("a refused push says the app writes only where it is installed, and where to add it", function()
+	local r = t.run({ http = route({}), secrets = { github = true } })
+	local why = r:forge("refused", { repo = "cfcosta/rust-dev-tools.nix" })
+	t.equal(string.find(why, "GitHub refused the push to cfcosta/rust-dev-tools.nix", 1, true) ~= nil, true, why)
+	t.equal(string.find(why, "/installations/new", 1, true) ~= nil, true, why)
 end)

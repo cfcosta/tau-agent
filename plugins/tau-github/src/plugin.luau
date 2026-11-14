@@ -203,5 +203,9 @@ return tau.plugin({
 		checks = function(input)
 			return github.checks(input.repo, input.head)
 		end,
+		-- Why a push GitHub refused was refused.
+		refused = function(input)
+			return github.push_refused(input.repo)
+		end,
 	},
 })
