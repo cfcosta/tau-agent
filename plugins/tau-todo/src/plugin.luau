@@ -23,15 +23,30 @@ local function bump(store)
 	store.put("rev", (store.get("rev") or 0) + 1)
 end
 
-local function now(ctx)
-	return ctx.now.unix
+local function now(env)
+	return env.now.unix
 end
 
-local function store_of(ctx)
-	if not ctx.store then
-		error("this repository keeps no issues here", 0)
-	end
-	return ctx.store
+-- The plugin's store, as the issues module reads it: each read awaited,
+-- each write given, so a later read in the hook sees it.
+local cmd = tau.cmd
+local STORE = {
+	get = function(key)
+		return tau.await(cmd.store.get(key))
+	end,
+	list = function(prefix)
+		return tau.await(cmd.store.list(prefix)) or {}
+	end,
+	put = function(key, value)
+		tau.give(cmd.store.put(key, value))
+	end,
+	delete = function(key)
+		tau.give(cmd.store.delete(key))
+	end,
+}
+
+local function store_of()
+	return STORE
 end
 
 -- One line of an issue, for the model.
@@ -181,7 +196,8 @@ local function object(properties, required)
 end
 
 -- A change's card: its line, and an undo.
-local function change_card(call, result, ctx)
+local function change_card(input, model, env)
+	local result = input.result
 	local line = ui.text(result.line or "")
 	if not result.undo then
 		return line
@@ -190,7 +206,8 @@ local function change_card(call, result, ctx)
 end
 
 -- A read's card: the issues it found.
-local function read_card(call, result, ctx)
+local function read_card(input, model, env)
+	local result = input.result
 	local found = result.issues or result.ready or result.blocked or {}
 	if result.issue and not result.line then
 		found = { result.issue }
@@ -214,12 +231,12 @@ local tools = {
 			priority = PRIORITY,
 			blocked = { type = "boolean", description = "List what is blocked, and on what." },
 		}),
-		call = function(args, ctx)
-			local all = issues.all(store_of(ctx))
+		call = function(args, model, env)
+			local all = issues.all(store_of())
 			local filter = filter_of(args)
 			if args.blocked then
 				local out = array({})
-				for _, id in ipairs(graph.blocked(all, now(ctx), filter)) do
+				for _, id in ipairs(graph.blocked(all, now(env), filter)) do
 					local one = brief(all[id])
 					one.waits_on = array(graph.blockers(all, id))
 					one.blocked = all[id].blocked
@@ -227,7 +244,7 @@ local tools = {
 				end
 				return { blocked = out }
 			end
-			return { ready = briefs(all, graph.ready(all, now(ctx), filter)) }
+			return { ready = briefs(all, graph.ready(all, now(env), filter)) }
 		end,
 		card = read_card,
 	},
@@ -241,8 +258,8 @@ local tools = {
 			claim = { type = "string", description = "The run that holds them." },
 			tree = { type = "boolean" },
 		}),
-		call = function(args, ctx)
-			local all = issues.all(store_of(ctx))
+		call = function(args, model, env)
+			local all = issues.all(store_of())
 			local filter = filter_of(args)
 			local ids = {}
 			for id, issue in pairs(all) do
@@ -275,17 +292,17 @@ local tools = {
 	todo_show = {
 		description = "One issue whole: its description, criteria, links, what blocks it and its comments.",
 		parameters = object({ id = ID }, { "id" }),
-		call = function(args, ctx)
-			local all = issues.all(store_of(ctx))
-			return { issue = whole(all, issues.find(all, args.id), now(ctx)) }
+		call = function(args, model, env)
+			local all = issues.all(store_of())
+			return { issue = whole(all, issues.find(all, args.id), now(env)) }
 		end,
 		card = read_card,
 	},
 	todo_search = {
 		description = "Issues whose title, description or comments hold the text, any case.",
 		parameters = object({ text = { type = "string" } }, { "text" }),
-		call = function(args, ctx)
-			local all = issues.all(store_of(ctx))
+		call = function(args, model, env)
+			local all = issues.all(store_of())
 			return { issues = briefs(all, issues.search(all, args.text)) }
 		end,
 		card = read_card,
@@ -302,13 +319,13 @@ local tools = {
 			parent = { type = "string", description = "The epic it is part of." },
 			step = { type = "integer", description = "Your step it comes from, from 1." },
 		}, { "title" }),
-		call = function(args, ctx)
-			local store = store_of(ctx)
+		call = function(args, model, env)
+			local store = store_of()
 			local args2 = table.clone(args)
-			args2.found_while = held(store, ctx.run.id)
-			local issue = issues.create(store, now(ctx), args2)
+			args2.found_while = held(store, env.run.id)
+			local issue = issues.create(store, now(env), args2)
 			if args.step then
-				promote(ctx.state, args.step, issue.id)
+				promote(model, args.step, issue.id)
 			end
 			bump(store)
 			return { issue = brief(issue), line = "filed " .. issue.id .. ": " .. issue.title, undo = { forget = issue.id } }
@@ -328,10 +345,10 @@ local tools = {
 			status = { type = "string", enum = { "open", "in_progress", "blocked", "deferred" } },
 			blocked = { type = "string", description = "With status blocked: what it waits on." },
 		}, { "id" }),
-		call = function(args, ctx)
-			local store = store_of(ctx)
+		call = function(args, model, env)
+			local store = store_of()
 			local before = snapshot(store, args.id)
-			local issue = issues.update(store, now(ctx), args)
+			local issue = issues.update(store, now(env), args)
 			local line = issue.id .. " changed"
 			if before and before.priority ~= issue.priority then
 				line = issue.id .. ": P" .. before.priority .. " to P" .. issue.priority
@@ -345,10 +362,10 @@ local tools = {
 	todo_claim = {
 		description = "Claims an issue for this run: it goes in progress, yours until it is closed or your run ends. Refused when another run holds it.",
 		parameters = object({ id = ID }, { "id" }),
-		call = function(args, ctx)
-			local store = store_of(ctx)
-			local issue = issues.claim(store, now(ctx), args.id, ctx.run.id)
-			ctx.state.issue = issue.id
+		call = function(args, model, env)
+			local store = store_of()
+			local issue = issues.claim(store, now(env), args.id, env.run.id)
+			model.issue = issue.id
 			bump(store)
 			return { issue = brief(issue), line = "claimed " .. issue.id }
 		end,
@@ -357,10 +374,10 @@ local tools = {
 	todo_check = {
 		description = "Checks one of an issue's done-when criteria, by its number from 1; done false unchecks it.",
 		parameters = object({ id = ID, criterion = { type = "integer" }, done = { type = "boolean" } }, { "id", "criterion" }),
-		call = function(args, ctx)
-			local store = store_of(ctx)
+		call = function(args, model, env)
+			local store = store_of()
 			local before = snapshot(store, args.id)
-			local issue = issues.check(store, now(ctx), args.id, args.criterion, args.done)
+			local issue = issues.check(store, now(env), args.id, args.criterion, args.done)
 			local verb = args.done == false and "unmet" or "met"
 			return changed(store, issue, issue.id .. ": criterion " .. args.criterion .. " " .. verb, before)
 		end,
@@ -374,10 +391,10 @@ local tools = {
 			on = { type = "string", description = "The other issue." },
 			remove = { type = "boolean" },
 		}, { "id", "kind", "on" }),
-		call = function(args, ctx)
-			local store = store_of(ctx)
+		call = function(args, model, env)
+			local store = store_of()
 			local before = snapshot(store, args.id)
-			local issue = issues.link(store, now(ctx), args.id, args.kind, args.on, args.remove)
+			local issue = issues.link(store, now(env), args.id, args.kind, args.on, args.remove)
 			local line = args.remove and (args.id .. ": no longer " .. args.kind .. " " .. args.on)
 				or (args.kind == "blocks" and (args.on .. " blocks " .. args.id) or (args.id .. " " .. args.kind .. " " .. args.on))
 			return changed(store, issue, line, before)
@@ -387,9 +404,9 @@ local tools = {
 	todo_comment = {
 		description = "Adds a comment to an issue.",
 		parameters = object({ id = ID, text = { type = "string" } }, { "id", "text" }),
-		call = function(args, ctx)
-			local store = store_of(ctx)
-			local issue = issues.comment(store, now(ctx), args.id, args.text, ctx.run.id)
+		call = function(args, model, env)
+			local store = store_of()
+			local issue = issues.comment(store, now(env), args.id, args.text, env.run.id)
 			bump(store)
 			return { issue = brief(issue), line = "commented on " .. issue.id }
 		end,
@@ -398,13 +415,13 @@ local tools = {
 	todo_close = {
 		description = "Closes an issue with the reason; with reopen, opens a closed one again. Closing with criteria unmet is allowed, but the reason says why. An epic closes once its children have.",
 		parameters = object({ id = ID, reason = { type = "string" }, reopen = { type = "boolean" } }, { "id" }),
-		call = function(args, ctx)
-			local store = store_of(ctx)
+		call = function(args, model, env)
+			local store = store_of()
 			local before = snapshot(store, args.id)
 			if args.reopen then
-				return changed(store, issues.reopen(store, now(ctx), args.id), "reopened " .. args.id, before)
+				return changed(store, issues.reopen(store, now(env), args.id), "reopened " .. args.id, before)
 			end
-			local issue = issues.close(store, now(ctx), args.id, args.reason)
+			local issue = issues.close(store, now(env), args.id, args.reason)
 			local done, all = graph.checked(issue)
 			local line = "closed " .. issue.id
 			if done < all then
@@ -417,10 +434,10 @@ local tools = {
 	todo_defer = {
 		description = "Defers an issue, until a date (2026-11-10) when given: it is not ready until then.",
 		parameters = object({ id = ID, ["until"] = { type = "string" } }, { "id" }),
-		call = function(args, ctx)
-			local store = store_of(ctx)
+		call = function(args, model, env)
+			local store = store_of()
 			local before = snapshot(store, args.id)
-			local issue = issues.defer(store, now(ctx), args.id, args["until"])
+			local issue = issues.defer(store, now(env), args.id, args["until"])
 			local line = "deferred " .. issue.id .. (issue.defer_until and (" until " .. string.sub(time.iso(issue.defer_until), 1, 10)) or "")
 			return changed(store, issue, line, before)
 		end,
@@ -429,10 +446,10 @@ local tools = {
 	todo_dispatch = {
 		description = "Asks the person to start a chat on an issue, with it claimed, or to send it to a chat that exists (to, its run id). It is the one thing you cannot do alone: the person allows it, or says why not.",
 		parameters = object({ id = ID, to = { type = "string", description = "The chat's run id; none starts a new chat." } }, { "id" }),
-		call = function(args, ctx)
-			local store = store_of(ctx)
+		call = function(args, model, env)
+			local store = store_of()
 			local issue = issues.find(issues.all(store), args.id)
-			if issue.claim and issue.claim ~= ctx.run.id then
+			if issue.claim and issue.claim ~= env.run.id then
 				error(issue.id .. " is held by the run " .. issue.claim, 0)
 			end
 			local where = args.to and ("the chat " .. args.to) or "a new chat"
@@ -440,7 +457,7 @@ local tools = {
 				title = (args.to and "Send " or "Start a chat on ") .. issue.id .. (args.to and (" to " .. args.to) or ""),
 				text = "**" .. issue.title .. "**, in " .. where .. ", with it claimed there.",
 				action = "dispatch",
-				args = { issue = issue.id, to = args.to, from = ctx.run.id },
+				args = { issue = issue.id, to = args.to, from = env.run.id },
 			})
 		end,
 	},
@@ -455,19 +472,19 @@ local tools = {
 				}, { "text", "status" }),
 			},
 		}, { "steps" }),
-		call = function(args, ctx)
+		call = function(args, model, env)
 			local list, why = steps.check(args.steps)
 			if list == nil then
 				error(why, 0)
 			end
 			-- A promoted step keeps the issue it became.
 			for at, step in ipairs(list) do
-				local was = (ctx.state.steps or {})[at]
+				local was = (model.steps or {})[at]
 				if was and was.issue and was.text == step.text then
 					step.issue = was.issue
 				end
 			end
-			ctx.state.steps = list
+			model.steps = list
 			return { steps = #list, done = steps.done(list) }
 		end,
 	},
@@ -837,13 +854,13 @@ local function asked(store, all)
 	}, { dismiss = "cancel" })
 end
 
-local function board_page(params, ctx)
-	local store = ctx.store
-	if not store then
+local function board_page(params, model, env)
+	local store = STORE
+	local ok, all = pcall(issues.all, store)
+	if not ok then
 		return ui.empty("Issues need the plugin's store.")
 	end
-	local all = issues.all(store)
-	local at = now(ctx)
+	local at = now(env)
 	local ready = #graph.ready(all, at)
 	local view = params.view or "board"
 	local body
@@ -879,9 +896,9 @@ local function board_page(params, ctx)
 end
 
 -- What the person's move of a card stands for.
-local function move(args, ctx)
-	local store = store_of(ctx)
-	local at = now(ctx)
+local function move(args, model, env)
+	local store = store_of()
+	local at = now(env)
 	local id, to = args.card, args.to
 	local all = issues.all(store)
 	local issue = issues.find(all, id)
@@ -916,13 +933,13 @@ end
 
 local actions = {
 	move = move,
-	start = function(args, ctx)
-		return start_chat(store_of(ctx), now(ctx), args.issue)
+	start = function(args, model, env)
+		return start_chat(store_of(), now(env), args.issue)
 	end,
 	-- A chat started on `issue`, or why it did not: it holds the issue.
-	started = function(args, ctx)
-		local store = store_of(ctx)
-		local at = now(ctx)
+	started = function(args, model, env)
+		local store = store_of()
+		local at = now(env)
 		if args.error then
 			issues.let_go(store, at, args.issue, "starting", nil)
 			bump(store)
@@ -934,8 +951,8 @@ local actions = {
 		return "Started the chat " .. args.run .. " on " .. args.issue .. ", which holds it."
 	end,
 	-- What a run asked with todo_dispatch, once the person allows it.
-	dispatch = function(args, ctx)
-		local store = store_of(ctx)
+	dispatch = function(args, model, env)
+		local store = store_of()
 		local issue = issues.find(issues.all(store), args.issue)
 		if issue.claim and issue.claim ~= args.from and issue.claim ~= args.to then
 			return issue.id .. " is held by the run " .. issue.claim .. " now: nothing was started"
@@ -944,16 +961,16 @@ local actions = {
 			return tau.steer_chat({ run = args.to, text = opening(issue), ["then"] = "sent", args = { issue = issue.id, from = args.from } })
 		end
 		if issue.claim == args.from then
-			issues.let_go(store, now(ctx), issue.id, args.from, nil)
+			issues.let_go(store, now(env), issue.id, args.from, nil)
 		end
-		return start_chat(store, now(ctx), issue.id)
+		return start_chat(store, now(env), issue.id)
 	end,
-	sent = function(args, ctx)
+	sent = function(args, model, env)
 		if args.error then
 			return args.issue .. " was not sent: " .. args.error
 		end
-		local store = store_of(ctx)
-		local at = now(ctx)
+		local store = store_of()
+		local at = now(env)
 		local issue = issues.find(issues.all(store), args.issue)
 		if issue.claim and issue.claim ~= args.run then
 			issues.let_go(store, at, issue.id, issue.claim, "Sent to the chat " .. args.run .. ".", "the person")
@@ -962,26 +979,26 @@ local actions = {
 		bump(store)
 		return "Sent " .. args.issue .. " to the chat " .. args.run .. ", which holds it."
 	end,
-	ask = function(args, ctx)
-		store_of(ctx).put("ask", { kind = args.kind, issue = args.issue })
-		bump(ctx.store)
+	ask = function(args, model, env)
+		store_of().put("ask", { kind = args.kind, issue = args.issue })
+		bump(STORE)
 	end,
-	cancel = function(args, ctx)
-		store_of(ctx).delete("ask")
-		bump(ctx.store)
+	cancel = function(args, model, env)
+		store_of().delete("ask")
+		bump(STORE)
 	end,
-	close = function(args, ctx)
-		local store = store_of(ctx)
+	close = function(args, model, env)
+		local store = store_of()
 		local ask = store.get("ask")
 		if not ask then
 			return nil
 		end
-		issues.close(store, now(ctx), ask.issue, args.text ~= "" and args.text or "Closed from the board.")
+		issues.close(store, now(env), ask.issue, args.text ~= "" and args.text or "Closed from the board.")
 		store.delete("ask")
 		bump(store)
 	end,
-	block = function(args, ctx)
-		local store = store_of(ctx)
+	block = function(args, model, env)
+		local store = store_of()
 		local ask = store.get("ask")
 		if not ask then
 			return nil
@@ -989,62 +1006,62 @@ local actions = {
 		local on = string.match(args.text or "", "^%s*(td%-[%w%.]+)%s*$")
 		local all = issues.all(store)
 		if on and all[on] then
-			issues.link(store, now(ctx), ask.issue, "blocks", on)
+			issues.link(store, now(env), ask.issue, "blocks", on)
 			local issue = issues.all(store)[ask.issue]
 			if issue.claim then
-				issues.let_go(store, now(ctx), issue.id, issue.claim, "Blocked on " .. on .. ".", "the person")
+				issues.let_go(store, now(env), issue.id, issue.claim, "Blocked on " .. on .. ".", "the person")
 			end
 		else
-			issues.update(store, now(ctx), { id = ask.issue, status = "blocked", blocked = args.text })
+			issues.update(store, now(env), { id = ask.issue, status = "blocked", blocked = args.text })
 		end
 		store.delete("ask")
 		bump(store)
 	end,
-	reopen = function(args, ctx)
-		issues.reopen(store_of(ctx), now(ctx), args.id)
-		bump(ctx.store)
+	reopen = function(args, model, env)
+		issues.reopen(store_of(), now(env), args.id)
+		bump(STORE)
 	end,
-	defer = function(args, ctx)
-		issues.defer(store_of(ctx), now(ctx), args.id, args["until"])
-		bump(ctx.store)
+	defer = function(args, model, env)
+		issues.defer(store_of(), now(env), args.id, args["until"])
+		bump(STORE)
 	end,
-	let_go = function(args, ctx)
-		local store = store_of(ctx)
+	let_go = function(args, model, env)
+		local store = store_of()
 		local issue = issues.find(issues.all(store), args.id)
 		if issue.claim then
-			issues.let_go(store, now(ctx), issue.id, issue.claim, "The person let it go; the run goes on without it.", "the person")
+			issues.let_go(store, now(env), issue.id, issue.claim, "The person let it go; the run goes on without it.", "the person")
 		end
 		bump(store)
 	end,
-	check = function(args, ctx)
-		issues.check(store_of(ctx), now(ctx), args.id, args.at, args.done)
-		bump(ctx.store)
+	check = function(args, model, env)
+		issues.check(store_of(), now(env), args.id, args.at, args.done)
+		bump(STORE)
 	end,
 	-- A comment on the issue the panel shows; the run that holds it is
 	-- steered with it too.
-	comment = function(args, ctx)
-		local store = store_of(ctx)
+	comment = function(args, model, env)
+		local store = store_of()
 		local id = args.issue or (args.params and args.params.issue)
 		if not id then
 			return nil
 		end
-		local issue = issues.comment(store, now(ctx), id, args.text, "the person")
+		local issue = issues.comment(store, now(env), id, args.text, "the person")
 		bump(store)
 		if issue.claim and issue.claim ~= "starting" then
 			return tau.steer_chat({ run = issue.claim, text = "On " .. issue.id .. ": " .. args.text })
 		end
 	end,
 	-- Undoes a change a run's card shows.
-	undo = function(args, ctx)
-		local store = store_of(ctx)
+	undo = function(args, model, env)
+		local store = store_of()
 		if args.forget then
-			issues.delete(store, now(ctx), args.forget)
+			issues.delete(store, now(env), args.forget)
 		elseif args.restore then
 			local issue = args.restore
 			-- A claim comes back only with its run going on: an ended run's
 			-- would hold the issue with nothing to let it go, so the issue
 			-- goes back to open, as an ended run's does.
-			if issue.claim ~= nil and not (issue.claim == ctx.run.id and ctx.run.live) then
+			if issue.claim ~= nil and not (issue.claim == env.run.id and env.run.live) then
 				issue = table.clone(issue)
 				issue.claim = nil
 				if issue.status == "in_progress" then
@@ -1056,20 +1073,24 @@ local actions = {
 		bump(store)
 	end,
 	-- A step of the run's becomes an issue, found while its issue.
-	promote = function(args, ctx)
-		local store = store_of(ctx)
-		local step = (ctx.state.steps or {})[tonumber(args.at) or 0]
+	promote = function(args, model, env)
+		local store = store_of()
+		local step = (model.steps or {})[tonumber(args.at) or 0]
 		if not step then
 			return nil
 		end
-		local issue = issues.create(store, now(ctx), { title = step.text, found_while = held(store, ctx.run.id) })
-		promote(ctx.state, args.at, issue.id)
+		local issue = issues.create(store, now(env), { title = step.text, found_while = held(store, env.run.id) })
+		-- The steps as they are now: promoted only if it is still that step.
+		local still = (model.steps or {})[tonumber(args.at) or 0]
+		if still and still.text == step.text then
+			promote(model, args.at, issue.id)
+		end
 		bump(store)
 	end,
 	-- Beads' JSONL the person pasted, into this repository.
-	import = function(args, ctx)
-		local store = store_of(ctx)
-		local n = issues.import(store, now(ctx), beads.import(args.text or ""))
+	import = function(args, model, env)
+		local store = store_of()
+		local n = issues.import(store, now(env), beads.import(args.text or ""))
 		bump(store)
 		return "Imported " .. n .. " issues."
 	end,
@@ -1093,40 +1114,76 @@ local function step_lines(list)
 	return lines
 end
 
+-- What the band shows of the issue the run holds, kept in the model as
+-- a hook leaves the store: the view draws from it, and waits on nothing.
+local function refresh(model, env)
+	local run = env.run and env.run.id
+	if run == nil then
+		return
+	end
+	local all = issues.all(STORE)
+	local id = nil
+	for other, issue in pairs(all) do
+		if issue.claim == run and (id == nil or other < id) then
+			id = other
+		end
+	end
+	if not id then
+		model.held = nil
+		return
+	end
+	local issue = all[id]
+	local found = {}
+	for other, candidate in pairs(all) do
+		for _, link in ipairs(candidate.links or {}) do
+			if link.kind == "found_while" and link.id == id then
+				table.insert(found, other)
+			end
+		end
+	end
+	table.sort(found)
+	local ready = graph.ready(all, now(env))
+	local next = {}
+	for n = 1, math.min(3, #ready) do
+		table.insert(next, ready[n])
+	end
+	local criteria = {}
+	for _, criterion in ipairs(issue.criteria or {}) do
+		table.insert(criteria, { text = criterion.text, done = criterion.done == true })
+	end
+	model.held = { id = id, title = issue.title, criteria = criteria, found = found, next = next }
+end
+
+-- `f` as a hook that leaves the band's issue as the store has it.
+local function refreshing(f)
+	return function(input, model, env)
+		local out = f(input, model, env)
+		refresh(model, env)
+		return out
+	end
+end
+
 -- The band over the composer: the issue the run holds, then its steps.
-local function band(state, ctx)
-	local list = state.steps or {}
-	local store = ctx.store
-	local all = store and issues.all(store) or {}
-	local id = store and held(store, ctx.run.id)
+local function band(model)
+	local list = model.steps or {}
+	local held_issue = model.held
+	local id = held_issue and held_issue.id
 	local lines = {}
 	local head
-	if id then
-		local issue = all[id]
-		local done, total = graph.checked(issue)
-		head = issue.id .. " · " .. issue.title .. (total > 0 and (", " .. done .. "/" .. total) or "")
-		for _, criterion in ipairs(issue.criteria or {}) do
+	if held_issue then
+		local done, total = 0, #held_issue.criteria
+		for _, criterion in ipairs(held_issue.criteria) do
+			if criterion.done then
+				done += 1
+			end
 			table.insert(lines, ui.toned((criterion.done and "☑ " or "☐ ") .. criterion.text, criterion.done and "good" or "neutral"))
 		end
-		local found = {}
-		for other, candidate in pairs(all) do
-			for _, link in ipairs(candidate.links or {}) do
-				if link.kind == "found_while" and link.id == id then
-					table.insert(found, other)
-				end
-			end
+		head = id .. " · " .. held_issue.title .. (total > 0 and (", " .. done .. "/" .. total) or "")
+		if #held_issue.found > 0 then
+			table.insert(lines, ui.mono("found: " .. table.concat(held_issue.found, ", ")))
 		end
-		table.sort(found)
-		if #found > 0 then
-			table.insert(lines, ui.mono("found: " .. table.concat(found, ", ")))
-		end
-		local next = graph.ready(all, now(ctx))
-		if #next > 0 then
-			local shown = {}
-			for n = 1, math.min(3, #next) do
-				table.insert(shown, next[n])
-			end
-			table.insert(lines, ui.mono("next ready: " .. table.concat(shown, ", ")))
+		if #held_issue.next > 0 then
+			table.insert(lines, ui.mono("next ready: " .. table.concat(held_issue.next, ", ")))
 		end
 	end
 	if #list > 0 then
@@ -1147,79 +1204,87 @@ local function band(state, ctx)
 	return ui.section("todo-band", head, lines, { open = true }), id
 end
 
+for _, tool in pairs(tools) do
+	tool.call = refreshing(tool.call)
+end
+for name, action in pairs(actions) do
+	actions[name] = refreshing(action)
+end
+
 return tau.plugin({
 	uses = { store = true },
 	tools = tools,
 	actions = actions,
 	pages = { board = board_page },
 	repo_nav = { label = "Todo", page = "board", icon = "list" },
-	repo_data = function(ctx)
-		if not ctx.store then
+	repo_data = function(_, model, env)
+		local ok, all = pcall(issues.all, STORE)
+		if not ok then
 			return {}
 		end
-		local all = issues.all(ctx.store)
-		local ready = #graph.ready(all, now(ctx))
+		local ready = #graph.ready(all, now(env))
 		return {
-			rev = ctx.store.get("rev") or 0,
+			rev = STORE.get("rev") or 0,
 			ready = ready,
 			nav = { badge = ready > 0 and tostring(ready) or nil, detail = ready .. " ready" },
 		}
 	end,
-	start = function(plan, ctx)
+	start = function(plan, model, env)
+		refresh(model, env)
 		return tau.start({ instructions = PROMPT })
+	end,
+	-- What another run or the board changed shows in the band by the
+	-- next turn.
+	turn_end = function(_, model, env)
+		refresh(model, env)
 	end,
 	-- A claim is its run's: as the run ends, what it holds goes back to
 	-- open, with what it did and the steps it left.
-	run_end = function(run, ctx)
-		if not ctx.store then
-			return
-		end
+	run_end = function(run, model, env)
+		local held = issues.held_by(STORE, env.run.id)
+		-- The steps as they are now, after the read.
 		local left = {}
-		for _, step in ipairs(ctx.state.steps or {}) do
+		for _, step in ipairs(model.steps or {}) do
 			if step.status ~= "done" then
 				table.insert(left, "- " .. step.text)
 			end
 		end
 		local said = run.text and string.sub(run.text, 1, 600) or ""
-		local note = "The run " .. ctx.run.id .. " ended (" .. tostring(run.stop) .. ")."
+		local note = "The run " .. env.run.id .. " ended (" .. tostring(run.stop) .. ")."
 		if said ~= "" then
 			note = note .. " It said: " .. said
 		end
 		if #left > 0 then
 			note = note .. "\n\nSteps it left:\n" .. table.concat(left, "\n")
 		end
-		local any = false
-		for _, id in ipairs(issues.held_by(ctx.store, ctx.run.id)) do
-			issues.let_go(ctx.store, now(ctx), id, ctx.run.id, note)
-			any = true
+		for _, id in ipairs(held) do
+			issues.let_go(STORE, now(env), id, env.run.id, note)
 		end
-		if any then
-			bump(ctx.store)
+		if #held > 0 then
+			bump(STORE)
 		end
+		model.held = nil
 	end,
 	-- As tau starts: what the runs it found cut off held goes back to
 	-- open, and no chat is being started any more.
-	recover = function(input, ctx)
-		if not ctx.store then
-			return
-		end
+	recover = function(input, model, env)
 		local any = false
 		for _, run in ipairs(input.runs or {}) do
-			for _, id in ipairs(issues.held_by(ctx.store, run)) do
-				issues.let_go(ctx.store, now(ctx), id, run, "tau closed while the run " .. run .. " was going.", "tau")
+			for _, id in ipairs(issues.held_by(STORE, run)) do
+				issues.let_go(STORE, now(env), id, run, "tau closed while the run " .. run .. " was going.", "tau")
 				any = true
 			end
 		end
-		for _, id in ipairs(issues.held_by(ctx.store, "starting")) do
-			issues.let_go(ctx.store, now(ctx), id, "starting", nil)
+		for _, id in ipairs(issues.held_by(STORE, "starting")) do
+			issues.let_go(STORE, now(env), id, "starting", nil)
 			any = true
 		end
 		if any then
-			bump(ctx.store)
+			bump(STORE)
 		end
 	end,
-	view = function(state, ctx)
-		local drawn, id = band(state, ctx)
+	view = function(model, env)
+		local drawn, id = band(model)
 		if not drawn then
 			return {}
 		end
