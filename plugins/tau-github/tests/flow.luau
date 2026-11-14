@@ -27,8 +27,20 @@ t.machine_of("a sign-in checks every token it is given", machine, {
 		refused = g.records({ error = g.text({ max = 4 }) }),
 		checked = g.records({ ok = g.booleans(), error = g.text({ max = 4 }) }),
 	},
-	init = function()
-		return { before = machine.initial }
+	-- A code waiting, drawn whole: a case reaches one only by a start
+	-- and a started in a row, so a pending or a sign-out from it would
+	-- go untaken in some runs.
+	states = {
+		waiting = g.records({
+			code = g.just({ code = "ABCD", url = "github.com/login/device", expires = "15 minutes" }),
+			device_code = g.just("dev"),
+			deadline = g.integers({ min = 0, max = 150 }),
+			interval = g.integers({ min = 1, max = 10 }),
+			next = g.integers({ min = 0, max = 160 }),
+		}),
+	},
+	init = function(_, state)
+		return { before = state }
 	end,
 	event = function(model, e, state, effects)
 		local before = model.before

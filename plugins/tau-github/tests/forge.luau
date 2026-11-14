@@ -25,7 +25,8 @@ end
 
 t.case("the account is who signed in, none signed out", function()
 	local r = t.run({ http = route({}), secrets = { github = true } })
-	t.equal(r:forge("account", {}), json.null)
+	-- None comes back as nil: the harness gives a hook's JSON null so.
+	t.equal(r:forge("account", {}), nil)
 	r.store.account = { user = "octo" }
 	t.equal(r:forge("account", {}), "octo")
 end)

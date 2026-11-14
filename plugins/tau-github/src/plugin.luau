@@ -17,21 +17,32 @@ local endpoints = require("endpoints")
 local sign_in = require("sign_in")
 local flow = require("flow")
 
-local function now(ctx)
-	return ctx.now.unix or 0
+local cmd = tau.cmd
+
+local function get(key)
+	return tau.await(cmd.store.get(key))
+end
+
+local function has_token()
+	return tau.await(cmd.secrets.has(github.SECRET))
+end
+
+local function now(env)
+	return env.now.unix or 0
 end
 
 -- How the sign-in stands, as the setup step and the Models screen draw
 -- it: `{ state, code?, user?, error? }`.
-local function standing(ctx)
-	local going = ctx.store.get("sign_in")
-	local account = ctx.store.get("account")
+local function standing()
+	local going = get("sign_in")
+	local account = get("account")
+	local token = has_token()
 	-- A failure stands until a token is typed again: the job checks it.
-	local typed = going and going.state == "failed" and account == nil and ctx.secrets.has(github.SECRET)
+	local typed = going and going.state == "failed" and account == nil and token
 	if going and going.state ~= "idle" and not typed then
 		return going
 	end
-	if ctx.secrets.has(github.SECRET) then
+	if token then
 		if account then
 			return { state = "signed_in", user = account.user }
 		end
@@ -43,41 +54,43 @@ end
 
 -- Signed in as `user`, with a token that lasts `expires_in` seconds if it
 -- expires: the token form closes.
-local function signed(ctx, user, expires_in)
-	ctx.store.put("account", { user = user, expires_at = expires_in and (now(ctx) + expires_in) or nil })
-	ctx.store.put("token_form", false)
+local function signed(env, user, expires_in)
+	tau.give(cmd.store.put("account", { user = user, expires_at = expires_in and (now(env) + expires_in) or nil }))
+	tau.give(cmd.store.put("token_form", false))
 end
 
 -- Steps the sign-in with `event` and carries out what it says: a poll of
 -- GitHub, or a check of whose the token is, each telling it how it went.
-local function step(ctx, event)
-	local next, effects = flow.machine:step(ctx.store.get("sign_in"), event)
-	ctx.store.put("sign_in", next)
+-- The sign-in is read from the store at each step, so one stepped while
+-- a request was out is what the answer steps on.
+local function step(env, event)
+	local next, effects = flow.machine:step(get("sign_in"), event)
+	tau.give(cmd.store.put("sign_in", next))
 	for _, effect in ipairs(effects) do
 		local name = type(effect) == "table" and effect[1] or effect
 		if name == "poll" then
-			local ok, polled = pcall(github.poll, ctx.http, next.device_code)
-			local at = now(ctx)
+			local ok, polled = pcall(github.poll, next.device_code)
+			local at = now(env)
 			if not ok then
-				step(ctx, { event = "refused", error = tostring(polled) })
+				step(env, { event = "refused", error = tostring(polled) })
 			elseif polled.pending then
-				step(ctx, { event = "pending", at = at })
+				step(env, { event = "pending", at = at })
 			elseif polled.slow_down then
-				step(ctx, { event = "slow_down", at = at })
+				step(env, { event = "slow_down", at = at })
 			elseif polled.failed then
-				step(ctx, { event = "refused", error = polled.failed })
+				step(env, { event = "refused", error = polled.failed })
 			else
-				step(ctx, { event = "approved", expires_in = polled.expires_in })
+				step(env, { event = "approved", expires_in = polled.expires_in })
 			end
 		elseif name == "check_token" then
-			local ok, user = pcall(github.user, ctx.http)
+			local ok, user = pcall(github.user)
 			if ok then
-				signed(ctx, user, effect[2])
-				step(ctx, { event = "checked", ok = true })
+				signed(env, user, effect[2])
+				step(env, { event = "checked", ok = true })
 			else
-				ctx.secrets.forget(github.SECRET)
-				ctx.store.delete("account")
-				step(ctx, { event = "checked", ok = false, error = tostring(user) })
+				tau.give(cmd.secrets.forget(github.SECRET))
+				tau.give(cmd.store.delete("account"))
+				step(env, { event = "checked", ok = false, error = tostring(user) })
 			end
 		end
 	end
@@ -97,17 +110,17 @@ return tau.plugin({
 	jobs = {
 		sign_in = {
 			every = 1,
-			run = function(ctx)
-				local account = ctx.store.get("account")
-				if account and account.expires_at and now(ctx) >= account.expires_at then
-					ctx.secrets.forget(github.SECRET)
-					ctx.store.delete("account")
+			run = function(_, _, env)
+				local account = get("account")
+				if account and account.expires_at and now(env) >= account.expires_at then
+					tau.give(cmd.secrets.forget(github.SECRET))
+					tau.give(cmd.store.delete("account"))
 					return
 				end
-				if flow.machine:is(ctx.store.get("sign_in"), "waiting") then
-					step(ctx, { event = "tick", at = now(ctx) })
-				elseif account == nil and ctx.secrets.has(github.SECRET) then
-					step(ctx, { event = "token" })
+				if flow.machine:is(get("sign_in"), "waiting") then
+					step(env, { event = "tick", at = now(env) })
+				elseif has_token() and get("account") == nil then
+					step(env, { event = "token" })
 				end
 			end,
 		},
@@ -115,17 +128,17 @@ return tau.plugin({
 
 	actions = {
 		-- Asks GitHub for a device code and shows it; the job polls.
-		sign_in = function(_, ctx)
-			ctx.store.put("token_form", false)
-			step(ctx, { event = "start" })
-			local ok, start = pcall(github.start_device, ctx.http)
+		sign_in = function(_, _, env)
+			tau.give(cmd.store.put("token_form", false))
+			step(env, { event = "start" })
+			local ok, start = pcall(github.start_device)
 			if not ok then
-				step(ctx, { event = "start_failed", error = tostring(start) })
+				step(env, { event = "start_failed", error = tostring(start) })
 				return
 			end
-			step(ctx, {
+			step(env, {
 				event = "started",
-				at = now(ctx),
+				at = now(env),
 				code = {
 					code = start.user_code,
 					url = github.address(start.verification_uri),
@@ -137,22 +150,22 @@ return tau.plugin({
 			})
 		end,
 		-- The person says they approved: poll at the job's next tick.
-		check = function(_, ctx)
-			step(ctx, { event = "approve" })
+		check = function(_, _, env)
+			step(env, { event = "approve" })
 		end,
-		sign_out = function(_, ctx)
-			ctx.secrets.forget(github.SECRET)
-			ctx.store.delete("account")
-			step(ctx, { event = "sign_out" })
+		sign_out = function(_, _, env)
+			tau.give(cmd.secrets.forget(github.SECRET))
+			tau.give(cmd.store.delete("account"))
+			step(env, { event = "sign_out" })
 		end,
 		-- Shows the token form, or the device code again.
-		token_form = function(args, ctx)
-			ctx.store.put("token_form", args.open == true)
+		token_form = function(args)
+			tau.give(cmd.store.put("token_form", args.open == true))
 		end,
 	},
 
-	app = function(ctx)
-		return { sign_in = standing(ctx), token_form = ctx.store.get("token_form") == true }
+	app = function()
+		return { sign_in = standing(), token_form = get("token_form") == true }
 	end,
 	setup = function(app)
 		return sign_in.step(app.sign_in, app.token_form)
@@ -167,24 +180,28 @@ return tau.plugin({
 		host = "github.com",
 		token = github.SECRET,
 		-- Who is signed in: none with no token, or one not checked yet.
-		account = function(_, ctx)
-			local account = ctx.store.get("account")
-			if account and ctx.secrets.has(github.SECRET) then
+		account = function()
+			if not has_token() then
+				return json.null
+			end
+			-- Read after the secret's answer: a sign-out may have come.
+			local account = get("account")
+			if account then
 				return account.user
 			end
 			return json.null
 		end,
-		repos = function(_, ctx)
-			return array(github.repos(ctx.http))
+		repos = function()
+			return array(github.repos())
 		end,
-		can_push = function(input, ctx)
-			return github.can_push(ctx.http, input.repo)
+		can_push = function(input)
+			return github.can_push(input.repo)
 		end,
-		open_pull = function(input, ctx)
-			return github.open_pull(ctx.http, input)
+		open_pull = function(input)
+			return github.open_pull(input)
 		end,
-		checks = function(input, ctx)
-			return github.checks(ctx.http, input.repo, input.head)
+		checks = function(input)
+			return github.checks(input.repo, input.head)
 		end,
 	},
 })
