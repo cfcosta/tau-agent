@@ -1,6 +1,8 @@
 -- What tau-goal knows of goals (docs/reference/goal.md): how `/goal`
 -- reads, the input the model gets for a goal, and a conversation's goal
 -- as its checks leave it, with the notes, lines and badges that say it.
+local tau = require("tau")
+
 local goal = {}
 
 -- Continuations a goal allows when `/goal` does not say.
@@ -301,6 +303,96 @@ local function note(state, text, detail, tone)
 	state.notes["g" .. count(state.notes)] = { text = text, detail = detail, tone = tone }
 end
 
+-- The fields every goal carries, whatever its status.
+local KEPT = { "condition", "max_continuations", "budget", "continuations", "spent", "checks" }
+
+local function fields(extra)
+	local out = table.clone(KEPT)
+	for _, name in ipairs(extra or {}) do
+		table.insert(out, name)
+	end
+	return out
+end
+
+-- `g`'s kept fields, as `status`, with `extra`.
+local function as(g, status, extra)
+	local out = { status = status }
+	for _, name in ipairs(KEPT) do
+		out[name] = g[name]
+	end
+	for key, value in pairs(extra or {}) do
+		out[key] = value
+	end
+	return out
+end
+
+local function active(g)
+	return as(g, "active")
+end
+
+-- A goal's lifecycle (ADR 0054), its status the tag: active, paused, met,
+-- or stopped when out of continuations or budget. Only an active goal is
+-- checked, paused, stopped or failed; a failed check's `error` is an
+-- active goal's, and `exhausted` a stopped one's.
+goal.machine = tau.machine({
+	tag = "status",
+	states = {
+		active = fields({ "error?" }),
+		paused = fields(),
+		met = fields(),
+		stopped = fields({ "exhausted" }),
+	},
+	initial = {
+		status = "active",
+		condition = "",
+		max_continuations = goal.DEFAULT_CONTINUATIONS,
+		budget = goal.DEFAULT_BUDGET,
+		continuations = 0,
+		spent = 0,
+		checks = {},
+	},
+	on = {
+		check = {
+			active = function(g, e)
+				-- A copy by hand: `table.clone` refuses the metatable of a
+				-- list read back from JSON.
+				local checks = {}
+				for _, check in ipairs(g.checks) do
+					table.insert(checks, check)
+				end
+				table.insert(checks, e.check)
+				return as(g, e.check.met and "met" or "active", {
+					spent = e.check.spent,
+					continuations = e.check.continuation or g.continuations,
+					checks = checks,
+				})
+			end,
+		},
+		stop = {
+			active = function(g, e)
+				return as(g, "stopped", { exhausted = e.why })
+			end,
+		},
+		extend = {
+			active = function(g, e)
+				return as(g, "active", { max_continuations = math.max(g.continuations, g.max_continuations) + e.by })
+			end,
+		},
+		pause = { active = function(g)
+			return as(g, "paused")
+		end },
+		resume = { paused = active },
+		fail = {
+			active = function(g, e)
+				return as(g, "active", { error = e.message })
+			end,
+		},
+	},
+})
+for _, from in ipairs({ "paused", "met", "stopped" }) do
+	goal.machine.on.extend[from] = goal.machine.on.extend.active
+end
+
 -- Sets the conversation's goal, anew: what it spends counts from now.
 function goal.set(state, condition, continuations, budget)
 	state.unchecked = 0
@@ -313,6 +405,7 @@ function goal.set(state, condition, continuations, budget)
 		spent = 0,
 		checks = {},
 	}
+	assert(goal.machine:shape(state.goal))
 end
 
 -- Clears it.
@@ -324,17 +417,11 @@ end
 -- `turn` the model stopped at, the `continuation` it sent the model
 -- back for, if it did, what it `cost` and what the goal `spent` so far.
 function goal.check(state, check)
+	state.goal = goal.machine:step(state.goal, { event = "check", check = check })
 	local g = state.goal
-	g.spent = check.spent
-	g.error = nil
 	if check.continuation ~= nil then
-		g.continuations = check.continuation
 		state.held[tostring(check.continuation)] = true
 	end
-	if check.met then
-		g.status = "met"
-	end
-	table.insert(g.checks, check)
 	local p = string.format("%.2f", check.p)
 	if check.met then
 		note(state, "the goal is met", "check " .. check.n .. " · turn " .. check.turn .. " · p " .. p .. " · the run stops", "good")
@@ -347,36 +434,32 @@ end
 
 -- Not met, and out of continuations or budget (`why`).
 function goal.stopped(state, why)
-	state.goal.status = "stopped"
-	state.goal.exhausted = why
+	state.goal = goal.machine:step(state.goal, { event = "stop", why = why })
 	local said = why == "budget" and "out of budget" or "out of continuations"
 	note(state, "stopped the goal: " .. said .. ", and it is not met", "before_stop", "bad")
 end
 
 -- More continuations, and the goal active again.
 function goal.extend(state, by)
-	local g = state.goal
-	g.max_continuations = math.max(g.continuations, g.max_continuations) + by
-	g.status = "active"
-	g.exhausted = nil
+	state.goal = goal.machine:step(state.goal, { event = "extend", by = by })
 end
 
 -- Kept, but not checked, until resumed.
 function goal.pause(state)
-	if state.goal and state.goal.status == "active" then
-		state.goal.status = "paused"
+	if state.goal then
+		state.goal = goal.machine:step(state.goal, { event = "pause" })
 	end
 end
 
 function goal.resume(state)
-	if state.goal and state.goal.status == "paused" then
-		state.goal.status = "active"
+	if state.goal then
+		state.goal = goal.machine:step(state.goal, { event = "resume" })
 	end
 end
 
 -- Jev gave no answer; the run stopped unchecked.
 function goal.failed(state, message)
-	state.goal.error = message
+	state.goal = goal.machine:step(state.goal, { event = "fail", message = message })
 	note(state, message, "not checked", "bad")
 end
 
