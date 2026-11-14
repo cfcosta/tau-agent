@@ -483,14 +483,13 @@ impl Host {
         let choice = self.session_of(run).choice.unwrap_or_else(|| {
             ModelChoice::new(self.default_model(), Effort::Auto)
         });
-        self.resume_as(
-            run,
-            Prompt::new(prompt),
-            &choice,
-            By::Tau,
-            self.is_main(run),
-        )
-        .await
+        let resumer = if self.is_main(run) {
+            Resumer::Resolving
+        } else {
+            Resumer::Tau
+        };
+        self.resume_as(run, Prompt::new(prompt), &choice, resumer)
+            .await
     }
 
     /// Records `child`, under `parent`, as dropped: it takes no more

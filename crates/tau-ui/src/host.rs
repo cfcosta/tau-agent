@@ -36,7 +36,6 @@ use tau_agent::{
 use tau_ai::{message::Message, model::find};
 use tau_store::{Entry, RunKind, Status, Store, TurnUsage};
 use tau_ui_plugin::{
-    By,
     HOST_RECORD,
     HostRecord,
     RepoId,
@@ -1286,7 +1285,7 @@ impl Host {
         prompt: impl Into<Prompt>,
         choice: &ModelChoice,
     ) -> anyhow::Result<()> {
-        self.resume_as(run, prompt.into(), choice, By::Person, false)
+        self.resume_as(run, prompt.into(), choice, Resumer::Person)
             .await
     }
 
@@ -1299,21 +1298,19 @@ impl Host {
         prompt: &str,
         choice: &ModelChoice,
     ) -> anyhow::Result<()> {
-        self.resume_as(run, Prompt::new(prompt), choice, By::Tau, false)
+        self.resume_as(run, Prompt::new(prompt), choice, Resumer::Tau)
             .await
     }
 
-    /// [`Host::resume`], by `by`; `resolving` for tau's turn resolving
-    /// what a landing left in conflict on a main chat, whose stop is held
-    /// once while conflicts remain.
+    /// [`Host::resume`], by `resumer`.
     async fn resume_as(
         &self,
         run: &RunId,
         prompt: Prompt,
         choice: &ModelChoice,
-        by: By,
-        resolving: bool,
+        resumer: Resumer,
     ) -> anyhow::Result<()> {
+        let resolving = resumer == Resumer::Resolving;
         self.keep_uploads(&prompt.images).await;
         if self.is_running(run) {
             anyhow::bail!("The run is still going; steer it instead");
@@ -1321,7 +1318,7 @@ impl Host {
         self.refuse_ended(run).await?;
         // Its message is tau's: the record says so before the turn
         // stores it.
-        if by == By::Tau {
+        if resumer != Resumer::Person {
             self.store
                 .append_turn(
                     &run.0,
@@ -2312,4 +2309,15 @@ mod tests {
             None
         );
     }
+}
+
+/// Who goes on with a run ([`Host::resume_as`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Resumer {
+    Person,
+    /// tau, with a message of its own.
+    Tau,
+    /// tau's turn resolving what a landing left in conflict on a main
+    /// chat, whose stop is held once while conflicts remain.
+    Resolving,
 }
