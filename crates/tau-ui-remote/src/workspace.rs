@@ -454,6 +454,14 @@ pub enum PickerTarget {
 /// How long a plugin's note stays over the composer.
 const COMPOSER_NOTE_FOR: Duration = Duration::from_secs(4);
 
+/// How far the system's bars reach into the window, in pixels: a
+/// phone's status bar from the top, its navigation bar from the bottom.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct SystemBars {
+    pub top: f32,
+    pub bottom: f32,
+}
+
 pub struct Workspace {
     pub(crate) name: String,
     pub(crate) runs: Vec<RunView>,
@@ -639,6 +647,10 @@ pub struct Workspace {
     /// Lay out at exactly this size, pinned to the top left: for
     /// comparing screens against their designs.
     frame: Option<(f32, f32)>,
+    /// How far the system's bars reach into the window, read at each
+    /// frame: on a phone drawn edge to edge, its status bar and its
+    /// navigation bar.
+    system_bars: Option<std::rc::Rc<dyn Fn() -> SystemBars>>,
     /// The window's width at the last frame, for screens that size
     /// their columns to it.
     pub(crate) width: gpui::Pixels,
@@ -904,6 +916,7 @@ impl Workspace {
             phone_preview: false,
             mirrored: false,
             frame: None,
+            system_bars: None,
             width: NARROW_MAX,
             height: px(900.),
             _subscriptions: subscriptions,
@@ -1390,6 +1403,18 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.frame = frame;
+        cx.notify();
+    }
+
+    /// Keeps the workspace clear of the system's bars, as `bars` says
+    /// at each frame they reach: a black band behind each, and the
+    /// workspace between them.
+    pub fn keep_clear_of_system_bars(
+        &mut self,
+        bars: impl Fn() -> SystemBars + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        self.system_bars = Some(std::rc::Rc::new(bars));
         cx.notify();
     }
 

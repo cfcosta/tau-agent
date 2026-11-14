@@ -52,6 +52,13 @@ impl Render for Workspace {
                 (size.width, size.height)
             }
         };
+        // The system's bars take their share of the height.
+        let bars = self
+            .system_bars
+            .as_ref()
+            .map(|bars| bars())
+            .unwrap_or_default();
+        let height = height - px(bars.top + bars.bottom);
         self.height = height;
         // Zoomed in, the window holds less: the layouts change at the
         // widths they would for a window that much smaller.
@@ -130,6 +137,33 @@ impl Render for Workspace {
                 .into_any_element()
         } else {
             body
+        };
+        let body = if bars == SystemBars::default() {
+            body
+        } else {
+            let band = |id: &'static str, height: f32| {
+                div()
+                    .debug_selector(move || id.to_owned())
+                    .flex_shrink_0()
+                    .h(px(height))
+                    .bg(gpui::black())
+            };
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .child(band("system-bar-top", bars.top))
+                .child(
+                    div()
+                        .debug_selector(|| "system-bars-between".to_owned())
+                        .flex_1()
+                        .min_h(px(0.))
+                        .relative()
+                        .overflow_hidden()
+                        .child(body),
+                )
+                .child(band("system-bar-bottom", bars.bottom))
+                .into_any_element()
         };
         div()
             .key_context(CONTEXT)

@@ -166,6 +166,7 @@ impl Workspace {
             phone_preview: _,
             mirrored: _,
             frame: _,
+            system_bars: _,
             width: _,
             height: _,
             _subscriptions: _,

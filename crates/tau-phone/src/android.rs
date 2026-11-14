@@ -11,6 +11,7 @@ use jni::{
     sys::jint,
 };
 use tau_ui_remote::{
+    SystemBars,
     Workspace,
     assets::Assets,
     catalog::Catalog,
@@ -69,6 +70,7 @@ fn android_main(app: android_activity::AndroidApp) {
             });
             match opened.and_then(|window| window.entity(cx)) {
                 Ok(workspace) => {
+                    keep_clear_of_system_bars(&workspace, cx);
                     let platform = Platform {
                         dir,
                         scan: Arc::new(scan),
@@ -83,6 +85,37 @@ fn android_main(app: android_activity::AndroidApp) {
             }
             cx.activate(true);
         });
+}
+
+/// Android draws tau edge to edge, under its status bar and navigation
+/// bar: the workspace keeps clear of them, black behind each, with the
+/// status bar's icons light on it.
+fn keep_clear_of_system_bars(
+    workspace: &gpui::Entity<Workspace>,
+    cx: &mut App,
+) {
+    mobile::set_system_chrome(&gpui_mobile::SystemChromeStyle {
+        status_bar_color: Some(0x000000),
+        status_bar_style: gpui_mobile::StatusBarContentStyle::Light,
+        navigation_bar_color: Some(0x000000),
+    });
+    workspace
+        .update(cx, |ws, cx| ws.keep_clear_of_system_bars(system_bars, cx));
+}
+
+/// Where the system's bars reach now, as the window last heard: they
+/// move as the phone turns.
+fn system_bars() -> SystemBars {
+    mobile::platform()
+        .and_then(|platform| platform.primary_window())
+        .map(|window| {
+            let insets = window.safe_area_insets_logical();
+            SystemBars {
+                top: insets.top,
+                bottom: insets.bottom,
+            }
+        })
+        .unwrap_or_default()
 }
 
 /// Opens tau's viewfinder and waits for the computer's pairing code in

@@ -65,7 +65,7 @@ pub mod workspace;
 
 use gpui::App;
 pub use tau_ui_kit::{assets, input, markdown, theme};
-pub use workspace::{Workspace, WorkspaceEvent};
+pub use workspace::{SystemBars, Workspace, WorkspaceEvent};
 
 /// Sets up what the interface needs once per app: fonts, the theme and
 /// the text field's keys.

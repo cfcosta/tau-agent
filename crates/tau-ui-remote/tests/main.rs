@@ -20,5 +20,6 @@ mod repo_model;
 mod setup_steps;
 mod sidebar;
 mod status_bar;
+mod system_bars;
 mod table_layout;
 mod terminal;
