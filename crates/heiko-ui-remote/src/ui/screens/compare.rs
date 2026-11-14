@@ -30,9 +30,9 @@ use crate::{
         dot,
         landing,
         mono,
-        pill,
         rich,
         status_look,
+        status_mark,
     },
     view::{
         CodeState,
@@ -425,12 +425,11 @@ fn branch(
                         .child(run.title.clone()),
                 )
                 .child(match failing {
-                    Some(stat) => pill(
+                    Some(stat) => status_mark(
                         SharedString::from(format!("{} failing", stat.name)),
                         t.red,
-                        t.raised,
                     ),
-                    None => pill(stop, stop_color, t.raised),
+                    None => status_mark(stop, stop_color),
                 }),
         )
         .child({

@@ -43,7 +43,7 @@ impl Render for Shown {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let theme = Theme::graphite();
+        let theme = Theme::tokyo_night();
         let acted = self.acted.clone();
         let width = *self.width.borrow();
         let mut draw = Draw::new(&theme, "t")

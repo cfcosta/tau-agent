@@ -10,6 +10,11 @@
 //!   steps. Changing the unit makes the whole interface denser or looser.
 //! - Corners come from [`radius`], icons from [`IconSize`], and the
 //!   heights of buttons and fields from [`control`].
+//!
+//! The look is flat and printed: no gradients, no soft shadows, no
+//! rounded boxes. Structure comes from rules ([`Theme::rule`] under a
+//! section's title, [`Theme::hairline`] between rows), and the one
+//! decoration is a hard offset behind a block ([`Theme::offset`]).
 
 use gpui::{
     App,
@@ -45,14 +50,16 @@ pub const SANS: &str = "Geist";
 pub const MONO: &str = "Geist Mono";
 /// The reading face of notes.
 pub const SERIF: &str = "Newsreader 16pt 16pt";
+/// The display face: section titles, a page's title, big figures and the
+/// wordmark. It has one weight, and the Japanese glyphs the marks use.
+pub const DISPLAY: &str = "RocknRoll One";
 
 /// Below this width the window gets the one-column phone layout.
 pub const PHONE_MAX: Pixels = px(720.);
 /// Below this width the desktop layout drops the inspector.
 pub const NARROW_MAX: Pixels = px(1100.);
 
-/// The interface's colors. [`Theme::tokyo_night`] is the default;
-/// [`Theme::graphite`] is the earlier look.
+/// The interface's colors: [`Theme::tokyo_night`].
 #[derive(Debug, Clone)]
 pub struct Theme {
     /// The editor ground, behind the transcript.
@@ -65,7 +72,16 @@ pub struct Theme {
     pub selected: Hsla,
     pub border: Hsla,
     pub border_strong: Hsla,
+    /// The heavy rule under a section's title.
+    pub rule: Hsla,
+    /// The thin rule between rows, and the offset behind a stamp.
+    pub hairline: Hsla,
+    /// The hard offset printed behind the primary action and a selected
+    /// option.
+    pub offset: Hsla,
     pub text: Hsla,
+    /// Titles in the display face, big figures and the wordmark.
+    pub bright: Hsla,
     pub text_soft: Hsla,
     pub muted: Hsla,
     pub dim: Hsla,
@@ -109,8 +125,6 @@ pub struct Theme {
     pub syntax: SyntaxLook,
     /// Onboarding's look: the handshake screens.
     pub setup: SetupLook,
-    /// How surfaces stand out of the ground or sink into it.
-    pub depth: Depth,
     /// The colors things take by what they are: a running run, a cost,
     /// a tool. A palette's own hues, spread over the interface.
     pub roles: Roles,
@@ -160,33 +174,6 @@ pub struct Roles {
 }
 
 impl Roles {
-    fn graphite() -> Self {
-        let blue = c(rgb(0x82aaff));
-        Self {
-            live: c(rgb(0xe5a54a)),
-            waiting: blue,
-            cost: c(rgb(0xe8c07d)),
-            agent: c(rgb(0xc49bf0)),
-            model: c(rgb(0x9db8ff)),
-            memory: c(rgb(0x7ec8c8)),
-            rules: c(rgb(0xc49bf0)),
-            mcp: blue,
-            reasoning: c(rgb(0xe5a54a)),
-            branch: c(rgb(0x7fc98a)),
-            meter: c(rgb(0x8b8983)),
-            link: c(rgb(0x9db8ff)),
-            code: c(rgb(0xf2f0ea)),
-            primary: c(rgb(0xe5a54a)),
-            on_primary: c(rgb(0x1a1305)),
-            tool_list: blue,
-            tool_search: blue,
-            tool_read: blue,
-            tool_edit: blue,
-            tool_run: blue,
-            tool_other: blue,
-        }
-    }
-
     fn tokyo_night() -> Self {
         Self {
             live: c(rgb(0xff9e64)),
@@ -238,91 +225,6 @@ impl Roles {
             _ if name.starts_with("mcp__") => self.mcp,
             _ if name.starts_with("memory") => self.memory,
             _ => self.tool_other,
-        }
-    }
-}
-
-/// The milled look: surfaces lit from above. Panels and buttons rise
-/// with a light top edge and a shadow under them; fields, meters and
-/// the terminal sink into wells; the chrome casts a shadow onto what it
-/// frames.
-#[derive(Debug, Clone)]
-pub struct Depth {
-    /// The light along a raised surface's top edge.
-    pub highlight: Hsla,
-    /// The dark along a raised surface's bottom edge.
-    pub shade: Hsla,
-    /// The shadow a raised surface casts.
-    pub drop: Hsla,
-    /// The shadow a pressed or sunken surface holds inside.
-    pub inner: Hsla,
-    /// The seam where the chrome meets what it frames.
-    pub seam: Hsla,
-    /// A panel's top; it falls to [`Theme::card`].
-    pub panel_top: Hsla,
-    /// The chrome's top; it falls to [`Theme::panel`].
-    pub chrome_top: Hsla,
-    /// A well's floor: fields, meters, the terminal.
-    pub well: Hsla,
-    /// A key's top and bottom: buttons, chips, bubbles.
-    pub key_top: Hsla,
-    pub key_bottom: Hsla,
-    pub key_border: Hsla,
-    /// The accent key's top and bottom, and its lower edge.
-    pub accent_top: Hsla,
-    pub accent_bottom: Hsla,
-    pub accent_edge: Hsla,
-    /// The light the accent key and live dots throw.
-    pub accent_glow: Hsla,
-    /// The danger key's top and bottom.
-    pub danger_top: Hsla,
-    pub danger_bottom: Hsla,
-}
-
-impl Depth {
-    /// Nearly flat: surfaces are told apart by their fill, with only a
-    /// faint lift.
-    fn tokyo_night() -> Self {
-        Self {
-            highlight: c(rgba(0xffffff08)),
-            shade: c(rgba(0x00000040)),
-            drop: c(rgba(0x00000040)),
-            inner: c(rgba(0x00000066)),
-            seam: c(rgb(0x16161e)),
-            panel_top: c(rgb(0x16161e)),
-            chrome_top: c(rgb(0x16161e)),
-            well: c(rgb(0x16161e)),
-            key_top: c(rgb(0x292e42)),
-            key_bottom: c(rgb(0x24283b)),
-            key_border: c(rgb(0x3b4261)),
-            accent_top: c(rgb(0x89b0fa)),
-            accent_bottom: c(rgb(0x7aa2f7)),
-            accent_edge: c(rgba(0x3d59a159)),
-            accent_glow: c(rgba(0x7aa2f740)),
-            danger_top: c(rgb(0x2d202a)),
-            danger_bottom: c(rgb(0x261b25)),
-        }
-    }
-
-    fn graphite() -> Self {
-        Self {
-            highlight: c(rgba(0xffffff0f)),
-            shade: c(rgba(0x00000080)),
-            drop: c(rgba(0x00000066)),
-            inner: c(rgba(0x000000b3)),
-            seam: c(rgb(0x0c0d0f)),
-            panel_top: c(rgb(0x1e1f24)),
-            chrome_top: c(rgb(0x202126)),
-            well: c(rgb(0x101114)),
-            key_top: c(rgb(0x2c2d33)),
-            key_bottom: c(rgb(0x212228)),
-            key_border: c(rgb(0x34353c)),
-            accent_top: c(rgb(0xf3bb67)),
-            accent_bottom: c(rgb(0xd9922f)),
-            accent_edge: c(rgba(0x78460a59)),
-            accent_glow: c(rgba(0xe5a54a4d)),
-            danger_top: c(rgb(0x241a19)),
-            danger_bottom: c(rgb(0x1b1514)),
         }
     }
 }
@@ -406,33 +308,6 @@ impl SetupLook {
             glow_alpha: 0.10,
         }
     }
-
-    fn graphite() -> Self {
-        Self {
-            ground: c(rgb(0x0b0c0e)),
-            tile: c(rgb(0x17181c)),
-            surface: c(rgb(0x131417)),
-            surface_top: c(rgb(0x1d1e23)),
-            surface_border: c(rgb(0x23242a)),
-            glass: c(rgba(0x131417d9)),
-            divider: c(rgb(0x1d1e23)),
-            field: c(rgb(0x0f1012)),
-            track: c(rgb(0x2a2b30)),
-            light: c(rgb(0xf4f3ee)),
-            light_foot: c(rgb(0xd9d7cf)),
-            on_light: c(rgb(0x111111)),
-            soft: c(rgb(0xbdbbb5)),
-            faint: c(rgb(0x6f6d68)),
-            idle: c(rgb(0x55544f)),
-            green_edge: c(rgb(0x2d4a33)),
-            waiting_edge: c(rgb(0x6b5230)),
-            refusal: c(rgb(0x7a5a55)),
-            ring_alphas: [0.16, 0.10, 0.07, 0.05, 0.035],
-            ring_radii: [150., 250., 360., 480., 610.],
-            compact_scale: 0.45,
-            glow_alpha: 0.10,
-        }
-    }
 }
 
 /// How code is colored (`syntax`): one color per kind of part, quiet
@@ -468,23 +343,6 @@ impl SyntaxLook {
             builtin: c(rgb(0xf7768e)),
             punctuation: c(rgb(0x89ddff)),
             tag: c(rgb(0xf7768e)),
-        }
-    }
-
-    fn graphite() -> Self {
-        Self {
-            keyword: c(rgb(0xc49bf0)),
-            string: c(rgb(0xa9dcb1)),
-            escape: c(rgb(0x7ec8c8)),
-            comment: c(rgb(0x75736d)),
-            function: c(rgb(0x82aaff)),
-            ty: c(rgb(0xe8c07d)),
-            number: c(rgb(0xf0a37e)),
-            property: c(rgb(0xd6d4ce)),
-            attribute: c(rgb(0x7ec8c8)),
-            builtin: c(rgb(0xf08a7e)),
-            punctuation: c(rgb(0x8b8983)),
-            tag: c(rgb(0xf08a7e)),
         }
     }
 
@@ -595,43 +453,6 @@ impl TermLook {
             rows: 12,
         }
     }
-
-    fn graphite() -> Self {
-        Self {
-            palette: heiko_terminal::Palette {
-                ansi: [
-                    term_rgb(0x1d1f24),
-                    term_rgb(0xf0655a),
-                    term_rgb(0x5fd068),
-                    term_rgb(0xf2c14e),
-                    term_rgb(0x5aa9f0),
-                    term_rgb(0xc678dd),
-                    term_rgb(0x3fc5c5),
-                    term_rgb(0xd6d4ce),
-                    term_rgb(0x8a8883),
-                    term_rgb(0xff7b70),
-                    term_rgb(0x7ee08a),
-                    term_rgb(0xffd36b),
-                    term_rgb(0x7cbcff),
-                    term_rgb(0xd898ec),
-                    term_rgb(0x62d8d8),
-                    term_rgb(0xf2f0ea),
-                ],
-                foreground: term_rgb(0xd6d4ce),
-                background: term_rgb(0x0e0f11),
-                cursor: term_rgb(0xd6d4ce),
-                selection: term_rgb(0x2c3a52),
-                scrollbar: term_rgb(0x3a3c44),
-            },
-            border: c(rgb(0x23252c)),
-            divider: c(rgb(0x1d1f24)),
-            label: c(rgb(0x6f6d68)),
-            tab: c(rgb(0x23252c)),
-            text: Type::CAPTION.mono(),
-            leading: 1.5,
-            rows: 12,
-        }
-    }
 }
 
 fn c(color: Rgba) -> Hsla {
@@ -650,7 +471,11 @@ impl Theme {
             selected: c(rgb(0x292e42)),
             border: c(rgb(0x292e42)),
             border_strong: c(rgb(0x3b4261)),
+            rule: c(rgb(0xc0caf5)),
+            hairline: c(rgb(0x292e42)),
+            offset: c(rgb(0xf7768e)),
             text: c(rgb(0xc0caf5)),
+            bright: c(rgb(0xe6eaff)),
             text_soft: c(rgb(0xa9b1d6)),
             muted: c(rgb(0x9aa5ce)),
             dim: c(rgb(0x737aa2)),
@@ -688,60 +513,7 @@ impl Theme {
             term: TermLook::tokyo_night(),
             syntax: SyntaxLook::tokyo_night(),
             setup: SetupLook::tokyo_night(),
-            depth: Depth::tokyo_night(),
             roles: Roles::tokyo_night(),
-        }
-    }
-
-    pub fn graphite() -> Self {
-        Self {
-            bg: c(rgb(0x141518)),
-            panel: c(rgb(0x1b1c20)),
-            card: c(rgb(0x18191d)),
-            raised: c(rgb(0x23252c)),
-            selected: c(rgb(0x2a2b31)),
-            border: c(rgb(0x2c2d33)),
-            border_strong: c(rgb(0x3a3b42)),
-            text: c(rgb(0xe7e5e0)),
-            text_soft: c(rgb(0xdcdad4)),
-            muted: c(rgb(0xa3a19b)),
-            dim: c(rgb(0x8b8983)),
-            accent: c(rgb(0xe5a54a)),
-            accent_soft: c(rgba(0xe5a54a1f)),
-            accent_border: c(rgb(0x4a3b24)),
-            blue: c(rgb(0x82aaff)),
-            blue_soft: c(rgba(0x82aaff0d)),
-            blue_border: c(rgb(0x2c3a52)),
-            green: c(rgb(0x7fc98a)),
-            green_soft: c(rgba(0x7fc98a1f)),
-            red: c(rgb(0xf08a7e)),
-            red_soft: c(rgba(0xf08a7e14)),
-            red_border: c(rgb(0x5a2f2b)),
-            added_text: c(rgb(0xa9dcb1)),
-            removed_text: c(rgb(0xf3b3aa)),
-            scrim: c(rgba(0x08080a99)),
-            backdrop: c(rgb(0x0b0c0e)),
-            border_soft: c(rgb(0x30323a)),
-            slate: c(rgb(0x5c6b88)),
-            bar_idle: c(rgb(0x3d4452)),
-            change: c(rgb(0xc49bf0)),
-            info_surface: c(rgb(0x1f2633)),
-            info_panel: c(rgb(0x171a21)),
-            danger_surface: c(rgb(0x1d1716)),
-            danger_edge: c(rgb(0x3a2724)),
-            marks: [
-                c(rgb(0xe5a54a)),
-                c(rgb(0x82aaff)),
-                c(rgb(0x7fc98a)),
-                c(rgb(0xc49bf0)),
-                c(rgb(0xf0a37e)),
-                c(rgb(0x7ec8c8)),
-            ],
-            term: TermLook::graphite(),
-            syntax: SyntaxLook::graphite(),
-            setup: SetupLook::graphite(),
-            depth: Depth::graphite(),
-            roles: Roles::graphite(),
         }
     }
 
@@ -752,6 +524,17 @@ impl Theme {
             (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
         });
         self.marks[hash as usize % self.marks.len()]
+    }
+
+    /// The hard offset behind something outlined in `color`, such as a
+    /// slip: the same hue, much darker.
+    pub fn under(&self, color: Hsla) -> Hsla {
+        Hsla {
+            h: color.h,
+            s: color.s * 0.7,
+            l: color.l * 0.32,
+            a: color.a,
+        }
     }
 
     /// The color a tone is written in.
@@ -783,15 +566,25 @@ pub const fn sp(steps: f32) -> Rems {
     rems(UNIT * steps / 16.)
 }
 
-/// A text style: size, and optionally weight, line height and the mono
-/// face.
+/// The face a text style is set in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Face {
+    /// The face of what holds the text: [`SANS`], unless set otherwise.
+    Inherited,
+    /// [`MONO`]: code, paths, ids, counts and times.
+    Mono,
+    /// [`DISPLAY`]: titles and big figures.
+    Display,
+}
+
+/// A text style: size, and optionally weight, line height and face.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Type {
     pub size: f32,
     pub weight: Option<FontWeight>,
     /// A multiple of the size.
     pub line_height: Option<f32>,
-    pub mono: bool,
+    pub face: Face,
 }
 
 impl Type {
@@ -800,7 +593,7 @@ impl Type {
             size,
             weight: None,
             line_height: None,
-            mono: false,
+            face: Face::Inherited,
         }
     }
 
@@ -810,7 +603,7 @@ impl Type {
     }
 
     const fn monospace(mut self) -> Self {
-        self.mono = true;
+        self.face = Face::Mono;
         self
     }
 
@@ -860,9 +653,15 @@ impl Type {
     pub const HERO_MEDIUM: Self = Self::new(40.).weight(FontWeight::MEDIUM);
     /// Onboarding's headline over a list.
     pub const HERO_SMALL: Self = Self::new(36.).weight(FontWeight::MEDIUM);
+    /// A section's title, over its heavy rule, in the display face.
+    pub const SECTION: Self = Self::new(20.).display().leading(1.2);
+    /// A page's or a chat's title, in the display face.
+    pub const PAGE_TITLE: Self = Self::new(22.).display().leading(1.2);
+    /// A big number or time, in the display face.
+    pub const FIGURE: Self = Self::new(30.).display().leading(1.);
 
     /// This style at another size: for text that scales with what holds
-    /// it, as τ does with its tile.
+    /// it, as the wordmark does.
     pub const fn sized(mut self, size: f32) -> Self {
         self.size = size;
         self
@@ -871,6 +670,12 @@ impl Type {
     /// This style in the mono face.
     pub const fn mono(self) -> Self {
         self.monospace()
+    }
+
+    /// This style in the display face, which has one weight.
+    pub const fn display(mut self) -> Self {
+        self.face = Face::Display;
+        self
     }
 
     /// This style at another weight.
@@ -896,34 +701,38 @@ pub mod weight {
     pub const STRONG: FontWeight = FontWeight::SEMIBOLD;
 }
 
-/// Corner radii.
+/// Corner radii. The look is square: every corner a surface or a
+/// control names is 0. Only a selected row is eased a little, and marks
+/// that are dots stay round.
 pub mod radius {
     use gpui::{Rems, rems};
 
     /// Thin bars and meters.
-    pub const HAIRLINE: Rems = rems(0.125);
+    pub const HAIRLINE: Rems = rems(0.);
     /// The tops of chart bars.
-    pub const BAR: Rems = rems(0.1875);
+    pub const BAR: Rems = rems(0.);
     /// Checkboxes, small chips.
-    pub const SMALL: Rems = rems(0.25);
+    pub const SMALL: Rems = rems(0.);
     /// Icon badges and step buttons.
-    pub const TAG: Rems = rems(0.3125);
+    pub const TAG: Rems = rems(0.);
     /// Buttons, inline chips, list rows.
-    pub const CONTROL: Rems = rems(0.375);
+    pub const CONTROL: Rems = rems(0.);
     /// Fields, cards, boxes.
-    pub const BOX: Rems = rems(0.5);
+    pub const BOX: Rems = rems(0.);
     /// Transcript bubbles and grouped rows.
-    pub const LARGE: Rems = rems(0.625);
+    pub const LARGE: Rems = rems(0.);
     /// Panels on task screens.
-    pub const CARD: Rems = rems(0.75);
+    pub const CARD: Rems = rems(0.);
     /// The phone's run cards.
-    pub const TILE: Rems = rems(0.875);
-    pub const BUBBLE: Rems = rems(1.);
+    pub const TILE: Rems = rems(0.);
+    pub const BUBBLE: Rems = rems(0.);
     /// The tops of bottom sheets.
-    pub const SHEET: Rems = rems(1.125);
+    pub const SHEET: Rems = rems(0.);
     /// The phone preview's frame.
-    pub const DEVICE: Rems = rems(1.75);
-    /// Fully round, for pills and circles.
+    pub const DEVICE: Rems = rems(0.);
+    /// The selected row of the sidebar, and a repository's mark: 3 px.
+    pub const SELECTED: Rems = rems(0.1875);
+    /// Fully round, for dots and rings.
     pub const FULL: Rems = rems(624.9375);
 }
 
@@ -966,10 +775,11 @@ pub trait Design: Styled + Sized {
         if let Some(line_height) = style.line_height {
             self = self.line_height(relative(line_height));
         }
-        if style.mono {
-            self = self.font_family(MONO);
+        match style.face {
+            Face::Inherited => self,
+            Face::Mono => self.font_family(MONO),
+            Face::Display => self.font_family(DISPLAY),
         }
-        self
     }
 
     /// Sets a line height as a multiple of the size.
@@ -1002,8 +812,48 @@ mod tests {
         ];
         assert!(scale.windows(2).all(|pair| pair[0].size < pair[1].size));
         for code in [Type::CODE, Type::CODE_LARGE, Type::CODE_HERO] {
-            assert!(code.mono);
+            assert_eq!(code.face, Face::Mono);
         }
-        assert!(Type::BODY.mono().mono && !Type::BODY.mono);
+        assert_eq!(Type::BODY.mono().face, Face::Mono);
+        assert_eq!(Type::BODY.face, Face::Inherited);
+    }
+
+    #[test]
+    fn titles_and_figures_are_in_the_display_face() {
+        for style in [Type::SECTION, Type::PAGE_TITLE, Type::FIGURE] {
+            assert_eq!(style.face, Face::Display);
+            assert_eq!(style.weight, None);
+        }
+        const { assert!(Type::SECTION.size < Type::PAGE_TITLE.size) };
+        const { assert!(Type::PAGE_TITLE.size < Type::FIGURE.size) };
+    }
+
+    #[test]
+    fn the_look_is_square_and_flat() {
+        for corner in [
+            radius::HAIRLINE,
+            radius::BAR,
+            radius::SMALL,
+            radius::TAG,
+            radius::CONTROL,
+            radius::BOX,
+            radius::LARGE,
+            radius::CARD,
+            radius::TILE,
+            radius::BUBBLE,
+            radius::SHEET,
+            radius::DEVICE,
+        ] {
+            assert_eq!(corner, rems(0.));
+        }
+        assert_eq!(radius::SELECTED, rems(0.1875));
+        let t = Theme::tokyo_night();
+        assert_eq!(t.rule, c(rgb(0xc0caf5)));
+        assert_eq!(t.hairline, c(rgb(0x292e42)));
+        assert_eq!(t.offset, c(rgb(0xf7768e)));
+        // A slip's offset is its outline's hue, much darker.
+        let under = t.under(t.roles.memory);
+        assert_eq!(under.h, t.roles.memory.h);
+        assert!(under.l < t.roles.memory.l / 2.);
     }
 }

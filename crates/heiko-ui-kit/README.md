@@ -9,9 +9,9 @@ writes its own sizes or colors. Changing the look is a change to this crate.
 
 | Module       | What it holds                                                                                  |
 | ------------ | ---------------------------------------------------------------------------------------------- |
-| `theme`      | `Theme` (every color; `Theme::tokyo_night` is the default), `Type` sizes, `sp` spacing, `Tone` |
-| `components` | Text, buttons, badges, chips, cards, notices, dialogs, tables, code blocks, QR codes and more  |
-| `assets`     | `Icon`, the `Assets` source GPUI loads SVGs from, `Brand` marks, and `load_fonts`              |
+| `theme`      | `Theme` (every color: `Theme::tokyo_night`), `Type` sizes and faces, `sp` spacing, `Tone`      |
+| `components` | Rules, section heads, actions, marks, stamps, ticks, slips, fields, dialogs, tables and more   |
+| `assets`     | `Icon`, `State` marks, the `Assets` source GPUI loads SVGs from, `Brand` marks, `load_fonts`   |
 | `input`      | `TextInput`, a text field that works with input methods; one line, or `multiline`              |
 | `select`     | Text the person can select and copy: `selection_scope`, `selectable`                           |
 | `markdown`   | A model's reply parsed into `Block`s with `pulldown-cmark` (`blocks`)                          |
@@ -21,12 +21,19 @@ writes its own sizes or colors. Changing the look is a change to this crate.
 | `format`     | Numbers as the interface writes them: `grouped`, `tokens`, `usd`, `clock`                      |
 | `design`     | `check`, which finds raw design values in a crate's sources                                    |
 
+The look is flat and printed: no gradients, soft shadows or rounded
+boxes. A section is a title in the display face over a heavy rule
+(`section_header`), rows are split by hairlines (`rule`), the primary action
+is a blue block over a hard pink offset (`primary_block`), other actions are
+underlined words (`link_action`), quantities are square ticks (`ticks`), and
+state is a small mark (`mark`), a stamp, a square or a slip.
+
 `init` sets up what the kit needs once per app: it loads the fonts, sets
 `Theme::tokyo_night` as the global theme, binds the text field's keys, and
 binds copying selected text.
 
-The fonts are Geist, Geist Mono and Newsreader, under the SIL Open Font
-License (`assets/fonts/`). Syntax highlighting covers Bash, Go, JavaScript,
+The fonts are Geist, Geist Mono, Newsreader and RocknRoll One (the display
+face), under the SIL Open Font License (`assets/fonts/`). Syntax highlighting covers Bash, Go, JavaScript,
 JSON, Luau, Nix, Python, Rust, TOML, TSX and TypeScript; the Luau
 highlight query is in `queries/luau.scm`.
 

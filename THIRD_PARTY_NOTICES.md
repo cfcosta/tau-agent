@@ -145,6 +145,9 @@ includes them:
   [crates/heiko-ui-kit/assets/fonts/OFL.txt](crates/heiko-ui-kit/assets/fonts/OFL.txt).
 - Newsreader, Copyright 2020 The Newsreader Project Authors:
   [crates/heiko-ui-kit/assets/fonts/OFL-Newsreader.txt](crates/heiko-ui-kit/assets/fonts/OFL-Newsreader.txt).
+- RocknRoll One, Copyright 2020 The RocknRoll Project Authors
+  (<https://github.com/fontworks-fonts/RocknRoll>):
+  [crates/heiko-ui-kit/assets/fonts/OFL-RocknRollOne.txt](crates/heiko-ui-kit/assets/fonts/OFL-RocknRollOne.txt).
 
 ## Designs followed, not copied
 

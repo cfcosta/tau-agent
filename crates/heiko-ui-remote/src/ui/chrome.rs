@@ -1039,7 +1039,7 @@ fn run_row(
                         })),
                 )
             } else if unread > 0 {
-                row.child(super::count_pill(unread, t))
+                row.child(super::unread_count(unread, t))
             } else {
                 row.child(
                     div().flex().gap(sp(1.5)).children(
@@ -1840,7 +1840,7 @@ fn phone_run_row(
                 )
                 .child(mono(meta, Type::MICRO, color).truncate()),
         )
-        .when(unread > 0, |row| row.child(super::count_pill(unread, t)))
+        .when(unread > 0, |row| row.child(super::unread_count(unread, t)))
         .when_some(badge.filter(|_| unread == 0), |row, (badge, tone, _)| {
             row.child(mono(badge, Type::CAPTION, tone))
         })

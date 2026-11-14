@@ -27,7 +27,6 @@ use heiko_ui_kit::{
     assets::Icon,
     components::{
         ButtonKind,
-        badge,
         button,
         dot,
         empty,
@@ -35,9 +34,10 @@ use heiko_ui_kit::{
         heading,
         icon,
         mono,
-        pill,
         qr_code,
         rule,
+        stamp,
+        status_mark,
         text_link,
     },
     prose::{markdown, rich},
@@ -1192,20 +1192,14 @@ impl<'a> Draw<'a> {
                 None => invalid(&format!("no icon `{name}`"), t),
             },
             Node::Badge { text, tone } => {
-                let color = t.tone((*tone).into());
-                badge(text.clone(), color, color.opacity(0.4))
-                    .into_any_element()
+                stamp(text.clone(), (*tone).into(), t).into_any_element()
             }
             Node::Pill { text, tone } => {
                 let color = match tone {
                     Tone::Neutral => t.text_soft,
                     tone => t.tone((*tone).into()),
                 };
-                let bg = match tone {
-                    Tone::Neutral => t.raised,
-                    _ => color.opacity(0.12),
-                };
-                pill(text.clone(), color, bg).into_any_element()
+                status_mark(text.clone(), color).into_any_element()
             }
             Node::Status { text, detail, tone } => div()
                 .flex()
@@ -1897,7 +1891,7 @@ impl<'a> Draw<'a> {
                     .debug_selector(selector("button", label))
                     .on_click(click)
                     .into_any_element(),
-                None => badge(label.clone(), t.muted, t.border_strong)
+                None => stamp(label.clone(), theme::Tone::Quiet, t)
                     .into_any_element(),
             },
             Node::Link { label, to } => {

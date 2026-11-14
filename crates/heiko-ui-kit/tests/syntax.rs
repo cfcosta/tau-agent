@@ -126,7 +126,7 @@ fn parts_are_ordered_and_inside(tc: hegel::TestCase) {
         assert!(text.is_char_boundary(range.end));
         at = range.end;
     }
-    let t = Theme::graphite();
+    let t = Theme::tokyo_night();
     let runs = runs(&text, &spans, t.text_soft, &t.syntax);
     assert_eq!(runs.iter().map(|run| run.len).sum::<usize>(), text.len());
 }

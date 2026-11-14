@@ -474,11 +474,7 @@ fn pane(
                 .child(div().size(rems(0.5625)).rounded(radius::FULL).bg(ink))
                 .child(mono(name.clone(), Type::TITLE, ink))
                 .children(row.note().map(|note| {
-                    ui::pill(
-                        note.text.clone(),
-                        t.tone(note.tone),
-                        t.tone(note.tone).opacity(0.12),
-                    )
+                    ui::status_mark(note.text.clone(), t.tone(note.tone))
                 })),
         )
         .child(

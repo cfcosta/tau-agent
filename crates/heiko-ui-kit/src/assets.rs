@@ -371,6 +371,79 @@ impl<'de> serde::Deserialize<'de> for Icon {
     }
 }
 
+/// What a run, a check or a limit is in, as the small mark beside its
+/// name says it. Each is a 14×14 shape; GPUI paints it in the element's
+/// text color, and [`crate::components::mark`] gives each its color.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum State {
+    /// At work: a dot in a faint ring.
+    Working,
+    /// Asks the person: a diamond.
+    Asks,
+    /// Failing: a cross.
+    Failing,
+    /// Met its goal: a tick.
+    Met,
+    /// Stopped at a limit: a square.
+    Limit,
+    /// Stopped at a cap the person set: a square, in amber.
+    Cap,
+    /// Idle: a hollow ring.
+    Idle,
+}
+
+impl State {
+    pub const ALL: [Self; 7] = [
+        Self::Working,
+        Self::Asks,
+        Self::Failing,
+        Self::Met,
+        Self::Limit,
+        Self::Cap,
+        Self::Idle,
+    ];
+
+    pub fn path(self) -> &'static str {
+        match self {
+            Self::Working => "marks/working.svg",
+            Self::Asks => "marks/asks.svg",
+            Self::Failing => "marks/failing.svg",
+            Self::Met => "marks/met.svg",
+            Self::Limit => "marks/limit.svg",
+            Self::Cap => "marks/cap.svg",
+            Self::Idle => "marks/idle.svg",
+        }
+    }
+
+    fn body(self) -> &'static str {
+        match self {
+            Self::Working => {
+                r#"<circle cx="7" cy="7" r="6" fill="none" stroke="black" stroke-opacity=".4"/><circle cx="7" cy="7" r="3.2" fill="black"/>"#
+            }
+            Self::Asks => r#"<path d="M7 1 13 7 7 13 1 7z" fill="black"/>"#,
+            Self::Failing => {
+                r#"<path d="M3 3 11 11M11 3 3 11" fill="none" stroke="black" stroke-width="2.2" stroke-linecap="round"/>"#
+            }
+            Self::Met => {
+                r#"<path d="M2.5 7.5 5.8 10.6 11.5 3.6" fill="none" stroke="black" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>"#
+            }
+            Self::Limit | Self::Cap => {
+                r#"<rect x="2.5" y="2.5" width="9" height="9" fill="black"/>"#
+            }
+            Self::Idle => {
+                r#"<circle cx="7" cy="7" r="3" fill="none" stroke="black" stroke-width="1.5"/>"#
+            }
+        }
+    }
+
+    fn svg(self) -> String {
+        format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14">{}</svg>"#,
+            self.body()
+        )
+    }
+}
+
 mod brand {
     include!(concat!(env!("OUT_DIR"), "/brand.rs"));
 }
@@ -405,14 +478,17 @@ impl Brand {
     }
 }
 
-/// Serves the icons, and the brand marks that are present, to GPUI's
-/// `svg()` element.
+/// Serves the icons, the state marks, and the brand marks that are
+/// present, to GPUI's `svg()` element.
 pub struct Assets;
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
         if let Some(mark) = Brand::ALL.into_iter().find(|b| b.path() == path) {
             return Ok(mark.svg().map(Cow::Borrowed));
+        }
+        if let Some(state) = State::ALL.into_iter().find(|s| s.path() == path) {
+            return Ok(Some(Cow::Owned(state.svg().into_bytes())));
         }
         Ok(Icon::ALL
             .into_iter()
@@ -428,6 +504,7 @@ impl AssetSource for Assets {
         Ok(Icon::ALL
             .into_iter()
             .map(Icon::path)
+            .chain(State::ALL.into_iter().map(State::path))
             .chain(marks)
             .filter(|icon| icon.starts_with(path))
             .map(SharedString::from)
@@ -436,8 +513,10 @@ impl AssetSource for Assets {
 }
 
 /// Geist and Geist Mono (SIL Open Font License, `assets/fonts/OFL.txt`),
-/// and Newsreader for reading notes (`assets/fonts/OFL-Newsreader.txt`).
-const FONTS: [&[u8]; 10] = [
+/// Newsreader for reading notes (`assets/fonts/OFL-Newsreader.txt`), and
+/// RocknRoll One for titles, figures and the wordmark
+/// (`assets/fonts/OFL-RocknRollOne.txt`).
+const FONTS: [&[u8]; 11] = [
     include_bytes!("../assets/fonts/Geist-Regular.ttf"),
     include_bytes!("../assets/fonts/Geist-Medium.ttf"),
     include_bytes!("../assets/fonts/Geist-SemiBold.ttf"),
@@ -449,6 +528,7 @@ const FONTS: [&[u8]; 10] = [
     include_bytes!("../assets/fonts/GeistMono-Medium.ttf"),
     include_bytes!("../assets/fonts/Newsreader-Regular.ttf"),
     include_bytes!("../assets/fonts/Newsreader-Medium.ttf"),
+    include_bytes!("../assets/fonts/RocknRollOne-Regular.ttf"),
 ];
 
 pub fn load_fonts(cx: &App) -> Result<()> {
@@ -484,6 +564,24 @@ mod tests {
             assert!(svg.starts_with("<svg"), "{icon:?}");
         }
         assert!(Assets.load("icons/missing.svg").unwrap().is_none());
+    }
+
+    #[test]
+    fn every_state_mark_is_served_as_svg() {
+        for state in State::ALL {
+            let bytes = Assets.load(state.path()).unwrap().expect("mark");
+            let svg = std::str::from_utf8(&bytes).unwrap();
+            assert!(svg.starts_with("<svg"), "{state:?}");
+            let listed = Assets.list("marks/").unwrap();
+            assert!(listed.contains(&state.path().into()), "{state:?}");
+        }
+    }
+
+    /// The display face is bundled, with the wordmark's glyphs in it.
+    #[test]
+    fn the_display_face_is_bundled() {
+        let font = include_bytes!("../assets/fonts/RocknRollOne-Regular.ttf");
+        assert!(FONTS.contains(&font.as_slice()));
     }
 
     #[test]

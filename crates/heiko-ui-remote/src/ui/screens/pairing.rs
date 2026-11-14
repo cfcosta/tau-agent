@@ -475,7 +475,7 @@ fn paired(ws: &Workspace, t: &Theme, cx: &mut Context<Workspace>) -> Div {
         .flex_1()
         .gap(sp(6.))
         .pt(sp(8.))
-        .child(tile(Icon::Check, t.green, t.green_soft, t.green))
+        .child(tile(Icon::Check, t.green, t))
         .child(heading_block(
             format!("Paired with {}", computer_name(computer)),
             "This phone now has its own key, kept in its keystore. You can \
@@ -522,7 +522,7 @@ fn unreachable(ws: &Workspace, t: &Theme, cx: &mut Context<Workspace>) -> Div {
         .flex_1()
         .gap(sp(5.))
         .pt(sp(8.))
-        .child(tile(Icon::Offline, t.red, t.red_soft, t.red_border))
+        .child(tile(Icon::Offline, t.red, t))
         .child(
             div()
                 .flex()

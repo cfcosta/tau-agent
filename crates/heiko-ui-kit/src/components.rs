@@ -1,7 +1,16 @@
-//! The components screens are built from: text, buttons, badges, chips,
-//! surfaces, fields and notices. Each takes its look from the design
-//! tokens in [`crate::theme`], so a component looks the same wherever it
-//! is used, and changing it here changes it everywhere.
+//! The components screens are built from: text, rules, actions, marks,
+//! stamps, ticks, surfaces, fields and notices. Each takes its look from
+//! the design tokens in [`crate::theme`], so a component looks the same
+//! wherever it is used, and changing it here changes it everywhere.
+//!
+//! The look is flat and printed. Structure comes from rules: a section
+//! is a title over a heavy rule ([`section_header`]), rows are split by
+//! hairlines ([`rule`]), and nothing is boxed. The one decoration is the
+//! hard offset: the primary action is a flat block printed over an
+//! offset in another color ([`primary_block`]). Other actions are
+//! underlined words ([`link_action`]). Quantities are square ticks
+//! ([`ticks`]), and state is a small mark ([`mark`]), a stamp
+//! ([`stamp`]), a square ([`square`]) or a slip ([`slip`]).
 //!
 //! Components return plain elements; callers add ids, clicks and layout.
 
@@ -23,68 +32,74 @@ use gpui::{
     svg,
 };
 
+pub use crate::assets::State;
 use crate::{
     assets::Icon,
     input::TextInput,
     prose::prose,
-    theme::{Design, IconSize, MONO, Theme, Type, control, radius, sp, weight},
+    theme::{Design, IconSize, Theme, Tone, Type, control, radius, sp, weight},
 };
 
-// Depth.
+// Surfaces.
 
 /// Which side of the window a piece of chrome sits on: the side its
-/// shadow falls away from.
+/// border faces away from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Edge {
-    /// The title bar: its shadow falls down onto the content.
+    /// The title bar: its border is under it.
     Top,
-    /// The status bar: its shadow falls up.
+    /// The status bar: its border is over it.
     Bottom,
-    /// The sidebar: its shadow falls right.
+    /// The sidebar: its border is on its right.
     Left,
-    /// The inspector: its shadow falls left.
+    /// The inspector: its border is on its left.
     Right,
 }
 
-/// A shadow `x` and `y` px off, blurred by `blur`.
-pub fn shade(x: f32, y: f32, blur: f32, color: Hsla) -> BoxShadow {
-    BoxShadow::new(px(x), px(y), color).blur_radius(px(blur))
+/// A hard offset `by` px down and right in `color`, with no blur: what
+/// a printed block sits on.
+fn offset(by: f32, color: Hsla) -> Vec<BoxShadow> {
+    vec![BoxShadow::new(px(by), px(by), color)]
 }
 
-/// How surfaces are told apart, for any element: flat fills and thin
-/// borders, as the quiet look draws them. Only what floats over the
-/// rest (menus, sheets, popovers) casts a shadow.
+/// How surfaces are told apart, for any element: flat fills, thin
+/// outlines and the hard offset. Nothing is rounded, lit or blurred.
 pub trait Material: Styled + Sized {
-    /// A panel: cards, menus, notes. A fill a step off the ground,
-    /// edged with a border.
+    /// What floats over the rest: menus, popovers, dialogs. The
+    /// sidebar's fill, outlined.
     fn raised(self, t: &Theme) -> Self {
         self.bg(t.card).border_1().border_color(t.border)
     }
 
-    /// A field: text fields, meters, the terminal. The sidebar's fill,
-    /// edged a little stronger than a panel.
+    /// A field: text fields and the terminal. An outline, a little
+    /// stronger than a floating surface's, with no fill.
     fn well(self, t: &Theme) -> Self {
-        self.bg(t.panel).border_1().border_color(t.border_strong)
+        self.border_1().border_color(t.border_strong)
     }
 
-    /// A key: secondary buttons and chips. An outline with no fill.
+    /// The selected one of a set of options: an outline with no fill.
     fn key(self, t: &Theme) -> Self {
         self.border_1().border_color(t.border_strong)
     }
 
-    /// The primary key: the one thing to do, filled.
+    /// A flat block in the primary color: a checked box, a switch that
+    /// is on.
     fn accent_key(self, t: &Theme) -> Self {
         self.bg(t.roles.primary)
     }
 
-    /// A danger key: stopping or throwing away, outlined in red.
-    fn danger_key(self, t: &Theme) -> Self {
-        self.border_1().border_color(t.red_border)
+    /// The offset print: a flat block in the primary color with dark
+    /// text, over a hard offset `by` px down and right. For the primary
+    /// action and a selected option; once or twice a screen.
+    fn printed(self, by: f32, t: &Theme) -> Self {
+        self.bg(t.roles.primary)
+            .text_color(t.roles.on_primary)
+            .shadow(offset(by, t.offset))
     }
 
     /// The selected row of a list.
     fn pressed(self, t: &Theme) -> Self {
-        self.bg(t.raised)
+        self.bg(t.selected).rounded(radius::SELECTED)
     }
 
     /// Chrome on one `edge` of the window: the sidebar's fill, and a
@@ -99,11 +114,6 @@ pub trait Material: Styled + Sized {
         }
     }
 
-    /// A band tinted with `fill`: a banner.
-    fn lit(self, fill: Hsla, _t: &Theme) -> Self {
-        self.bg(fill.opacity(0.6))
-    }
-
     /// A key in its own colors, for looks with their own palette, such
     /// as onboarding's: filled with `top`.
     fn bevel(self, top: Hsla, _bottom: Hsla, _t: &Theme) -> Self {
@@ -115,23 +125,55 @@ pub trait Material: Styled + Sized {
         self.well(t).bg(floor)
     }
 
-    /// Floating over the rest, keeping its fill: one soft shadow.
+    /// Floating over the rest, keeping its fill: a hard offset in the
+    /// hairline's color.
     fn lifted(self, t: &Theme) -> Self {
-        self.shadow(vec![shade(0., 12., 32., t.depth.drop)])
-    }
-
-    /// A small shape in `color`, such as a live dot. Flat: the color
-    /// alone says it is live.
-    fn glow(self, _color: Hsla) -> Self {
-        self
+        self.shadow(offset(4., t.hairline))
     }
 }
 
 impl<E: Styled> Material for E {}
 
-/// The inner shadow of a meter's `track`.
-fn track_shade(track: Hsla) -> Hsla {
-    gpui::black().opacity(0.55 * track.a.max(0.6))
+// Rules.
+
+/// A hairline: between rows, and a thematic break in a reply.
+pub fn rule(t: &Theme) -> Div {
+    div()
+        .w_full()
+        .h(rems(0.0625))
+        .flex_shrink_0()
+        .bg(t.hairline)
+}
+
+/// The heavy rule a section's title sits on.
+pub fn heavy_rule(t: &Theme) -> Div {
+    div().w_full().h(rems(0.125)).flex_shrink_0().bg(t.rule)
+}
+
+/// A section's head: its title in the display face, `meta` in small
+/// muted print at the right when there is one, over the heavy rule.
+pub fn section_header(
+    title: impl Into<SharedString>,
+    meta: Option<SharedString>,
+    t: &Theme,
+) -> Div {
+    div()
+        .flex()
+        .items_baseline()
+        .gap(sp(3.))
+        .pb(sp(2.5))
+        .border_b_2()
+        .border_color(t.rule)
+        .child(
+            div()
+                .typeset(Type::SECTION)
+                .text_color(t.bright)
+                .child(title.into()),
+        )
+        .child(div().flex_1())
+        .children(
+            meta.map(|meta| text(meta, Type::SMALL, t.dim).flex_shrink_0()),
+        )
 }
 
 // Text.
@@ -157,7 +199,7 @@ pub fn text(text: impl Into<SharedString>, style: Type, color: Hsla) -> Div {
     div().typeset(style).text_color(color).child(text.into())
 }
 
-/// A small uppercase section heading.
+/// A small uppercase label over a group inside a section.
 pub fn heading(text: &str, t: &Theme) -> Div {
     div()
         .typeset(Type::MICRO)
@@ -165,12 +207,19 @@ pub fn heading(text: &str, t: &Theme) -> Div {
         .child(text.to_uppercase())
 }
 
-/// A screen's big title.
+/// A screen's big title, in the display face at `style`'s size.
 pub fn title(text: impl Into<SharedString>, style: Type) -> Div {
     div()
-        .typeset(style)
-        .font_weight(weight::STRONG)
+        .typeset(style.display())
         .leading(1.25)
+        .child(text.into())
+}
+
+/// A big number or time, in the display face.
+pub fn big_figure(text: impl Into<SharedString>, t: &Theme) -> Div {
+    div()
+        .typeset(Type::FIGURE)
+        .text_color(t.bright)
         .child(text.into())
 }
 
@@ -182,7 +231,7 @@ pub fn lead(text: &str, style: Type, t: &Theme) -> Div {
         .child(prose(text, t.muted, t))
 }
 
-/// A screen's title and the sentence under it.
+/// A screen's title, in the display face, and the sentence under it.
 pub fn screen_title(
     title: impl Into<SharedString>,
     subtitle: impl Into<SharedString>,
@@ -194,8 +243,8 @@ pub fn screen_title(
         .gap(sp(1.5))
         .child(
             div()
-                .typeset(Type::HEADING)
-                .font_weight(weight::STRONG)
+                .typeset(Type::PAGE_TITLE)
+                .text_color(t.bright)
                 .child(title.into()),
         )
         .child(
@@ -212,36 +261,121 @@ pub fn label(text: &'static str, t: &Theme) -> Div {
     div().typeset(Type::SMALL).text_color(t.muted).child(text)
 }
 
-/// Text that acts like a link, in blue.
-pub fn text_link(text: impl Into<SharedString>, style: Type, t: &Theme) -> Div {
-    div()
-        .typeset(style)
-        .text_color(t.blue)
-        .cursor_pointer()
-        .hover(|style| style.underline())
-        .child(text.into())
-}
+// Actions.
 
-/// A link that navigates somewhere, with a chevron.
-pub fn link(label: impl Into<SharedString>, t: &Theme) -> Div {
-    text_link(label, Type::CAPTION, t)
+/// A word over a 1 px line in `line`, with an optional leading icon.
+fn underlined(
+    label: SharedString,
+    glyph: Option<(Icon, IconSize)>,
+    line: Hsla,
+    t: &Theme,
+) -> Div {
+    div()
         .flex()
         .items_center()
-        .gap(sp(1.))
+        .gap(sp(1.5))
         .flex_shrink_0()
-        .child(icon(Icon::Chevron, IconSize::TINY, t.blue))
+        .border_b_1()
+        .border_color(line)
+        .text_color(t.text)
+        .whitespace_nowrap()
+        .cursor_pointer()
+        .hover(|style| style.text_color(t.bright))
+        .children(glyph.map(|(glyph, size)| icon(glyph, size, t.text)))
+        .child(label)
 }
 
-// Buttons.
+/// An action that is not the screen's main one: a word underlined in
+/// blue, at the size of the text around it. Never a bordered button.
+pub fn link_action(label: impl Into<SharedString>, t: &Theme) -> Div {
+    underlined(label.into(), None, t.blue, t)
+}
+
+/// An action that needs the person: a small block in the offset print,
+/// at the size of the text around it.
+pub fn hot_action(label: impl Into<SharedString>, t: &Theme) -> Div {
+    div()
+        .flex_shrink_0()
+        .px(sp(1.75))
+        .py(rems(0.0625))
+        .printed(2., t)
+        .whitespace_nowrap()
+        .cursor_pointer()
+        .hover(|style| style.opacity(0.9))
+        .child(label.into())
+}
+
+/// [`link_action`] at `style`.
+pub fn text_link(text: impl Into<SharedString>, style: Type, t: &Theme) -> Div {
+    link_action(text, t).typeset(style)
+}
+
+/// [`link_action`] in small print: a link that navigates somewhere.
+pub fn link(label: impl Into<SharedString>, t: &Theme) -> Div {
+    text_link(label, Type::CAPTION, t)
+}
+
+/// How big a [`primary_block`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockSize {
+    /// In a header or a list: 30 px.
+    Small,
+    /// Beside a composer: 34 px.
+    Medium,
+    /// A screen's main action: 40 px, over a deeper offset.
+    Large,
+}
+
+/// The screen's primary action: a flat blue block with dark text over
+/// a hard pink offset. Use it once or twice a screen.
+pub fn primary_block(
+    label: impl Into<SharedString>,
+    size: BlockSize,
+    t: &Theme,
+) -> Div {
+    block(label.into(), None, size, t)
+}
+
+fn block(
+    label: SharedString,
+    glyph: Option<Icon>,
+    size: BlockSize,
+    t: &Theme,
+) -> Div {
+    let (height, pad, style, by, glyph_size) = match size {
+        BlockSize::Small => (30., 3., Type::SMALL, 3., IconSize::COMPACT),
+        BlockSize::Medium => {
+            (34., 3.5, Type::SMALL.sized(13.5), 3., IconSize::BASE)
+        }
+        BlockSize::Large => (40., 4.5, Type::BODY, 4., IconSize::LARGE),
+    };
+    div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap(sp(2.))
+        .flex_shrink_0()
+        .h(rems(height / 16.))
+        .px(sp(pad))
+        .printed(by, t)
+        .typeset(style.weighted(weight::STRONG))
+        .whitespace_nowrap()
+        .cursor_pointer()
+        .hover(|style| style.opacity(0.9))
+        .children(
+            glyph.map(|glyph| icon(glyph, glyph_size, t.roles.on_primary)),
+        )
+        .child(label)
+}
 
 /// What a button does, and so how loud it is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ButtonKind {
-    /// The one thing to do on a screen: filled in the accent.
+    /// The one thing to do on a screen: the offset print.
     Primary,
-    /// Anything else: outlined.
+    /// Anything else: a word underlined in blue.
     Secondary,
-    /// Stopping or throwing away: outlined in red.
+    /// Stopping or throwing away: a word underlined in red.
     Danger,
 }
 
@@ -251,7 +385,15 @@ pub fn button(
     kind: ButtonKind,
     t: &Theme,
 ) -> Div {
-    base_button(label.into(), None, kind, false, t)
+    match kind {
+        ButtonKind::Primary => block(label.into(), None, BlockSize::Small, t),
+        ButtonKind::Secondary => {
+            underlined(label.into(), None, t.blue, t).typeset(Type::SMALL)
+        }
+        ButtonKind::Danger => {
+            underlined(label.into(), None, t.red, t).typeset(Type::SMALL)
+        }
+    }
 }
 
 /// A big button for task screens and phones: 44 px, easy to hit, with an
@@ -262,72 +404,35 @@ pub fn big_button(
     kind: ButtonKind,
     t: &Theme,
 ) -> Div {
-    base_button(label.into(), glyph, kind, true, t)
-}
-
-fn base_button(
-    label: SharedString,
-    glyph: Option<Icon>,
-    kind: ButtonKind,
-    big: bool,
-    t: &Theme,
-) -> Div {
-    let color = match kind {
-        ButtonKind::Primary => t.roles.on_primary,
-        ButtonKind::Secondary => t.text_soft,
+    let line = match kind {
+        ButtonKind::Primary => {
+            return block(label.into(), glyph, BlockSize::Large, t)
+                .min_h(control::LARGE);
+        }
+        ButtonKind::Secondary => t.blue,
         ButtonKind::Danger => t.red,
     };
-    let button = div()
+    // The word is underlined, not the whole 44 px a finger hits.
+    div()
         .flex()
         .items_center()
         .justify_center()
-        .gap(sp(if big { 2. } else { 1.5 }))
         .flex_shrink_0()
+        .min_h(control::LARGE)
         .cursor_pointer()
-        .text_color(color)
-        .when(big, |button| {
-            button
-                .min_h(control::LARGE)
-                .px(sp(4.5))
-                .rounded(radius::BOX)
-                .typeset(Type::BODY)
-        })
-        .when(!big, |button| {
-            button
-                .h(control::SMALL)
-                .px(sp(3.))
-                .rounded(radius::BOX)
-                .typeset(Type::CAPTION)
-        })
-        .children(glyph.map(|glyph| {
-            icon(
-                glyph,
-                if big {
-                    IconSize::LARGE
-                } else {
-                    IconSize::COMPACT
-                },
-                color,
-            )
-        }))
-        .child(label);
-    match kind {
-        ButtonKind::Primary => button
-            .accent_key(t)
-            .font_weight(weight::EMPHASIS)
-            .hover(|style| style.opacity(0.9)),
-        ButtonKind::Secondary => button
-            .key(t)
-            .hover(|style| style.border_color(t.border_strong)),
-        ButtonKind::Danger => button
-            .danger_key(t)
-            .hover(|style| style.border_color(t.red)),
-    }
+        .typeset(Type::BODY)
+        .child(underlined(
+            label.into(),
+            glyph.map(|glyph| (glyph, IconSize::LARGE)),
+            line,
+            t,
+        ))
 }
 
-/// A round 44 px button holding an icon: the phone's send and stop.
-/// Filled in `color` when `filled`, else outlined in `border`.
-pub fn round_button(
+/// A square 44 px button holding an icon: the phone's send and stop.
+/// Outlined in `border` when there is one; else filled in `color`, and
+/// printed over the offset when `color` is the accent.
+pub fn square_button(
     id: &'static str,
     glyph: Icon,
     color: Hsla,
@@ -341,7 +446,6 @@ pub fn round_button(
         .flex()
         .items_center()
         .justify_center()
-        .rounded(radius::FULL)
         .cursor_pointer();
     match border {
         Some(border) => button.key(t).border_color(border).child(icon(
@@ -349,11 +453,11 @@ pub fn round_button(
             IconSize::BASE,
             color,
         )),
-        None if color == t.accent => {
-            button
-                .accent_key(t)
-                .child(icon(glyph, IconSize::XLARGE, t.bg))
-        }
+        None if color == t.accent => button.printed(3., t).child(icon(
+            glyph,
+            IconSize::XLARGE,
+            t.roles.on_primary,
+        )),
         None => button.bg(color).child(icon(glyph, IconSize::XLARGE, t.bg)),
     }
 }
@@ -372,7 +476,6 @@ pub fn icon_button(
         .flex()
         .items_center()
         .justify_center()
-        .rounded(radius::BOX)
         .cursor_pointer()
         .hover(|style| style.bg(gpui::white().opacity(0.05)))
         .child(icon(glyph, IconSize::XLARGE, t.text_soft))
@@ -380,7 +483,43 @@ pub fn icon_button(
 
 // Marks.
 
-/// heiko's mark: τ on the accent.
+/// `text` in the display face, `size` px tall, as heiko's name is
+/// printed: light, over a blue copy a little up and left and a pink
+/// copy a little down and right.
+fn overprinted(text: &'static str, size: f32, t: &Theme) -> Div {
+    let (x, y) = (size / 14. / 16., size / 21. / 16.);
+    let copy = |color: Hsla, x: f32, y: f32| {
+        div()
+            .absolute()
+            .left(rems(x))
+            .top(rems(y))
+            .text_color(color)
+            .child(text)
+    };
+    div()
+        .relative()
+        .flex_shrink_0()
+        .typeset(Type::SECTION.sized(size).leading(1.))
+        .whitespace_nowrap()
+        .child(copy(t.offset, x, y))
+        .child(copy(t.blue, -x, -y))
+        .child(div().relative().text_color(t.bright).child(text))
+}
+
+/// heiko's wordmark: 並行 and the name, overprinted in blue and pink.
+/// `size` is the height of its letters in px.
+pub fn wordmark(size: f32, t: &Theme) -> Div {
+    div()
+        .flex()
+        .items_baseline()
+        .flex_shrink_0()
+        .gap(rems(size / 4. / 16.))
+        .child(overprinted("並行", size, t))
+        .child(overprinted("heiko", size * 0.86, t))
+}
+
+/// heiko's mark for small places: 並 alone, overprinted like the
+/// [`wordmark`], in a square `size` px wide.
 pub fn logo(t: &Theme, size: f32) -> Div {
     div()
         .size(rems((size) / 16.))
@@ -388,26 +527,55 @@ pub fn logo(t: &Theme, size: f32) -> Div {
         .flex()
         .items_center()
         .justify_center()
-        .rounded(rems((size / 4.) / 16.))
-        .accent_key(t)
-        .text_color(t.bg)
-        .font_family(MONO)
-        .text_size(rems((size * 0.6) / 16.))
-        .font_weight(weight::EMPHASIS)
-        .child("τ")
+        .child(overprinted("並", size * 0.85, t))
 }
 
-/// A count on a pill: a conversation's unread replies.
-pub fn count_pill(count: usize, t: &Theme) -> Div {
-    mono(count.to_string(), Type::MICRO, t.bg)
+/// The small mark a state is shown with, in its color: working is a
+/// ringed green dot, asking an orange diamond, failing a red cross, a
+/// met goal a green tick, a limit a red square, a cap an amber square,
+/// and idle a hollow ring.
+pub fn mark(state: State, t: &Theme) -> Svg {
+    let color = match state {
+        State::Working | State::Met => t.green,
+        State::Asks => t.roles.live,
+        State::Failing | State::Limit => t.red,
+        State::Cap => t.roles.cost,
+        State::Idle => t.slate,
+    };
+    svg()
+        .path(state.path())
+        .size(rems(0.875))
+        .flex_shrink_0()
+        .text_color(color)
+}
+
+/// A state's mark with how many things are in it before it, when more
+/// than one: `3` and the diamond for three questions.
+pub fn counted_mark(count: usize, state: State, t: &Theme) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .flex_shrink_0()
+        .gap(rems(0.1875))
+        .when(count > 1, |row| {
+            row.child(
+                mono(count.to_string(), Type::MICRO.sized(11.5), t.text_soft)
+                    .font_weight(weight::EMPHASIS),
+            )
+        })
+        .child(mark(state, t))
+}
+
+/// A count on a small filled square: a conversation's unread replies.
+pub fn unread_count(count: usize, t: &Theme) -> Div {
+    mono(count.to_string(), Type::MICRO, t.roles.on_primary)
         .flex_shrink_0()
         .min_w(rems(1.125))
         .h(rems(1.125))
-        .px(sp(1.5))
+        .px(sp(1.))
         .flex()
         .items_center()
         .justify_center()
-        .rounded(radius::FULL)
         .bg(t.accent)
         .font_weight(weight::EMPHASIS)
 }
@@ -420,44 +588,113 @@ pub fn dot(color: Hsla, size: f32) -> Div {
         .bg(color)
 }
 
-/// A dot that glows: something running now.
+/// A dot in a faint ring of its color: something running now.
 pub fn live_dot(color: Hsla, size: f32) -> Div {
-    dot(color, size).glow(color)
+    div()
+        .size(rems((size * 1.75) / 16.))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(radius::FULL)
+        .border_1()
+        .border_color(color.opacity(0.4))
+        .child(dot(color, size))
 }
 
-/// A status: a dot and words, on a tinted pill.
-pub fn pill(text: impl Into<SharedString>, color: Hsla, bg: Hsla) -> Div {
+/// A status as a plain mark: a dot and words in `color`, with no fill.
+pub fn status_mark(text: impl Into<SharedString>, color: Hsla) -> Div {
     div()
         .flex()
         .items_center()
+        .flex_shrink_0()
         .gap(sp(1.5))
-        .px(sp(2.))
-        .py(sp(0.75))
-        .rounded(radius::LARGE)
-        .bg(bg)
         .text_color(color)
         .typeset(Type::CAPTION)
-        .child(live_dot(color, 6.))
+        .child(dot(color, 6.))
         .child(text.into())
 }
 
-/// Words in an outlined pill: a state (`Draft`) or a tag
-/// (`Recommended`).
-pub fn badge(text: impl Into<SharedString>, color: Hsla, border: Hsla) -> Div {
-    div()
+/// A stamp: a word or two in mono, outlined in its tone over a hard
+/// offset. `exit 0`, `queued`, `Draft`.
+pub fn stamp(label: impl Into<SharedString>, tone: Tone, t: &Theme) -> Div {
+    let color = t.tone(tone);
+    mono(label, Type::CAPTION, color)
         .flex_shrink_0()
         .px(sp(2.))
-        .py(sp(0.5))
-        .rounded(radius::LARGE)
-        .border_1()
-        .border_color(border)
-        .typeset(Type::MICRO)
-        .text_color(color)
-        .child(text.into())
+        .py(rems(0.0625))
+        .border(px(1.5))
+        .border_color(color)
+        .shadow(offset(3., t.hairline))
 }
 
-/// A name in mono on a raised chip, with an optional leading icon: a
-/// branch, a repository, a model.
+/// How a [`square`] is drawn.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SquareStyle {
+    /// Not reached yet: a muted outline and number.
+    Quiet,
+    /// Outlined and numbered in a color.
+    Outlined(Hsla),
+    /// Filled with a color, its number dark. Never a warm color.
+    Filled(Hsla),
+}
+
+/// A small square holding a number or a letter: a step, a check, a
+/// place in a queue.
+pub fn square(
+    label: impl Into<SharedString>,
+    style: SquareStyle,
+    t: &Theme,
+) -> Div {
+    let (line, fill, ink) = match style {
+        SquareStyle::Quiet => (t.slate, None, t.dim),
+        SquareStyle::Outlined(color) => (color, None, color),
+        SquareStyle::Filled(color) => (color, Some(color), t.roles.on_primary),
+    };
+    mono(label, Type::CAPTION, ink)
+        .size(rems(1.5))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .border(px(1.5))
+        .border_color(line)
+        .when_some(fill, |square, fill| square.bg(fill))
+        .font_weight(weight::EMPHASIS)
+}
+
+fn slip_in(content: AnyElement, tone: Tone, dashed: bool, t: &Theme) -> Div {
+    let color = t.tone(tone);
+    // A row, so the slip is as wide as what it holds and no wider.
+    div().flex().child(
+        div()
+            .max_w_full()
+            .px(sp(2.75))
+            .py(sp(1.5))
+            .bg(t.bg)
+            .border(px(1.5))
+            .border_color(color)
+            .when(dashed, |slip| slip.border_dashed())
+            .shadow(offset(4., t.under(color)))
+            .typeset(Type::SMALL.sized(13.5).leading(1.5))
+            .text_color(t.text)
+            .child(content),
+    )
+}
+
+/// A slip: a note or an id on a label outlined in its tone, over a
+/// hard offset in a darker shade of the same color.
+pub fn slip(content: impl IntoElement, tone: Tone, t: &Theme) -> Div {
+    slip_in(content.into_any_element(), tone, false, t)
+}
+
+/// A [`slip`] with a dashed outline: one proposed, not kept yet.
+pub fn dashed_slip(content: impl IntoElement, tone: Tone, t: &Theme) -> Div {
+    slip_in(content.into_any_element(), tone, true, t)
+}
+
+/// A name in mono, underlined as a word the person can change, with an
+/// optional leading icon: a branch, a repository, a model.
 pub fn chip(
     glyph: Option<Icon>,
     text: impl Into<SharedString>,
@@ -470,15 +707,13 @@ pub fn chip(
         .items_center()
         .gap(sp(1.5))
         .flex_shrink_0()
-        .px(sp(2.5))
-        .py(sp(1.25))
-        .rounded(radius::CONTROL)
-        .key(t)
+        .border_b_1()
+        .border_color(t.slate)
         .children(glyph.map(|glyph| icon(glyph, IconSize::COMPACT, color)))
         .child(mono(text, style, color))
 }
 
-/// A short value in mono on a small raised tag: a field name, a path, a
+/// A short value in mono on a flat band: a field name, a path, a
 /// permission level.
 pub fn tag(
     text: impl Into<SharedString>,
@@ -490,79 +725,115 @@ pub fn tag(
         .flex_shrink_0()
         .px(sp(1.5))
         .py(sp(0.5))
-        .rounded(radius::SMALL)
         .bg(t.raised)
 }
 
-/// What the user wrote, in a raised bubble.
+/// What the user wrote, between two hairlines.
 pub fn bubble(t: &Theme) -> Div {
     div()
-        .px(sp(3.5))
-        .py(sp(2.5))
-        .bg(t.raised)
-        .rounded(radius::BUBBLE)
+        .py(sp(3.5))
+        .border_y_1()
+        .border_color(t.hairline)
         .leading(1.55)
 }
 
-/// A horizontal meter: `share` of the track filled.
-pub fn bar(share: f32, height: f32, fill: Hsla, track: Hsla) -> Div {
+// Ticks.
+
+/// How many ticks a [`bar`] has.
+const BAR_TICKS: usize = 10;
+
+fn tick_strip(
+    lit: usize,
+    total: usize,
+    height: f32,
+    color: Hsla,
+    track: Hsla,
+    marked: &[(usize, Hsla)],
+) -> Div {
+    let marked = |n: usize| {
+        marked
+            .iter()
+            .find(|(at, _)| *at == n)
+            .map(|(_, color)| *color)
+    };
     div()
-        .relative()
-        .h(rems((height) / 16.))
+        .flex()
         .w_full()
-        .rounded(radius::FULL)
-        .bg(track)
-        .shadow(vec![shade(0., 1., 2., track_shade(track)).inset()])
-        .child(
+        .gap(rems(0.1875))
+        .children((0..total).map(|n| {
             div()
-                .h(rems((height) / 16.))
-                .w(relative(share.clamp(0.0, 1.0)))
-                .rounded(radius::FULL)
-                .bg(fill)
-                .shadow(vec![
-                    shade(0., 1., 0., gpui::white().opacity(0.3)).inset(),
-                ]),
-        )
+                .flex_1()
+                .min_w(rems(0.))
+                .h(rems(height / 16.))
+                .bg(marked(n).unwrap_or(if n < lit { color } else { track }))
+        }))
 }
 
-// Surfaces.
+/// A quantity as a strip of `total` square ticks, the first `lit` of
+/// them in `color`. Never a smooth bar.
+pub fn ticks(lit: usize, total: usize, color: Hsla, t: &Theme) -> Div {
+    marked_ticks(lit, total, color, &[], t)
+}
 
-/// A raised, bordered box, clipping what it holds.
+/// [`ticks`], with the ticks at the indexes in `marked` drawn white:
+/// thresholds on the strip.
+pub fn marked_ticks(
+    lit: usize,
+    total: usize,
+    color: Hsla,
+    marked: &[usize],
+    t: &Theme,
+) -> Div {
+    let marked: Vec<(usize, Hsla)> =
+        marked.iter().map(|at| (*at, t.bright)).collect();
+    tick_strip(lit, total, 10., color, t.hairline, &marked)
+}
+
+/// A share as ticks `height` px tall: `share` of them in `fill`, the
+/// rest in `track`. Any share above none lights a tick.
+pub fn bar(share: f32, height: f32, fill: Hsla, track: Hsla) -> Div {
+    let share = share.clamp(0.0, 1.0);
+    let lit = (share * BAR_TICKS as f32).round() as usize;
+    let lit = if share > 0. { lit.max(1) } else { 0 };
+    tick_strip(lit, BAR_TICKS, height, fill, track, &[])
+}
+
+// Blocks.
+
+/// A block in a column of them, under a hairline, clipping what it
+/// holds. No fill and no outline.
 pub fn card(t: &Theme) -> Div {
     div()
         .flex()
         .flex_col()
-        .raised(t)
-        .border_1()
-        .border_color(t.border)
-        .rounded(radius::BOX)
+        .border_t_1()
+        .border_color(t.hairline)
         .overflow_hidden()
 }
 
-/// A panel-colored box with big rounded corners, padded by `steps`.
+/// A block on a task screen, under a hairline, with `steps` of room
+/// above and below what it holds. No fill and no outline.
 pub fn panel(steps: f32, t: &Theme) -> Div {
     div()
         .flex()
         .flex_col()
-        .p(sp(steps))
-        .raised(t)
-        .border_1()
-        .border_color(t.border)
-        .rounded(radius::CARD)
+        .py(sp(steps))
+        .border_t_1()
+        .border_color(t.hairline)
 }
 
-/// A 56 px glyph in a tinted tile, above a phone screen's title: done,
-/// or what went wrong.
-pub fn tile(glyph: Icon, color: Hsla, bg: Hsla, border: Hsla) -> Div {
+/// A 56 px glyph in a square outlined in its color over a hard offset,
+/// above a phone screen's title: done, or what went wrong.
+pub fn tile(glyph: Icon, color: Hsla, t: &Theme) -> Div {
     div()
         .size(rems(3.5))
         .flex()
         .items_center()
         .justify_center()
-        .rounded(radius::TILE)
-        .bg(bg)
-        .border_1()
-        .border_color(border)
+        .bg(t.bg)
+        .border(px(1.5))
+        .border_color(color)
+        .shadow(offset(4., t.under(color)))
         .child(icon(glyph, IconSize(28.), color))
 }
 
@@ -572,10 +843,6 @@ pub fn stat(label: &str, value: impl Into<SharedString>, t: &Theme) -> Div {
         .flex()
         .flex_col()
         .gap(sp(1.))
-        .px(sp(3.))
-        .py(sp(2.5))
-        .rounded(radius::CONTROL)
-        .bg(t.panel)
         .child(mono(label.to_owned(), Type::CAPTION, t.dim))
         .child(mono(value, Type::LEAD, t.text))
 }
@@ -604,7 +871,8 @@ pub fn key_values(
         }))
 }
 
-/// A line of news in a tinted box: waiting, or a failure.
+/// A line of news under a rule in its `tone`: waiting, or a failure.
+/// No fill.
 pub fn notice(
     glyph: Icon,
     text: impl Into<SharedString>,
@@ -612,19 +880,15 @@ pub fn notice(
     style: Type,
     t: &Theme,
 ) -> Div {
-    let danger = tone == t.red;
     div()
         .flex()
         .items_center()
         .gap(sp(2.5))
-        .px(sp(3.5))
-        .py(sp(3.))
-        .rounded(radius::BOX)
-        .border_1()
-        .bg(if danger { t.red_soft } else { t.blue_soft })
-        .border_color(if danger { t.red_border } else { t.blue_border })
+        .pt(sp(2.5))
+        .border_t_2()
+        .border_color(tone)
         .typeset(style)
-        .text_color(if danger { t.red } else { t.text_soft })
+        .text_color(if tone == t.red { t.red } else { t.text_soft })
         .child(icon(glyph, IconSize::LARGE, tone))
         .child(div().flex_1().min_w(rems(0.)).child(text.into()))
 }
@@ -648,8 +912,9 @@ pub fn dialog(
     )
 }
 
-/// A modal over a dimmed backdrop: a title, a message, then anything
-/// the message asks for (a field, a choice) above the actions.
+/// A modal over a dimmed backdrop: a title in the display face, a
+/// message, then anything the message asks for (a field, a choice)
+/// above the actions.
 pub fn modal(
     glyph: Svg,
     title: impl Into<SharedString>,
@@ -678,11 +943,9 @@ pub fn modal(
                 .flex_col()
                 .gap(sp(3.))
                 .p(sp(5.))
-                .bg(t.panel)
-                .border_1()
+                .raised(t)
                 .border_color(t.border_strong)
-                .rounded(radius::CARD)
-                .shadow_lg()
+                .lifted(t)
                 .child(
                     div()
                         .flex()
@@ -695,8 +958,8 @@ pub fn modal(
                             div()
                                 .flex_1()
                                 .min_w(rems(0.))
-                                .typeset(Type::SUBTITLE)
-                                .font_weight(weight::STRONG)
+                                .typeset(Type::SECTION.sized(17.))
+                                .text_color(t.bright)
                                 .child(title.into()),
                         ),
                 )
@@ -708,7 +971,14 @@ pub fn modal(
                         .child(message.into()),
                 )
                 .children(body)
-                .child(div().flex().justify_end().gap(sp(2.)).child(actions)),
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_end()
+                        .gap(sp(4.))
+                        .child(actions),
+                ),
         )
 }
 
@@ -724,20 +994,21 @@ pub fn empty(text: impl Into<SharedString>, t: &Theme) -> Div {
 
 // Forms.
 
-/// A text field in a 44 px box.
+/// A text field in a square 44 px outline.
 pub fn field(input: &Entity<TextInput>, mono: bool, t: &Theme) -> Div {
     div()
         .flex()
         .items_center()
         .h(control::LARGE)
         .px(sp(3.))
-        .rounded(radius::BOX)
         .well(t)
         .typeset(if mono { Type::SMALL.mono() } else { Type::BODY })
         .child(input.clone())
 }
 
-/// An on/off switch; callers add the id and the click.
+/// An on/off switch, as two squares: a block that sits left in an
+/// outline when off, and right in a filled track when on. Callers add
+/// the id and the click.
 pub fn switch(on: bool, t: &Theme) -> Div {
     div()
         .w(rems(2.25))
@@ -746,14 +1017,23 @@ pub fn switch(on: bool, t: &Theme) -> Div {
         .flex()
         .items_center()
         .p(sp(0.5))
-        .rounded(radius::FULL)
-        .when(on, |track| track.accent_key(t).justify_end())
-        .when(!on, |track| track.well(t))
+        .border_1()
+        .when(on, |track| {
+            track
+                .accent_key(t)
+                .border_color(t.roles.primary)
+                .justify_end()
+        })
+        .when(!on, |track| track.border_color(t.border_strong))
         .cursor_pointer()
-        .child(div().size(rems(1.)).rounded(radius::FULL).key(t))
+        .child(div().size(rems(0.875)).bg(if on {
+            t.roles.on_primary
+        } else {
+            t.slate
+        }))
 }
 
-/// A checkbox: 18 px, or 20 px for a phone's touch rows.
+/// A square checkbox: 18 px, or 20 px for a phone's touch rows.
 pub fn checkbox(checked: bool, large: bool, t: &Theme) -> Div {
     let size = if large { 20. } else { 18. };
     let checkbox = div()
@@ -761,8 +1041,7 @@ pub fn checkbox(checked: bool, large: bool, t: &Theme) -> Div {
         .flex_shrink_0()
         .flex()
         .items_center()
-        .justify_center()
-        .rounded(radius::SMALL);
+        .justify_center();
     if checked {
         checkbox.accent_key(t).child(icon(
             Icon::Check,
@@ -771,7 +1050,7 @@ pub fn checkbox(checked: bool, large: bool, t: &Theme) -> Div {
             } else {
                 IconSize::SMALL
             },
-            t.bg,
+            t.roles.on_primary,
         ))
     } else {
         checkbox.well(t)
@@ -822,88 +1101,9 @@ pub fn any(element: impl IntoElement) -> AnyElement {
     element.into_any_element()
 }
 
-/// A rule's strictness: the probability line from 0 to 1, split where
-/// the rule flags a call and where it blocks one, with a mark at
-/// `score` when there is one. `handles` draws the thresholds as knobs,
-/// for the editor.
-pub fn strictness(
-    review: f64,
-    block: f64,
-    score: Option<f64>,
-    width: Option<f32>,
-    handles: bool,
-    t: &Theme,
-) -> Div {
-    let height = if handles { 6. } else { 5. };
-    let zone = |share: f64, color: Hsla| {
-        div()
-            .h(rems((height) / 16.))
-            .w(relative(share.clamp(0.0, 1.0) as f32))
-            .bg(color)
-    };
-    let knob = |at: f64, color: Hsla| {
-        div()
-            .absolute()
-            .left(relative(at as f32))
-            .top(rems(-0.375))
-            .ml(rems(-0.5625))
-            .size(rems(1.125))
-            .rounded(radius::FULL)
-            .bg(t.text)
-            .border_3()
-            .border_color(color)
-    };
-    div()
-        .relative()
-        .h(rems((height) / 16.))
-        .flex_shrink_0()
-        .map(|line| match width {
-            Some(width) => line.w(rems((width) / 16.)),
-            None => line.w_full(),
-        })
-        .child(
-            div()
-                .flex()
-                .size_full()
-                .rounded(radius::HAIRLINE)
-                .overflow_hidden()
-                .child(zone(review, t.border_strong))
-                .child(zone(block - review, t.accent.opacity(0.55)))
-                .child(
-                    div()
-                        .flex_1()
-                        .h(rems((height) / 16.))
-                        .bg(t.red.opacity(0.6)),
-                ),
-        )
-        .when_some(score, |line, score| {
-            let color = if score >= block {
-                t.red
-            } else if score >= review {
-                t.accent
-            } else {
-                t.text_soft
-            };
-            line.child(
-                div()
-                    .absolute()
-                    .left(relative(score.clamp(0.0, 1.0) as f32))
-                    .top(rems(-0.25))
-                    .ml(rems(-0.0625))
-                    .w(rems(0.125))
-                    .h(rems((height + 8.) / 16.))
-                    .rounded(radius::HAIRLINE)
-                    .bg(color),
-            )
-        })
-        .when(handles, |line| {
-            line.child(knob(review, t.accent)).child(knob(block, t.red))
-        })
-}
-
-/// A table from a model's reply: a header row on a raised band, rows
-/// split by hairlines, each cell lined up as its column says. Columns
-/// share the width; long cells wrap.
+/// A table from a model's reply: a header row in small muted print
+/// over a rule, rows split by hairlines, each cell lined up as its
+/// column says. Columns share the width; long cells wrap.
 pub fn table(
     align: &[crate::markdown::Align],
     head: Vec<AnyElement>,
@@ -927,9 +1127,13 @@ pub fn weighted_table(
         div()
             .flex()
             .w_full()
-            .when(!header, |row| row.border_t_1().border_color(t.border))
+            .border_color(t.hairline)
+            .when(!header, |row| row.border_b_1())
             .when(header, |row| {
-                row.bg(t.card).text_color(t.muted).typeset(Type::CAPTION)
+                row.border_b_2()
+                    .border_color(t.slate)
+                    .text_color(t.dim)
+                    .typeset(Type::CAPTION)
             })
             .children(cells.into_iter().enumerate().map(|(n, content)| {
                 let weight = weights.get(n).copied().unwrap_or(1.).max(0.1);
@@ -938,7 +1142,7 @@ pub fn weighted_table(
                     .flex_shrink(1.)
                     .flex_basis(rems(0.))
                     .min_w(rems(0.))
-                    .px(sp(3.))
+                    .pr(sp(3.5))
                     .py(sp(2.));
                 let cell = match align.get(n) {
                     Some(Align::Right) => cell.text_right(),
@@ -952,17 +1156,13 @@ pub fn weighted_table(
         .flex()
         .flex_col()
         .w_full()
-        .border_1()
-        .border_color(t.border)
-        .rounded(radius::LARGE)
-        .overflow_hidden()
         .typeset(Type::SMALL)
         .child(row(head, true))
         .children(rows.into_iter().map(|cells| row(cells, false)))
 }
 
-/// A fenced block of code from a reply, in the monospace face, with its
-/// language in the corner.
+/// A fenced block of code from a reply, in the monospace face on a
+/// flat band, with its language in the corner.
 pub fn code_block(lang: Option<&str>, text: &str, t: &Theme) -> Div {
     numbered_code_block(lang, text, None, t)
 }
@@ -993,10 +1193,7 @@ pub fn numbered_code_block(
         .w_full()
         .px(sp(3.5))
         .py(sp(3.))
-        .rounded(radius::BOX)
         .bg(t.card)
-        .border_1()
-        .border_color(t.border)
         .child(
             div().flex().children(gutter).child(
                 div()
@@ -1095,11 +1292,6 @@ pub fn md_heading(level: u8, content: AnyElement, t: &Theme) -> Div {
         .child(content)
 }
 
-/// A thematic break in a reply.
-pub fn rule(t: &Theme) -> Div {
-    div().w_full().h(rems(0.0625)).my(sp(1.)).bg(t.border)
-}
-
 /// `text` as a QR code, `size` px square: black modules on a white
 /// plate with a quiet zone, whatever the theme, so any camera reads it.
 /// `None` if the text does not fit a QR code.
@@ -1141,14 +1333,13 @@ pub fn qr_code(text: &str, size: f32) -> Option<Div> {
             .flex()
             .items_center()
             .justify_center()
-            .rounded(radius::BOX)
             .bg(gpui::rgb(0xffffff))
             .child(modules),
     )
 }
 
-/// A repository's mark: its letter on its color, 20 px in the sidebar
-/// and 26 px on a phone.
+/// A repository's mark: its letter in mono, dark on a flat block of
+/// its color, 20 px in the sidebar and 26 px on a phone.
 pub fn repo_mark(name: &str, size: f32, t: &Theme) -> Div {
     let letter = name
         .chars()
@@ -1161,15 +1352,11 @@ pub fn repo_mark(name: &str, size: f32, t: &Theme) -> Div {
         .flex()
         .items_center()
         .justify_center()
-        .rounded(if size > 22. {
-            radius::LARGE
-        } else {
-            radius::TAG
-        })
-        .bg(mark.opacity(0.16))
-        .text_color(mark)
-        .typeset(Type::MICRO.sized(size * 0.6))
-        .font_weight(weight::STRONG)
+        .rounded(radius::SELECTED)
+        .bg(mark)
+        .text_color(t.roles.on_primary)
+        .typeset(Type::MICRO.sized(size * 0.6).mono())
+        .font_weight(weight::EMPHASIS)
         .child(letter)
 }
 
@@ -1179,7 +1366,7 @@ pub struct NoteHead {
     /// The plugin's name, beside its icon.
     pub plugin: String,
     pub icon: Icon,
-    pub tone: crate::theme::Tone,
+    pub tone: Tone,
     /// What it says, in marked-up prose.
     pub text: String,
     /// Cost, latency or confidence, in small print.
@@ -1209,12 +1396,9 @@ pub fn note(
     let folds = folds.filter(|_| !compact);
     let open = folds.unwrap_or(true);
     // A plugin speaks in its own color; a note that warns, in its tone.
-    let warns = matches!(
-        head.tone,
-        crate::theme::Tone::Danger | crate::theme::Tone::Warn
-    );
+    let warns = matches!(head.tone, Tone::Danger | Tone::Warn);
     let ink = match head.tone {
-        crate::theme::Tone::Info | crate::theme::Tone::Quiet => {
+        Tone::Info | Tone::Quiet => {
             t.roles.plugin(&head.plugin).unwrap_or(t.tone(head.tone))
         }
         tone => t.tone(tone),
@@ -1258,17 +1442,14 @@ pub fn note(
         (false, false) => 5.,
     };
     // A note is a line of the transcript, quieter than what the agent
-    // says; one that warns gets a soft fill of its tone.
+    // says; one that warns sits under a rule in its tone.
     div()
         .flex()
         .flex_col()
         .gap(sp(2.))
         .typeset(Type::CAPTION)
         .when(warns, |card| {
-            card.px(sp(3.5))
-                .py(sp(2.))
-                .rounded(radius::LARGE)
-                .bg(ink.opacity(0.1))
+            card.pt(sp(2.5)).border_t_2().border_color(ink)
         })
         .child(header)
         .when(compact && !head.text.is_empty(), |card| {
@@ -1284,14 +1465,9 @@ pub fn note(
         })
 }
 
-/// A key, as a popover's hints show it.
+/// A key, as a popover's hints show it: its name in small mono.
 pub fn key_hint(label: &'static str, t: &Theme) -> Div {
     mono(label, Type::MICRO, t.dim)
-        .px(sp(1.25))
-        .py(sp(0.25))
-        .border_1()
-        .border_color(t.border)
-        .rounded(radius::SMALL)
 }
 
 /// The keys a popover takes, in a row at its foot.
@@ -1305,7 +1481,7 @@ pub fn hints(keys: &[(&'static str, &'static str)], t: &Theme) -> Div {
         .pb(sp(1.))
         .mt(sp(1.))
         .border_t_1()
-        .border_color(t.border)
+        .border_color(t.hairline)
         .children(keys.iter().map(|(label, does)| {
             div()
                 .flex()

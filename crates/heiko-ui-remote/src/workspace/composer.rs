@@ -33,7 +33,7 @@ impl Workspace {
             .id("send")
             .on_click(cx.listener(|ws, _, _, cx| ws.submit_from_button(cx)));
         let send = if compact {
-            send.child(ui::round_button(
+            send.child(ui::square_button(
                 "phone-send",
                 Icon::Send,
                 t.accent,
@@ -190,7 +190,7 @@ impl Workspace {
                     .gap(sp(2.5))
                     .when(compact && live, |row| {
                         row.child(
-                            ui::round_button(
+                            ui::square_button(
                                 "phone-cancel",
                                 Icon::Stop,
                                 t.red,

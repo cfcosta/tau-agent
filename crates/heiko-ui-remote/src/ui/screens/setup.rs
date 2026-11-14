@@ -62,7 +62,7 @@ use crate::{
     },
     setup::{CloneState, SetupStep, Stage},
     theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
-    ui::{Material as _, bar, icon, icon_button, link, mono},
+    ui::{Material as _, bar, icon, icon_button, link, logo, mono},
     workspace::Workspace,
 };
 
@@ -600,7 +600,7 @@ fn top_bar(
                             .on_click(cx.listener(|ws, _, _, cx| ws.back(cx))),
                     )
                 })
-                .child(heiko_tile(22., t))
+                .child(logo(t, 22.))
                 .when(!compact, |row| {
                     row.child(mono("heiko · setup", Type::CAPTION, look.faint))
                 }),
@@ -621,33 +621,6 @@ fn top_bar(
 }
 
 // The handshake.
-
-/// heiko's tile: τ on amber, softly lit.
-fn heiko_tile(size: f32, t: &Theme) -> Div {
-    let lit = size >= 48.;
-    div()
-        .size(rems((size) / 16.))
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(rems((size * 30. / 112.) / 16.))
-        .accent_key(t)
-        .text_color(t.setup.on_light)
-        .typeset(Type::HERO.sized(size * 58. / 112.).weighted(weight::STRONG))
-        .when(lit, |tile| {
-            tile.shadow(vec![
-                BoxShadow::new(px(0.), px(2.), gpui::white().opacity(0.4))
-                    .inset(),
-                BoxShadow::new(px(0.), px(-3.), t.depth.accent_edge).inset(),
-                BoxShadow::new(px(0.), px(0.), t.accent.opacity(0.08))
-                    .spread_radius(px((size / 11.).max(6.))),
-                BoxShadow::new(px(0.), px(24.), t.accent.opacity(0.22))
-                    .blur_radius(px(60.)),
-            ])
-        })
-        .child("τ")
-}
 
 /// A company's mark, from its own artwork when it was built in; else a
 /// plain outlined circle holding its place. See [`Brand`]. `turn` is in
@@ -816,7 +789,7 @@ fn dashes(line: f32, alpha: f32, drift: bool, t: &Theme) -> AnyElement {
         .into_any_element()
 }
 
-/// The comet: a glowing streak with a fading tail, from τ to the service
+/// The comet: a glowing streak with a fading tail, from 並 to the service
 /// every 1.4 s.
 fn comet(line: f32, t: &Theme) -> AnyElement {
     let amber = t.accent;
@@ -1120,14 +1093,14 @@ fn line(size: Size, beat: Beat, words: Words, t: &Theme) -> Div {
         .children(below)
 }
 
-/// τ, the line and the other side, at `size`.
+/// 並, the line and the other side, at `size`.
 fn handshake_at(size: Size, beat: Beat, words: Words, t: &Theme) -> Div {
     div()
         .pt(rems((size.top) / 16.))
         .flex()
         .items_center()
         .justify_center()
-        .child(heiko_tile(size.tile, t))
+        .child(logo(t, size.tile))
         .child(line(size, beat, words, t))
         .child(service_tile(size.tile, beat, t))
 }
@@ -1378,7 +1351,7 @@ fn welcome(
         let size = Size::of(Scale::Big, true);
         div()
             .pt(rems((size.top) / 16.))
-            .child(heiko_tile(size.tile + 8., t))
+            .child(logo(t, size.tile + 8.))
     } else {
         orbit(t)
     };
@@ -1457,7 +1430,7 @@ fn welcome(
         )
 }
 
-/// The welcome's picture: τ in the middle, and what it connects to
+/// The welcome's picture: 並 in the middle, and what it connects to
 /// around it.
 fn orbit(t: &Theme) -> Div {
     const R: f32 = 190.;
@@ -1550,7 +1523,7 @@ fn orbit(t: &Theme) -> Div {
                 .absolute()
                 .left(rems((cx - 60.) / 16.))
                 .top(rems((cy - 60.) / 16.))
-                .child(heiko_tile(120., t)),
+                .child(logo(t, 120.)),
         )
 }
 
