@@ -14,13 +14,14 @@ const TEMPLATE: &str = include_str!("../skill/SKILL.md");
 
 /// The worked plugins, by their folders under `plugins/examples` (ADR 0051).
 /// They are read as the skill is, so editing one compiles nothing.
-pub const EXAMPLES: [&str; 6] = [
+pub const EXAMPLES: [&str; 7] = [
     "no-friday-deploys",
     "word-count",
     "say-the-tests",
     "forget-old-calls",
     "short-titles",
     "todo-page",
+    "ship-gate",
 ];
 
 /// The worked plugins' files, as this install has them.

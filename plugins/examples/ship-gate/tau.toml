@@ -1,0 +1,3 @@
+name = "ship-gate"
+version = "0.1.0"
+description = "The model asks before it ships a change, and a release waits for the person's yes."

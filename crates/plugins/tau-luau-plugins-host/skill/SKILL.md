@@ -382,6 +382,7 @@ so far, to count steps without reading it.
 - `tau.ask` and `tau.answer`: what a tool answers to ask the person a
   form, and what an action answers to give it the answers (below).
 - `tau.contains(list, value)`: whether `list` holds `value`.
+- `tau.machine(spec)`: a lifecycle as data (below).
 
 ### `tau.ui`: what views are made of
 
@@ -755,6 +756,44 @@ no longer accepts gives way to the defaults, and the pane says so.
 two side by side: `src/` has no folders of its own. A module may require `tau` and the plugin's other modules, as long as no two
 require each other, however far around. `tau` and `plugin` are taken.
 
+### A lifecycle: `tau.machine`
+
+Anything that goes through steps (a sign-in, an import, an approval)
+is one machine, not flags kept beside each other. The bugs it rules
+out: a step nobody wrote (a failure that never lets a new try start),
+a field left from a step before (an error shown after it was fixed),
+and an old answer written over a newer one.
+
+```luau
+local gate = tau.machine({
+  states = { idle = {}, waiting = { "change" }, refused = { "change", "why?" } },
+  initial = { state = "idle" },
+  on = {
+    ask = { idle = function(_, e) return { state = "waiting", change = e.change } end },
+    refuse = { waiting = function(s, e) return { state = "refused", change = s.change, why = e.why } end },
+  },
+})
+ctx.state.gate = gate:step(ctx.state.gate, { event = "ask", change = "v1.2" })
+```
+
+- A state is a plain table, `{ state = "<name>", ... }`, with exactly
+  the fields its entry in `states` lists (`name?` may be absent): keep it
+  in `ctx.state` or the store, as any value. `step` refuses one out of
+  shape, so a field left over is an error the tests find.
+- `machine:step(state, event)` gives the next state and its effects.
+  `event` is a table whose `event` names it; `state` nil is `initial`.
+  An event the state has no arm for changes nothing (a stale button, a
+  late answer); `strict = true` makes that an error.
+- An arm is a function of the state and the event, and touches nothing
+  else: it returns the next state, and the effects to carry out, a list
+  of names or `{ name, ... }` tables. The hook that stepped carries them
+  out: the machine decides, the hook does the asking and the writing.
+- Work that waits (on the model, on Jev) carries the generation it began
+  under, and an arm drops what comes back to another: a Stop pressed
+  meanwhile is not undone.
+- `machine:is(state, name)`, `machine:handles(state, event)`,
+  `machine:shape(state)`, `machine:tags()` and `machine:events()` read it.
+
 ## Tests
 
 Each file under `tests/` is a list of cases; `plugin_test` and every
@@ -854,6 +893,24 @@ end, { cases = 200 })
   of the model and `draw`, or `{ weight, run }`) changes it, and
   `invariant(model)` holds after every step. A failure shrinks to its
   fewest steps. `t.assume` in a rule skips it.
+- `t.machine_of(name, machine, spec)` tests a `tau.machine`: each of its
+  events fires from every state, in any order, with the data
+  `spec.events[name]` draws. Every step is checked for no error, a state
+  in shape, an event with no arm changing nothing, the same answer when
+  taken again, and a state that reads back the same from JSON. Add your
+  rule: `spec.init(draw)` makes a model, `spec.event(model, event, state,
+effects)` tells it each event, and `spec.invariant(state, model,
+effects)` holds after each. A failure notes its events as a `t.case`
+  to paste into the tests.
+- `t.hooks(name, spec)` drives the plugin through its ways in, in any
+  order: each of `spec.hooks` (a function of the run, `draw` and the
+  world) starts one, on a fake run made from `spec.run`. What a hook
+  waits on (`spec.run`'s `jev`, `tools`, `http`, `infer`) pauses it,
+  until the rule `answer` or `fail` lets it go on, so a job's tick and a
+  button can be under way at once, as they can for tau. A plugin's store
+  is taken in turns, files are shared at once. A hook that raises fails
+  the test unless `spec.may_fail(hook, why)`; `spec.invariant(world)`
+  holds after every step.
 - A property runs 100 cases unless it says (1000 at most), for 30 s at
   most, and gives the same result each time for the same files. Its
   cases share one VM: keep what a case changes inside it, not in the
@@ -923,7 +980,7 @@ end)
   it, by path).
 - A loop runs for 60 s at most; its check, like a case, 10 s.
 
-## Six plugins
+## Seven plugins
 
 ### A rule: `before_tool`
 
@@ -948,3 +1005,7 @@ end)
 ### A page with actions: `view.page` and `nav`
 
 {{todo-page}}
+
+### A lifecycle: `tau.machine`
+
+{{ship-gate}}
