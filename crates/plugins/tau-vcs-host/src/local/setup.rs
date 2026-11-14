@@ -711,14 +711,7 @@ impl<'a> Journal<'a> {
         let log = self.git_dir.join("logs").join("HEAD");
         if std::fs::read(&log).ok() != self.head_log_before {
             match &self.head_log_before {
-                Some(bytes) => {
-                    std::fs::write(&log, bytes).map_err(|source| {
-                        VcsError::Create {
-                            path: log.clone(),
-                            source,
-                        }
-                    })?
-                }
+                Some(bytes) => write_whole(&log, bytes)?,
                 None => remove_file(&log)?,
             }
         }
@@ -727,8 +720,7 @@ impl<'a> Journal<'a> {
         };
         let path = self.git_dir.join("HEAD");
         if std::fs::read(&path).ok().as_ref() != Some(before) {
-            std::fs::write(&path, before)
-                .map_err(|source| VcsError::Create { path, source })?;
+            write_whole(&path, before)?;
         }
         Ok(())
     }
@@ -829,10 +821,9 @@ impl<'a> Journal<'a> {
         }
         // The person's jj repository: its operation heads and workspace
         // store as they were.
+        // Its heads before go back first, then the setup's go, so that a
+        // cut-off undo never leaves it with none.
         let heads = repo_path.join("op_heads").join("heads");
-        for op in &self.ops {
-            remove_file(&heads.join(op))?;
-        }
         for op in &self.op_heads_before {
             let path = heads.join(op);
             if !path.exists() {
@@ -840,14 +831,12 @@ impl<'a> Journal<'a> {
                     .map_err(|source| VcsError::Create { path, source })?;
             }
         }
+        for op in &self.ops {
+            remove_file(&heads.join(op))?;
+        }
         let index = workspace_store_index(&repo_path);
         match &self.workspace_store_before {
-            Some(bytes) => std::fs::write(&index, bytes).map_err(|source| {
-                VcsError::Create {
-                    path: index.clone(),
-                    source,
-                }
-            })?,
+            Some(bytes) => write_whole(&index, bytes)?,
             None => remove_file(&index)?,
         }
         if self.made_tau_dir {
@@ -895,14 +884,7 @@ impl<'a> Journal<'a> {
         for (name, _) in back {
             let log = self.git_dir.join("logs").join(name);
             match self.logs_before.get(name) {
-                Some(bytes) => {
-                    std::fs::write(&log, bytes).map_err(|source| {
-                        VcsError::Create {
-                            path: log.clone(),
-                            source,
-                        }
-                    })?
-                }
+                Some(bytes) => write_whole(&log, bytes)?,
                 None => remove_file(&log)?,
             }
         }
@@ -1241,6 +1223,22 @@ fn remove_dir_all(dir: &Path) -> Result<(), VcsError> {
             source,
         }),
     }
+}
+
+/// Writes `bytes` to `path` whole or not at all: to a file beside it,
+/// then renamed over it.
+fn write_whole(path: &Path, bytes: &[u8]) -> Result<(), VcsError> {
+    let mut partial = path.as_os_str().to_owned();
+    partial.push(".tau-partial");
+    let partial = PathBuf::from(partial);
+    std::fs::write(&partial, bytes).map_err(|source| VcsError::Create {
+        path: partial.clone(),
+        source,
+    })?;
+    std::fs::rename(&partial, path).map_err(|source| VcsError::Create {
+        path: path.to_owned(),
+        source,
+    })
 }
 
 fn remove_file(path: &Path) -> Result<(), VcsError> {
