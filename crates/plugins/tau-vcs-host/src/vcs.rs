@@ -144,6 +144,12 @@ impl Vcs {
                 &lock.git()?,
             )?;
             worker.workspace = Some(begun.finish(&repo, name)?);
+            crate::workspace_init::made(&worker.root).map_err(|source| {
+                VcsError::Create {
+                    path: worker.root.join(".jj"),
+                    source,
+                }
+            })?;
             Ok(())
         })
         .await?;

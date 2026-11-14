@@ -182,7 +182,8 @@ pub(crate) fn is_local(repo_path: &Path) -> bool {
 /// finish, cut off by a crash: the next setup takes it away and starts
 /// again, and inspecting the folder sees a Git repository.
 pub fn unfinished(folder: &Path) -> bool {
-    tau_dir(folder).join(MAKING_FILE).is_file()
+    crate::workspace_init::unfinished(folder)
+        || tau_dir(folder).join(MAKING_FILE).is_file()
 }
 
 /// A name for a new local repository's runs' directory under `parent`:
@@ -442,6 +443,16 @@ impl<'a> Journal<'a> {
             trunk,
         }
         .write(&folder)?;
+        // Last: the main chat's workspace, then the repository, whole.
+        let main = &self.layout.main_dir;
+        for root in [main.as_path(), folder.as_path()] {
+            crate::workspace_init::made(root).map_err(|source| {
+                VcsError::Delete {
+                    path: root.join(".jj"),
+                    source,
+                }
+            })?;
+        }
         let making = tau_dir(&folder).join(MAKING_FILE);
         if making.exists() {
             std::fs::remove_file(&making).map_err(|source| {
@@ -813,7 +824,7 @@ impl<'a> Journal<'a> {
             for dir in &self.missing_config {
                 let _ = std::fs::remove_dir(dir);
             }
-            remove_dir_all(&folder.join(".jj"))?;
+            remove_jj_dir(folder)?;
             return Ok(());
         }
         // The person's jj repository: its operation heads and workspace
@@ -938,7 +949,7 @@ fn clear_unfinished(
         .collect();
     delete_refs(&git_dir, &jj_refs.iter().collect::<Vec<_>>())?;
     remove_repo_config(&identity.env, &repo_path)?;
-    remove_dir_all(&folder.join(".jj"))
+    remove_jj_dir(folder)
 }
 
 /// Sets the repository's `trunk()` to the default branch of `upstream`,
@@ -1209,6 +1220,16 @@ fn was(dir: &Path) -> Was {
         },
         Err(_) => Was::Kept,
     }
+}
+
+/// Takes `folder`'s `.jj` away whole ([`crate::workspace_init::remove_jj_dir`]).
+fn remove_jj_dir(folder: &Path) -> Result<(), VcsError> {
+    crate::workspace_init::remove_jj_dir(folder).map_err(|source| {
+        VcsError::Delete {
+            path: folder.join(".jj"),
+            source,
+        }
+    })
 }
 
 fn remove_dir_all(dir: &Path) -> Result<(), VcsError> {

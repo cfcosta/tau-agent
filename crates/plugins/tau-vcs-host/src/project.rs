@@ -367,10 +367,9 @@ impl std::fmt::Debug for ProjectRepo {
 impl ProjectRepo {
     /// Whether `root` holds a project.
     pub fn exists(root: &Path) -> bool {
-        Layout::of_clone(root, MAIN_WORKSPACE)
-            .repo_root
-            .join(".jj")
-            .is_dir()
+        crate::workspace_init::is_made(
+            &Layout::of_clone(root, MAIN_WORKSPACE).repo_root,
+        )
     }
 
     /// Opens the project at `root`, or makes it there from the local
@@ -419,6 +418,16 @@ impl ProjectRepo {
         };
         let project = Self::new(root.into(), identity)?;
         let main = project.inner.layout.main_dir.clone();
+        // A `main/` with no whole repository is what a make that died
+        // part way left.
+        if main.exists() {
+            std::fs::remove_dir_all(&main).map_err(|source| {
+                VcsError::Delete {
+                    path: main.clone(),
+                    source,
+                }
+            })?;
+        }
         std::fs::create_dir_all(&main).map_err(|source| VcsError::Create {
             path: main.clone(),
             source,
@@ -479,6 +488,7 @@ impl ProjectRepo {
             begun.finish(&repo, name).map_err(VcsError::MakeRepo)?;
         block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
             .map_err(VcsError::CheckOut)?;
+        made(&main)?;
         Ok(project)
     }
 
@@ -738,7 +748,8 @@ impl ProjectRepo {
             let repo =
                 crate::colocate::commit_in(tx, "import", &git, &name, &main)?;
             begun.finish(&repo, name).map_err(VcsError::MakeRepo)?;
-            project.write_trunk_alias(&repo)
+            project.write_trunk_alias(&repo)?;
+            made(&main)
         })();
         if let Err(error) = made {
             let _ = std::fs::remove_dir_all(&main);
@@ -1039,10 +1050,11 @@ impl ProjectRepo {
         snapshot: &str,
     ) -> Result<Vcs, VcsError> {
         let dir = self.workspace_dir(name);
-        if dir.join(".jj").is_dir() {
+        if crate::workspace_init::is_made(&dir) {
             self.link_worktree(name)?;
             return Vcs::open_in_job(dir, self.inner.identity.clone());
         }
+        clear_unmade(&dir)?;
         std::fs::create_dir_all(&dir).map_err(|source| VcsError::Create {
             path: dir.clone(),
             source,
@@ -1128,6 +1140,7 @@ impl ProjectRepo {
         block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
             .map_err(VcsError::CheckOut)?;
         crate::colocate::ignore_jj_dir(&dir)?;
+        made(&dir)?;
         drop(git);
         drop(lock);
         // Made with the main workspace's config, as `jj workspace add`
@@ -1448,10 +1461,11 @@ impl ProjectRepo {
         base: &str,
     ) -> Result<Vcs, VcsError> {
         let dir = self.workspace_dir(name);
-        if dir.join(".jj").is_dir() {
+        if crate::workspace_init::is_made(&dir) {
             self.link_worktree(name)?;
             return Vcs::open_in_job(dir, self.inner.identity.clone());
         }
+        clear_unmade(&dir)?;
         std::fs::create_dir_all(&dir).map_err(|source| VcsError::Create {
             path: dir.clone(),
             source,
@@ -1475,6 +1489,8 @@ impl ProjectRepo {
         let wc = block_on(
             tx.repo_mut().check_out(WorkspaceNameBuf::from(name), &base),
         )?;
+        // A workspace made again after a crash leaves the commit it had.
+        block_on(tx.repo_mut().rebase_descendants())?;
         let repo = crate::colocate::commit_in(
             tx,
             format!("add workspace {name}"),
@@ -1488,6 +1504,7 @@ impl ProjectRepo {
         block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
             .map_err(VcsError::CheckOut)?;
         crate::colocate::ignore_jj_dir(&dir)?;
+        made(&dir)?;
         drop(git);
         drop(lock);
         // Made with the main workspace's config, as `jj workspace add`
@@ -2227,6 +2244,26 @@ fn copy(entry: &std::fs::DirEntry, target: &Path) -> std::io::Result<()> {
 /// Git's lock files, which belong to whatever git process holds them.
 fn skipped(entry: &std::fs::DirEntry) -> bool {
     entry.file_name().to_string_lossy().ends_with(".lock")
+}
+
+/// Marks the workspace at `root` whole ([`crate::workspace_init::made`]).
+fn made(root: &Path) -> Result<(), VcsError> {
+    crate::workspace_init::made(root).map_err(|source| VcsError::Create {
+        path: root.join(".jj"),
+        source,
+    })
+}
+
+/// Takes away a run's workspace at `dir` that a crash cut off as it was
+/// made, so it is made again: it holds nothing of the run's yet.
+fn clear_unmade(dir: &Path) -> Result<(), VcsError> {
+    if !crate::workspace_init::unfinished(dir) {
+        return Ok(());
+    }
+    std::fs::remove_dir_all(dir).map_err(|source| VcsError::Delete {
+        path: dir.to_owned(),
+        source,
+    })
 }
 
 #[cfg(test)]

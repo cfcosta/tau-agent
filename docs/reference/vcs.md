@@ -861,8 +861,16 @@ Objects it wrote may stay in `.git/objects` as unreachable loose
 objects until Git collects them, and in a jj repository of the
 person's, the operations, index files and commit metadata it wrote stay
 in jj's content-addressed stores (`op_store`, `index`, `store/extra`),
-which no operation head reaches. A setup cut off by a crash leaves
-`.jj/repo/tau/making` in the `.jj` it made (`local::unfinished`):
+which no operation head reaches. Every `.jj` tau makes (a setup's, a
+project's, a run's workspace's) appears whole with `.jj/tau-making` and
+its `.gitignore` in it, made aside and renamed into place, and loses
+the mark as its maker's last step; one taken away is renamed aside
+first, so no `.jj` is left without its mark half deleted. A `.jj` that
+has the mark is one a crash cut off: a project whose `main/.jj` has it
+is not a project, and is made again; a run's workspace with it is made
+again on its next add. A setup cut off by a crash leaves
+`.jj/tau-making` or `.jj/repo/tau/making` in the `.jj` it made
+(`local::unfinished`):
 inspecting the folder sees the Git repository it was, and the next
 setup takes that `.jj` away (with `refs/jj/`, the repository's config,
 and the main chat's directory when it holds a workspace of it) and

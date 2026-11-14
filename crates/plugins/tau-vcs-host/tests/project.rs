@@ -533,3 +533,58 @@ fn the_main_chats_workspace_is_tau_main() {
 fn run_head(run: &str) -> tau_vcs_host::Head {
     tau_vcs_host::Head::Run(tau_agent::tool::RunId(run.into()))
 }
+
+/// What a crash inside making a `.jj` leaves: the mark it is born with,
+/// and no working copy yet.
+fn cut_off(root: &Path) {
+    let jj = root.join(".jj");
+    std::fs::remove_dir_all(jj.join("working_copy")).unwrap();
+    std::fs::write(jj.join("tau-making"), "").unwrap();
+}
+
+/// A project whose making a crash cut off is made again, not opened as
+/// made: its main workspace's `.jj` is marked unfinished until its last
+/// step, where any `main/.jj` counted as a project.
+#[test]
+fn a_project_cut_off_as_it_was_made_is_made_again() {
+    let src = tempfile::tempdir().unwrap();
+    let head = source(src.path());
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path().join("p");
+    let source = src.path().to_str().unwrap();
+    let project =
+        ProjectRepo::import(source, &root, Identity::default()).unwrap();
+    cut_off(project.main_dir());
+    drop(project);
+    assert!(!ProjectRepo::exists(&root));
+    let project =
+        ProjectRepo::open_or_import(source, &root, Identity::default())
+            .unwrap();
+    assert_eq!(project.trunk().unwrap(), head);
+    assert!(ProjectRepo::exists(&root));
+}
+
+/// A run's workspace that a crash cut off as it was made is made again
+/// on its next add, where it was opened half made and failed.
+#[test]
+fn a_run_workspace_cut_off_as_it_was_made_is_made_again() {
+    let src = tempfile::tempdir().unwrap();
+    source(src.path());
+    let home = tempfile::tempdir().unwrap();
+    let project = ProjectRepo::import(
+        src.path().to_str().unwrap(),
+        home.path().join("p"),
+        Identity::default(),
+    )
+    .unwrap();
+    let base = project.trunk().unwrap();
+    drop(project.add_workspace("run", &base).unwrap());
+    let dir = project.workspace_dir("run");
+    cut_off(&dir);
+    drop(project.add_workspace("run", &base).unwrap());
+    assert_eq!(
+        std::fs::read_to_string(dir.join("README.md")).unwrap(),
+        "hello\n"
+    );
+    assert!(!dir.join(".jj").join("tau-making").exists());
+}

@@ -23,7 +23,7 @@ use std::{
 use jj_lib::{
     backend::{Backend, BackendInitError},
     default_backend_factories::{self, default_working_copy_factory},
-    file_util::{self, IoResultExt as _, PathError},
+    file_util::{self, IoResultExt as _},
     git_backend::GitBackend,
     ref_name::{WorkspaceName, WorkspaceNameBuf},
     repo::{ReadonlyRepo, Repo as _, RepoInitError},
@@ -138,7 +138,7 @@ pub(crate) fn begin_repo(
         ))
     })();
     if made.is_err() {
-        let _ = std::fs::remove_dir_all(&jj_dir);
+        let _ = remove_jj_dir(workspace_root);
     }
     made
 }
@@ -221,18 +221,69 @@ impl Begun {
     }
 }
 
-/// `workspace_root/.jj`, made; refused when it exists.
+/// In a `.jj` tau is making, from the moment it appears: its maker
+/// takes it away last, once the workspace is whole ([`made`]). A `.jj`
+/// that has it is one a crash cut off ([`unfinished`]).
+const MAKING: &str = "tau-making";
+
+/// Where a `.jj` is made before it appears whole, and where one goes
+/// before it is deleted, beside it.
+const STAGED: &str = ".jj.tau-new";
+const ASIDE: &str = ".jj.tau-old";
+
+/// `workspace_root/.jj`, made with [`MAKING`] in it: it appears with the
+/// mark at once, renamed into place, so a crash leaves no `.jj` or one
+/// marked unfinished. It is out of Git's view from the start, as
+/// `crate::colocate::ignore_jj_dir` keeps it. Refused when it exists.
 fn create_jj_dir(workspace_root: &Path) -> Result<PathBuf, WorkspaceInitError> {
     let jj_dir = workspace_root.join(".jj");
-    match std::fs::create_dir(&jj_dir) {
-        Ok(()) => Ok(jj_dir),
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            Err(WorkspaceInitError::DestinationExists(jj_dir))
-        }
-        Err(source) => Err(PathError {
-            path: jj_dir,
-            source,
-        }
-        .into()),
+    if jj_dir.exists() {
+        return Err(WorkspaceInitError::DestinationExists(jj_dir));
     }
+    let staged = workspace_root.join(STAGED);
+    // What a crash left of a make before.
+    let _ = std::fs::remove_dir_all(&staged);
+    std::fs::create_dir(&staged).context(&staged)?;
+    let mark = staged.join(MAKING);
+    std::fs::write(&mark, "").context(&mark)?;
+    let ignore = staged.join(".gitignore");
+    std::fs::write(&ignore, "/*\n").context(&ignore)?;
+    std::fs::rename(&staged, &jj_dir).context(&jj_dir)?;
+    Ok(jj_dir)
+}
+
+/// Marks the workspace at `workspace_root` whole: its maker's last step.
+pub(crate) fn made(workspace_root: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(workspace_root.join(".jj").join(MAKING)) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            Err(error)
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Whether the `.jj` at `workspace_root` is one tau began and a crash cut
+/// off before it was whole.
+pub(crate) fn unfinished(workspace_root: &Path) -> bool {
+    workspace_root.join(".jj").join(MAKING).is_file()
+}
+
+/// Whether `workspace_root` holds a whole `.jj`: tau's, finished, or one
+/// it did not make.
+pub(crate) fn is_made(workspace_root: &Path) -> bool {
+    workspace_root.join(".jj").is_dir() && !unfinished(workspace_root)
+}
+
+/// Takes `workspace_root/.jj` away, renamed aside first, so that no
+/// `.jj` is left part deleted, its mark gone before the rest.
+pub(crate) fn remove_jj_dir(workspace_root: &Path) -> std::io::Result<()> {
+    let aside = workspace_root.join(ASIDE);
+    let _ = std::fs::remove_dir_all(&aside);
+    match std::fs::rename(workspace_root.join(".jj"), &aside) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(());
+        }
+        result => result?,
+    }
+    std::fs::remove_dir_all(&aside)
 }

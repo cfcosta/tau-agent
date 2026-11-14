@@ -934,6 +934,37 @@ fn a_setup_cut_off_by_a_crash_is_cleared_by_the_next(tc: TestCase) {
     assert_eq!(git_view(&person, &folder), before);
 }
 
+/// A crash inside making the `.jj`, before the setup marks it its own,
+/// leaves a `.jj` with the mark it is born with: the folder is still the
+/// Git repository it was, and the next setup takes the `.jj` away and
+/// succeeds. It was taken as the person's jj repository, which could not
+/// be read, so no setup could run again.
+#[hegel::test(
+    test_cases = 3,
+    suppress_health_check = [hegel::HealthCheck::TooSlow]
+)]
+fn a_setup_cut_off_inside_making_its_jj_is_cleared_by_the_next(tc: TestCase) {
+    let world = world(&tc, false, false);
+    let base = tempfile::tempdir().unwrap();
+    let person = Person::new(&base.path().join("person"));
+    let folder = build(&person, base.path(), &world, None);
+    let first = found(&person, &folder);
+    let before = git_view(&person, &folder);
+    // Where `begin_repo` was when the crash came.
+    let jj = folder.join(".jj");
+    std::fs::create_dir_all(jj.join("repo")).unwrap();
+    std::fs::write(jj.join("tau-making"), "").unwrap();
+    std::fs::write(jj.join(".gitignore"), "/*\n").unwrap();
+    assert!(local::unfinished(&folder));
+    let again = found(&person, &folder);
+    assert_eq!(again, first);
+    let layout = layout(base.path(), &folder);
+    ProjectRepo::setup_local(&again, layout, person.identity(), &mut go_on)
+        .unwrap();
+    assert!(!local::unfinished(&folder));
+    assert_eq!(git_view(&person, &folder), before);
+}
+
 /// Copies the folder `from` to `to`, files, folders and modes.
 fn copy(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).unwrap();
