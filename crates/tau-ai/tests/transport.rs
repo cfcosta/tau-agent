@@ -582,6 +582,40 @@ fn dropping_responses(tc: TestCase) {
     }
 }
 
+/// A response the driver finished, whose `Done` the caller never read,
+/// cancels nothing when it is dropped after the next request started:
+/// the cancel names the request, not the lane.
+#[hegel::test(test_cases = 5)]
+fn dropping_an_unread_finished_response_keeps_the_next(tc: TestCase) {
+    let (_, first_reply) = respond(&tc, "resp_1");
+    let (second, second_reply) = respond(&tc, "resp_2");
+    let got: Rc<RefCell<Option<AssistantMessage>>> = Rc::default();
+    let seen = got.clone();
+    let label = (second.model.clone(), second.timestamp);
+    simulate(vec![first_reply, second_reply], async move {
+        let transport = Transport::start(SimConnector, Limits::default());
+        let lane = transport.open_lane(Affinity::default()).await.unwrap();
+        let settings = Settings {
+            model: "gpt-5.5".into(),
+            ..Settings::default()
+        };
+        let input = to_input(&[user("hi")]);
+        let first =
+            lane.request(body(&settings, input.clone()), "gpt-5.5".into(), 0);
+        // The whole response arrives and the driver ends the request; the
+        // caller reads none of it.
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        let second_response =
+            lane.request(body(&settings, input), label.0, label.1);
+        drop(first);
+        *seen.borrow_mut() = Some(collect(second_response).await);
+        Ok(())
+    });
+    let mut have = got.borrow_mut().take().unwrap();
+    have.usage.cost = second.usage.cost.clone();
+    assert_eq!(have, second);
+}
+
 /// A request the server rejects outright fails with one `Start` and one
 /// `Error`, even though no response frame ever arrived.
 #[test]

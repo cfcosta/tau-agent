@@ -88,6 +88,11 @@ impl Request {
         }
     }
 
+    /// Whether its caller dropped the response.
+    pub(super) fn abandoned(&self) -> bool {
+        self.events.is_closed()
+    }
+
     fn attempt(&self) -> Attempt {
         Attempt {
             processor: StreamProcessor::new(self.model.clone(), self.timestamp),

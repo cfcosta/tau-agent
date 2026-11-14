@@ -132,6 +132,7 @@ enum Command {
         timestamp: Timestamp,
         events: mpsc::UnboundedSender<AssistantEvent>,
     },
+    /// Cancels the lane's request, if its caller dropped the response.
     Cancel(LaneId),
     Stats(oneshot::Sender<PoolStats>),
     CacheLapse(Arc<str>, oneshot::Sender<Option<CacheLapse>>),
@@ -269,7 +270,11 @@ impl Response {
 }
 
 impl Drop for Response {
+    /// Cancels the request, unless it finished. Closed first, so the
+    /// driver tells it from the lane's next request, which a response
+    /// whose `Done` it never read may outlive.
     fn drop(&mut self) {
+        self.events.close();
         if !self.finished {
             let _ = self.commands.send(Command::Cancel(self.lane));
         }
@@ -364,6 +369,15 @@ impl<C: Connector> Driver<C> {
                 }
             }
             Command::Cancel(lane) => {
+                // The lane's request now may be a later one than the
+                // dropped response's.
+                if !self
+                    .lanes
+                    .get(&lane)
+                    .is_some_and(|request| request.inner().abandoned())
+                {
+                    return;
+                }
                 let Some(effects) = self.feed(lane, &Input::Cancel) else {
                     return;
                 };
