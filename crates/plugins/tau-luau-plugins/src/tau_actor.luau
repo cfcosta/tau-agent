@@ -207,6 +207,24 @@ local function unpack_values(values)
 	return table.unpack(out, 1, n)
 end
 
+-- The model answers in an envelope, `{ ok, value, error }`: an await
+-- gives its value, or raises its error, as every other command's.
+local ENVELOPED = { infer = true, infer_turn = true }
+
+local function unwrap(values, level)
+	local envelope = unpack_values(values)
+	if type(envelope) ~= "table" then
+		return envelope
+	end
+	if envelope.ok == false then
+		error(envelope.error or "the model gave no answer", level + 1)
+	end
+	if envelope.value == json.null then
+		return nil
+	end
+	return envelope.value
+end
+
 -- What awaiting needs to know of the step it runs in.
 local current = nil
 
@@ -228,6 +246,9 @@ function tau.await(c)
 	local answer = coroutine.yield(AWAIT, c)
 	if answer.ok == false then
 		error(answer.error, 2)
+	end
+	if ENVELOPED[c.op] then
+		return unwrap(answer.values, 2)
 	end
 	return unpack_values(answer.values)
 end
@@ -301,7 +322,7 @@ function tau._infer_with_tools(args)
 		if answer.ok == false then
 			error(answer.error, 2)
 		end
-		local turn_answer = unpack_values(answer.values)
+		local turn_answer = unwrap(answer.values, 2)
 		text = turn_answer.text or ""
 		local asked = turn_answer.calls or {}
 		if #asked == 0 then
