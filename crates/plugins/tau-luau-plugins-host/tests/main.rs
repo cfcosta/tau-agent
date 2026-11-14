@@ -2,6 +2,7 @@
 //! rather than one per file is most of what building the tests
 //! costs (docs/reference/testing.md, "One binary per crate").
 
+mod actors;
 mod agent;
 mod agents;
 mod desktop;

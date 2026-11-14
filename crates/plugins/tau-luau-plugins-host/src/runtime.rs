@@ -337,17 +337,30 @@ impl Files {
     pub fn modules(&self) -> Result<Modules, String> {
         let entry = self.entry().to_owned();
         let (file, module) = (entry.as_str(), self.root.module);
+        let actor = Definition::new(
+            "tau_actor".into(),
+            tau_luau_plugins::TAU_ACTOR_MODULE.into(),
+            json!({}),
+            BTreeMap::new(),
+        )?;
         let tau = Definition::new(
             "tau".into(),
             TAU_MODULE.into(),
             json!({}),
-            BTreeMap::new(),
+            BTreeMap::from([(
+                "tau_actor".to_owned(),
+                actor.version().to_owned(),
+            )]),
         )?;
         let mut modules = BTreeMap::new();
         let mut plugin_deps =
             BTreeMap::from([("tau".to_owned(), tau.version().to_owned())]);
         for name in self.libs.keys() {
-            if name == "tau" || name == "tau_test" || name == module {
+            if name == "tau"
+                || name == "tau_test"
+                || name == "tau_actor"
+                || name == module
+            {
                 return Err(format!("src/{name}.luau: `{name}` is taken"));
             }
         }
@@ -401,6 +414,7 @@ impl Files {
         )?;
         modules.insert("tau_test".into(), harness);
         modules.insert("tau".into(), tau);
+        modules.insert("tau_actor".into(), actor);
         Ok(modules)
     }
 }

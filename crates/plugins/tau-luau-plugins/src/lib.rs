@@ -44,6 +44,9 @@ pub const SKILL: &str = "tau-plugins";
 /// The `tau` module every plugin requires: the declaration, the
 /// answers hooks give, the view pieces.
 pub const TAU_MODULE: &str = include_str!("tau.luau");
+/// Commands, awaiting them, and a plugin's actor (ADR 0056), which
+/// `tau` installs into itself.
+pub const TAU_ACTOR_MODULE: &str = include_str!("tau_actor.luau");
 
 /// The `tau_test` module the tests run with: `tau.test`, apart from
 /// `tau`, which every hook loads.

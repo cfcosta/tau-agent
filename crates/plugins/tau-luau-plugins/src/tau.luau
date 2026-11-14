@@ -1760,6 +1760,9 @@ function tau._ctx(data, with_tools)
 	return ctx
 end
 
+-- Commands, awaiting them, and a plugin's actor (ADR 0056).
+require("tau_actor")(tau, { tool_text = tool_text })
+
 -- For the test harness (`tau_test`): reading a frame as a stream does,
 -- and how many keys a poll keeps.
 tau._parse_one = parse_frame
