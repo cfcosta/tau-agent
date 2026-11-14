@@ -1221,7 +1221,9 @@ branch), has none, and the head names nothing: no head names the root
 commit. The run's changes are
 what `@` has that neither trunk nor the commit the workspace last moved
 onto has. The workspace records that commit (in `.jj/tau-moved-onto`)
-after each move, unless it was one of the run's own commits. So
+with each move, unless it was one of the run's own commits: written
+whole, before the move's operation stands, as what it says holds
+either way, so a crash between the two never loses it. So
 upstream's commits under the run never count as the run's: once
 upstream drops them (a reset, an amend, a force-push), they stay
 dropped. Each change keeps its

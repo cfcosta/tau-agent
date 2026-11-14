@@ -606,7 +606,6 @@ pub(crate) fn commit_all(
     let name = workspace_name(worker)?;
     let record = crate::land::MovedOnto::load(worker)?;
     let revsets = worker.revsets()?;
-    let mut followed = None;
     let (_, committed) = session::mutate(worker, CHECKPOINT, |tx, wc| {
         let (wc, onto) = crate::land::follow_head(
             tx,
@@ -616,7 +615,8 @@ pub(crate) fn commit_all(
             record.last(),
             &revsets,
         )?;
-        followed = onto;
+        // Before the operation stands: see `MovedOnto::save`.
+        record.save(onto.as_ref())?;
         let wc = &wc;
         let parent_tree = block_on(wc.parent_tree(tx.repo().index()))?;
         // Changed paths, not jj's emptiness, which compares trees as
@@ -660,7 +660,6 @@ pub(crate) fn commit_all(
         point_head(tx, head, &name, &committed.commit_id, !committed.changed)?;
         Ok(committed)
     })?;
-    record.save(followed.as_ref())?;
     Ok(committed)
 }
 
@@ -707,7 +706,6 @@ pub(crate) fn end_turn(
     let name = workspace_name(worker)?;
     let record = crate::land::MovedOnto::load(worker)?;
     let revsets = worker.revsets()?;
-    let mut followed = None;
     let (_, turn) = session::mutate(worker, CHECKPOINT, |tx, snapped| {
         let (wc, onto) = crate::land::follow_head(
             tx,
@@ -717,7 +715,8 @@ pub(crate) fn end_turn(
             record.last(),
             &revsets,
         )?;
-        followed = onto;
+        // Before the operation stands: see `MovedOnto::save`.
+        record.save(onto.as_ref())?;
         let wc = &wc;
         let head = wc.parent_ids().first().ok_or(VcsError::NoParent)?.clone();
         let before = match since.and_then(CommitId::try_from_hex) {
@@ -749,7 +748,6 @@ pub(crate) fn end_turn(
             paths,
         })
     })?;
-    record.save(followed.as_ref())?;
     Ok(turn)
 }
 

@@ -53,7 +53,6 @@ pub(crate) fn land(
     let record = MovedOnto::load(worker)?;
     let revsets = worker.revsets()?;
     if confirm {
-        let mut followed = None;
         let (_, landing) = session::mutate(worker, "land", |tx, wc| {
             let (landing, onto) = follow_and_restack(
                 tx,
@@ -64,7 +63,8 @@ pub(crate) fn land(
                 &record,
                 &revsets,
             )?;
-            followed = onto;
+            // Before the operation stands: see [`MovedOnto::save`].
+            record.save(onto.as_ref())?;
             let landed: Vec<&str> = landing
                 .changes
                 .iter()
@@ -84,7 +84,6 @@ pub(crate) fn land(
             );
             Ok(landing)
         })?;
-        record.save(followed.as_ref())?;
         return Ok(landing);
     }
     // A preview: the same rewrite in a transaction that is dropped.
@@ -330,12 +329,12 @@ pub(crate) fn move_onto(
     let revsets = worker.revsets()?;
     if confirm {
         // Where the run went: past `onto` when an update moved the
-        // head on meanwhile; recorded unless it is the run's own.
-        let mut moved_onto = None;
+        // head on meanwhile; recorded unless it is the run's own, before
+        // the operation stands (see [`MovedOnto::save`]).
         let (_, moved) = session::mutate(worker, "move_onto", |tx, wc| {
             let onto = past(tx, wc, &onto, head)?;
             if !is_own(tx.repo(), wc, last.as_ref(), &onto)? {
-                moved_onto = Some(onto.clone());
+                record.save(Some(&onto))?;
             }
             tx.set_attribute(
                 session::CAUGHT_UP_ATTRIBUTE.to_owned(),
@@ -344,7 +343,6 @@ pub(crate) fn move_onto(
             let immutable = Immutable::of(tx.repo(), &revsets)?;
             rebase_run(tx, wc, &name, &onto, last.as_ref(), head, &immutable)
         })?;
-        record.save(moved_onto.as_ref())?;
         return Ok(moved);
     }
     let snapshot = session::snapshot(worker)?;
@@ -389,11 +387,18 @@ impl MovedOnto {
         self.last.as_ref()
     }
 
-    /// Records `onto`, when the run moved onto one.
+    /// Records `onto`, when the run moves onto one. It is saved before
+    /// the move's operation stands, as what it says (what is under
+    /// `onto` is upstream's) holds whether the move does or not, and a
+    /// crash between the two must not lose it. Written whole or not at
+    /// all: a torn record would read as none.
     pub(crate) fn save(&self, onto: Option<&CommitId>) -> Result<(), VcsError> {
-        if let Some(onto) = onto {
-            std::fs::write(&self.path, onto.hex())?;
-        }
+        let Some(onto) = onto else {
+            return Ok(());
+        };
+        let fresh = self.path.with_extension("new");
+        std::fs::write(&fresh, onto.hex())?;
+        std::fs::rename(&fresh, &self.path)?;
         Ok(())
     }
 }

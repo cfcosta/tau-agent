@@ -1130,6 +1130,32 @@ fn an_update_during_a_main_chat_turn_keeps_upstream_on_trunk() {
     );
 }
 
+/// A catch-up records the commit it moves onto before its operation
+/// stands: one that cannot record it does not move, where it moved and
+/// then failed to record, so a crash between the two lost the record
+/// that keeps upstream's dropped commits from coming back as the run's.
+#[test]
+fn a_catch_up_that_cannot_record_where_it_went_does_not_move() {
+    let repo = Repo::new();
+    repo.push_upstream(Some("x\n"));
+    repo.project
+        .update(UpdateFrom::Checkout(&repo.src()))
+        .unwrap();
+    let record = repo.main_dir().join(".jj").join("tau-moved-onto");
+    std::fs::remove_file(&record).unwrap();
+    std::fs::create_dir(&record).unwrap();
+    assert!(catch_up(&repo.project).is_err());
+    assert_eq!(read(&repo.main_dir(), "up.txt"), None, "it moved");
+
+    std::fs::remove_dir(&record).unwrap();
+    catch_up(&repo.project).unwrap();
+    assert_eq!(read(&repo.main_dir(), "up.txt").as_deref(), Some("x\n"));
+    assert_eq!(
+        std::fs::read_to_string(&record).unwrap(),
+        repo.project.trunk().unwrap()
+    );
+}
+
 /// Dropping a chat after an update, as `Host::drop_child` does it,
 /// abandons only the chat's own commit: the main chat catches up first
 /// and keeps what its working copy stands on.
