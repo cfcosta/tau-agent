@@ -473,6 +473,14 @@ local function answering(req, noul)
 	return answers
 end
 
+-- `output.ask` in a hook of a run whose Jev is `jev`: what it gives.
+local function ask(jev, planned, threshold)
+	local got = t.run({ jev = jev }):call(function()
+		return table.pack(output.ask(planned, threshold))
+	end)
+	return table.unpack(got, 1, got.n)
+end
+
 -- Asking sends every planned request and charges each one answered;
 -- with every answer given, a chunk goes exactly when `output.keep` says:
 -- the second chunk, kept by its answer, stays with the first and last.
@@ -488,7 +496,7 @@ t.case("asking charges every answer and keeps what Jev keeps", function()
 			end), 0.25
 		end,
 	}
-	local asked, why, spent = output.ask(jev, planned, 0.5)
+	local asked, why, spent = ask(jev, planned, 0.5)
 	t.equal(why, nil)
 	t.equal(sent, #planned.requests)
 	t.equal(spent, 0.25 * #planned.requests)
@@ -522,7 +530,7 @@ t.case("asking fails on any failure", function()
 			end), 0.25
 		end,
 	}
-	local asked, why, spent = output.ask(jev, planned, 0.5)
+	local asked, why, spent = ask(jev, planned, 0.5)
 	t.equal(asked, nil)
 	t.equal(why, "Jev answered with status 503")
 	t.equal(spent, 0.25 * (#planned.requests - 1))
@@ -536,7 +544,7 @@ t.case("asking fails on an answer missing or out of range", function()
 			return {}, 0
 		end,
 	}
-	local asked, why = output.ask(missing, planned, 0.5)
+	local asked, why = ask(missing, planned, 0.5)
 	t.equal(asked, nil)
 	t.equal(string.find(why, "Jev gave no yes/no answer", 1, true) ~= nil, true, why)
 	local wrong = {
@@ -546,7 +554,7 @@ t.case("asking fails on an answer missing or out of range", function()
 			end), 0
 		end,
 	}
-	local again, out_of_range = output.ask(wrong, planned, 0.5)
+	local again, out_of_range = ask(wrong, planned, 0.5)
 	t.equal(again, nil)
 	t.equal(string.find(out_of_range, "out of range", 1, true) ~= nil, true, out_of_range)
 end)

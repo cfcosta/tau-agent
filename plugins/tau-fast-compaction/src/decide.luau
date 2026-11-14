@@ -4,6 +4,7 @@
 -- `joelhooks/pi-fast-jev-compaction` (`src/core/decide.ts`), with the
 -- partitioned history of `tamaratran/jev-pruner` (`src/history.ts`; see
 -- THIRD_PARTY_NOTICES.md).
+local tau = require("tau")
 local estimate = require("estimate")
 local state = require("state")
 local history = require("history")
@@ -213,22 +214,31 @@ end
 
 -- Sends `requests` to Jev together, at most as many at once as Jev
 -- takes: each one's answers, or nil and the first failure. What it cost.
-function decide.ask(jev, requests)
-	local calls = {}
+function decide.ask(requests)
+	local commands = {}
 	for _, request in ipairs(requests) do
-		table.insert(calls, function()
-			local questions = {}
-			for _, question in ipairs(request.questions) do
-				questions[question.id] = { kind = "noul", question = question.instructions, yes = question.yes, no = question.no }
-			end
-			local ok, answers, cost = pcall(jev.ask, { state_json = request.state, questions = questions })
-			if not ok then
-				return { error = tostring(answers) }
-			end
-			return { answers = answers, cost = cost or 0 }
-		end)
+		local questions = {}
+		for _, question in ipairs(request.questions) do
+			questions[question.id] = { kind = "noul", question = question.instructions, yes = question.yes, no = question.no }
+		end
+		table.insert(commands, tau.cmd.jev.ask({ state_json = request.state, questions = questions }))
 	end
-	local results = { parallel(table.unpack(calls)) }
+	local answers = tau.all(commands)
+	-- The runtime's `tau.all` answers its list inside the answer's values
+	-- (`{ answers }`): take the list either way.
+	if type(answers[1]) == "table" and answers[1].ok == nil then
+		answers = answers[1]
+	end
+	local results = {}
+	for _, answer in ipairs(answers) do
+		if answer.ok then
+			local values = answer.values or {}
+			local cost = values[2]
+			table.insert(results, { answers = values[1], cost = type(cost) == "number" and cost or 0 })
+		else
+			table.insert(results, { error = tostring(answer.error) })
+		end
+	end
 	local spent = 0
 	for _, result in ipairs(results) do
 		spent += result.cost or 0
@@ -245,7 +255,7 @@ end
 -- kept without asking; so is a call some segment was not asked about.
 -- Otherwise each answer is its largest over the segments: a keep in any
 -- segment keeps. Nil and why on any failure; what Jev cost either way.
-function decide.decide(jev, entries, calls, settings)
+function decide.decide(entries, calls, settings)
 	local planned, why = decide.requests(
 		entries,
 		calls,
@@ -256,7 +266,7 @@ function decide.decide(jev, entries, calls, settings)
 	if planned == nil then
 		return nil, why, 0
 	end
-	local results, failed, spent = decide.ask(jev, planned.requests)
+	local results, failed, spent = decide.ask(planned.requests)
 	if results == nil then
 		return nil, failed, spent
 	end

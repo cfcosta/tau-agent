@@ -303,8 +303,8 @@ end
 -- Sends every planned request together and decides each chunk: which
 -- stay, and how many requests it took; or nil and the first failure.
 -- What Jev cost either way.
-function output.ask(jev, planned, threshold)
-	local results, failed, spent = decide.ask(jev, planned.requests)
+function output.ask(planned, threshold)
+	local results, failed, spent = decide.ask(planned.requests)
 	if results == nil then
 		return nil, failed, spent
 	end

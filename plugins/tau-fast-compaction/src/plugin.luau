@@ -56,9 +56,9 @@ for key, value in pairs(DEFAULT) do
 end
 
 -- The settings, the defaults under what the person set.
-local function settings_of(ctx)
+local function settings_of(env)
 	local out = table.clone(DEFAULT)
-	for key, value in pairs(ctx.settings or {}) do
+	for key, value in pairs(env.settings or {}) do
 		out[key] = value
 	end
 	return out
@@ -74,11 +74,11 @@ end
 
 -- Whether a pass is due between turns: past the share of the window, and
 -- past the cooldown since the last pass that asked Jev.
-local function due(ctx, tokens, window, settings)
+local function due(model, tokens, window, settings)
 	if window == nil or window <= 0 then
 		return false
 	end
-	local last = ctx.state.last_pass
+	local last = model.last_pass
 	local cooled = last == nil or math.max(tokens - last, 0) >= window * settings.cooldown_percent / 100
 	return tokens * 100 / window >= settings.compact_at_percent and cooled
 end
@@ -141,7 +141,7 @@ end
 -- decisions into the ledger, and rewrites the transcript when that saves
 -- enough. Nothing when there is nothing to ask or too little to save;
 -- nil and why on a failure.
-local function pass(view, ctx, settings)
+local function pass(view, model, settings)
 	local preserve = math.max(settings.preserve_recent, 1)
 	local entries = state.entries(view.messages)
 	local calls = state.calls(entries, preserve)
@@ -153,16 +153,19 @@ local function pass(view, ctx, settings)
 		return nil
 	end
 	-- Unlike pi, the cooldown starts only with a pass that asks Jev.
-	ctx.state.last_pass = view.tokens
-	local decided, why, spent = decide.decide(ctx.jev, entries, calls, settings)
+	model.last_pass = view.tokens
+	local decided, why, spent = decide.decide(entries, calls, settings)
 	if decided == nil then
 		return nil, why
 	end
-	local staged = ledger.of(ctx.state.decisions)
+	-- The ledger as it is now, after Jev answered.
+	local staged = ledger.of(model.decisions)
 	ledger.merge(staged, decided.decisions)
-	local archives = ledger.assign_archives(staged, view.messages, settings.head_chars, ctx.archive.path)
+	local archives = ledger.assign_archives(staged, view.messages, settings.head_chars, function(kind)
+		return tau.await(tau.cmd.archive.path(kind))
+	end)
 	local rewrite = ledger.apply(staged, view.messages, settings.head_chars)
-	local measured = ctx.measure(rewrite)
+	local measured = tau.await(tau.cmd.measure(rewrite))
 	local reduction = 0
 	if measured.before > 0 then
 		reduction = math.max(measured.before - measured.after, 0) / measured.before
@@ -174,7 +177,7 @@ local function pass(view, ctx, settings)
 	-- cannot be written fails the pass rather than cut a result the
 	-- model could not read back.
 	for _, archive in ipairs(archives) do
-		local ok, failed = pcall(ctx.archive.write, archive.path, archive.text)
+		local ok, failed = pcall(tau.await, tau.cmd.archive.write(archive.path, archive.text))
 		if not ok then
 			return nil, tostring(failed)
 		end
@@ -207,7 +210,7 @@ local function pass(view, ctx, settings)
 		cost = spent,
 	}
 	local decisions = ledger.list(staged)
-	ctx.state.decisions = array(decisions)
+	model.decisions = array(decisions)
 	-- What the ledger page and the cards show of this pass: each call,
 	-- what it was decided, and what it takes.
 	-- Calls an earlier pass dropped have left the transcript; they still
@@ -242,7 +245,7 @@ local function pass(view, ctx, settings)
 			decision = decision and decision.action or "pinned",
 		})
 	end
-	local passes = ctx.state.passes or {}
+	local passes = model.passes or {}
 	table.insert(passes, {
 		before = estimate.div_ceil(stats.chars_before, 4),
 		after = estimate.div_ceil(stats.chars_after, 4),
@@ -252,8 +255,8 @@ local function pass(view, ctx, settings)
 		detail = detail(stats),
 		window = window_of(view, settings) or json.null,
 	})
-	ctx.state.passes = array(passes)
-	ctx.state.ledger = array(judged)
+	model.passes = array(passes)
+	model.ledger = array(judged)
 	rewrite.details = { decisions = array(decisions), stats = stats }
 	return tau.rewrite(rewrite)
 end
@@ -262,8 +265,8 @@ end
 -- renders what stays, and writes the archive. The pruned text, when it
 -- saves at least the ratio of the output; nil and why on a failure.
 -- Reports how it went whenever Jev was asked.
-local function prune(result, full, ctx, settings)
-	local entries = state.entries(ctx.transcript())
+local function prune(result, full, model, settings)
+	local entries = state.entries(tau.await(tau.cmd.transcript()))
 	local task = state.goal_or_prompts(settings.goal, entries)
 	local records = output.records(entries)
 	local lines = output.lines(full)
@@ -280,11 +283,11 @@ local function prune(result, full, ctx, settings)
 	if #planned.requests == 0 then
 		return nil
 	end
-	local asked, failed, spent = output.ask(ctx.jev, planned, settings.output_keep_threshold)
+	local asked, failed, spent = output.ask(planned, settings.output_keep_threshold)
 	if asked == nil then
 		return nil, failed
 	end
-	local archive = ctx.archive.path("output")
+	local archive = tau.await(tau.cmd.archive.path("output"))
 	local text = output.render(lines, planned.chunks, asked.keep, archive)
 	local before, after = estimate.tokens(full), estimate.tokens(text)
 	local kept, dropped_lines = 0, 0
@@ -297,12 +300,13 @@ local function prune(result, full, ctx, settings)
 	end
 	local pruned = dropped_lines > 0 and after <= before * (1 - settings.output_min_reduction_ratio)
 	if pruned then
-		local ok, failure = pcall(ctx.archive.write, archive, full)
+		local ok, failure = pcall(tau.await, tau.cmd.archive.write(archive, full))
 		if not ok then
 			return nil, tostring(failure)
 		end
 	end
-	local outputs = ctx.state.outputs or {}
+	-- The outputs as they are now, after every await.
+	local outputs = model.outputs or {}
 	table.insert(outputs, {
 		call_id = result.id,
 		lines = #lines,
@@ -317,7 +321,7 @@ local function prune(result, full, ctx, settings)
 		archive = pruned and archive or json.null,
 		cost = spent,
 	})
-	ctx.state.outputs = array(outputs)
+	model.outputs = array(outputs)
 	return pruned and text or nil
 end
 
@@ -412,7 +416,7 @@ return tau.plugin({
 	settings = {
 		schema = SCHEMA,
 		default = DEFAULT,
-		view = function(settings, ctx)
+		view = function(settings, model, env)
 			return ui.stack({
 				ui.text(
 					"Prunes large command outputs as they arrive, and stale tool history between turns, asking Jev what the task still needs. What it cuts is archived for the model to read back. It needs a TypeSafe key."
@@ -421,14 +425,14 @@ return tau.plugin({
 		end,
 	},
 	-- Whether it can prune: there is a TypeSafe key.
-	start = function(input, ctx)
-		ctx.state.on = ctx.jev ~= nil
+	start = function(input, model, env)
+		model.on = env.run.jev == true
 	end,
-	rewrite_context = function(view, ctx)
-		if ctx.jev == nil then
+	rewrite_context = function(view, model, env)
+		if not env.run.jev then
 			return nil
 		end
-		local settings = settings_of(ctx)
+		local settings = settings_of(env)
 		local window = window_of(view, settings)
 		local trigger = view.trigger
 		local wanted
@@ -439,7 +443,7 @@ return tau.plugin({
 			-- prompt cache: only a rewrite that must fit the window runs.
 			wanted = overfull(view.tokens, window, settings)
 		elseif trigger == "turn_end" then
-			wanted = due(ctx, view.tokens, window, settings)
+			wanted = due(model, view.tokens, window, settings)
 		else
 			-- An idle run is summarized in its own conversation while its
 			-- cache lasts: pruning first would change what that reads.
@@ -448,28 +452,28 @@ return tau.plugin({
 		if not wanted then
 			return nil
 		end
-		local rewritten, why = pass(view, ctx, settings)
+		local rewritten, why = pass(view, model, settings)
 		if why ~= nil then
 			if trigger == "overflow" then
 				error(why, 0)
 			end
-			ctx.log(why)
+			tau.log(why)
 			return nil
 		end
 		return rewritten
 	end,
-	after_tool_result = function(result, ctx)
-		local settings = settings_of(ctx)
-		if ctx.jev == nil or not settings.output_enabled or result.nested then
+	after_tool_result = function(result, model, env)
+		local settings = settings_of(env)
+		if not env.run.jev or not settings.output_enabled or result.nested then
 			return nil
 		end
 		local full = output.gate(result, settings.output_min_tokens)
 		if full == nil then
 			return nil
 		end
-		local text, why = prune(result, full, ctx, settings)
+		local text, why = prune(result, full, model, settings)
 		if why ~= nil then
-			ctx.log(why)
+			tau.log(why)
 			return nil
 		end
 		if text == nil then
@@ -477,7 +481,7 @@ return tau.plugin({
 		end
 		return tau.result(text, { flag = false })
 	end,
-	view = function(state_now, ctx)
+	view = function(state_now, env)
 		local passes = state_now.passes or {}
 		local last = passes[#passes]
 		local line
