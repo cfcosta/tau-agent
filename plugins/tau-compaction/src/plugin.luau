@@ -9,14 +9,35 @@ local tau = require("tau")
 local ui = tau.ui
 local compaction = require("compaction")
 
+-- The model's answer to `request` as its envelope, `{ ok, value, error,
+-- reason }`: awaited through `tau.all`, which keeps the `reason` an
+-- answer was refused for, where `tau.await` keeps only its error.
+local function infer(request)
+	local answers = tau.all({ tau.cmd.infer(request) })
+	-- The runtime's `tau.all` answers its list inside the answer's values
+	-- (`{ answers }`): take the list either way.
+	if type(answers[1]) == "table" and answers[1].ok == nil then
+		answers = answers[1]
+	end
+	local answer = answers[1]
+	if not answer.ok then
+		return { ok = false, error = answer.error }
+	end
+	local envelope = (answer.values or {})[1]
+	if type(envelope) ~= "table" then
+		return { ok = false, error = "the model gave no answer" }
+	end
+	return envelope
+end
+
 -- One summary request of its own, with pi's instructions, on the run's
 -- model at the effort the run started at: the summary, or why it is
 -- none.
-local function summarize(request, ctx)
-	local answer = ctx.tools.infer({
+local function summarize(request, model)
+	local answer = infer({
 		task = request,
 		instructions = compaction.SYSTEM_PROMPT,
-		effort = ctx.state.effort,
+		effort = model.effort,
 	})
 	return compaction.summary_of(answer)
 end
@@ -24,7 +45,7 @@ end
 -- The rewrite to `summary` of what `plan` drops: the summary first, its
 -- file lists after it, then the messages kept. It becomes the run's
 -- latest compaction.
-local function rewrite(view, plan, summary, files, ctx)
+local function rewrite(view, plan, summary, files, model, env)
 	local read_files, modified_files = compaction.file_lists(files)
 	summary ..= compaction.format_files(read_files, modified_files)
 	local record = {
@@ -32,9 +53,9 @@ local function rewrite(view, plan, summary, files, ctx)
 		tokens_before = view.tokens,
 		read_files = array(read_files),
 		modified_files = array(modified_files),
-		timestamp = ctx.now.unix * 1000,
+		timestamp = env.now.unix * 1000,
 	}
-	ctx.state.compacted = record
+	model.compacted = record
 	local keep = {}
 	for at = plan.kept_from, #view.messages do
 		table.insert(keep, at)
@@ -50,10 +71,10 @@ end
 -- What the transcript opens with of the latest compaction: how many
 -- messages are its summary, the plan of what to summarize past them, and
 -- the files the summary carries.
-local function planned(view, ctx)
-	local record = ctx.state.compacted
+local function planned(view, model, env)
+	local record = model.compacted
 	local summarized = compaction.summarized(view.messages, record)
-	local plan = compaction.plan(view.messages, summarized, ctx.settings.keep_recent_tokens)
+	local plan = compaction.plan(view.messages, summarized, env.settings.keep_recent_tokens)
 	local files = compaction.files(summarized == 1 and record or nil)
 	return summarized, plan, files
 end
@@ -61,18 +82,18 @@ end
 -- Replaces the older messages with a summary: the history's, and a split
 -- turn's start's, merged. Nothing when the cut keeps everything; nil and
 -- why when a summary failed.
-local function compact(view, ctx)
-	local summarized, plan, files = planned(view, ctx)
+local function compact(view, model, env)
+	local summarized, plan, files = planned(view, model, env)
 	if plan == nil then
 		return nil
 	end
-	local previous = summarized == 1 and ctx.state.compacted.summary or nil
+	local previous = summarized == 1 and model.compacted.summary or nil
 	local history = compaction.slice(view.messages, plan.history)
 	compaction.extract(files, history)
 	local summary = previous or "No prior history."
 	if #history > 0 then
 		local why
-		summary, why = summarize(compaction.summary_request(history, previous), ctx)
+		summary, why = summarize(compaction.summary_request(history, previous), model)
 		if summary == nil then
 			return nil, why
 		end
@@ -80,25 +101,25 @@ local function compact(view, ctx)
 	if plan.turn_prefix ~= nil then
 		local prefix = compaction.slice(view.messages, plan.turn_prefix)
 		compaction.extract(files, prefix)
-		local text, why = summarize(compaction.turn_prefix_request(prefix), ctx)
+		local text, why = summarize(compaction.turn_prefix_request(prefix), model)
 		if text == nil then
 			return nil, why
 		end
 		summary = compaction.merge(summary, text)
 	end
-	return rewrite(view, plan, summary, files, ctx)
+	return rewrite(view, plan, summary, files, model, env)
 end
 
 -- `compact`, the summary asked in the run's own conversation: the
 -- messages it drops go as they are, then the prompt. One request covers
 -- what a split turn would ask twice.
-local function compact_in_context(view, ctx)
-	local summarized, plan, files = planned(view, ctx)
+local function compact_in_context(view, model, env)
+	local summarized, plan, files = planned(view, model, env)
 	if plan == nil then
 		return nil
 	end
 	compaction.extract(files, compaction.slice(view.messages, { summarized + 1, plan.kept_from - 1 }))
-	local answer = ctx.tools.infer({
+	local answer = infer({
 		task = compaction.in_context_request(summarized == 1),
 		conversation = plan.kept_from - 1,
 	})
@@ -106,7 +127,7 @@ local function compact_in_context(view, ctx)
 	if summary == nil then
 		return nil, why
 	end
-	return rewrite(view, plan, summary, files, ctx)
+	return rewrite(view, plan, summary, files, model, env)
 end
 
 return tau.plugin({
@@ -128,7 +149,7 @@ return tau.plugin({
 			keep_recent_tokens = compaction.KEEP_RECENT_TOKENS,
 			window = 0,
 		},
-		view = function(settings, ctx)
+		view = function(settings, model, env)
 			return ui.stack({
 				ui.toggle("idle", "Compact idle chats"),
 				ui.text(
@@ -138,17 +159,17 @@ return tau.plugin({
 		end,
 	},
 	-- The effort the run starts at, which its summaries ask at.
-	start = function(input, ctx)
-		ctx.state.effort = input.effort
+	start = function(input, model, env)
+		model.effort = input.effort
 	end,
-	rewrite_context = function(view, ctx)
-		local state, settings = ctx.state, ctx.settings
+	rewrite_context = function(view, model, env)
+		local settings = env.settings
 		local window = view.window
 		if settings.window ~= nil and settings.window > 0 then
 			window = settings.window
 		end
 		if view.trigger == "overflow" then
-			local rewritten, why = compact(view, ctx)
+			local rewritten, why = compact(view, model, env)
 			if why ~= nil then
 				error(why, 0)
 			end
@@ -159,31 +180,32 @@ return tau.plugin({
 			if not settings.idle then
 				return nil
 			end
-			local rewritten, why = compact_in_context(view, ctx)
+			local rewritten, why = compact_in_context(view, model, env)
 			if why ~= nil then
 				error(why, 0)
 			end
 			return rewritten
 		end
-		local due = view.turn >= (state.retry_at or 0)
+		local due = view.turn >= (model.retry_at or 0)
 			and window ~= nil
 			and compaction.should_compact(view.tokens, window, settings.reserve_tokens)
 		if not due then
 			return nil
 		end
-		local rewritten, why = compact(view, ctx)
+		local rewritten, why = compact(view, model, env)
 		-- A failing summary is not paid for every turn, and a run with no
 		-- turn cap is not left uncompacted for good.
+		-- The model as it is now, after the summary came back.
 		if why ~= nil then
-			state.failures = (state.failures or 0) + 1
-			state.retry_at = compaction.retry_at(view.turn, state.failures)
-			ctx.log(why)
+			model.failures = (model.failures or 0) + 1
+			model.retry_at = compaction.retry_at(view.turn, model.failures)
+			tau.log(why)
 			return nil
 		end
-		state.failures = 0
+		model.failures = 0
 		return rewritten
 	end,
-	view = function(state, ctx)
+	view = function(model, env)
 		return { status = ui.status("watching the window", nil, "neutral") }
 	end,
 })
