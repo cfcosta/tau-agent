@@ -297,11 +297,11 @@ return tau.plugin({
 })
 "#;
 
-/// A Pause pressed while a check waits on Jev is written over when the
-/// check ends, as on the host: the hook's state, changed, is stored over
-/// the action that came meanwhile. `t.hooks` finds it in three steps.
+/// A Pause pressed while a check waits on Jev is kept, as on the host:
+/// the check's state, changed, is the run's, and the Pause is carried out
+/// again on it. Every order `t.hooks` tries keeps it.
 #[test]
-fn an_action_lost_under_a_waiting_hook_is_found() {
+fn an_action_under_a_waiting_hook_is_carried_out_again() {
     let result = only_of(
         CHECKING,
         r#"
@@ -316,25 +316,13 @@ t.hooks("a pause is kept", {
   may_fail = function(hook) return hook == "stop" end,
   invariant = function(world)
     if world.paused and #world.under_way == 0 then
-      t.equal(world.run.state.paused == true or world.run.dropped > 0, true, "the pause is kept, or dropped and said")
+      t.equal(world.run.state.paused, true, "the pause is kept")
     end
   end,
 })
 "#,
     );
-    assert!(!result.passed);
-    let error = error(&result);
-    assert!(error.contains("the pause is kept"), "{error}");
-    let steps: Vec<&str> = error
-        .lines()
-        .filter(|line| line.trim_start().starts_with("step "))
-        .collect();
-    assert_eq!(
-        steps,
-        ["  step 1: stop", "  step 2: pause", "  step 3: answer"],
-        "{error}"
-    );
-    assert!(error.contains("stop waits on jev.ask"), "{error}");
+    assert!(result.passed, "{:?}", result.error);
 }
 
 /// Two hooks that read a count from the store, wait, and write it back

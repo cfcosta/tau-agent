@@ -614,6 +614,8 @@ function test.run(spec)
 		logs = {},
 		-- Actions whose state was dropped: it changed under them.
 		dropped = 0,
+		-- Actions whose state was taken, in order, as `{ name, args }`.
+		acted = {},
 		data = {
 			-- `live` and `jev`, as an action sees them: `spec.live`, and
 			-- whether there is `spec.jev`.
@@ -642,7 +644,9 @@ function test.run(spec)
 	-- run's own `ctx.run`, the state in `run[context.slot]` ("state", or
 	-- "job_state" for a job), and job reaches when `context.job`. Nothing
 	-- of the run is swapped while it runs, so hooks under way at once
-	-- (`t.hooks`) each keep their own.
+	-- (`t.hooks`) each keep their own. `context.action` names an action,
+	-- carried out with `context.args`: one whose state is taken while a
+	-- hook runs is carried out again on what that hook leaves.
 	local function call_in(context, hook, ...)
 		local slot = context.slot or "state"
 		local data = table.clone(run.data)
@@ -665,6 +669,7 @@ function test.run(spec)
 			ctx.jev = spec.jev
 		end
 		local before = deep_copy(stores)
+		local seen = #run.acted
 		local ok, answer = pcall(hook, ..., ctx)
 		in_job = was_job
 		if not ok then
@@ -678,17 +683,29 @@ function test.run(spec)
 			end
 			error(answer, 0)
 		end
+		local meanwhile = {}
 		if context.action then
 			if same(run[slot], started) then
+				if not same(ctx.state, started) then
+					table.insert(run.acted, { name = context.action, args = deep_copy(context.args) })
+				end
 				run[slot] = ctx.state
 			else
 				run.dropped += 1
 			end
 		elseif not same(ctx.state, started) then
+			-- The actions taken while it ran, carried out again on what it
+			-- left, as the host's run does.
+			if slot == "state" then
+				table.move(run.acted, seen + 1, #run.acted, 1, meanwhile)
+			end
 			run[slot] = ctx.state
 		end
 		for _, line in ipairs(ctx._logs) do
 			table.insert(run.logs, line)
+		end
+		for _, acted in ipairs(meanwhile) do
+			call_in({ action = acted.name, args = acted.args }, plugin.actions[acted.name], deep_copy(acted.args))
 		end
 		return answer
 	end
@@ -773,7 +790,8 @@ function test.run(spec)
 		end, settings or run.data.settings)
 	end
 	function run:action(name, args)
-		return call_in({ action = true }, need((plugin.actions or {})[name], "action " .. name), args or {})
+		args = args or {}
+		return call_in({ action = name, args = args }, need((plugin.actions or {})[name], "action " .. name), args)
 	end
 	-- `call` is the call's id, `ctx.run.call`: "call_1" when not given.
 	function run:tool(name, args, call_id)
