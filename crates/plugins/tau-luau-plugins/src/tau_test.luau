@@ -1278,11 +1278,11 @@ function test.machine_of(name, machine, spec, opts)
 				local ok, next, effects = pcall(machine.step, machine, deep_copy(before), deep_copy(e))
 				check(m, ok, "the step raised: " .. tostring(next))
 				if not handled then
-					check(m, same(next, before), "`" .. event .. "` has no arm from `" .. before.state .. "` and changed the state")
-					check(m, #effects == 0, "`" .. event .. "` has no arm from `" .. before.state .. "` and gave effects")
+					check(m, same(next, before), "`" .. event .. "` has no arm from `" .. before[machine.tag] .. "` and changed the state")
+					check(m, #effects == 0, "`" .. event .. "` has no arm from `" .. before[machine.tag] .. "` and gave effects")
 				end
 				local again, again_effects = machine:step(deep_copy(before), deep_copy(e))
-				check(m, same(again, next) and same(again_effects, effects), "`" .. event .. "` from `" .. before.state .. "` gave another answer when taken again")
+				check(m, same(again, next) and same(again_effects, effects), "`" .. event .. "` from `" .. before[machine.tag] .. "` gave another answer when taken again")
 				check(m, same(json.decode(json.encode(next)), next), "the state does not read back the same from JSON: " .. shown(next))
 				m.state = next
 				m.effects = effects

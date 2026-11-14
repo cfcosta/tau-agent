@@ -132,6 +132,37 @@ end)
     assert!(result.passed, "{}", error(&result));
 }
 
+/// A machine can name its tag field, for data kept before it: its states
+/// read and step by that field, which is no field of theirs.
+#[test]
+fn a_machine_names_its_tag_field() {
+    let result = only(
+        r#"
+local tau = require("tau")
+local t = tau.test
+t.case("by status", function()
+  local m = tau.machine({
+    tag = "status",
+    states = { active = { "n" }, paused = { "n" } },
+    initial = { status = "active", n = 0 },
+    on = { pause = { active = function(s) return { status = "paused", n = s.n } end } },
+  })
+  local s = m:step(nil, { event = "pause" })
+  t.equal(s, { status = "paused", n = 0 })
+  t.equal(m:is(s, "paused"), true)
+  local ok, why = pcall(m.step, m, { state = "active", n = 0 }, { event = "pause" })
+  t.equal(ok, false)
+  t.equal(string.find(why, "names no state") ~= nil, true, why)
+  ok, why = pcall(tau.machine, {
+    tag = "status", states = { a = { "status" } }, initial = { status = "a" }, on = {},
+  })
+  t.equal(string.find(why, "names the tag") ~= nil, true, why)
+end)
+"#,
+    );
+    assert!(result.passed, "{}", error(&result));
+}
+
 /// The fixed sign-in holds under every event from every state: a token
 /// saved is checked, whatever came before.
 #[test]
