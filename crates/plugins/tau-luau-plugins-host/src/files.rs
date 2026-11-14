@@ -213,7 +213,7 @@ impl Files {
                     ))
             });
             if !keeps {
-                return Err("`ctx.files.repositories` needs `repository` among uses.files".into());
+                return Err("`cmd.files.repositories` needs `repository` among uses.files".into());
             }
             return Ok(ToolReply::success(json!(self.listed)));
         }
@@ -280,7 +280,7 @@ impl Files {
             "files_frontmatter" => frontmatter(input, &path).await?,
             "blobs_put" => self.put(input, &path).await?,
             other => {
-                return Err(format!("`{other}` is not a call of ctx.files"));
+                return Err(format!("`{other}` is not a command of cmd.files"));
             }
         };
         Ok(ToolReply::success(value))

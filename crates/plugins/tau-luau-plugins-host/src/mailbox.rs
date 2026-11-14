@@ -42,6 +42,10 @@ pub trait Keep: Send + Sync {
         _place: Option<&str>,
     ) {
     }
+    /// Whether the mailbox draws after a step that changed the model.
+    fn draws(&self) -> bool {
+        true
+    }
     /// The model, with no hook under way: what a restart starts from.
     async fn quiet(&self, _model: &Value) {}
     /// The commands a step gave could not be carried out.
@@ -138,6 +142,14 @@ impl Mailbox {
                     if let Some(ended) = step.ended.get(&id) {
                         return ended.clone();
                     }
+                    // What it gave did not go in: its await raises why,
+                    // rather than going on as if it had.
+                    if let (Some(why), true) =
+                        (&step.not_given, step.waits.contains_key(&id))
+                    {
+                        message = Answer::failed(why.clone()).to(&id);
+                        continue;
+                    }
                     step.waits.get(&id).cloned()
                 }
                 Err(error) => return Ended::Error { error },
@@ -167,12 +179,19 @@ impl Mailbox {
     ) -> Result<Step, String> {
         let actor = self.actor.lock().await;
         self.keep.taken(message).await;
-        let step = actor.deliver(message, limit)?;
+        let mut step = actor.deliver(message, limit)?;
         if let Err(why) = executor.give(&step.given).await {
             self.keep.not_given(&why).await;
+            // A step is one with its writes (ADR 0056): a hook it ended
+            // did not end well when they did not go in.
+            let why = format!("what the step gave was not carried out: {why}");
+            for ended in step.ended.values_mut() {
+                *ended = Ended::Error { error: why.clone() };
+            }
+            step.not_given = Some(why);
         }
         let drawn = match &self.drawing {
-            Some((path, env)) if step.changed => {
+            Some((path, env)) if step.changed && self.keep.draws() => {
                 Some(actor.draw(path, None, env, DRAW_LIMIT))
             }
             _ => None,

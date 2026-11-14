@@ -44,7 +44,7 @@ pub fn write(dir: &Path, path: &str, text: &str) -> Result<(), String> {
         || !name.ends_with(".txt")
     {
         return Err(format!(
-            "{} is not an archive's path: ask ctx.archive.path for one",
+            "{} is not an archive's path: ask cmd.archive.path for one",
             path.display()
         ));
     }
@@ -105,7 +105,7 @@ mod tests {
             dir.join("tau-x.sh").to_str().unwrap().to_owned(),
         ] {
             let refused = write(&dir, &path, "text").unwrap_err();
-            assert!(refused.contains("ctx.archive.path"), "{refused}");
+            assert!(refused.contains("cmd.archive.path"), "{refused}");
             assert!(!Path::new(&path).exists(), "{path}");
         }
     }

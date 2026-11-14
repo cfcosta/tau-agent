@@ -142,8 +142,8 @@ pub fn point(name: &str) -> Option<Luau> {
 /// this table does not know.
 pub fn service(name: &str) -> Option<Luau> {
     let luau = match name {
-        tau_jev::SERVICE => Luau::Hook("ctx.jev"),
-        names::WORKSPACE_DIR => Luau::Hook("ctx.files"),
+        tau_jev::SERVICE => Luau::Hook("cmd.jev"),
+        names::WORKSPACE_DIR => Luau::Hook("cmd.files"),
         names::IDENTITY => Luau::Excluded(
             "the host's own, to check and land the plugins repository",
         ),

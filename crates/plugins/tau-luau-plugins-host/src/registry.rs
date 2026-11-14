@@ -659,7 +659,10 @@ impl Registry {
                     .plugin(plugin)
                     .await
                     .ok_or_else(|| format!("{plugin} is not active"))?;
-                let context = self.app_context(&active).await;
+                let mut context = self.app_context(&active).await;
+                if let Some(run) = context.run.as_object_mut() {
+                    run.insert("jev".into(), serde_json::json!(jev.is_some()));
+                }
                 let outcome = active
                     .loaded
                     .call(
@@ -928,7 +931,10 @@ impl Registry {
             .plugin(plugin)
             .await
             .ok_or_else(|| anyhow::anyhow!("{plugin} is not active"))?;
-        let context = self.repo_context(&active, repo).await;
+        let mut context = self.repo_context(&active, repo).await;
+        // Whether Jev answers here, as a run's `env.run.jev` says: the
+        // action reaches the one it is given.
+        context.run["jev"] = serde_json::json!(jev.is_some());
         let outcome = active
             .loaded
             .call(

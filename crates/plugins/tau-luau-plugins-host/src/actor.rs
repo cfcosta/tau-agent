@@ -66,6 +66,10 @@ pub struct Step {
     /// The commands it gave that need no answer, in order.
     pub given: Vec<Command>,
     pub logs: Vec<String>,
+    /// Why what it gave could not be carried out, when it could not: the
+    /// hooks it ended failed, and those it left waiting are answered
+    /// with it.
+    pub not_given: Option<String>,
 }
 
 /// A command's answer, as the hook that awaits it gets it.
@@ -368,6 +372,7 @@ fn step_of(lua: &Lua, value: &LuaValue) -> Result<Step, String> {
                 .collect(),
             _ => Vec::new(),
         },
+        not_given: None,
     })
 }
 

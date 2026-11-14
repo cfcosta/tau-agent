@@ -95,7 +95,11 @@ fn manifest(name: &str) -> String {
 fn plugin(name: &str, tool: &str) -> String {
     format!(
         r#"-- {name}: a tool that greets, counting how many it greeted, with a
--- status line and a button that starts the count again.
+-- status line and a button that starts the count again. Every hook
+-- takes `(input, model, env)`: `model` is the plugin's own, changed in
+-- place; `env` says the run, the time and the settings. An effect is a
+-- command: `tau.await(tau.cmd...)` for one that answers, `tau.give` for
+-- one that needs none.
 local tau = require("tau")
 local ui = tau.ui
 
@@ -108,19 +112,19 @@ return tau.plugin {{
 				properties = {{ name = {{ type = "string" }} }},
 				required = {{ "name" }},
 			}},
-			call = function(args, ctx)
-				ctx.state.greeted = (ctx.state.greeted or 0) + 1
+			call = function(args, model, env)
+				model.greeted = (model.greeted or 0) + 1
 				return "Hello, " .. args.name .. "!"
 			end,
 		}},
 	}},
 	actions = {{
-		reset = function(_, ctx)
-			ctx.state.greeted = 0
+		reset = function(_, model, env)
+			model.greeted = 0
 		end,
 	}},
-	view = function(state)
-		local greeted = state.greeted or 0
+	view = function(model, env)
+		local greeted = model.greeted or 0
 		if greeted == 0 then
 			return {{}}
 		end

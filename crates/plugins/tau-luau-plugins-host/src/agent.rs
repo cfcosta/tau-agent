@@ -154,6 +154,28 @@ struct Inner {
     runs: Mutex<HashMap<RunId, Arc<tokio::sync::Mutex<RunState>>>>,
 }
 
+/// Each plugin's failed hooks in a run, by name.
+type Failures = Arc<std::sync::Mutex<HashMap<String, u32>>>;
+
+/// How often `name` failed in `failures`.
+fn failures_of(failures: &Failures, name: &str) -> u32 {
+    failures
+        .lock()
+        .expect("not poisoned")
+        .get(name)
+        .copied()
+        .unwrap_or(0)
+}
+
+/// Counts a failure of `name` in `failures`: whether it turned it off.
+fn count_failure(failures: &Failures, name: &str) -> bool {
+    let mut failures = failures.lock().expect("not poisoned");
+    let count = failures.entry(name.to_owned()).or_default();
+    let was_off = *count >= MAX_FAILURES;
+    *count += 1;
+    !was_off && *count >= MAX_FAILURES
+}
+
 /// One run's state for every plugin, by name.
 #[derive(Debug, Default)]
 struct RunState {
@@ -163,7 +185,9 @@ struct RunState {
     /// Each plugin's mailbox (ADR 0056), with the digest of the version
     /// its actor runs.
     mailboxes: HashMap<String, (String, Arc<Mailbox>)>,
-    failures: HashMap<String, u32>,
+    /// Each plugin's failed hooks in this run, shared with the keep of
+    /// its mailbox, which counts the views its steps fail to draw.
+    failures: Failures,
     /// The digest of each plugin's version the run last drew.
     drawn: HashMap<String, String>,
     /// Times each plugin's `before_stop` kept the run going.
@@ -511,7 +535,7 @@ impl Inner {
 
 /// Whether `name` failed often enough in this run to be off.
 fn is_off(state: &RunState, name: &str) -> bool {
-    state.failures.get(name).copied().unwrap_or(0) >= MAX_FAILURES
+    failures_of(&state.failures, name) >= MAX_FAILURES
 }
 
 /// `plugin`'s `hook` failed with `error`: the run hears it, and that it
@@ -523,15 +547,14 @@ async fn failed(
     hook: String,
     error: String,
 ) {
-    let was_off = is_off(state, &plugin);
-    *state.failures.entry(plugin.clone()).or_default() += 1;
+    let turned_off = count_failure(&state.failures, &plugin);
     ctx.publish(&Record::Error {
         plugin: plugin.clone(),
         hook,
         error,
     })
     .await;
-    if !was_off && is_off(state, &plugin) {
+    if turned_off {
         ctx.publish(&Record::Off {
             plugin,
             why: format!("{MAX_FAILURES} of its hooks failed in this run"),
@@ -686,6 +709,7 @@ impl Inner {
         let keep = Arc::new(RunKeep {
             ctx: ctx.clone(),
             plugin: name.clone(),
+            failures: state.failures.clone(),
         });
         let mut mailbox = Mailbox::new(actor, keep);
         if active.loaded.declaration.hooks.view {
@@ -788,6 +812,9 @@ fn failed_outcome(error: String, started: std::time::Instant) -> Outcome {
 struct RunKeep {
     ctx: PluginCtx,
     plugin: String,
+    /// The run's count of failed hooks: a view that fails counts, and a
+    /// plugin that is off is not drawn.
+    failures: Failures,
 }
 
 #[async_trait]
@@ -832,6 +859,7 @@ impl Keep for RunKeep {
                 .await;
             }
             Some(Err(error)) => {
+                let turned_off = count_failure(&self.failures, &self.plugin);
                 self.ctx
                     .publish(&Record::Error {
                         plugin: plugin(),
@@ -839,9 +867,23 @@ impl Keep for RunKeep {
                         error,
                     })
                     .await;
+                if turned_off {
+                    self.ctx
+                        .publish(&Record::Off {
+                            plugin: plugin(),
+                            why: format!(
+                                "{MAX_FAILURES} of its hooks failed in this run"
+                            ),
+                        })
+                        .await;
+                }
             }
             None => {}
         }
+    }
+
+    fn draws(&self) -> bool {
+        failures_of(&self.failures, &self.plugin) < MAX_FAILURES
     }
 
     async fn not_given(&self, why: &str) {
@@ -1768,7 +1810,7 @@ impl AgentTool for LuauTool {
             jev: inner.jev.clone(),
             files,
         });
-        let failures = state.failures.get(&self.plugin).copied().unwrap_or(0);
+        let failures = failures_of(&state.failures, &self.plugin);
         let outcome = inner
             .run_hook_of(
                 &active,

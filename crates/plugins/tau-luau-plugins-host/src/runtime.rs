@@ -2197,8 +2197,18 @@ impl Host for PluginHost {
                 .map(ToolReply::success);
         }
         if !self.allowed(&call.name) {
+            // The `uses` key that grants the command, not always a tool.
+            let field = match call.name.as_str() {
+                "infer" | "infer_turn" => "uses.infer",
+                "transcript" => "uses.transcript",
+                "archive_path" | "archive_write" => "uses.archive",
+                "files_write" | "files_remove" | "files_rename"
+                | "files_mkdir" => "uses.writes",
+                name if crate::files::Files::handles(name) => "uses.files",
+                _ => "uses.tools",
+            };
             return Err(format!(
-                "this plugin does not use `{}`: add it to `uses.tools`",
+                "this plugin does not use `{}`: add it to `{field}`",
                 call.name
             ));
         }
