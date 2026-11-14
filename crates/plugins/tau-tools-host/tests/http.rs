@@ -286,6 +286,41 @@ fn a_secret_goes_in_as_the_request_leaves_and_never_comes_back() {
     });
 }
 
+/// A request says it is tau's, as APIs such as GitHub's refuse one that
+/// names no `User-Agent`; one the request gives is sent in its place.
+#[test]
+fn a_request_names_tau_as_its_user_agent_unless_it_names_its_own() {
+    block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        let (address, seen) = serve().await;
+        let user_agent = |head: &str| {
+            head.lines()
+                .filter_map(|line| line.split_once(':'))
+                .filter(|(name, _)| name.eq_ignore_ascii_case("user-agent"))
+                .map(|(_, value)| value.trim().to_owned())
+                .collect::<Vec<_>>()
+        };
+        for (headers, sent) in [
+            (json!({}), tau_ai::http::user_agent()),
+            (json!({ "user-agent": "mine/1" }), "mine/1".to_owned()),
+        ] {
+            call(
+                dir.path(),
+                store(dir.path()).await,
+                false,
+                json!({
+                    "method": "get",
+                    "url": format!("{address}/echo"),
+                    "headers": headers,
+                }),
+            )
+            .await;
+            let head = seen.lock().unwrap().last().cloned().unwrap().0;
+            assert_eq!(user_agent(&head), [sent], "{head}");
+        }
+    });
+}
+
 #[test]
 fn a_missing_secret_is_named_and_nothing_is_sent() {
     block_on(async {

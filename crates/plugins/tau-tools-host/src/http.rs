@@ -52,10 +52,13 @@ pub const SECRET_KEY: &str = "$secret";
 const METHODS: [&str; 7] =
     ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
 
-/// The client every request goes through: tau's TLS, no redirects.
+/// The client every request goes through: tau's TLS, no redirects, and
+/// tau's `User-Agent` unless a request gives its own (GitHub's API
+/// refuses a request with none).
 pub fn client() -> reqwest::Client {
     reqwest::Client::builder()
         .tls_backend_preconfigured(tau_ai::http::tls_config())
+        .user_agent(tau_ai::http::user_agent())
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("a static client configuration builds")
