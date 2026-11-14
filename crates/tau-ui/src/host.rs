@@ -305,6 +305,7 @@ mod compare;
 mod config;
 mod conversations;
 mod forecast;
+mod going;
 mod history;
 mod hosted;
 pub mod idle;
@@ -750,7 +751,7 @@ impl Host {
         loop {
             let ending = matches!(
                 self.runs.lock().expect("not poisoned").get(run),
-                Some(Going::Ending(_))
+                Some(going) if going.is_ending()
             ) || self.sub_agent_ending(run);
             if !ending || !self.is_running(run) {
                 return;
@@ -1532,7 +1533,7 @@ impl Host {
         self.runs
             .lock()
             .expect("not poisoned")
-            .insert(id.clone(), Going::Live(run.control()));
+            .insert(id.clone(), Going::live(run.control()));
         let events = self.events.clone();
         let runs = self.runs.clone();
         let idle = self.idle.clone();
@@ -1649,10 +1650,13 @@ impl Host {
         // A run whose end went by reads nothing more.
         self.settle(run).await;
         // Only a run still working reads what it is steered with.
-        let control = match self.runs.lock().expect("not poisoned").get(run) {
-            Some(Going::Live(control)) => Some(control.clone()),
-            Some(Going::Ending(_)) | None => None,
-        };
+        let control = self
+            .runs
+            .lock()
+            .expect("not poisoned")
+            .get(run)
+            .and_then(Going::steerable)
+            .cloned();
         let Some(control) = control.or_else(|| self.sub_agent_control(run))
         else {
             if !self.is_sub_agent(run) {
@@ -1787,30 +1791,8 @@ impl Host {
     }
 }
 
-/// A run going on in this session.
-pub(crate) enum Going {
-    /// Working.
-    Live(RunControl),
-    /// Its `RunEnd` went by while its outcome is still being stored: it
-    /// stops in a moment.
-    Ending(RunControl),
-}
-
-impl Going {
-    /// How to steer and cancel it.
-    pub(crate) fn control(&self) -> &RunControl {
-        match self {
-            Self::Live(control) | Self::Ending(control) => control,
-        }
-    }
-
-    /// Its end went by.
-    fn end(&mut self) {
-        if let Self::Live(control) = self {
-            *self = Self::Ending(control.clone());
-        }
-    }
-}
+/// A run going on in this session ([`going::Run`]).
+pub(crate) type Going = going::Run<RunControl>;
 
 /// A run [`Host::track`] follows, until it stored what it was asked.
 pub(crate) struct Started(
