@@ -76,6 +76,10 @@
 
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
+mod seat;
+
+use seat::Seat;
+
 use super::{
     continuation::{Body, Continuation},
     lane::{self, Event, Lane, LaneStats},
@@ -259,32 +263,13 @@ struct Slot {
 
 impl Slot {
     fn connection(&self) -> Option<ConnectionId> {
-        match self.seat {
-            Seat::Held(connection) => Some(connection),
-            _ => None,
-        }
+        self.seat.connection()
     }
 
     /// Gives up the connection it holds, if it holds one.
     fn leave(&mut self) -> Option<ConnectionId> {
-        let connection = self.connection()?;
-        self.seat = Seat::Unseated;
-        Some(connection)
+        self.seat.leave()
     }
-}
-
-/// Where a lane is.
-#[derive(Debug)]
-enum Seat {
-    /// Without a connection: before it took one, and after it lost one.
-    Unseated,
-    /// Waiting for a busy connection of its path, or its parent's,
-    /// until `until`, with the request sent while it waits.
-    Waiting {
-        until: Duration,
-        pending: Option<Body>,
-    },
-    Held(ConnectionId),
 }
 
 /// Where a lane goes.
@@ -334,7 +319,7 @@ impl Pool {
         self.lanes.insert(
             lane,
             Slot {
-                seat: Seat::Unseated,
+                seat: Seat::default(),
                 lane: Lane::new(),
                 affinity,
                 answered: false,
@@ -391,13 +376,19 @@ impl Pool {
         if self.is_busy(lane) {
             return Err(PoolError::Busy(lane));
         }
-        let mut actions = match &mut self.slot(lane).seat {
-            Seat::Held(_) => return Ok(self.start(lane, full_body)),
-            Seat::Waiting { pending, .. } => {
-                *pending = Some(full_body);
-                Vec::new()
-            }
-            Seat::Unseated => self.place(lane, true, Some(full_body)),
+        let seat = &mut self.slot(lane).seat;
+        let mut actions = if seat.connection().is_some() {
+            return Ok(self.start(lane, full_body));
+        } else if seat.is_unseated() {
+            self.place(lane, true, Some(full_body))
+        } else {
+            // Waiting, and not busy: it keeps the request.
+            let refused = seat.submit(full_body);
+            debug_assert!(
+                refused.is_none(),
+                "a waiting lane takes one request"
+            );
+            Vec::new()
         };
         actions.extend(self.finish());
         Ok(actions)
@@ -434,9 +425,7 @@ impl Pool {
             .lanes
             .get_mut(&lane)
             .ok_or(PoolError::UnknownLane(lane))?;
-        if let Seat::Waiting { pending, .. } = &mut slot.seat
-            && pending.take().is_some()
-        {
+        if slot.seat.withdraw().is_some() {
             return Ok(Vec::new());
         }
         let in_flight = slot.lane.is_busy();
@@ -649,14 +638,7 @@ impl Pool {
     /// connection.
     pub fn is_busy(&self, lane: LaneId) -> bool {
         self.lanes.get(&lane).is_some_and(|slot| {
-            slot.lane.is_busy()
-                || matches!(
-                    slot.seat,
-                    Seat::Waiting {
-                        pending: Some(_),
-                        ..
-                    }
-                )
+            slot.lane.is_busy() || slot.seat.waits_with_request()
         })
     }
 
@@ -665,7 +647,7 @@ impl Pool {
     pub fn is_waiting(&self, lane: LaneId) -> bool {
         self.lanes
             .get(&lane)
-            .is_some_and(|slot| matches!(slot.seat, Seat::Waiting { .. }))
+            .is_some_and(|slot| slot.seat.waiting_until().is_some())
     }
 
     fn slot(&mut self, lane: LaneId) -> &mut Slot {
@@ -744,7 +726,8 @@ impl Pool {
         if placement == Placement::Wait {
             self.waits += 1;
             let until = self.now + self.limits.affinity_wait;
-            self.slot(lane).seat = Seat::Waiting { until, pending };
+            let refused = self.slot(lane).seat.wait(until, pending);
+            debug_assert!(refused.is_none(), "an unseated lane waits with it");
             return Vec::new();
         }
         let (mut actions, _) = self.attach(lane, placement);
@@ -815,12 +798,9 @@ impl Pool {
         c.empty_since = None;
         c.last_used = now;
         let slot = self.slot(lane);
-        let waited = std::mem::replace(&mut slot.seat, Seat::Held(connection));
+        let (pending, held) = slot.seat.attach(connection);
+        debug_assert!(held.is_none(), "a lane attaches with no connection");
         slot.lane.set_continuation(kept);
-        let pending = match waited {
-            Seat::Waiting { pending, .. } => pending,
-            Seat::Unseated | Seat::Held(_) => None,
-        };
         (actions, pending)
     }
 
@@ -855,12 +835,12 @@ impl Pool {
         let waiting: Vec<LaneId> = self
             .lanes
             .iter()
-            .filter(|(_, slot)| matches!(slot.seat, Seat::Waiting { .. }))
+            .filter(|(_, slot)| slot.seat.waiting_until().is_some())
             .map(|(id, _)| *id)
             .collect();
         let mut actions = Vec::new();
         for lane in waiting {
-            let Seat::Waiting { until, .. } = self.lanes[&lane].seat else {
+            let Some(until) = self.lanes[&lane].seat.waiting_until() else {
                 continue;
             };
             let over = self.now >= until;

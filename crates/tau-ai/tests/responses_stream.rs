@@ -1046,7 +1046,7 @@ impl Phases {
         let other_open = self.open.keys().any(|open| Some(*open) != index);
         match frame["type"].as_str() {
             Some("response.output_item.added") => {
-                if other_open {
+                if !self.open.is_empty() {
                     tc.reject();
                 }
                 self.open.insert(index.unwrap(), frame["item"].clone());
