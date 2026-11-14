@@ -9233,6 +9233,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "sse-stream",
+ "statig",
  "tau-agent",
  "tau-ai",
  "tau-codemode-host",

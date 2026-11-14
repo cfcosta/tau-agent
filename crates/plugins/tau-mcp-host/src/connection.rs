@@ -7,6 +7,8 @@
 //! when a call finds it dropped. HTTP connects retry transient errors
 //! after 250 ms and 1 s; tool calls are never retried.
 
+mod phase;
+
 use std::{
     collections::BTreeMap,
     fmt,
@@ -374,23 +376,7 @@ struct Inner {
     instructions: Option<String>,
     /// The protocol version of the last session.
     protocol: Option<String>,
-    phase: Phase,
-}
-
-/// What the connection does, kept under its lock with the session; its
-/// status is published under the same lock, so the two always agree.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-enum Phase {
-    /// No connect under way: it holds a session, or the status says why
-    /// it holds none.
-    #[default]
-    Settled,
-    /// A connect is under way. `again`: a restart came meanwhile (a
-    /// sign-in or a sign-out), so what it brings is dropped and it
-    /// connects again.
-    Connecting { again: bool },
-    /// Closed for good: nothing connects it again.
-    Closed,
+    phase: phase::Phase,
 }
 
 /// What a connect lists: tools always, resources, templates and prompts
@@ -502,9 +488,9 @@ impl Connection {
         environment: Environment,
     ) -> Arc<Self> {
         let (state, phase) = if config.enabled {
-            (State::Disconnected, Phase::Settled)
+            (State::Disconnected, phase::Phase::default())
         } else {
-            (State::Closed, Phase::Closed)
+            (State::Closed, phase::Phase::closed())
         };
         Arc::new(Self {
             config,
@@ -587,13 +573,9 @@ impl Connection {
         if let Some(session) = inner.session.take() {
             tokio::spawn(async move { session.close().await });
         }
-        match &mut inner.phase {
-            Phase::Closed => return,
-            Phase::Connecting { again } => {
-                *again = true;
-                return;
-            }
-            Phase::Settled => {}
+        if inner.phase.take(phase::Input::Restart) != phase::Answer::Connect {
+            // Closed, or a connect under way connects again once it ends.
+            return;
         }
         if self.status().state == State::Connected {
             self.set_status(&inner, State::Disconnected, None);
@@ -629,7 +611,7 @@ impl Connection {
     /// Publishes the status. It takes the connection's state, so it is
     /// only published under its lock; a closed connection stays closed.
     fn set_status(&self, inner: &Inner, state: State, error: Option<String>) {
-        if inner.phase == Phase::Closed && state != State::Closed {
+        if inner.phase.is_closed() && state != State::Closed {
             return;
         }
         self.status.send_replace(Status { state, error });
@@ -744,10 +726,9 @@ impl Connection {
     /// connecting, or closed. Whether one began; the caller runs it.
     fn begin_connect(&self, inner: &mut Inner) -> bool {
         let live = inner.session.as_ref().is_some_and(|s| !s.is_closed());
-        if live || inner.phase != Phase::Settled {
+        if live || inner.phase.take(phase::Input::Begin) != phase::Answer::Run {
             return false;
         }
-        inner.phase = Phase::Connecting { again: false };
         self.started.store(true, Ordering::SeqCst);
         self.set_status(inner, State::Connecting, None);
         let seen = self
@@ -780,21 +761,14 @@ impl Connection {
     /// is marked for the caller to run.
     fn land(self: &Arc<Self>, outcome: Opened) -> bool {
         let mut inner = self.inner.lock().expect("connection lock");
-        let again = match inner.phase {
-            Phase::Connecting { again } => again,
-            Phase::Settled | Phase::Closed => false,
-        };
-        if inner.phase == Phase::Closed || again {
+        let answer = inner.phase.take(phase::Input::Land);
+        if answer != phase::Answer::Keep {
             if let Ok((session, ..)) = outcome {
                 tokio::spawn(async move { session.close().await });
             }
-            if !again {
-                return false;
-            }
-            inner.phase = Phase::Settled;
-            return self.begin_connect(&mut inner);
+            return answer == phase::Answer::Again
+                && self.begin_connect(&mut inner);
         }
-        inner.phase = Phase::Settled;
         match outcome {
             Ok((session, lists, events)) => {
                 inner.instructions = session.instructions().map(str::to_owned);
@@ -1266,7 +1240,7 @@ impl Connection {
         self.watched.lock().expect("watch lock").clear();
         let session = {
             let mut inner = self.inner.lock().expect("connection lock");
-            inner.phase = Phase::Closed;
+            inner.phase.take(phase::Input::Close);
             self.set_status(&inner, State::Closed, None);
             inner.session.take()
         };
