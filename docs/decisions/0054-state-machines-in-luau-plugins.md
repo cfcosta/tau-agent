@@ -274,6 +274,20 @@ the case to keep is written from those notes.
   again too, until actions are pure. tau-goal's Pause during a check is
   kept, which a tau-ui test holds.
 
+### Start states and arm coverage, 2026-11-14
+
+- `t.machine_of` takes `spec.states`, a generator of each state's fields
+  by state: a case starts from `initial` or from any of them, drawn in
+  shape (one out of shape is the spec's error), as records an older
+  version kept hand back. `spec.init` gets the start state, and a case
+  to paste begins from it.
+- Once every case held, each arm some case took, or the property fails
+  naming those none took. The user chose failing over a passing report:
+  a gap a report shows goes unnoticed, and seeds are fixed per source,
+  so it is not flaky. `spec.untaken` lists the arms that may stay so, as
+  `"event from state"`. tau-github's sign-in, tau-goal's goal and
+  ship-gate's gate took every arm already.
+
 ## Alternatives considered
 
 - **The idiom alone, no helper.** A tag and a table of functions in each
@@ -307,9 +321,6 @@ the case to keep is written from those notes.
 
 ## Open questions
 
-- **Start states and arm coverage.** Drawing any state in shape, not only
-  those reachable from `initial` (what records folded from an older
-  version hand back), and reporting arms no case took. Left for later.
 - **Effects across hooks.** Whether effects stay a plugin's own names,
   carried out by its hook, or some become host effects (`tau.start`,
   `tau.continue`, a store write) that `step`'s caller hands back as is.

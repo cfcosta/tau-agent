@@ -901,7 +901,12 @@ end, { cases = 200 })
   rule: `spec.init(draw)` makes a model, `spec.event(model, event, state,
 effects)` tells it each event, and `spec.invariant(state, model,
 effects)` holds after each. A failure notes its events as a `t.case`
-  to paste into the tests.
+  to paste into the tests. Once every case held, each arm (an event from
+  a state) must have been taken: the test fails naming those no case
+  took. Reach them with `spec.states`, a generator of each state's
+  fields by state, so cases start from those states too (as data an
+  older version kept may), or list the ones that may stay untaken in
+  `spec.untaken`, as `"event from state"`.
 - `t.hooks(name, spec)` drives the plugin through its ways in, in any
   order: each of `spec.hooks` (a function of the run, `draw` and the
   world) starts one, on a fake run made from `spec.run`. What a hook
