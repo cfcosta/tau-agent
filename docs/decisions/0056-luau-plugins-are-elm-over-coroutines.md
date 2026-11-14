@@ -270,6 +270,43 @@ holds half of it:
   `catch_up` and the action replay.
 - No plugin keeps the old API; there are no users to migrate.
 
+## As built, 2026-11-14
+
+- **The actor is Luau** (`tau_actor.luau`, installed by `tau`): `tau.cmd`,
+  `tau.await`, `tau.give`, `tau.all`, `tau.log`, and `tau._actor`, whose
+  `deliver` takes one message a step. The host and the test harness run
+  the same steps.
+- **Hooks are `(input, model, env)`**, `view` is `(model, env)` and a
+  card's input is `{ call, result }`; drawings read a frozen copy of
+  plain tables. A host tool's command has its name as its op, Jev is an
+  op like any other (`PluginHost::command`), and only `all` carries
+  several. An awaited null reads as nil, an infer's value comes out of
+  its envelope, and a failure raises the command's own message.
+- **The host keeps a VM per model** (`actor.rs`), its `require` over the
+  plugin's modules, no clock nor randomness, and a limit per step. A
+  run's hooks go through a mailbox per plugin (`mailbox.rs`), whose steps
+  keep their model, log and view with the run's records; `Loaded::call`
+  runs a hook alone on an actor made from its context's state. An
+  interface's action on a run going on is a message to that run's
+  mailbox (`Registry::live`). `ctx`, `catch_up` and the action replay
+  are gone.
+- **Replay works and is tested**: a mailbox comes back from the model it
+  kept when quiet and the messages taken since, its hooks under way again.
+- All 24 plugins are ported, with the tests of the host, tau-ui and the
+  built-ins; the plugins skill and the reference teach the new API.
+
+Not yet built, each to come on this:
+
+- The journal is not kept with a run's records, so a restart does not
+  bring back a hook under way yet; replay has nothing to read.
+- An action on a run not going on still records `Record::Acted`, folded
+  with `still_on`.
+- `tau.start_chat`, `tau.steer_chat`, `tau.allow` and `tau.ask` are still
+  answers with a "then" action, not commands awaited where they are asked.
+- The harness has no `run:hook` with pending commands, no replay as a
+  property and no log fixtures; `t.run` runs a hook to its end against
+  the fakes, and `t.hooks` pauses on them.
+
 ## As built: a store's changes go in whole, 2026-11-14
 
 A hook holds its store a step at a time, so two runs of one repository
