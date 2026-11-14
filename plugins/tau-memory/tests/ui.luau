@@ -6,6 +6,7 @@
 local tau = require("tau")
 local t = tau.test
 local g = t.gen
+local host = require("host")
 local memory = require("memory")
 local note = require("note")
 local read = require("import_read")
@@ -140,8 +141,8 @@ local PATHS = { "src/a.rs", "src/b.rs", "docs/c.md" }
 -- paragraphs, and a stale mark first when it has one.
 t.property("the screen shows current notes as they are", function(draw)
 	local run = run_with()
-	run:call(function(ctx)
-		local scope = memory.open(ctx.files, REPO_NOTES)
+	run:call(function()
+		local scope = memory.open(host.files, REPO_NOTES)
 		local clock = 1000
 		for _ = 1, draw(g.integers({ min = 1, max = 8 })) do
 			clock += 1

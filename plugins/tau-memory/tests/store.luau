@@ -227,9 +227,9 @@ t.case("a broken file is reported, not dropped", function()
 	t.equal(notes.unreadable[1].path, DIR .. "/fact/broken.md")
 end)
 
--- Through a run's `ctx.files`, as the plugin reads and writes them: the
+-- Through a run's files (`host.files`), as the plugin reads and writes them: the
 -- note lands in its type's folder, and its old version in the history.
-t.case("the store writes through ctx.files", function()
+t.case("the store writes through the run's files", function()
 	local run = t.run({ roots = { ["repository/tau-memory"] = "/r/tau-memory" } })
 	run:tool("memory_write", { type = "fact", title = "Retry reads the header", description = "d", body = "first" })
 	run:tool("memory_write", { type = "fact", title = "Retry reads the header", description = "d", body = "second", id = "retry-reads-the-header" })

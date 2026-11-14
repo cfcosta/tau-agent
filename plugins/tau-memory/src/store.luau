@@ -1,7 +1,7 @@
 -- A scope's notes: a folder with one file per note at `<type>/<id>.md`,
 -- and `.history/<id>/<n>.md` holding every version a write replaced,
 -- so any change can be looked at and undone. Read and written through
--- `ctx.files`.
+-- `host.files`.
 --
 -- The files are the truth: `open` reads them all, and anything derived
 -- from them (links, backlinks, search) is rebuilt from them. A file
@@ -62,7 +62,7 @@ local function entries(files, dir)
 	return found
 end
 
--- Reads every note under `dir`, through `files` (`ctx.files`).
+-- Reads every note under `dir`, through `files` (`host.files`).
 function M.open(files, dir)
 	local self = setmetatable({ files = files, dir = dir, notes = {}, unreadable = {} }, Notes)
 	for _, kind in ipairs(note.TYPES) do

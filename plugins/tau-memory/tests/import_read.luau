@@ -6,6 +6,7 @@
 local tau = require("tau")
 local t = tau.test
 local g = t.gen
+local host = require("host")
 local import = require("import")
 local read = require("import_read")
 
@@ -19,7 +20,7 @@ local function lines(events)
 	return table.concat(out)
 end
 
--- `f(ctx)` in a run of the plugin over `files`.
+-- `f()` in a run of the plugin over `files`, reading through `host.files`.
 local function with(files, f, remotes)
 	return t.run({ files = files, remotes = remotes or {} }):call(f)
 end
@@ -49,15 +50,15 @@ end
 t.property("every folder Claude Code names reads back as that folder, while it is there", function(draw)
 	local parts = draw(g.lists(g.from_regex("[a-zA-Z0-9][a-zA-Z0-9._-]{0,8}"), { min = 1, max = 4 }))
 	local path = "/base/" .. table.concat(parts, "/")
-	local found = with({ [path .. "/.keep"] = "" }, function(ctx)
-		return read.decode(ctx.files, read.encode(path))
+	local found = with({ [path .. "/.keep"] = "" }, function()
+		return read.decode(host.files, read.encode(path))
 	end)
 	t.equal(found, path)
 end)
 
 t.case("a folder that is gone decodes to nothing", function()
-	local found = with({ ["/base/other/.keep"] = "" }, function(ctx)
-		return read.decode(ctx.files, read.encode("/base/was-here/once"))
+	local found = with({ ["/base/other/.keep"] = "" }, function()
+		return read.decode(host.files, read.encode("/base/was-here/once"))
 	end)
 	t.equal(found, nil)
 end)
@@ -144,8 +145,8 @@ local function claude_home()
 end
 
 t.case("Claude Code's scan finds its notes and chats and their folders", function()
-	local scan = with(claude_home(), function(ctx)
-		return read.scan(ctx.files, HOME)
+	local scan = with(claude_home(), function()
+		return read.scan(host.files, HOME)
 	end, { [REPO .. "/src"] = "git@github.com:acme/shop-api.git" })
 	local saved = of(scan.items, read.CLAUDE, read.SAVED)
 	local names = {}
@@ -199,8 +200,8 @@ t.case("a Claude Code chat reads as text, and again from where it stopped", func
 	end
 	-- A line still being written is not read.
 	local partial = first .. '{"type": "us'
-	local got = with({ [path] = partial }, function(ctx)
-		return read.item(ctx.files, chat(partial), 0)
+	local got = with({ [path] = partial }, function()
+		return read.item(host.files, chat(partial), 0)
 	end)
 	t.equal(
 		got.text,
@@ -208,13 +209,13 @@ t.case("a Claude Code chat reads as text, and again from where it stopped", func
 			.. '[call edit] {"path":"rust-toolchain.toml"}\n\n[result]\nok\n\n'
 	)
 	t.equal(got.offset, #first)
-	local again = with({ [path] = first .. more }, function(ctx)
-		return read.item(ctx.files, chat(first .. more), got.offset)
+	local again = with({ [path] = first .. more }, function()
+		return read.item(host.files, chat(first .. more), got.offset)
 	end)
 	t.equal(again.text, "[user]\nAnd the lints.\n\n")
 	t.equal(again.offset, #first + #more)
-	local bad, why = with({ [path] = "not json\n" }, function(ctx)
-		return read.item(ctx.files, chat("not json\n"), 0)
+	local bad, why = with({ [path] = "not json\n" }, function()
+		return read.item(host.files, chat("not json\n"), 0)
 	end)
 	t.equal(bad, nil)
 end)
@@ -262,8 +263,8 @@ end
 
 t.case("Codex's scan reads each thing once", function()
 	-- The jj repository's Git store says where it pushes.
-	local scan = with(codex_home(), function(ctx)
-		return read.scan(ctx.files, HOME)
+	local scan = with(codex_home(), function()
+		return read.scan(host.files, HOME)
 	end, { [BILLING] = "https://github.com/acme/billing" })
 	local saved = of(scan.items, read.CODEX, read.SAVED)
 	local keys = {}
@@ -315,8 +316,8 @@ t.case("a Codex session reads as text", function()
 		message("assistant", "output_text", "Done: rounding is in one place."),
 		{ type = "event_msg", payload = { type = "token_count" } },
 	})
-	local got = with({ ["/s.jsonl"] = text }, function(ctx)
-		return read.item(ctx.files, { tool = read.CODEX, material = read.CHAT, path = "/s.jsonl", size = #text }, 0)
+	local got = with({ ["/s.jsonl"] = text }, function()
+		return read.item(host.files, { tool = read.CODEX, material = read.CHAT, path = "/s.jsonl", size = #text }, 0)
 	end)
 	t.equal(
 		got.text,
@@ -326,8 +327,8 @@ t.case("a Codex session reads as text", function()
 end)
 
 t.case("a home with neither tool has nothing", function()
-	local scan = with({ [HOME .. "/notes.txt"] = "" }, function(ctx)
-		return read.scan(ctx.files, HOME)
+	local scan = with({ [HOME .. "/notes.txt"] = "" }, function()
+		return read.scan(host.files, HOME)
 	end)
 	t.equal(#scan.items, 0)
 	t.equal(#scan.failed, 0)

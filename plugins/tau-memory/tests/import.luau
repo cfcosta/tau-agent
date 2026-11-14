@@ -9,6 +9,7 @@
 local tau = require("tau")
 local t = tau.test
 local g = t.gen
+local host = require("host")
 local import = require("import")
 local memory = require("memory")
 local read = require("import_read")
@@ -77,9 +78,9 @@ function World:list(name, remote, folder)
 	table.insert(self.repos, { id = "id-" .. name, name = name, remote = remote, folder = folder })
 end
 
-function World:env(ctx)
+function World:env()
 	return {
-		files = ctx.files,
+		files = host.files,
 		home = HOME,
 		dir = DIR,
 		now = self.now,
@@ -93,15 +94,15 @@ function World:env(ctx)
 				end
 				dir = repo_notes(repo.name)
 			end
-			return import.notes(memory.open(ctx.files, dir))
+			return import.notes(memory.open(host.files, dir))
 		end,
-		infer = ctx.tools.infer,
+		infer = host.infer,
 		writer = { model = "luna", effort = "low" },
 		signed_in = self.signed_in,
 	}
 end
 
--- `f(env, ctx)` in a run over the world's files.
+-- `f(env)` in a run over the world's files.
 function World:run(f)
 	local requests = self.requests
 	local model = self.model
@@ -117,8 +118,8 @@ function World:run(f)
 			end
 			return model(request)
 		end,
-	}):call(function(ctx)
-		return f(self:env(ctx), ctx)
+	}):call(function()
+		return f(self:env())
 	end)
 end
 
@@ -173,8 +174,8 @@ end
 
 -- The notes in `dir`, by title.
 function World:notes_in(dir)
-	return self:run(function(_, ctx)
-		local notes = memory.open(ctx.files, dir).notes:list()
+	return self:run(function()
+		local notes = memory.open(host.files, dir).notes:list()
 		table.sort(notes, function(a, b)
 			return a.title < b.title
 		end)
@@ -339,8 +340,8 @@ t.case("the model merges what both tools say and flags disagreement", function()
 		.. "\n\n# Tests\n\nremember repository: Tests run with make check\nremember repository against uses-cargo-test: Tests run under nextest\n"
 	w:list("shop", "git@github.com:acme/shop", nil)
 	-- tau has a note the summary disagrees with.
-	w:run(function(_, ctx)
-		assert(memory.open(ctx.files, repo_notes("shop")):write({
+	w:run(function()
+		assert(memory.open(host.files, repo_notes("shop")):write({
 			type = "convention",
 			title = "Uses cargo test",
 			description = "cargo test runs the tests",

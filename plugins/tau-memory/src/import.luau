@@ -41,7 +41,7 @@
 --
 -- `env`:
 --
--- - `files`: `ctx.files`, reading `~/.claude` and `~/.codex` and writing
+-- - `files`: `host.files`, reading `~/.claude` and `~/.codex` and writing
 --   `dir`.
 -- - `home`: the person's home, where the tools' folders are.
 -- - `dir`: the folder the import keeps its files in.
@@ -53,7 +53,7 @@
 --   description } each, write(draft, now) → written | nil, why }`, `why`
 --   `{ refused = text }` for a note its checks refused: what
 --   `import.notes` makes of one of memory's scopes.
--- - `infer`: `ctx.tools.infer`, and `writer`, `{ model, effort }` or nil;
+-- - `infer`: `host.infer`, and `writer`, `{ model, effort }` or nil;
 --   `signed_in`, whether there is a model to ask at all.
 
 local bm25 = require("bm25")

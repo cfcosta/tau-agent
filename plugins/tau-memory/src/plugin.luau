@@ -10,11 +10,12 @@
 -- folders: `tau-memory/` in tau's folder for the repository, and in
 -- tau's data folder for the user's.
 --
--- What interfaces draw is in `ctx.state`: `recalled`, the notes the
+-- What interfaces draw is in the model: `recalled`, the notes the
 -- run's task found as it started; `log`, each `{ kind = "recalled" |
 -- "saved" | "marked" | "error", ... }` in order; `given`, what the
 -- conversation has of memory.
 local tau = require("tau")
+local host = require("host")
 local import = require("import")
 local memory = require("memory")
 local note = require("note")
@@ -43,13 +44,13 @@ local FAMILIES = { "sol", "luna", "astra", "terra" }
 -- The efforts the settings offer; `auto` leaves it to the model.
 local EFFORTS = { "auto", "low", "medium", "high" }
 
-local function now_ms(ctx)
-	return ctx.now.ms or ctx.now.unix * 1000
+local function now_ms(env)
+	return env.now.ms or env.now.unix * 1000
 end
 
-local function log(ctx, entry)
-	ctx.state.log = ctx.state.log or {}
-	table.insert(ctx.state.log, entry)
+local function log(model, entry)
+	model.log = model.log or {}
+	table.insert(model.log, entry)
 end
 
 -- `id` without any `user:` before it.
@@ -108,12 +109,17 @@ local function without_nulls(value)
 end
 
 -- A tool's call, the saves made in a memory request kept as `Saved` was:
--- `{ tool, details, error }` each.
+-- `{ tool, details, error }` each. A memory request's tools are called
+-- in the coroutine of the hook that asks it: what it saves is kept by
+-- that coroutine, `{ saved, by }`.
+local requests = setmetatable({}, { __mode = "k" })
+
 local function saving(name, call)
-	return function(args, ctx)
-		local ok, answer, details = pcall(call, without_nulls(args or {}), ctx)
-		if ctx._memory_saved and name ~= "memory_search" then
-			table.insert(ctx._memory_saved, { tool = name, details = ok and details or nil, error = not ok and tostring(answer) or nil })
+	return function(args, _model, env)
+		local request = requests[coroutine.running()]
+		local ok, answer, details = pcall(call, without_nulls(args or {}), env, request)
+		if request and name ~= "memory_search" then
+			table.insert(request.saved, { tool = name, details = ok and details or nil, error = not ok and tostring(answer) or nil })
 		end
 		if not ok then
 			error(answer, 0)
@@ -122,16 +128,16 @@ local function saving(name, call)
 	end
 end
 
-local function write_call(args, ctx)
+local function write_call(args, env, request)
 	local kind = need_string(args, "type")
 	if not note.is_type(kind) then
 		error(string.format("%q is not a note type", kind), 0)
 	end
 	local links = parse_links(args.links)
 	-- Notes written in a memory request say who they come from.
-	local by = ctx._memory_by or "agent"
+	local by = request and request.by or "agent"
 	local source = note.source(by)
-	source.run = ctx.run.id
+	source.run = env.run.id
 	for _, link in ipairs(links) do
 		if link.type == "about" then
 			table.insert(source.files, link.to)
@@ -143,7 +149,7 @@ local function write_call(args, ctx)
 	elseif scope_name ~= "user" then
 		error(string.format("%q is not a scope: repository or user", tostring(scope_name)), 0)
 	end
-	local scopes = memory.scopes(ctx)
+	local scopes = memory.scopes()
 	if scopes[scope_name] == nil then
 		error("there is no " .. scope_name .. " scope", 0)
 	end
@@ -158,7 +164,7 @@ local function write_call(args, ctx)
 		supersedes = args.supersedes and bare(args.supersedes) or nil,
 		source = source,
 	}
-	local written, why = memory.write(scopes, scope_name, draft, now_ms(ctx))
+	local written, why = memory.write(scopes, scope_name, draft, now_ms(env))
 	if written == nil then
 		error(why, 0)
 	end
@@ -166,10 +172,10 @@ local function write_call(args, ctx)
 	return render.render_written(written, prefix), { id = prefix .. written.id, action = written.action, redacted = written.redacted }
 end
 
-local function search_call(args, ctx)
+local function search_call(args, _env)
 	local query = need_string(args, "query")
 	local limit = math.clamp(math.floor(tonumber(args.limit) or 8), 1, 20)
-	local hits = memory.search(memory.scopes(ctx), query, limit)
+	local hits = memory.search(memory.scopes(), query, limit)
 	local ids = {}
 	for _, hit in ipairs(hits) do
 		table.insert(ids, hit.id)
@@ -180,9 +186,9 @@ local function search_call(args, ctx)
 	return render.render_hits(hits), { ids = ids }
 end
 
-local function read_call(args, ctx)
+local function read_call(args, _env)
 	local id = need_string(args, "id")
-	local scope, inner = resolve(memory.scopes(ctx), id)
+	local scope, inner = resolve(memory.scopes(), id)
 	local reading = scope:read(inner)
 	if reading == nil then
 		error("no note is called " .. require("store").quoted(id), 0)
@@ -191,14 +197,14 @@ local function read_call(args, ctx)
 	return render.render_reading(reading, prefix)
 end
 
-local function link_call(args, ctx)
+local function link_call(args, env)
 	local kind = need_string(args, "type")
 	if not note.is_link(kind) then
 		error(string.format("%q is not a link type", kind), 0)
 	end
-	local scope, from = resolve(memory.scopes(ctx), need_string(args, "from"))
+	local scope, from = resolve(memory.scopes(), need_string(args, "from"))
 	local to = bare(need_string(args, "to"))
-	local ok, why = scope:link(from, to, kind, args.why, now_ms(ctx))
+	local ok, why = scope:link(from, to, kind, args.why, now_ms(env))
 	if not ok then
 		error(why, 0)
 	end
@@ -217,13 +223,13 @@ local LINK_SCHEMA = {
 
 -- What a note is written with: the model the settings name and its
 -- effort, or the run's own.
-local function writer(ctx)
-	local settings, state = ctx.settings, ctx.state
-	local own = { model = nil, effort = state.effort }
+local function writer(model_, env)
+	local settings = env.settings
+	local own = { model = nil, effort = model_.effort }
 	if settings.follow_chat then
 		return own
 	end
-	for _, model in ipairs(ctx.models or {}) do
+	for _, model in ipairs(env.models or {}) do
 		if model.family == settings.family then
 			local effort = settings.reasoning
 			if effort == "auto" or not table.find(model.efforts or {}, effort) then
@@ -249,11 +255,11 @@ local function head_of(messages)
 	return string.sub(json.encode(first), 1, 300)
 end
 
-local function distill(ctx, messages, prompt, by)
-	local with = writer(ctx)
-	ctx._memory_saved = {}
-	ctx._memory_by = by
-	local answer = ctx.tools.infer({
+local function distill(model, env, messages, prompt, by)
+	local with = writer(model, env)
+	local request = { saved = {}, by = by }
+	requests[coroutine.running()] = request
+	local answer = host.infer({
 		task = "<conversation>\n" .. render.serialize(messages) .. "\n</conversation>",
 		context = json.null,
 		instructions = prompt,
@@ -263,28 +269,28 @@ local function distill(ctx, messages, prompt, by)
 		model = with.model,
 		effort = with.effort,
 	})
-	local saved = ctx._memory_saved
-	ctx._memory_saved, ctx._memory_by = nil, nil
+	requests[coroutine.running()] = nil
+	local saved = request.saved
 	if #saved > 0 then
-		log(ctx, { kind = "saved", calls = saved })
+		log(model, { kind = "saved", calls = saved })
 	end
 	if not answer.ok then
-		log(ctx, { kind = "error", message = tostring(answer.error) })
+		log(model, { kind = "error", message = tostring(answer.error) })
 	end
 end
 
 -- Marks the notes about `paths`, last written by `written_by`, in both
 -- scopes.
-local function mark_stale(ctx, paths, why, written_by)
-	local scopes = memory.scopes(ctx)
+local function mark_stale(model, env, paths, why, written_by)
+	local scopes = memory.scopes()
 	local marked = {}
-	local now = now_ms(ctx)
+	local now = now_ms(env)
 	for _, name in ipairs({ "repository", "user" }) do
 		local scope = scopes[name]
 		if scope then
 			local ids, err = scope:mark_stale(paths, why, written_by, now)
 			if ids == nil then
-				log(ctx, { kind = "error", message = err })
+				log(model, { kind = "error", message = err })
 			else
 				for _, id in ipairs(ids) do
 					table.insert(marked, name == "user" and USER .. id or id)
@@ -293,7 +299,7 @@ local function mark_stale(ctx, paths, why, written_by)
 		end
 	end
 	if #marked > 0 then
-		log(ctx, { kind = "marked", notes = marked, why = why })
+		log(model, { kind = "marked", notes = marked, why = why })
 	end
 end
 
@@ -304,8 +310,8 @@ local CLAUDE, CODEX = "~/.claude", "~/.codex"
 -- What an import reaches, outside any run: the tools' folders, the
 -- import's own in memory's, the repositories tau lists, the scopes'
 -- notes, and the person's model (`import`'s `env`).
-local function env_of(ctx)
-	local files = ctx.files
+local function env_of(env)
+	local files = host.files
 	local roots = files.roots()
 	local home = nil
 	if roots[CLAUDE] then
@@ -320,7 +326,7 @@ local function env_of(ctx)
 		-- seconds.
 		local write = notes.write
 		notes.write = function(draft, _now)
-			return write(draft, now_ms(ctx))
+			return write(draft, now_ms(env))
 		end
 		return notes
 	end
@@ -328,7 +334,7 @@ local function env_of(ctx)
 		files = files,
 		home = home,
 		dir = roots[memory.DATA] .. "/import",
-		now = ctx.now.unix,
+		now = env.now.unix,
 		repos = repos,
 		scope = function(scope)
 			if scope == "you" then
@@ -349,28 +355,28 @@ local function env_of(ctx)
 			end
 			return opened(dir .. "/" .. memory.FOLDER)
 		end,
-		infer = ctx.tools and ctx.tools.infer,
-		writer = ui_settings.model(ctx.settings, ctx.models),
-		signed_in = #(ctx.models or {}) > 0,
+		infer = host.infer,
+		writer = ui_settings.model(env.settings, env.models),
+		signed_in = #(env.models or {}) > 0,
 	}
 end
 
 -- What the setup step chose so far, kept in the import's folder.
-local function setup_choice(ctx)
-	local path = ctx.files.roots()[memory.DATA] .. "/setup.json"
-	local ok, text = pcall(ctx.files.read, path)
+local function setup_choice()
+	local path = host.files.roots()[memory.DATA] .. "/setup.json"
+	local ok, text = pcall(host.files.read, path)
 	return ui_import.choice(ok and json.decode(text) or nil)
 end
 
 -- What keeping proposals last did, for the review page to say.
-local function last_kept(ctx)
-	local ok, text = pcall(ctx.files.read, ctx.files.roots()[memory.DATA] .. "/import/kept.json")
+local function last_kept()
+	local ok, text = pcall(host.files.read, host.files.roots()[memory.DATA] .. "/import/kept.json")
 	return ok and json.decode(text) or nil
 end
 
 -- A scope's notebook, as its page lists it.
-local function notebook(scope, ctx)
-	return scope and ui_notes.notebook(scope.notes, now_ms(ctx)) or {}
+local function notebook(scope, env)
+	return scope and ui_notes.notebook(scope.notes, now_ms(env)) or {}
 end
 
 local plugin = tau.plugin({
@@ -392,8 +398,8 @@ local plugin = tau.plugin({
 		-- The newest luna at low effort, and a pass after each run: without
 		-- it, a run that never compacts keeps only what the agent wrote.
 		default = { family = "luna", reasoning = "low", follow_chat = false, after_each_run = true },
-		view = function(settings, ctx)
-			return ui_settings.pane(settings, ctx.models)
+		view = function(settings, _model, env)
+			return ui_settings.pane(settings, env.models)
 		end,
 	},
 	tools = {
@@ -458,18 +464,18 @@ local plugin = tau.plugin({
 
 	-- The index note and the notes the task finds, unless the conversation
 	-- has them already: each message of a chat is a run.
-	start = function(plan, ctx)
-		local state = ctx.state
+	start = function(plan, state, env)
+		-- The notes first: what comes after reads the model as it is then.
+		local scopes = memory.scopes()
 		state.effort = plan.effort
 		state.model = plan.model
 		-- Set by the run's first request.
 		state.own_from = nil
-		state.turn_since = now_ms(ctx)
+		state.turn_since = now_ms(env)
 		state.recalled = nil
-		local scopes = memory.scopes(ctx)
 		-- How many notes the repository has, for its line in the run's
 		-- plugin list.
-		state.notes = #notebook(scopes.repository, ctx)
+		state.notes = #notebook(scopes.repository, env)
 		local function index_of(scope)
 			local n = scope and scope:index_note()
 			return n and n.body or nil
@@ -504,33 +510,38 @@ local plugin = tau.plugin({
 				table.insert(recalled, { id = hit.id, title = hit.title })
 			end
 			state.recalled = recalled
-			log(ctx, { kind = "recalled", notes = recalled })
+			log(state, { kind = "recalled", notes = recalled })
 		end
 		return tau.start({ context = { render.start_context(index, hits) } })
 	end,
 
 	-- Where the run's own messages start: its input, after the history it
 	-- inherited. The pass at its end reads only what the run added.
-	before_request = function(request, ctx)
-		if ctx.state.own_from == nil then
-			local head = head_of(ctx.transcript())
-			ctx.state.own_from = request.messages
-			ctx.state.own_head = head
-			-- What was given went with a rewrite of the conversation since,
-			-- even one whose hook ran out of time and kept nothing: its
-			-- first message says so. The next message gives them again.
-			local given = ctx.state.given
-			if given ~= nil and given.head ~= nil and given.head ~= head then
-				ctx.state.given = nil
-			elseif given ~= nil then
-				given.head = head
-			end
+	before_request = function(request, model)
+		if model.own_from ~= nil then
+			return nil
+		end
+		local head = head_of(tau.await(tau.cmd.transcript()))
+		-- Another request may have set it while the transcript came.
+		if model.own_from ~= nil then
+			return nil
+		end
+		model.own_from = request.messages
+		model.own_head = head
+		-- What was given went with a rewrite of the conversation since,
+		-- even one whose hook ran out of time and kept nothing: its
+		-- first message says so. The next message gives them again.
+		local given = model.given
+		if given ~= nil and given.head ~= nil and given.head ~= head then
+			model.given = nil
+		elseif given ~= nil then
+			given.head = head
 		end
 		return nil
 	end,
 
 	-- An edit to a file notes are about marks them.
-	after_tool_result = function(result, ctx)
+	after_tool_result = function(result, model, env)
 		if not table.find(EDITS, result.name) then
 			return nil
 		end
@@ -538,48 +549,49 @@ local plugin = tau.plugin({
 		if type(path) ~= "string" then
 			return nil
 		end
-		mark_stale(ctx, { path }, path .. " was edited after this note was written", now_ms(ctx))
+		mark_stale(model, env, { path }, path .. " was edited after this note was written", now_ms(env))
 		return nil
 	end,
 
 	-- A commit the turn left marks the notes about what it changed, those
 	-- last written before the turn began.
-	turn_end = function(turn, ctx)
-		local state = ctx.state
-		local written_by = state.turn_since or now_ms(ctx)
-		state.turn_since = now_ms(ctx)
+	turn_end = function(turn, state, env)
+		local written_by = state.turn_since or now_ms(env)
+		state.turn_since = now_ms(env)
 		local commit = turn.commit
 		if commit == nil or #(commit.paths or {}) == 0 then
 			return
 		end
-		mark_stale(ctx, commit.paths, "commit " .. string.sub(commit.change, 1, 12) .. " changed it", written_by)
+		mark_stale(state, env, commit.paths, "commit " .. string.sub(commit.change, 1, 12) .. " changed it", written_by)
 	end,
 
 	-- Compaction drops details: a memory request over what it replaced
 	-- keeps what is worth keeping first. Pruning, which keeps the
 	-- conversation, asks for nothing.
-	rewritten = function(info, ctx)
+	rewritten = function(info, model, env)
 		-- The transcript is new: the pass at the end reads all of it.
-		ctx.state.own_from = 1
+		model.own_from = 1
 		if not info.drops_conversation then
 			return
 		end
 		-- The notes given so far go with it: the next run gives them again.
-		ctx.state.given = nil
+		model.given = nil
 		-- A request that fails keeps what this hook set: logged, not raised.
-		local ok, why = pcall(distill, ctx, ctx.transcript(), render.FLUSH_PROMPT, "agent")
+		local ok, why = pcall(function()
+			distill(model, env, tau.await(tau.cmd.transcript()), render.FLUSH_PROMPT, "agent")
+		end)
 		if not ok then
-			log(ctx, { kind = "error", message = tostring(why) })
+			log(model, { kind = "error", message = tostring(why) })
 		end
 	end,
 
 	-- What a run recalled and saved, in its transcript, and its line in
 	-- the run's plugin list.
-	view = function(state, ctx)
+	view = function(state, env)
 		local status = ui_notes.status(state.notes)
 		return {
 			status = status and ui.status(status) or nil,
-			notes = ui_notes.marks(state.log, ctx.run.repo),
+			notes = ui_notes.marks(state.log, env.run.repo),
 		}
 	end,
 
@@ -593,28 +605,28 @@ local plugin = tau.plugin({
 
 	-- What it keeps of the app: the person's notes and what imports found
 	-- and propose (ADR 0044).
-	app = function(ctx)
-		local scopes = memory.scopes(ctx)
-		local book = notebook(scopes.user, ctx)
-		local imports = import.imports(env_of(ctx))
+	app = function(_, _model, env)
+		local scopes = memory.scopes()
+		local book = notebook(scopes.user, env)
+		local imports = import.imports(env_of(env))
 		return {
 			nav = { detail = #book .. " notes" },
 			you = { notes = #book, edited = book[1] and book[1].edited or nil },
 			imports = imports,
 			menu = ui_import.menu(imports),
-			choice = setup_choice(ctx),
-			kept = last_kept(ctx),
+			choice = setup_choice(),
+			kept = last_kept(),
 		}
 	end,
 
 	-- The Memories step, only when Claude Code or Codex is on this
 	-- computer, of the repositories picked so far.
-	setup = function(app, ctx)
+	setup = function(app, _model, env)
 		if app == nil or app == json.null or app.imports == nil then
 			return nil
 		end
 		local picked = {}
-		for _, repo in ipairs(ctx.run.picked or {}) do
+		for _, repo in ipairs(env.run.picked or {}) do
 			table.insert(picked, {
 				name = repo.name,
 				folder = repo.folder ~= json.null and repo.folder or nil,
@@ -625,37 +637,37 @@ local plugin = tau.plugin({
 	end,
 
 	-- What the sidebar's entry and the page of a repository say.
-	repo_data = function(ctx)
-		local book = notebook(memory.scopes(ctx).repository, ctx)
-		local imports = import.imports(env_of(ctx))
+	repo_data = function(_, _model, env)
+		local book = notebook(memory.scopes().repository, env)
+		local imports = import.imports(env_of(env))
 		return {
 			nav = { detail = #book .. " notes" },
 			notes = #book,
 			edited = book[1] and book[1].edited or nil,
-			banner = (imports.banners or {})[ctx.run.repo],
+			banner = (imports.banners or {})[env.run.repo],
 		}
 	end,
 
 	pages = {
 		-- A repository's notes, or with no repository, the person's.
-		notes = function(params, ctx)
-			local scopes = memory.scopes(ctx)
-			local imports = import.imports(env_of(ctx))
+		notes = function(params, _model, env)
+			local scopes = memory.scopes()
+			local imports = import.imports(env_of(env))
 			if params.repo == nil then
-				return ui_notes.page(notebook(scopes.user, ctx), params, { ui_notes.yours() }, ui_import.import_button(imports))
+				return ui_notes.page(notebook(scopes.user, env), params, { ui_notes.yours() }, ui_import.import_button(imports))
 			end
 			local top = {}
 			local banner = ui_import.banner(params.repo, imports)
 			if banner then
 				table.insert(top, banner)
 			end
-			return ui_notes.page(notebook(scopes.repository, ctx), params, top, ui_import.import_button(imports))
+			return ui_notes.page(notebook(scopes.repository, env), params, top, ui_import.import_button(imports))
 		end,
 		-- What imports propose, to keep or drop.
-		import = function(params, ctx)
-			local imports = import.imports(env_of(ctx))
+		import = function(params, _model, env)
+			local imports = import.imports(env_of(env))
 			local query = (params.drafts or {})[ui_import.SEARCH] or ""
-			return ui_import.review(imports, ui_import.tab_of(params), query, last_kept(ctx))
+			return ui_import.review(imports, ui_import.tab_of(params), query, last_kept())
 		end,
 	},
 
@@ -663,8 +675,8 @@ local plugin = tau.plugin({
 		[import.JOB] = {
 			every = 1,
 			label = import.LABEL,
-			run = function(ctx)
-				import.tick(env_of(ctx))
+			run = function(_, _model, env)
+				import.tick(env_of(env))
 			end,
 		},
 	},
@@ -672,54 +684,55 @@ local plugin = tau.plugin({
 	actions = {
 		-- What the person asks of an import (`import.act`): what keeping
 		-- did is kept for the review page.
-		act = function(args, ctx)
+		act = function(args, _model, env)
 			if type(args.act) ~= "table" and type(args.act) ~= "string" then
 				return nil
 			end
-			local answer = import.act(env_of(ctx), args.act)
+			local answer = import.act(env_of(env), args.act)
 			if type(args.act) == "table" and args.act.act == "keep" and answer then
-				ctx.files.write(ctx.files.roots()[memory.DATA] .. "/import/kept.json", json.encode(answer))
+				host.files.write(host.files.roots()[memory.DATA] .. "/import/kept.json", json.encode(answer))
 			end
 			return nil
 		end,
 		-- Starts an import, and opens the review page to watch it.
-		import = function(args, ctx)
+		import = function(args, _model, env)
 			local request = table.clone(args.request or {})
 			request.act = "import"
-			import.act(env_of(ctx), request)
+			import.act(env_of(env), request)
 			return tau.interface("open", { page = "import" })
 		end,
 		-- What the setup step chose so far.
-		setup_choose = function(args, ctx)
-			ctx.files.write(ctx.files.roots()[memory.DATA] .. "/setup.json", json.encode(args.choice or {}))
+		setup_choose = function(args)
+			host.files.write(host.files.roots()[memory.DATA] .. "/setup.json", json.encode(args.choice or {}))
 			return nil
 		end,
 		-- Starts what the setup step chose, when anything, and ends it.
-		setup_start = function(args, ctx)
+		setup_start = function(args, _model, env)
 			if args.request ~= nil and args.request ~= json.null then
 				local request = table.clone(args.request)
 				request.act = "import"
-				import.act(env_of(ctx), request)
+				import.act(env_of(env), request)
 			end
 			return tau.interface("setup_done")
 		end,
 	},
 
-	run_end = function(_run, ctx)
-		if not ctx.settings.after_each_run then
+	run_end = function(_run, model, env)
+		if not env.settings.after_each_run then
 			return
 		end
-		local messages = ctx.transcript()
+		local messages = tau.await(tau.cmd.transcript())
 		local own = {}
-		-- A rewrite since, even one whose hook failed, starts it over.
-		local from = ctx.state.own_from or 1
-		if ctx.state.own_head ~= nil and ctx.state.own_head ~= head_of(messages) then
+		-- A rewrite since, even one whose hook failed, starts it over: read
+		-- once the transcript is here.
+		local from = model.own_from or 1
+		if model.own_head ~= nil and model.own_head ~= head_of(messages) then
 			from = 1
 		end
 		for i = from, #messages do
 			table.insert(own, messages[i])
 		end
-		distill(ctx, own, render.CONSOLIDATE_PROMPT, "inferred")
+		distill(model, env, own, render.CONSOLIDATE_PROMPT, "inferred")
 	end,
 })
 

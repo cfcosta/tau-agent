@@ -1,12 +1,12 @@
 -- What tau-memory's tests draw, and a folder they keep notes in: notes
 -- valid by construction, ids from a small pool so notes collide and
--- link to one another, and files in memory, as `ctx.files` reads and
+-- link to one another, and files in memory, as `host.files` reads and
 -- writes them. Only tests use it.
 local note = require("note")
 
 local M = {}
 
--- Files in memory, by path: what `ctx.files` reads, lists and writes.
+-- Files in memory, by path: what `host.files` reads, lists and writes.
 function M.files(start)
 	local held = start or {}
 	local files = { held = held }

@@ -6,8 +6,8 @@
 -- What the rest of the plugin, its imports too, use:
 --
 --   memory.open(files, dir)            a scope: the notes in `dir`, read
---                                      through `files` (`ctx.files`)
---   memory.scopes(ctx)                 the run's scopes, `{ repository,
+--                                      through `files` (`host.files`)
+--   memory.scopes(files?)              the run's scopes, `{ repository,
 --                                      user }`; either may be missing
 --   memory.write(scopes, name, draft, now)
 --                                      writes `draft` to `scopes[name]`:
@@ -281,21 +281,25 @@ M.REPOSITORY = "repository/" .. M.FOLDER
 M.DATA = "data/" .. M.FOLDER
 
 -- The folders a run's scopes are in, where the host has them: the
--- repository's own, and the user's, under tau's data folder.
-function M.folders(ctx)
-	local roots = ctx.files.roots()
+-- repository's own, and the user's, under tau's data folder. `files` is
+-- `host.files` unless given.
+function M.folders(files)
+	files = files or require("host").files
+	local roots = files.roots()
 	return { repository = roots[M.REPOSITORY], user = roots[M.DATA] }
 end
 
--- The run's scopes, opened: `{ repository, user }`.
-function M.scopes(ctx)
-	local folders = M.folders(ctx)
+-- The run's scopes, opened: `{ repository, user }`, read now: a scope
+-- kept across an await may be behind its files.
+function M.scopes(files)
+	files = files or require("host").files
+	local folders = M.folders(files)
 	local scopes = {}
 	if folders.repository then
-		scopes.repository = M.open(ctx.files, folders.repository)
+		scopes.repository = M.open(files, folders.repository)
 	end
 	if folders.user then
-		scopes.user = M.open(ctx.files, folders.user)
+		scopes.user = M.open(files, folders.user)
 	end
 	return scopes
 end

@@ -259,7 +259,7 @@ t.case("the pass after a run reads only what the run added", function()
 	t.equal(#off.infers, 0)
 end)
 
--- The models of a plan, as `ctx.models` lists them.
+-- The models of a plan, as `env.models` lists them.
 local MODELS = {
 	{ id = "gpt-6-sol", family = "sol", efforts = { "low", "medium", "high" } },
 	{ id = "gpt-6-luna", family = "luna", efforts = { "low", "medium" } },

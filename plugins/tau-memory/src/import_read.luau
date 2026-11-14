@@ -2,7 +2,7 @@
 -- Claude Code's memory notes and chats, and Codex's memories, task
 -- summaries and sessions.
 --
--- Each reader takes `files` (`ctx.files`) and the person's home, never
+-- Each reader takes `files` (`host.files`) and the person's home, never
 -- the process's: the app gives the real one, tests a folder of their own.
 -- Readers only read. A scan lists what there is, cheaply: paths, sizes,
 -- the folder each was about. Reading an item gives a note as the tool
@@ -43,7 +43,7 @@ local RESULT_CHARS = 400
 -- ran.
 local HEAD_LINES = 64
 
--- The most one read takes of a file: what `ctx.files.read` gives.
+-- The most one read takes of a file: what `host.files.read` gives.
 read.MAX_BYTES = 8 * 1024 * 1024
 
 -- What a head's first read takes; it reads more while it lacks lines.
