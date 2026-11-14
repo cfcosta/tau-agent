@@ -748,36 +748,28 @@ fn reasoning_summary_array_wins_over_streamed_text() {
 }
 
 /// The `output_index` a frame carries is read from the frame itself, not
-/// assumed: two blocks whose real `output_index` values are neither 0
-/// nor 1, opened without the first closing, resolve to independent
-/// slots and independent content indices.
+/// assumed: blocks whose real `output_index` values are neither 0 nor 1
+/// get content indices in the order they open, and a delta goes to the
+/// block its `output_index` names.
 #[test]
 fn output_index_identifies_independent_slots() {
     let mut processor = StreamProcessor::new("gpt-5-mini".to_owned(), 0);
-
     let first = processor.push(&json!({
         "type": "response.output_item.added",
         "output_index": 7,
-        "item": {
-            "type": "message",
-            "id": "msg_a",
-            "role": "assistant",
-            "status": "in_progress",
-            "content": [],
-        },
+        "item": { "type": "message", "id": "msg_a", "content": [] },
     }));
     assert!(matches!(
         first.last(),
         Some(AssistantEvent::TextStart { index: 0 })
     ));
-
-    let second = processor.push(&json!({
-        "type": "response.output_item.added",
+    // A delta for an index with no open block goes nowhere.
+    let stray = processor.push(&json!({
+        "type": "response.output_text.delta",
         "output_index": 3,
-        "item": { "type": "reasoning", "id": "rs_b", "summary": [] },
+        "delta": "no",
     }));
-    assert_eq!(second, vec![AssistantEvent::ThinkingStart { index: 1 }]);
-
+    assert_eq!(stray, Vec::new());
     let text_delta = processor.push(&json!({
         "type": "response.output_text.delta",
         "output_index": 7,
@@ -790,7 +782,18 @@ fn output_index_identifies_independent_slots() {
             delta: "hi".into()
         }]
     );
-
+    processor.push(&json!({
+        "type": "response.output_item.done",
+        "output_index": 7,
+        "item": { "type": "message", "id": "msg_a",
+                  "content": [{ "type": "output_text", "text": "hi" }] },
+    }));
+    let second = processor.push(&json!({
+        "type": "response.output_item.added",
+        "output_index": 3,
+        "item": { "type": "reasoning", "id": "rs_b", "summary": [] },
+    }));
+    assert_eq!(second, vec![AssistantEvent::ThinkingStart { index: 1 }]);
     let thinking_delta = processor.push(&json!({
         "type": "response.reasoning_text.delta",
         "output_index": 3,
@@ -803,6 +806,43 @@ fn output_index_identifies_independent_slots() {
             delta: "hmm".into()
         }]
     );
+}
+
+/// An item opened while another is still open ends the response with an
+/// error, where its start broke the event grammar: the stream model's
+/// first case.
+#[test]
+fn an_item_opened_over_an_open_one_ends_the_response() {
+    let mut processor = StreamProcessor::new("gpt-5-mini".to_owned(), 0);
+    let events = [
+        json!({
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": { "type": "message", "id": "msg_a", "content": [] },
+        }),
+        json!({
+            "type": "response.output_item.added",
+            "output_index": 1,
+            "item": { "type": "message", "id": "msg_b", "content": [] },
+        }),
+        json!({ "type": "response.output_text.delta", "output_index": 1, "delta": "x" }),
+    ]
+    .iter()
+    .flat_map(|frame| processor.push(frame))
+    .collect::<Vec<_>>();
+    let mut accumulator = Accumulator::new();
+    for event in &events {
+        accumulator.push(event.clone()).unwrap();
+    }
+    assert!(
+        matches!(
+            events.last(),
+            Some(AssistantEvent::Error { message, class: Class::Fatal, .. })
+                if message.contains("while another was still open")
+        ),
+        "{events:?}"
+    );
+    assert!(processor.is_finished());
 }
 
 /// `response.completed`/`response.incomplete` with no `status` field
@@ -958,11 +998,6 @@ struct Phases {
     ended: Option<AssistantEvent>,
     /// Whether a function call was opened.
     called: bool,
-    /// The output indices with an item open: a second item is not
-    /// opened while one is, as the processor allows (two open slots are
-    /// `output_index_identifies_independent_slots`) and the event grammar
-    /// does not.
-    open: std::collections::BTreeMap<u64, serde_json::Value>,
 }
 
 /// One frame of the drawn vocabulary, at an output index below 3.
@@ -1041,27 +1076,7 @@ impl Phases {
 impl Phases {
     #[rule(weight = 8)]
     fn frame(&mut self, tc: TestCase) {
-        let mut frame = phase_frame(&tc);
-        let index = frame["output_index"].as_u64();
-        let other_open = self.open.keys().any(|open| Some(*open) != index);
-        match frame["type"].as_str() {
-            Some("response.output_item.added") => {
-                if !self.open.is_empty() {
-                    tc.reject();
-                }
-                self.open.insert(index.unwrap(), frame["item"].clone());
-            }
-            Some("response.output_item.done") => {
-                if other_open {
-                    tc.reject();
-                }
-                // An item closes as the item it opened as.
-                if let Some(item) = self.open.remove(&index.unwrap()) {
-                    frame["item"] = item;
-                }
-            }
-            _ => {}
-        }
+        let frame = phase_frame(&tc);
         let known = frame["type"] != "codex.response.metadata";
         let before = self.events.len();
         let events = self.processor.push(&frame);
@@ -1124,7 +1139,6 @@ fn the_stream_phase_follows_any_frames(tc: TestCase) {
         events: Vec::new(),
         ended: None,
         called: false,
-        open: Default::default(),
     })
     .steps(20)
     .run(tc);

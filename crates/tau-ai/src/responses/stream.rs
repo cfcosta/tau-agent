@@ -136,7 +136,8 @@
 //!   requests are built and how OpenAI emits items in practice;
 //!   [`crate::event::Accumulator`] enforces this as a hard grammar rule,
 //!   unlike pi's independently-indexed slot map, which would tolerate
-//!   genuine interleaving.
+//!   genuine interleaving. An item opened while another is open ends the
+//!   response with an error, so the events always keep the grammar.
 //! - A `function_call` item with no `id` falls back to a bare `call_id`
 //!   (no `|`), rather than pi's unconditional `${call_id}|${id}`; this
 //!   only matters for malformed server data, since OpenAI always sends
@@ -381,6 +382,23 @@ impl StreamProcessor {
         let Some(item_type) = item.get("type").and_then(Value::as_str) else {
             return;
         };
+        // Blocks do not overlap ("Deviations from pi"): an item opened
+        // while another is open ends the response, as one left open at
+        // its end does, where its start broke the event grammar.
+        if matches!(item_type, "reasoning" | "message" | "function_call")
+            && !self.slots.is_empty()
+        {
+            events.push(AssistantEvent::Error {
+                reason: ErrorReason::Error,
+                message: "The response opened an output item while another \
+                          was still open"
+                    .to_owned(),
+                usage: Usage::default(),
+                class: Class::Fatal,
+            });
+            self.step(Step::Terminal, events);
+            return;
+        }
         match item_type {
             "reasoning" => {
                 let index = self.alloc_index();
