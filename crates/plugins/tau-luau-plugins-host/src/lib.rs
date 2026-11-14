@@ -23,6 +23,7 @@ pub mod looping;
 
 pub mod packages;
 pub mod parity;
+pub mod pool;
 pub mod registry;
 pub mod remote;
 pub mod rewrite;

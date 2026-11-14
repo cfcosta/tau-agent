@@ -1140,9 +1140,14 @@ pub enum Step<'a> {
         kind: TestKind,
         cases: Option<u64>,
     },
-    /// The property going on began a case: the cases begun, and the case
-    /// its first failure was found in.
-    Case { ran: u64, failed_at: Option<u64> },
+    /// The property `name` of `file` began a case: the cases begun, and
+    /// the case its first failure was found in. Several go on at once.
+    Case {
+        file: &'a str,
+        name: &'a str,
+        ran: u64,
+        failed_at: Option<u64>,
+    },
     /// A test ended.
     Ended(&'a TestResult),
 }
@@ -1205,6 +1210,12 @@ pub async fn run_tests(
 
 /// [`run_tests`], with the fixtures the files made, telling `progress`
 /// how it goes.
+///
+/// Its tests run in the [`crate::pool`], at once: each file's cases
+/// first, which register what else runs, then each property and loop,
+/// the costliest first. Results come in the order the files declare
+/// them, as when they ran one by one, and a property's seed is its own,
+/// so what they come to does not depend on the order they ran in.
 pub async fn run_all(
     name: &str,
     modules: Arc<Modules>,
@@ -1212,22 +1223,16 @@ pub async fn run_all(
     cancel: CancellationToken,
     progress: &Progress,
 ) -> Tested {
+    use futures_util::future::{BoxFuture, join_all};
+
     let Root {
         module, subject, ..
     } = files.root;
     let digest = files.digest();
-    let mut results = Vec::new();
-    let mut fixtures: Vec<Made> = Vec::new();
-    for (file, source) in &files.tests {
-        let whole = format!("tests/{file}.luau");
-        progress.tell(Step::Began {
-            file,
-            name: &whole,
-            kind: TestKind::Case,
-            cases: None,
-        });
-        // The file runs as a function, from the script's first line, so
-        // its errors keep their line numbers.
+    let shared = Arc::new(files.clone());
+    // Each file's cases, all at once: a file runs as a function, from the
+    // script's first line, so its errors keep their line numbers.
+    let ran = join_all(files.tests.iter().map(|(file, source)| {
         let script = format!(
             "local __test = function() {source}\nend\n\
              require(\"tau_test\")\n\
@@ -1238,36 +1243,63 @@ pub async fn run_all(
              fixtures = require(\"tau\")._run_fixtures(), \
              loops = require(\"tau\")._loops() }}\n"
         );
-        let (value, error) = run(
-            modules.clone(),
-            Arc::new(NoReach),
-            Reaches::none(name),
-            script,
-            Vec::new(),
-            TEST_LIMIT,
-            cancel.clone(),
-        )
-        .await;
+        let (modules, cancel, progress) =
+            (modules.clone(), cancel.clone(), progress.clone());
+        let (name, file) = (name.to_owned(), file.clone());
+        // What every other test waits on goes first.
+        crate::pool::run(u64::MAX, move || async move {
+            let whole = format!("tests/{file}.luau");
+            progress.tell(Step::Began {
+                file: &file,
+                name: &whole,
+                kind: TestKind::Case,
+                cases: None,
+            });
+            run(
+                modules,
+                Arc::new(NoReach),
+                Reaches::none(&name),
+                script,
+                Vec::new(),
+                TEST_LIMIT,
+                cancel,
+            )
+            .await
+        })
+    }))
+    .await;
+    // What each file came to, in order: its cases' results, then the
+    // properties and loops it registered, each a job of the pool.
+    enum Slot {
+        Done(TestResult),
+        Pending(usize),
+    }
+    let mut slots = Vec::new();
+    let mut pending: Vec<BoxFuture<'static, TestResult>> = Vec::new();
+    let mut fixtures: Vec<Made> = Vec::new();
+    for ((file, source), (value, error)) in files.tests.iter().zip(ran) {
+        let whole = format!("tests/{file}.luau");
         if let Some(failed) = error {
-            results.push(progress.ended(TestResult {
+            slots.push(Slot::Done(progress.ended(TestResult {
                 file: file.clone(),
                 name: whole,
                 passed: false,
                 error: Some(failed.why),
                 kind: TestKind::File,
                 ..TestResult::default()
-            }));
+            })));
             continue;
         }
         for case in value["cases"].as_array().into_iter().flatten() {
-            results.push(progress.ended(TestResult {
+            slots.push(Slot::Done(progress.ended(TestResult {
                 file: file.clone(),
                 name: case["name"].as_str().unwrap_or_default().to_owned(),
                 passed: case["passed"] == true,
                 error: case["error"].as_str().map(str::to_owned),
                 millis: case["millis"].as_u64(),
+                kind: TestKind::Case,
                 ..TestResult::default()
-            }));
+            })));
         }
         for fixture in value["fixtures"].as_array().into_iter().flatten() {
             let name = fixture["name"].as_str().unwrap_or_default().to_owned();
@@ -1279,14 +1311,16 @@ pub async fn run_all(
                 None => None,
             };
             match error {
-                Some(error) => results.push(progress.ended(TestResult {
-                    file: file.clone(),
-                    name: format!("fixture {name}"),
-                    passed: false,
-                    error: Some(error),
-                    kind: TestKind::Fixture,
-                    ..TestResult::default()
-                })),
+                Some(error) => {
+                    slots.push(Slot::Done(progress.ended(TestResult {
+                        file: file.clone(),
+                        name: format!("fixture {name}"),
+                        passed: false,
+                        error: Some(error),
+                        kind: TestKind::Fixture,
+                        ..TestResult::default()
+                    })))
+                }
                 None => fixtures.push(Made {
                     file: file.clone(),
                     name,
@@ -1305,41 +1339,80 @@ pub async fn run_all(
                     TestKind::Property
                 },
             };
+            // What it took the last time, or the cases it asks for, a
+            // machine's each a run of steps.
+            let asks = property.cases.unwrap_or(CASES)
+                * if property.kind == TestKind::Machine {
+                    10
+                } else {
+                    1
+                };
+            let cost =
+                crate::pool::took(name, file, &property.name).unwrap_or(asks);
             let source = PropertySource {
-                name,
-                modules: &modules,
-                digest: &digest,
-                file,
+                name: name.to_owned(),
+                modules: modules.clone(),
+                digest: digest.clone(),
+                file: file.clone(),
                 script: property_script(source, module, subject),
             };
-            let result = run_property(&source, property, &cancel, progress);
-            results.push(progress.ended(result.await));
+            let (cancel, progress) = (cancel.clone(), progress.clone());
+            slots.push(Slot::Pending(pending.len()));
+            pending.push(Box::pin(async move {
+                let telling = progress.clone();
+                let result = crate::pool::run(cost, move || async move {
+                    run_property(&source, property, &cancel, &telling).await
+                })
+                .await;
+                progress.ended(result)
+            }));
         }
         for each in value["loops"].as_array().into_iter().flatten() {
-            let loop_name = each["name"].as_str().unwrap_or_default();
+            let loop_name =
+                each["name"].as_str().unwrap_or_default().to_owned();
+            let cost = crate::pool::took(name, file, &loop_name).unwrap_or(300);
             let script = loop_script(source, module, subject);
-            progress.tell(Step::Began {
-                file,
-                name: loop_name,
-                kind: TestKind::Loop,
-                cases: None,
-            });
-            let began = std::time::Instant::now();
-            let mut result = run_loop(
-                name,
-                &modules,
-                files,
-                file,
-                loop_name,
-                &each["spec"],
-                script,
-                &cancel,
-            )
-            .await;
-            result.millis = Some(millis(began.elapsed()));
-            results.push(progress.ended(result));
+            let (modules, shared, cancel, progress) = (
+                modules.clone(),
+                shared.clone(),
+                cancel.clone(),
+                progress.clone(),
+            );
+            let (name, file, spec) =
+                (name.to_owned(), file.clone(), each["spec"].clone());
+            slots.push(Slot::Pending(pending.len()));
+            pending.push(Box::pin(async move {
+                let telling = progress.clone();
+                let result = crate::pool::run(cost, move || async move {
+                    telling.tell(Step::Began {
+                        file: &file,
+                        name: &loop_name,
+                        kind: TestKind::Loop,
+                        cases: None,
+                    });
+                    let began = std::time::Instant::now();
+                    let mut result = run_loop(
+                        &name, &modules, &shared, &file, &loop_name, &spec,
+                        script, &cancel,
+                    )
+                    .await;
+                    result.millis = Some(millis(began.elapsed()));
+                    result
+                })
+                .await;
+                progress.ended(result)
+            }));
         }
     }
+    let mut done: Vec<Option<TestResult>> =
+        join_all(pending).await.into_iter().map(Some).collect();
+    let results = slots
+        .into_iter()
+        .map(|slot| match slot {
+            Slot::Done(result) => result,
+            Slot::Pending(at) => done[at].take().expect("each job ends once"),
+        })
+        .collect();
     Tested { results, fixtures }
 }
 
@@ -1367,11 +1440,11 @@ fn millis(elapsed: Duration) -> u64 {
 
 /// Where a property comes from: its plugin, the version's digest, and
 /// the script each of its cases runs.
-struct PropertySource<'a> {
-    name: &'a str,
-    modules: &'a Arc<Modules>,
-    digest: &'a str,
-    file: &'a str,
+struct PropertySource {
+    name: String,
+    modules: Arc<Modules>,
+    digest: String,
+    file: String,
     script: String,
 }
 
@@ -1465,7 +1538,7 @@ fn seed(digest: &str, file: &str, name: &str) -> u64 {
 /// and gives its one result: passed, or its failure shrunk, with what
 /// reproduces it.
 async fn run_property(
-    source: &PropertySource<'_>,
+    source: &PropertySource,
     property: Property,
     cancel: &CancellationToken,
     progress: &Progress,
@@ -1473,7 +1546,7 @@ async fn run_property(
     use crate::hegel::{Driver, Run, Settings};
     let began = std::time::Instant::now();
     let result = |error: Option<String>| TestResult {
-        file: source.file.to_owned(),
+        file: source.file.clone(),
         name: property.name.clone(),
         passed: error.is_none(),
         error,
@@ -1483,10 +1556,10 @@ async fn run_property(
     };
     let settings = Settings {
         cases: property.cases.unwrap_or(CASES).clamp(1, MOST_CASES),
-        seed: seed(source.digest, source.file, &property.name),
+        seed: seed(&source.digest, &source.file, &property.name),
     };
     progress.tell(Step::Began {
-        file: source.file,
+        file: &source.file,
         name: &property.name,
         kind: property.kind,
         cases: Some(settings.cases),
@@ -1498,15 +1571,21 @@ async fn run_property(
         }
     };
     let telling = progress.clone();
+    let (file, name) = (source.file.clone(), property.name.clone());
     let on_case = Box::new(move |ran, failed_at| {
-        telling.tell(Step::Case { ran, failed_at });
+        telling.tell(Step::Case {
+            file: &file,
+            name: &name,
+            ran,
+            failed_at,
+        });
     });
     let driver = Arc::new(std::sync::Mutex::new(Driver::telling(
         run,
         PROPERTY_LIMIT,
         on_case,
     )));
-    let mut reaches = Reaches::none(source.name);
+    let mut reaches = Reaches::none(&source.name);
     reaches.hegel = Some(driver.clone());
     let (_, failed) = self::run(
         source.modules.clone(),
