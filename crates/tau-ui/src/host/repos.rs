@@ -844,11 +844,15 @@ impl Host {
         let full_name = self.forge_of(name).ok_or_else(|| {
             anyhow::anyhow!("{name} was not cloned from {}", forge.name())
         })?;
-        let remote =
-            forge.remote(&full_name).await.unwrap_or_else(|_| Remote {
+        // Signed out, a public repository fetches as anyone; signed in,
+        // with the sign-in, or why its token cannot be had.
+        let remote = match forge.signed_in().await {
+            Some(_) => forge.remote(&full_name).await?,
+            None => Remote {
                 url: forge.clone_url(&full_name),
                 token: None,
-            });
+            },
+        };
         repository.update(remote).await
     }
 
