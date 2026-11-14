@@ -1040,7 +1040,18 @@ local actions = {
 		if args.forget then
 			issues.delete(store, now(ctx), args.forget)
 		elseif args.restore then
-			store.put("issue/" .. args.restore.id, args.restore)
+			local issue = args.restore
+			-- A claim comes back only with its run going on: an ended run's
+			-- would hold the issue with nothing to let it go, so the issue
+			-- goes back to open, as an ended run's does.
+			if issue.claim ~= nil and not (issue.claim == ctx.run.id and ctx.run.live) then
+				issue = table.clone(issue)
+				issue.claim = nil
+				if issue.status == "in_progress" then
+					issue.status = "open"
+				end
+			end
+			store.put("issue/" .. issue.id, issue)
 		end
 		bump(store)
 	end,

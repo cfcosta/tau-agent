@@ -223,3 +223,27 @@ t.case("the beads view shows the export and takes an import", function()
 	local exported = beads_text(run)
 	t.equal(other:action("import", { text = exported }), "Imported 1 issues.")
 end)
+
+-- Undo of a close puts back what the issue was, but a claim only for a
+-- run still going: the run that claimed and closed it has ended, so
+-- nothing would let the claim go, and the issue goes back to open as an
+-- ended run's would. Its own run going on, the claim comes back with it.
+t.case("undo brings back no claim of a run that ended", function()
+	local store = {}
+	local run = t.run({ id = "r1", store = store, live = true })
+	local id = run:tool("todo_create", { title = "fix the sync" }).issue.id
+	run:tool("todo_claim", { id = id })
+	local undo = run:tool("todo_close", { id = id, reason = "fixed" }).undo
+	t.equal(undo.restore.claim, "r1")
+
+	run:action("undo", undo)
+	t.equal(store["issue/" .. id].claim, "r1", "its run goes on: the claim is its")
+	t.equal(store["issue/" .. id].status, "in_progress")
+
+	run:tool("todo_close", { id = id, reason = "fixed" })
+	run:run_end({ stop = "stop", text = "done" })
+	local after = t.run({ id = "r1", store = store, live = false })
+	after:action("undo", undo)
+	t.equal(store["issue/" .. id].claim, nil, "no claim of an ended run")
+	t.equal(store["issue/" .. id].status, "open")
+end)
