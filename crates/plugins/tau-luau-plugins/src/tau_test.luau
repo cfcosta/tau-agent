@@ -610,6 +610,8 @@ function test.run(spec)
 		secrets = secrets,
 		notices = notices,
 		logs = {},
+		-- Actions whose state was dropped: it changed under them.
+		dropped = 0,
 		data = {
 			-- `live` and `jev`, as an action sees them: `spec.live`, and
 			-- whether there is `spec.jev`.
@@ -634,15 +636,32 @@ function test.run(spec)
 			models = spec.models or array({}),
 		},
 	}
-	local function call(hook, ...)
+	-- `hook` with a ctx of the run's: `context.run` in place of the
+	-- run's own `ctx.run`, the state in `run[context.slot]` ("state", or
+	-- "job_state" for a job), and job reaches when `context.job`. Nothing
+	-- of the run is swapped while it runs, so hooks under way at once
+	-- (`t.hooks`) each keep their own.
+	local function call_in(context, hook, ...)
+		local slot = context.slot or "state"
 		local data = table.clone(run.data)
-		data.state = run.state
+		if context.run ~= nil then
+			data.run = context.run
+		end
+		-- Its own copy, as on the host: what it leaves is the run's when it
+		-- ends well and changed the state, over an action that came
+		-- meanwhile; an action's is the run's only while the state is the
+		-- one it began on (`still_on`), and is dropped otherwise.
+		local started = deep_copy(run[slot])
+		data.state = deep_copy(started)
+		local was_job = in_job
+		in_job = context.job == true
 		local ctx = tau._ctx(data, fakes)
 		if spec.jev then
 			ctx.jev = spec.jev
 		end
 		local before = deep_copy(stores)
 		local ok, answer = pcall(hook, ..., ctx)
+		in_job = was_job
 		if not ok then
 			for name, store in pairs(stores) do
 				for key in pairs(store) do
@@ -654,11 +673,30 @@ function test.run(spec)
 			end
 			error(answer, 0)
 		end
-		run.state = ctx.state
+		if context.action then
+			if same(run[slot], started) then
+				run[slot] = ctx.state
+			else
+				run.dropped += 1
+			end
+		elseif not same(ctx.state, started) then
+			run[slot] = ctx.state
+		end
 		for _, line in ipairs(ctx._logs) do
 			table.insert(run.logs, line)
 		end
 		return answer
+	end
+	local function call(hook, ...)
+		return call_in({}, hook, ...)
+	end
+	-- Whether a job's reaches are on: `t.hooks` keeps it for each hook it
+	-- has under way.
+	function run:_in_job(on)
+		if on ~= nil then
+			in_job = on
+		end
+		return in_job
 	end
 	local function need(hook, name)
 		if hook == nil then
@@ -705,35 +743,16 @@ function test.run(spec)
 	-- `f(ctx)` with the ctx a hook outside any run gets: for a test of a
 	-- module the plugin's hooks call.
 	function run:call(f)
-		local data = run.data
-		run.data = table.clone(data)
-		run.data.run = {}
-		local ok, answer = pcall(call, function(_, ctx)
+		return call_in({ run = {} }, function(_, ctx)
 			return f(ctx)
 		end, nil)
-		run.data = data
-		if not ok then
-			error(answer, 0)
-		end
-		return answer
 	end
 	function run:job(name)
 		local job = need((plugin.jobs or {})[name], "job " .. name)
-		local data, state = run.data, run.state
 		-- A job is outside any run, with a state of its own: `run.job_state`.
-		run.data = table.clone(data)
-		run.data.run = {}
-		run.state = run.job_state
-		in_job = true
-		local ok, answer = pcall(call, function(_, ctx)
+		return call_in({ run = {}, slot = "job_state", job = true }, function(_, ctx)
 			return job.run(ctx)
 		end, nil)
-		in_job, run.data = false, data
-		run.job_state, run.state = run.state, state
-		if not ok then
-			error(answer, 0)
-		end
-		return answer
 	end
 	function run:view()
 		local view = need(plugin.view, "view")
@@ -749,21 +768,14 @@ function test.run(spec)
 		end, settings or run.data.settings)
 	end
 	function run:action(name, args)
-		return call(need((plugin.actions or {})[name], "action " .. name), args or {})
+		return call_in({ action = true }, need((plugin.actions or {})[name], "action " .. name), args or {})
 	end
 	-- `call` is the call's id, `ctx.run.call`: "call_1" when not given.
 	function run:tool(name, args, call_id)
 		local tool = need((plugin.tools or {})[name], "tool " .. name)
-		local data = run.data
-		run.data = table.clone(data)
-		run.data.run = table.clone(data.run)
-		run.data.run.call = call_id or "call_1"
-		local ok, answer = pcall(call, tool.call, args or {})
-		run.data = data
-		if not ok then
-			error(answer, 0)
-		end
-		return answer
+		local of = table.clone(run.data.run)
+		of.call = call_id or "call_1"
+		return call_in({ run = of }, tool.call, args or {})
 	end
 	-- Moves the run's clock to `iso`.
 	function run:at(iso)
@@ -805,29 +817,13 @@ function test.run(spec)
 	-- Its step of first-run setup of what `app` keeps, with the
 	-- repositories `picked` so far as `ctx.run.picked` (ADR 0050, gap L).
 	function run:setup(app, picked)
-		local data = run.data
-		run.data = table.clone(data)
-		run.data.run = { kind = "app", picked = picked }
-		local ok, answer = pcall(call, need(plugin.setup, "setup"), app)
-		run.data = data
-		if not ok then
-			error(answer, 0)
-		end
-		return answer
+		return call_in({ run = { kind = "app", picked = picked } }, need(plugin.setup, "setup"), app)
 	end
 	-- Its page `name` of the app, outside any repository (ADR 0050, gap
 	-- L), with `params` and what its `drafts` hold, `params.drafts`.
 	function run:app_page_of(name, params)
 		local page = need((plugin.pages or {})[name], "page " .. name)
-		local data = run.data
-		run.data = table.clone(data)
-		run.data.run = { kind = "app" }
-		local ok, answer = pcall(call, page, table.clone(params or {}))
-		run.data = data
-		if not ok then
-			error(answer, 0)
-		end
-		return answer
+		return call_in({ run = { kind = "app" } }, page, table.clone(params or {}))
 	end
 	function run:models(app)
 		return call(need(plugin.models, "models"), app)
@@ -1198,6 +1194,249 @@ function test.machine(name, spec, opts)
 			end
 		end
 	end, opts)
+end
+
+-- `value` as Luau source: keys sorted, so the same value reads the same.
+local function literal(value, depth)
+	depth = depth or 0
+	if type(value) == "string" then
+		return string.format("%q", value)
+	elseif type(value) ~= "table" then
+		return tostring(value)
+	end
+	local keys = {}
+	for key in pairs(value) do
+		table.insert(keys, key)
+	end
+	table.sort(keys, function(a, b)
+		return tostring(a) < tostring(b)
+	end)
+	local parts = {}
+	local n = #value
+	for i = 1, n do
+		table.insert(parts, literal(value[i], depth + 1))
+	end
+	for _, key in ipairs(keys) do
+		if type(key) ~= "number" or key < 1 or key > n or key % 1 ~= 0 then
+			local name = type(key) == "string" and string.match(key, "^[%a_][%w_]*$") and key
+				or "[" .. literal(key) .. "]"
+			table.insert(parts, name .. " = " .. literal(value[key], depth + 1))
+		end
+	end
+	return "{ " .. table.concat(parts, ", ") .. " }"
+end
+
+-- A machine of `tau.machine` (ADR 0054), tested on hegel's engine: one
+-- rule per event, firing in every state, its data drawn from
+-- `spec.events[name]`. After each step: no error, the state in shape,
+-- an event with no arm changing nothing, effects well formed, the step
+-- the same when taken again, and the state the same through JSON. A
+-- plugin adds `spec.init(draw)` (its model), `spec.event(model, event,
+-- state, effects)` (the model told each event) and `spec.invariant(state,
+-- model, effects)`; `spec.weights` by event, and `spec.steps`. A failure
+-- notes its events as a `t.case` to paste, stepping `spec.as` (the
+-- machine's name in the plugin's code, `machine` unless said).
+function test.machine_of(name, machine, spec, opts)
+	spec = spec or {}
+	local generators = spec.events or {}
+	local function fails(m, why)
+		local lines = {
+			"t.case(" .. string.format("%q", tostring(name) .. ": found") .. ", function()",
+			"\tlocal state",
+			"\tfor _, event in ipairs(" .. literal(m.events) .. ") do",
+			"\t\tstate = " .. (spec.as or "machine") .. ":step(state, event)",
+			"\tend",
+			"\t-- " .. string.gsub(tostring(why), "\n", " "),
+			"end)",
+		}
+		test.note("the case, to keep:\n" .. table.concat(lines, "\n"))
+		error(why, 0)
+	end
+	local function check(m, ok, why)
+		if not ok then
+			fails(m, why)
+		end
+	end
+	local rules = {}
+	for _, event in ipairs(machine:events()) do
+		rules[event] = {
+			weight = spec.weights and spec.weights[event] or 1,
+			run = function(m, draw)
+				local e = {}
+				if generators[event] ~= nil then
+					for key, value in pairs(draw(generators[event])) do
+						e[key] = value
+					end
+				end
+				e.event = event
+				table.insert(m.events, deep_copy(e))
+				local before = deep_copy(m.state)
+				local handled = machine:handles(before, event)
+				local ok, next, effects = pcall(machine.step, machine, deep_copy(before), deep_copy(e))
+				check(m, ok, "the step raised: " .. tostring(next))
+				if not handled then
+					check(m, same(next, before), "`" .. event .. "` has no arm from `" .. before.state .. "` and changed the state")
+					check(m, #effects == 0, "`" .. event .. "` has no arm from `" .. before.state .. "` and gave effects")
+				end
+				local again, again_effects = machine:step(deep_copy(before), deep_copy(e))
+				check(m, same(again, next) and same(again_effects, effects), "`" .. event .. "` from `" .. before.state .. "` gave another answer when taken again")
+				check(m, same(json.decode(json.encode(next)), next), "the state does not read back the same from JSON: " .. shown(next))
+				m.state = next
+				m.effects = effects
+				if spec.event then
+					local fine, why = pcall(spec.event, m.model, e, next, effects)
+					check(m, fine, why)
+				end
+			end,
+		}
+	end
+	test.machine(name, {
+		init = function(d)
+			return {
+				state = deep_copy(machine.initial),
+				model = spec.init and spec.init(d) or {},
+				effects = {},
+				events = array({}),
+			}
+		end,
+		rules = rules,
+		invariant = function(m)
+			local ok, why = machine:shape(m.state)
+			check(m, ok, "the state " .. tostring(why))
+			if spec.invariant then
+				local fine, broke = pcall(spec.invariant, m.state, m.model, m.effects)
+				check(m, fine, broke)
+			end
+		end,
+		steps = spec.steps,
+	}, opts)
+end
+
+-- A plugin through its ways in (ADR 0054), on hegel's engine. Each of
+-- `spec.hooks` (a function of the fake run, `draw` and the world, or `{
+-- weight, run }`) is a rule that starts that way in: a hook, an action, a
+-- job's tick.
+-- What it waits on pauses it: each function of `spec.run`'s `jev`,
+-- `tools`, `http` and `infer`, called from a hook, waits until the rule
+-- `answer` calls it, with `draw` after its arguments, or `fail` fails
+-- it. So ways in can be under way at once, as on the host, sharing what
+-- the host shares: a plugin's store is taken in turns (no way in starts
+-- while another holds it), files and a run's state are shared at once.
+-- A hook that raises fails the test, unless `spec.may_fail(hook, why)`.
+-- `spec.invariant(world)` holds after each step: `world.run` (the fake
+-- run, its stores, files and state), `world.under_way` (the ways in
+-- waiting, each `{ hook, kind }`) and `world.failed`.
+function test.hooks(name, spec, opts)
+	local plugin = test.load()
+	local stored = plugin.uses and plugin.uses.store
+	local function waiting(kind, answer)
+		return function(...)
+			if not coroutine.isyieldable() then
+				return answer(...)
+			end
+			local given = coroutine.yield({ kind = kind, args = table.pack(...), answer = answer })
+			if not given.ok then
+				error(given.why, 0)
+			end
+			return table.unpack(given.values, 1, given.values.n)
+		end
+	end
+	local function paused(set, kind)
+		if type(set) ~= "table" then
+			return set
+		end
+		local out = {}
+		for key, f in pairs(set) do
+			out[key] = type(f) == "function" and waiting(kind .. "." .. key, f) or f
+		end
+		return out
+	end
+	-- Runs `way` on until it waits or ends, with the reaches it had.
+	local function go_on(world, way, value)
+		world.run:_in_job(way.in_job)
+		local ok, out = coroutine.resume(way.co, value)
+		way.in_job = world.run:_in_job()
+		world.run:_in_job(false)
+		if coroutine.status(way.co) ~= "dead" then
+			way.wait = out
+			table.insert(world.under_way, way)
+			test.note("  " .. way.hook .. " waits on " .. out.kind)
+			return
+		end
+		if ok then
+			return
+		end
+		if out == ASSUMED then
+			error(ASSUMED, 0)
+		end
+		if spec.may_fail and spec.may_fail(way.hook, out) then
+			table.insert(world.failed, { hook = way.hook, why = tostring(out) })
+			return
+		end
+		error(way.hook .. " raised: " .. tostring(out), 0)
+	end
+	local rules = {}
+	for hook, entry in pairs(spec.hooks or {}) do
+		if type(entry) == "function" then
+			entry = { run = entry }
+		end
+		rules[hook] = {
+			weight = entry.weight or 1,
+			run = function(world, draw)
+				test.assume(not (stored and #world.under_way > 0))
+				local way = {
+					hook = hook,
+					in_job = false,
+					co = coroutine.create(function()
+						return entry.run(world.run, draw, world)
+					end),
+				}
+				go_on(world, way)
+			end,
+		}
+	end
+	local function take(world, draw)
+		test.assume(#world.under_way > 0)
+		local at = draw(gen.integers({ min = 1, max = #world.under_way }))
+		return table.remove(world.under_way, at)
+	end
+	rules.answer = {
+		weight = 2,
+		run = function(world, draw)
+			local way = take(world, draw)
+			local args = way.wait.args
+			local ok, values = pcall(function()
+				return table.pack(way.wait.answer(table.unpack(args, 1, args.n), draw))
+			end)
+			test.note("  " .. way.hook .. " gets its " .. way.wait.kind .. (ok and "" or ", which fails"))
+			go_on(world, way, { ok = ok, values = values, why = values })
+		end,
+	}
+	rules.fail = {
+		weight = 0.5,
+		run = function(world, draw)
+			local way = take(world, draw)
+			test.note("  " .. way.hook .. "'s " .. way.wait.kind .. " fails")
+			go_on(world, way, { ok = false, why = "the " .. way.wait.kind .. " failed (t.hooks)" })
+		end,
+	}
+	test.machine(name, {
+		init = function()
+			local given = table.clone(spec.run or {})
+			given.jev = paused(given.jev, "jev")
+			given.tools = paused(given.tools, "tool")
+			if type(given.http) == "function" then
+				given.http = waiting("http", given.http)
+			end
+			if type(given.infer) == "function" then
+				given.infer = waiting("infer", given.infer)
+			end
+			return { run = test.run(given), under_way = array({}), failed = array({}) }
+		end,
+		rules = rules,
+		invariant = spec.invariant,
+		steps = spec.steps,
+	}, opts)
 end
 
 -- The file's properties, for the host to run one at a time.

@@ -340,6 +340,184 @@ function tau.contains(list, value)
 	return false
 end
 
+-- State machines (ADR 0054): a machine holds no state. A state is a
+-- plain table, `{ state = "<tag>", ...fields }`, kept where the plugin
+-- keeps state, so it persists and replicates; `step` moves it.
+local Machine = {}
+Machine.__index = Machine
+
+-- `fields` of a tag as a set: `name` required, `name?` optional.
+local function field_set(tag, fields)
+	if type(fields) ~= "table" then
+		error("tau.machine: the state `" .. tostring(tag) .. "` needs a list of fields", 3)
+	end
+	local set = {}
+	for _, field in ipairs(fields) do
+		local name, optional = tostring(field), false
+		if string.sub(name, -1) == "?" then
+			name, optional = string.sub(name, 1, -2), true
+		end
+		if name == "state" then
+			error("tau.machine: `state` names the tag, not a field of `" .. tag .. "`", 3)
+		end
+		set[name] = optional and "optional" or "required"
+	end
+	return set
+end
+
+-- A machine: `states` (each tag's fields), `initial` (a state), `on`
+-- (by event, then by the tag it leaves: a function of the state and the
+-- event giving the next state and its effects), and optionally `effects`
+-- (the names effects may have) and `strict` (an event with no arm is an
+-- error, not a step that changes nothing).
+function tau.machine(spec)
+	if type(spec) ~= "table" or type(spec.states) ~= "table" or type(spec.on) ~= "table" then
+		error("tau.machine needs `states` and `on`", 2)
+	end
+	local machine = setmetatable({
+		fields = {},
+		on = {},
+		strict = spec.strict == true,
+	}, Machine)
+	for tag, fields in pairs(spec.states) do
+		machine.fields[tostring(tag)] = field_set(tostring(tag), fields)
+	end
+	for event, arms in pairs(spec.on) do
+		if type(arms) ~= "table" then
+			error("tau.machine: the event `" .. tostring(event) .. "` needs its arms, by state", 2)
+		end
+		for tag, arm in pairs(arms) do
+			if machine.fields[tag] == nil then
+				error("tau.machine: `" .. event .. "` leaves `" .. tostring(tag) .. "`, which is no state", 2)
+			end
+			if type(arm) ~= "function" then
+				error("tau.machine: `" .. event .. "` from `" .. tag .. "` is no function", 2)
+			end
+		end
+		machine.on[tostring(event)] = arms
+	end
+	if spec.effects ~= nil then
+		machine.effects = {}
+		for _, name in ipairs(spec.effects) do
+			machine.effects[tostring(name)] = true
+		end
+	end
+	local ok, why = machine:shape(spec.initial)
+	if not ok then
+		error("tau.machine: `initial` " .. why, 2)
+	end
+	machine.initial = spec.initial
+	return machine
+end
+
+-- Whether `state` is in shape: a known tag, and exactly its fields.
+-- Returns false and why when it is not.
+function Machine:shape(state)
+	if type(state) ~= "table" then
+		return false, "is " .. type(state) .. ", not a state"
+	end
+	local fields = self.fields[state.state]
+	if fields == nil then
+		return false, "names no state: `" .. tostring(state.state) .. "`"
+	end
+	for key in pairs(state) do
+		if key ~= "state" and fields[key] == nil then
+			return false, "of `" .. state.state .. "` has `" .. tostring(key) .. "`, which it does not carry"
+		end
+	end
+	for name, kind in pairs(fields) do
+		if kind == "required" and state[name] == nil then
+			return false, "of `" .. state.state .. "` lacks `" .. name .. "`"
+		end
+	end
+	return true
+end
+
+-- Whether `state` is the tag `tag`.
+function Machine:is(state, tag)
+	return type(state) == "table" and state.state == tag
+end
+
+-- The states' tags, sorted.
+function Machine:tags()
+	local tags = {}
+	for tag in pairs(self.fields) do
+		table.insert(tags, tag)
+	end
+	table.sort(tags)
+	return tags
+end
+
+-- The events, sorted.
+function Machine:events()
+	local events = {}
+	for event in pairs(self.on) do
+		table.insert(events, event)
+	end
+	table.sort(events)
+	return events
+end
+
+-- Whether `event` has an arm from `state`'s tag.
+function Machine:handles(state, event)
+	local arms = self.on[event]
+	return arms ~= nil and type(state) == "table" and arms[state.state] ~= nil
+end
+
+local function copy(value)
+	if type(value) ~= "table" then
+		return value
+	end
+	local out = {}
+	for key, item in pairs(value) do
+		out[key] = copy(item)
+	end
+	return out
+end
+
+-- The state after `event` (a table whose `event` names it) from
+-- `state` (nil: `initial`), and the effects to carry out. An event with
+-- no arm from the state changes nothing, unless the machine is strict.
+function Machine:step(state, event)
+	if state == nil then
+		state = copy(self.initial)
+	end
+	local ok, why = self:shape(state)
+	if not ok then
+		error("tau.machine: the state " .. why, 2)
+	end
+	if type(event) ~= "table" or type(event.event) ~= "string" then
+		error("tau.machine: an event is a table whose `event` names it", 2)
+	end
+	local arms = self.on[event.event]
+	local arm = arms and arms[state.state]
+	if arm == nil then
+		if self.strict then
+			error("tau.machine: `" .. event.event .. "` has no arm from `" .. state.state .. "`", 2)
+		end
+		return state, {}
+	end
+	local next, effects = arm(state, event)
+	ok, why = self:shape(next)
+	if not ok then
+		error("tau.machine: `" .. event.event .. "` from `" .. state.state .. "` gave a state that " .. why, 2)
+	end
+	effects = effects or {}
+	if type(effects) ~= "table" then
+		error("tau.machine: `" .. event.event .. "` from `" .. state.state .. "` gave effects that are no list", 2)
+	end
+	for _, effect in ipairs(effects) do
+		local name = type(effect) == "table" and effect[1] or effect
+		if type(name) ~= "string" then
+			error("tau.machine: an effect of `" .. event.event .. "` is named by no string", 2)
+		end
+		if self.effects ~= nil and not self.effects[name] then
+			error("tau.machine: `" .. event.event .. "` gave the effect `" .. name .. "`, which the machine does not declare", 2)
+		end
+	end
+	return next, effects
+end
+
 -- The view pieces: plain tables a Rust renderer draws.
 local TONES = { neutral = true, good = true, warn = true, bad = true, info = true }
 

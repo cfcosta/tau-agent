@@ -11,6 +11,7 @@ mod forge_urls;
 mod forms;
 mod infer;
 mod install;
+mod machines;
 mod package;
 mod parity;
 mod properties;
