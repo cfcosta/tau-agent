@@ -213,3 +213,71 @@ fn a_run_whose_turn_could_not_be_stored_is_failed() {
     });
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// Makes the store refuse to end runs as done.
+struct RefuseDone {
+    path: PathBuf,
+    schema: Value,
+}
+
+#[async_trait]
+impl AgentTool for RefuseDone {
+    fn name(&self) -> &str {
+        "refuse_done"
+    }
+    fn description(&self) -> &str {
+        "Breaks ending runs."
+    }
+    fn parameters(&self) -> &Value {
+        &self.schema
+    }
+    async fn call(
+        &self,
+        _: Value,
+        _: ToolCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        execute(
+            &self.path,
+            "CREATE TRIGGER refuse_done BEFORE UPDATE OF status ON runs
+             WHEN NEW.status = 'done'
+             BEGIN SELECT RAISE(ABORT, 'the disk is full'); END",
+        )
+        .await;
+        Ok(ToolOutput::text("done"))
+    }
+}
+
+/// A run whose ending could not be stored sends no `RunEnd`: a
+/// subscriber never sees it done while the store has it failed.
+#[test]
+fn a_run_whose_ending_could_not_be_stored_sends_no_run_end() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("refuse_done", json!({})))
+        .turn(|t| t.text("all done"));
+    let (path, dir) = database();
+    block_on_io(async {
+        use futures_util::StreamExt;
+        let store = tau_store_sqlite::open(&path).await.unwrap();
+        let agent = Agent::new(llm).tool(RefuseDone {
+            path: path.clone(),
+            schema: json!({"type": "object"}),
+        });
+        let mut run = agent.start("go", &store);
+        let id = run.id();
+        let mut ends = Vec::new();
+        {
+            let mut events = run.events();
+            while let Some(event) = events.next().await {
+                if let tau_agent::event::RunEvent::RunEnd { stop, .. } = event {
+                    ends.push(stop);
+                }
+            }
+        }
+        let error = run.outcome().await.unwrap_err();
+        assert!(matches!(error, AgentError::Store(_)), "{error:?}");
+        assert_eq!(ends, Vec::new());
+        let record = store.run(&id.0).await.unwrap().unwrap();
+        assert_eq!(record.status, Status::Failed);
+    });
+    std::fs::remove_dir_all(dir).unwrap();
+}

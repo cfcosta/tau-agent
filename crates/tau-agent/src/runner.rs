@@ -455,8 +455,9 @@ impl Runner {
         Ok(None)
     }
 
-    /// Ends the run with `stop`: `RunEnd`, its outcome stored, each
-    /// plugin's `finish`.
+    /// Ends the run with `stop`: its outcome stored, `RunEnd`, each
+    /// plugin's `finish`. A subscriber that sees `RunEnd` finds the run
+    /// ended so in the store.
     pub(crate) async fn end(
         mut self,
         turns: Turns,
@@ -466,13 +467,6 @@ impl Runner {
             own, transcript, ..
         } = turns;
         let total = self.total(&own);
-        self.emit(RunEvent::RunEnd {
-            run: self.run.clone(),
-            parent: self.parent.clone(),
-            stop: stop.clone(),
-            cost: total.cost.total,
-        })
-        .await;
         let text = last_text(&transcript);
         let (status, error) = match &stop {
             StopReason::Stop => (Status::Done, None),
@@ -490,6 +484,13 @@ impl Runner {
                 error: error.map(str::to_owned),
             })
             .await?;
+        self.emit(RunEvent::RunEnd {
+            run: self.run.clone(),
+            parent: self.parent.clone(),
+            stop: stop.clone(),
+            cost: total.cost.total,
+        })
+        .await;
         let finished = FinishedRun {
             transcript: &transcript,
             stop: &stop,
@@ -499,8 +500,11 @@ impl Runner {
         for plugin in &mut self.plugins {
             plugin.run.finish(&finished, &plugin.ctx).await;
         }
-        // What plugins charged while finishing still counts.
-        self.save_charged().await?;
+        // What plugins charged while finishing still counts. The run is
+        // stored as ended, so a failure here loses only those charges,
+        // as a plugin's failing `finish` loses its work, and the run
+        // keeps its result.
+        let _ = self.save_charged().await;
         let usage = self.total(&own);
         Ok(RunResult {
             transcript,
