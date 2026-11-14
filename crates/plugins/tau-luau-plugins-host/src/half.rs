@@ -381,6 +381,8 @@ impl HostHalf for LuauPluginsHost {
                     let done = tau_luau_plugins::ActionDone {
                         plugin,
                         run: String::new(),
+                        action: None,
+                        args: serde_json::Value::Null,
                         on: serde_json::Value::Null,
                         state: serde_json::Value::Null,
                         changed: false,
@@ -414,6 +416,8 @@ impl HostHalf for LuauPluginsHost {
                     let done = tau_luau_plugins::ActionDone {
                         plugin,
                         run: String::new(),
+                        action: None,
+                        args: serde_json::Value::Null,
                         on: serde_json::Value::Null,
                         state: serde_json::Value::Null,
                         changed: false,

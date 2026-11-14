@@ -68,6 +68,14 @@ fn host_on(
     llm: &ScriptedModel,
     jev: Option<tau_jev::fake::FakeJev>,
 ) -> (Host, UnboundedReceiver<RunEvent>) {
+    host_with(llm, jev.map(|jev| Arc::new(jev) as Arc<dyn tau_jev::Jev>))
+}
+
+/// [`host_on`], with any Jev.
+fn host_with(
+    llm: &ScriptedModel,
+    jev: Option<Arc<dyn tau_jev::Jev>>,
+) -> (Host, UnboundedReceiver<RunEvent>) {
     install();
     let dir = own_dir();
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -102,7 +110,7 @@ fn host_on(
             )),
         );
     let host = match jev {
-        Some(jev) => host.with_service(tau_jev::Upstream(Arc::new(jev))),
+        Some(jev) => host.with_service(tau_jev::Upstream(jev)),
         None => host,
     };
     (host, events)
@@ -243,6 +251,96 @@ fn a_new_chat_shows_the_goal_it_inherits() {
     assert_eq!(state["goal"]["condition"], "the docs build");
     assert_eq!(state["goal"]["max_continuations"], 4);
     assert_eq!(state["checks"], false, "no key: nothing checks it");
+}
+
+/// A Jev whose first check of the goal waits, without holding a thread,
+/// until it is let go: it says when it is asked, and answers as `inner`.
+struct GatedJev {
+    inner: tau_jev::fake::FakeJev,
+    held: tokio::sync::Mutex<
+        Option<(
+            std::sync::mpsc::Sender<()>,
+            tokio::sync::oneshot::Receiver<()>,
+        )>,
+    >,
+}
+
+#[async_trait::async_trait]
+impl tau_jev::Jev for GatedJev {
+    async fn ask(
+        &self,
+        request: &tau_jev::Request,
+    ) -> Result<tau_jev::Response, tau_jev::JevError> {
+        if request.questions.contains_key("met") {
+            let held = self.held.lock().await.take();
+            if let Some((asked, gate)) = held {
+                asked.send(()).unwrap();
+                gate.await.unwrap();
+            }
+        }
+        self.inner.ask(request).await
+    }
+}
+
+/// Pause pressed while the goal's check waits on Jev is kept: the check's
+/// state is the one the run goes on with, and the run carries the Pause
+/// out again on it, where the check wrote over it and checked again.
+#[test]
+fn a_pause_pressed_while_the_goal_is_checked_is_kept() {
+    let llm = ScriptedModel::new()
+        .turn(|t| t.text("tried"))
+        .turn(|t| t.text("tried again"))
+        .turn(|t| t.text("and again"))
+        .turn(|t| t.text("once more"));
+    // The first check waits until the test has pressed Pause.
+    let (asked, checking) = std::sync::mpsc::channel::<()>();
+    let (go, gate) = tokio::sync::oneshot::channel::<()>();
+    let jev = GatedJev {
+        inner: tau_jev::fake::FakeJev::new(|request| {
+            if !request.questions.contains_key("met") {
+                return Err(tau_jev::JevError::Status(400));
+            }
+            let answers = request
+                .questions
+                .keys()
+                .map(|id| (id.clone(), tau_jev::Answer::Noul { noul: 0.1 }))
+                .collect();
+            Ok(tau_jev::fake::response(answers, request))
+        }),
+        held: tokio::sync::Mutex::new(Some((asked, gate))),
+    };
+    let (host, mut events) = host_with(&llm, Some(Arc::new(jev)));
+
+    let prompt = "/goal --continuations 3 the tests pass";
+    let mut view = host
+        .block_on(host.start(prompt, &ModelChoice::default(), REPO))
+        .unwrap();
+    checking.recv_timeout(WAIT).expect("the goal is checked");
+    // The state the check began on, as the run's records keep it: what
+    // the interface has once they reached it.
+    let stored = host
+        .block_on(host.history())
+        .unwrap()
+        .into_iter()
+        .find(|run| run.id == view.id)
+        .expect("the run, stored");
+    let checked_on = goal_of(&stored);
+    assert_eq!(checked_on["goal"]["status"], "active");
+    click(&host, &view.id, "pause", checked_on);
+    go.send(()).unwrap();
+    for event in until_end(&mut events) {
+        view.apply(&event);
+    }
+    wait_until_done(&host, &view.id);
+
+    let goal = goal_of(&view)["goal"].clone();
+    assert_eq!(goal["status"], "paused", "the Pause is kept");
+    assert_eq!(goal["checks"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        llm.requests().len(),
+        2,
+        "sent back once by the check, then not checked while paused"
+    );
 }
 
 #[test]

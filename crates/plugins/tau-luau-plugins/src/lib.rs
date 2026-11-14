@@ -859,6 +859,12 @@ pub enum Act {
 pub struct ActionDone {
     pub plugin: String,
     pub run: String,
+    /// The action carried out, and its args: a run whose hook changed the
+    /// state meanwhile carries it out again on what the hook left.
+    #[serde(default)]
+    pub action: Option<String>,
+    #[serde(default)]
+    pub args: Value,
     /// The state the action was carried out on.
     #[serde(default)]
     pub on: Value,
@@ -885,9 +891,11 @@ impl ActionDone {
         if self.changed {
             records.push(Record::Acted {
                 plugin: plugin(),
-                on: self.on.clone(),
+                on: Box::new(self.on.clone()),
                 state: self.state.clone(),
                 view: self.view.clone(),
+                action: self.action.clone(),
+                args: Box::new(self.args.clone()),
             });
         }
         if !self.logs.is_empty() {
@@ -975,9 +983,16 @@ pub enum Record {
     /// dropped: every reader of the run's records drops it alike.
     Acted {
         plugin: String,
-        on: Value,
+        on: Box<Value>,
         state: Value,
         view: Option<Value>,
+        /// The action, and its args, that the run carries out again on
+        /// what a hook left when the hook began on `on` and changed it
+        /// meanwhile: the person's action is not lost under it.
+        #[serde(default)]
+        action: Option<String>,
+        #[serde(default)]
+        args: Box<Value>,
     },
     /// What its `view` drew from that state.
     View { plugin: String, view: Value },

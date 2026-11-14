@@ -119,6 +119,7 @@ impl Fold for State {
                 on,
                 state,
                 view,
+                ..
             } => {
                 let current = self.plugins.get(&plugin).map(|part| &part.state);
                 if crate::still_on(current, &on) {
@@ -2599,6 +2600,8 @@ mod tests {
         let done = ActionDone {
             plugin: "p".into(),
             run: "r1".into(),
+            action: None,
+            args: Value::Null,
             on: json!({}),
             state: json!({ "answered": true }),
             changed: true,
@@ -3303,6 +3306,8 @@ mod tests {
         let done = ActionDone {
             plugin: "p".into(),
             run: "r1".into(),
+            action: None,
+            args: Value::Null,
             on: json!({}),
             state: json!({ "n": 2 }),
             changed: true,
@@ -3340,9 +3345,11 @@ mod tests {
     fn an_action_on_a_state_left_behind_is_dropped() {
         let acted = |on: Value, n: i64| Record::Acted {
             plugin: "p".into(),
-            on,
+            on: Box::new(on),
             state: json!({ "n": n }),
             view: Some(json!({ "status": { "text": n.to_string() } })),
+            action: None,
+            args: Box::default(),
         };
         let mut state = State::default();
         let mut fold = |record| {

@@ -169,6 +169,9 @@ struct RunState {
     text: String,
     names: HashMap<String, String>,
     calls: Vec<Value>,
+    /// How many records the run had when a hook last caught up: those
+    /// after came while the hook ran.
+    seen: Option<usize>,
 }
 
 /// What a run's tool reaches once the person allows what it asked: the
@@ -615,9 +618,11 @@ impl Inner {
     /// knew it: what an interface recorded meanwhile, such as an action
     /// a button carried out (ADR 0045).
     async fn catch_up(&self, state: &mut RunState, ctx: &PluginCtx) {
+        state.seen = None;
         let Ok(records) = ctx.records().await else {
             return;
         };
+        state.seen = Some(records.len());
         for (plugin, stored) in tau_luau_plugins::last_states(&records) {
             if state.stored.get(&plugin) != Some(&stored) {
                 state.states.insert(plugin.clone(), stored.clone());
@@ -647,6 +652,7 @@ impl Inner {
             return None;
         }
         if state.states.get(&plugin) != Some(&outcome.state) {
+            let meanwhile = self.acted_meanwhile(&plugin, state, ctx).await;
             state.states.insert(plugin.clone(), outcome.state.clone());
             state.stored.insert(plugin.clone(), outcome.state.clone());
             // What `start` left shows after the message the run started
@@ -665,8 +671,96 @@ impl Inner {
             if !matches!(hook, Hook::View) {
                 self.draw(active, state, ctx, place).await;
             }
+            // What the person did meanwhile, carried out again on what the
+            // hook left, where the hook's state would write over it.
+            for (action, args) in meanwhile {
+                Box::pin(self.replay(active, action, args, state, ctx)).await;
+            }
         }
         Some(outcome.value)
+    }
+
+    /// The actions an interface stored with the run while a hook of
+    /// `plugin` ran, on the state the hook began on, that the run's
+    /// readers took: in order, each with its args.
+    async fn acted_meanwhile(
+        &self,
+        plugin: &str,
+        state: &RunState,
+        ctx: &PluginCtx,
+    ) -> Vec<(String, Value)> {
+        let Some(seen) = state.seen else {
+            return Vec::new();
+        };
+        let Ok(records) = ctx.records().await else {
+            return Vec::new();
+        };
+        let mut on = state.stored.get(plugin).cloned();
+        let mut acted = Vec::new();
+        for record in records.into_iter().skip(seen) {
+            match serde_json::from_value::<Record>(record) {
+                Ok(Record::State { plugin: of, state }) if of == plugin => {
+                    on = Some(state);
+                }
+                Ok(Record::Acted {
+                    plugin: of,
+                    on: was,
+                    state,
+                    action,
+                    args,
+                    ..
+                }) if of == plugin
+                    && tau_luau_plugins::still_on(on.as_ref(), &was) =>
+                {
+                    on = Some(state);
+                    acted.extend(action.map(|action| (action, *args)));
+                }
+                _ => {}
+            }
+        }
+        acted
+    }
+
+    /// Carries out `action` of `active` with `args` again, on the state
+    /// as the run has it, as an interface carries it out on a live run.
+    async fn replay(
+        &self,
+        active: &Active,
+        action: String,
+        args: Value,
+        state: &mut RunState,
+        ctx: &PluginCtx,
+    ) {
+        let hook = Hook::Action(action);
+        if self.off(state, &active.loaded.declaration.name)
+            || !hook.declared_in(&active.loaded.declaration)
+        {
+            return;
+        }
+        let mut context = self.context(&ctx.run, state, active);
+        context.run = json!({
+            "id": ctx.run.0.as_ref(),
+            "live": true,
+            "jev": self.jev.is_some(),
+        });
+        context.store = self.store_of(active).await;
+        let reach: Arc<dyn Reach> =
+            Arc::new(crate::runtime::ActionReach(self.jev.clone()));
+        let reach: Arc<dyn Reach> = match self.files_of(active) {
+            Some(files) => Arc::new(crate::runtime::WithFiles { reach, files }),
+            None => reach,
+        };
+        let outcome = active
+            .loaded
+            .call(
+                &hook,
+                args,
+                &context,
+                reach,
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await;
+        self.apply(active, &hook, outcome, state, ctx).await;
     }
 
     /// Draws `active`'s view from its state and publishes it, at
