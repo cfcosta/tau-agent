@@ -237,3 +237,76 @@ t.case("an answer with no verdict is a failed check", function()
 	t.equal(r.state.goal.error ~= nil, true, "noted")
 	t.equal(#r.state.goal.checks, 0)
 end)
+
+-- A Pause pressed while Jev checks the goal is kept: the check that was
+-- under way records nothing and sends the model nowhere (ADR 0056).
+t.case("a Pause pressed while Jev checks the goal is kept", function()
+	local r
+	r = run({
+		jev = {
+			ask = function()
+				r:action("act", { what = "pause" })
+				return { met = { probability = 0.1 } }, 0.001
+			end,
+		},
+	})
+	r:start({ input = "/goal the tests pass" })
+	t.equal(stopping(r, "done?", 1), nil, "no continuation")
+	t.equal(r.state.goal.status, "paused")
+	t.equal(#r.state.goal.checks, 0, "no check recorded")
+	t.equal(next(r.state.held), nil, "no continuation held")
+end)
+
+-- The same in every order: stops checked by Jev, Pause and Resume
+-- pressed at any point, and a new goal set. While the goal is paused,
+-- no check is recorded and no stop sends the model back.
+t.hooks("a Pause pressed during a check is kept", {
+	run = {
+		id = "r1",
+		jev = {
+			ask = function(_, draw)
+				return { met = { probability = draw(g.floats({ min = 0, max = 0.8 })) } }, 0.001
+			end,
+		},
+	},
+	hooks = {
+		stop = {
+			weight = 3,
+			run = function(r, draw, world)
+				local kept = r.state.goal
+				if kept == nil or kept.status == "met" or kept.status == "stopped" or draw(g.booleans({ p = 0.1 })) then
+					r:start({ input = "/goal --continuations 50 --budget 100 the tests pass" })
+					world.paused_at = nil
+				else
+					r:start({ input = goal.KEEP_GOING })
+				end
+				local out = r:before_stop({ text = "done?", turn = 1, reason = "stop" })
+				local now = r.state.goal
+				if now ~= nil and now.status == "paused" then
+					t.equal(out, nil, "a paused goal sends the model nowhere")
+				end
+			end,
+		},
+		pause = function(r, _, world)
+			r:action("act", { what = "pause" })
+			local now = r.state.goal
+			if now ~= nil and now.status == "paused" and world.paused_at == nil then
+				world.paused_at = #now.checks
+			end
+		end,
+		resume = function(r, _, world)
+			r:action("act", { what = "keep_going" })
+			local now = r.state.goal
+			if now == nil or now.status ~= "paused" then
+				world.paused_at = nil
+			end
+		end,
+	},
+	invariant = function(world)
+		local now = world.run.state.goal
+		if world.paused_at ~= nil then
+			t.equal(now.status, "paused", "the pause is kept")
+			t.equal(#now.checks, world.paused_at, "no check after the pause")
+		end
+	end,
+})

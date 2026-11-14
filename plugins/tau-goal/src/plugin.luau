@@ -9,6 +9,7 @@
 -- is cleared. The banner's buttons and the `/goal` command change it.
 local tau = require("tau")
 local ui = tau.ui
+local cmd = tau.cmd
 local goal = require("goal")
 
 local NAME = "tau-goal"
@@ -59,7 +60,7 @@ local function message_tree(said, state)
 	if said.goal ~= nil then
 		return goal_set(state.goal, said.goal)
 	end
-	if state.held[tostring(said.continuation)] then
+	if (state.held or {})[tostring(said.continuation)] then
 		return ui.stack({})
 	end
 	local first = string.match(said.text, "^[^\n]*")
@@ -238,10 +239,10 @@ return tau.plugin({
 
 	-- As a message comes in: a `/goal` sets or clears the goal, and the
 	-- model is told.
-	start = function(plan, ctx)
-		local state = goal.state(ctx.state)
-		state.checks = ctx.jev ~= nil and ctx.run.kind ~= "sub_agent"
-		state.live = ctx.run.id
+	start = function(plan, model, env)
+		local state = goal.state(model)
+		state.checks = env.run.jev == true and env.run.kind ~= "sub_agent"
+		state.live = env.run.id
 		state.evidence = {}
 		-- What runs cost that no check counted yet goes on counting: a
 		-- run whose stop went unchecked still spent it.
@@ -266,8 +267,8 @@ return tau.plugin({
 	end,
 
 	-- The latest tool results, for Jev.
-	after_tool_result = function(result, ctx)
-		local state = goal.state(ctx.state)
+	after_tool_result = function(result, model)
+		local state = goal.state(model)
 		state.evidence = state.evidence or {}
 		table.insert(state.evidence, {
 			tool = result.name,
@@ -280,28 +281,36 @@ return tau.plugin({
 	end,
 
 	-- What each turn cost counts toward the goal.
-	turn_end = function(turn, ctx)
-		local state = goal.state(ctx.state)
+	turn_end = function(turn, model)
+		local state = goal.state(model)
 		state.turn = turn.turn
 		state.unchecked = (state.unchecked or 0) + (turn.cost or 0)
 	end,
 
 	-- Each time the model would stop: does the goal hold? Not yet, and
 	-- it goes back, while continuations and budget last.
-	before_stop = function(stop, ctx)
-		local state = goal.state(ctx.state)
+	before_stop = function(stop, model, env)
+		local state = goal.state(model)
 		local g = state.goal
-		if g == nil or g.status ~= "active" or not state.checks or ctx.jev == nil then
+		if g == nil or g.status ~= "active" or not state.checks or not env.run.jev then
 			return nil
 		end
-		local ok, answers, cost = pcall(ctx.jev.ask, {
+		local asked, checked = g.condition, #g.checks
+		local ok, answers, cost = pcall(tau.await, cmd.jev.ask({
 			state = {
-				goal = g.condition,
+				goal = asked,
 				final_answer = stop.text,
 				recent_tool_results = state.evidence or {},
 			},
 			questions = { met = QUESTION },
-		})
+		}))
+		-- The model as it is now: a Pause, a Clear or a new goal may have
+		-- come while Jev answered, and then this check is not the goal's.
+		state = goal.state(model)
+		g = state.goal
+		if g == nil or g.status ~= "active" or g.condition ~= asked or #g.checks ~= checked then
+			return nil
+		end
 		if not ok then
 			goal.failed(state, "Jev could not check the goal: " .. tostring(answers))
 			return nil
@@ -344,8 +353,8 @@ return tau.plugin({
 		return tau.continue(message)
 	end,
 
-	run_end = function(run, ctx)
-		local state = goal.state(ctx.state)
+	run_end = function(_, model)
+		local state = goal.state(model)
 		state.live = nil
 		state.evidence = nil
 	end,
@@ -353,8 +362,8 @@ return tau.plugin({
 	actions = {
 		-- The banner's buttons: `{ what }`, one of pause, edit, clear and
 		-- keep_going.
-		act = function(args, ctx)
-			local state = goal.state(ctx.state)
+		act = function(args, model, env)
+			local state = goal.state(model)
 			local g = state.goal
 			if g == nil then
 				return nil
@@ -368,7 +377,7 @@ return tau.plugin({
 				return tau.interface("composer", { text = "/goal " .. condition })
 			elseif args.what == "keep_going" then
 				-- Without a key nothing would check it, so it says so.
-				if not ctx.run.jev then
+				if not env.run.jev then
 					return tau.interface("alert", { title = "Goals need Jev", message = NEEDS_JEV .. "go on." })
 				end
 				if g.status == "paused" then
@@ -377,7 +386,7 @@ return tau.plugin({
 					goal.extend(state, goal.DEFAULT_CONTINUATIONS)
 				end
 				-- A finished conversation goes on.
-				if not ctx.run.live then
+				if not env.run.live then
 					return tau.interface("send", { text = goal.KEEP_GOING })
 				end
 			end
@@ -394,8 +403,8 @@ return tau.plugin({
 			-- Sets the open conversation's goal, or a new chat's, with the
 			-- popover's limits unless the command gave its own; `/goal
 			-- clear` clears it.
-			run = function(text, ctx)
-				local state = goal.state(ctx.state)
+			run = function(text, model, env)
+				local state = goal.state(model)
 				local typed = "/goal " .. text
 				local command = goal.parse(typed)
 				if command == nil then
@@ -406,16 +415,16 @@ return tau.plugin({
 					goal.clear(state)
 					return nil
 				end
-				if not ctx.run.jev then
+				if not env.run.jev then
 					return tau.interface("alert", { title = "Goals need Jev", message = NEEDS_JEV .. "set the goal again." })
 				end
 				-- Limits typed with the command win over the popover's.
 				local continuations, budget = command.continuations, command.budget
 				if not (string.find(typed, "--continuations", 1, true) or string.find(typed, "--budget", 1, true)) then
-					continuations, budget = goal.limits(ctx.drafts[CONTINUATIONS], ctx.drafts[BUDGET])
+					continuations, budget = goal.limits(env.drafts[CONTINUATIONS], env.drafts[BUDGET])
 				end
 				local condition = command.condition
-				if ctx.run.live and not state.checks then
+				if env.run.live and not state.checks then
 					-- A run going on that started without Jev keeps the goal
 					-- for when it goes on, and nothing tells the model now.
 					goal.set(state, condition, continuations, budget)
@@ -424,7 +433,7 @@ return tau.plugin({
 						message = "This run started without a TypeSafe key, so nothing checks the goal while it goes on. It is kept, and checked once the conversation goes on.",
 					})
 				end
-				if ctx.run.live then
+				if env.run.live then
 					-- A run going on takes it at its next stop, and the model
 					-- is told.
 					goal.set(state, condition, continuations, budget)
@@ -439,14 +448,14 @@ return tau.plugin({
 		},
 	},
 
-	view = function(state, ctx)
-		state = goal.state(state)
+	-- Of a frozen copy: what `goal.state` would fill in reads as empty.
+	view = function(state)
 		local notes = {}
-		for key, entry in pairs(state.notes) do
+		for key, entry in pairs(state.notes or {}) do
 			notes[key] = note_tree(entry)
 		end
 		local messages = {}
-		for text, said in pairs(state.said) do
+		for text, said in pairs(state.said or {}) do
 			messages[text] = message_tree(said, state)
 		end
 		local g = state.goal
