@@ -217,7 +217,7 @@ local function unwrap(values, level)
 		return envelope
 	end
 	if envelope.ok == false then
-		error(envelope.error or "the model gave no answer", level + 1)
+		error(envelope.error or "the model gave no answer", 0)
 	end
 	if envelope.value == json.null then
 		return nil
@@ -244,8 +244,10 @@ function tau.await(c)
 		return tau._infer_with_tools(c.args)
 	end
 	local answer = coroutine.yield(AWAIT, c)
+	-- The command's own message, with no place in the plugin's source:
+	-- it is the host's, and a model may read it.
 	if answer.ok == false then
-		error(answer.error, 2)
+		error(answer.error, 0)
 	end
 	if ENVELOPED[c.op] then
 		return unwrap(answer.values, 2)
@@ -320,7 +322,7 @@ function tau._infer_with_tools(args)
 	for _ = 1, args.rounds or 4 do
 		local answer = coroutine.yield(AWAIT, command("infer_turn", request))
 		if answer.ok == false then
-			error(answer.error, 2)
+			error(answer.error, 0)
 		end
 		local turn_answer = unwrap(answer.values, 2)
 		text = turn_answer.text or ""
@@ -485,16 +487,19 @@ function tau._actor(plugin, model)
 		if type(hook) ~= "function" then
 			return json.null
 		end
-		local frozen = json.decode(json.encode(actor.model))
+		-- A copy of plain tables, frozen: a list read back from JSON has a
+		-- metatable `table.freeze` refuses.
 		local function freeze(value)
-			if type(value) == "table" and not table.isfrozen(value) then
-				for _, item in pairs(value) do
-					freeze(item)
-				end
-				table.freeze(value)
+			if type(value) ~= "table" then
+				return value
 			end
-			return value
+			local copy = {}
+			for key, item in pairs(value) do
+				copy[key] = freeze(item)
+			end
+			return table.freeze(copy)
 		end
+		local frozen = actor.model
 		if input == nil then
 			return hook(freeze(frozen), env or {})
 		end
