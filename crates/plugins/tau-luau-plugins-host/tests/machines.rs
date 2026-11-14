@@ -163,6 +163,99 @@ end)
     assert!(result.passed, "{}", error(&result));
 }
 
+/// A machine with an arm no path from `initial` takes: nothing leads to
+/// `archived`, as records an older version kept may still hold.
+const ARCHIVE: &str = r#"
+local tau = require("tau")
+local t = tau.test
+local g = t.gen
+local machine = tau.machine({
+  states = { open = { "n" }, closed = { "n" }, archived = { "n", "why" } },
+  initial = { state = "open", n = 0 },
+  on = {
+    close = { open = function(s) return { state = "closed", n = s.n + 1 } end },
+    reopen = { closed = function(s) return { state = "open", n = s.n } end },
+    restore = { archived = function(s) return { state = "open", n = s.n } end },
+  },
+})
+"#;
+
+/// An arm no case took fails the machine, naming it; one the plugin
+/// lists in `untaken` may stay so, and one `spec.states` starts cases
+/// from is taken.
+#[test]
+fn an_arm_no_case_took_is_named() {
+    let untested = only(&format!(
+        r#"{ARCHIVE}
+t.machine_of("every arm", machine, {{}})
+"#
+    ));
+    assert!(!untested.passed);
+    assert!(
+        error(&untested).contains("no case took `restore` from `archived`"),
+        "{}",
+        error(&untested)
+    );
+
+    let listed = only(&format!(
+        r#"{ARCHIVE}
+t.machine_of("every arm", machine, {{ untaken = {{ "restore from archived" }} }})
+"#
+    ));
+    assert!(listed.passed, "{}", error(&listed));
+
+    let drawn = only(&format!(
+        r#"{ARCHIVE}
+t.machine_of("every arm", machine, {{
+  states = {{ archived = g.records({{ n = g.integers({{ min = 0, max = 9 }}), why = g.text({{ max = 3 }}) }}) }},
+}})
+"#
+    ));
+    assert!(drawn.passed, "{}", error(&drawn));
+}
+
+/// A case that starts from a drawn state, and fails, is noted from that
+/// state: the case to paste begins there.
+#[test]
+fn a_case_from_a_drawn_state_is_noted_from_it() {
+    let result = only(&format!(
+        r#"{ARCHIVE}
+t.machine_of("counts stay small", machine, {{
+  states = {{ archived = g.records({{ n = g.integers({{ min = 5, max = 9 }}), why = g.just("old") }}) }},
+  invariant = function(state) t.equal(state.n < 5, true, "a count stays under 5") end,
+}})
+"#
+    ));
+    assert!(!result.passed);
+    let error = error(&result);
+    assert!(error.contains("a count stays under 5"), "{error}");
+    assert!(
+        error.contains(
+            r#"local state = { n = 5, state = "archived", why = "old" }"#
+        ),
+        "{error}"
+    );
+}
+
+/// A start state drawn out of shape is the spec's error, said as such.
+#[test]
+fn a_start_state_out_of_shape_is_said() {
+    let result = only(&format!(
+        r#"{ARCHIVE}
+t.machine_of("shapes", machine, {{
+  states = {{ archived = g.records({{ n = g.just(1) }}) }},
+}})
+"#
+    ));
+    assert!(!result.passed);
+    assert!(
+        error(&result)
+            .contains("spec.states.archived drew a state out of shape"),
+        "{}",
+        error(&result)
+    );
+}
+
 /// The fixed sign-in holds under every event from every state: a token
 /// saved is checked, whatever came before.
 #[test]

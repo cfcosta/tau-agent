@@ -1260,13 +1260,21 @@ end
 -- model, effects)`; `spec.weights` by event, and `spec.steps`. A failure
 -- notes its events as a `t.case` to paste, stepping `spec.as` (the
 -- machine's name in the plugin's code, `machine` unless said).
+--
+-- A case starts from `machine.initial`, or with `spec.states` (a
+-- generator of each state's fields, by state) from any of them too, in
+-- shape, as records an older version kept hand one back; `spec.init`
+-- gets the start state after `draw`. Once every case held, each arm (an
+-- event from a state) some case took, or the property fails naming
+-- those none took; `spec.untaken` lists the ones that may stay so, as
+-- "event from state".
 function test.machine_of(name, machine, spec, opts)
 	spec = spec or {}
 	local generators = spec.events or {}
 	local function fails(m, why)
 		local lines = {
 			"t.case(" .. string.format("%q", tostring(name) .. ": found") .. ", function()",
-			"\tlocal state",
+			"\tlocal state" .. (same(m.start, machine.initial) and "" or " = " .. literal(m.start)),
 			"\tfor _, event in ipairs(" .. literal(m.events) .. ") do",
 			"\t\tstate = " .. (spec.as or "machine") .. ":step(state, event)",
 			"\tend",
@@ -1281,6 +1289,8 @@ function test.machine_of(name, machine, spec, opts)
 			fails(m, why)
 		end
 	end
+	-- The arms the cases took, as "event from state".
+	local taken = {}
 	local rules = {}
 	for _, event in ipairs(machine:events()) do
 		rules[event] = {
@@ -1298,6 +1308,9 @@ function test.machine_of(name, machine, spec, opts)
 				-- hook's does on the host.
 				local before = json.decode(json.encode(m.state))
 				local handled = machine:handles(before, event)
+				if handled then
+					taken[event .. " from " .. before[machine.tag]] = true
+				end
 				local ok, next, effects = pcall(machine.step, machine, deep_copy(before), deep_copy(e))
 				check(m, ok, "the step raised: " .. tostring(next))
 				if not handled then
@@ -1316,13 +1329,37 @@ function test.machine_of(name, machine, spec, opts)
 			end,
 		}
 	end
+	-- Where a case may start: the initial state, or any of `spec.states`.
+	local starts = array({ "initial" })
+	for state in pairs(spec.states or {}) do
+		assert(machine.fields[state] ~= nil, "spec.states names no state " .. tostring(state))
+		table.insert(starts, state)
+	end
+	table.sort(starts)
+	local function start(d)
+		local from = #starts == 1 and "initial" or d(gen.sampled_from(starts))
+		if from == "initial" then
+			return deep_copy(machine.initial)
+		end
+		local state = {}
+		for key, value in pairs(d(spec.states[from])) do
+			state[key] = value
+		end
+		state[machine.tag] = from
+		local ok, why = machine:shape(state)
+		assert(ok, "spec.states." .. from .. " drew a state out of shape: " .. tostring(why))
+		return state
+	end
 	test.machine(name, {
 		init = function(d)
+			local state = start(d)
 			return {
-				state = deep_copy(machine.initial),
-				model = spec.init and spec.init(d) or {},
+				state = state,
+				model = spec.init and spec.init(d, deep_copy(state)) or {},
 				effects = {},
 				events = array({}),
+				-- The start, so a case to paste begins there.
+				start = deep_copy(state),
 			}
 		end,
 		rules = rules,
@@ -1336,6 +1373,25 @@ function test.machine_of(name, machine, spec, opts)
 		end,
 		steps = spec.steps,
 	}, opts)
+	properties[#properties].after = function()
+		local may = {}
+		for _, arm in ipairs(spec.untaken or {}) do
+			may[arm] = true
+		end
+		local untaken = {}
+		for event, arms in pairs(machine.on) do
+			for from in pairs(arms) do
+				local arm = event .. " from " .. from
+				if not taken[arm] and not may[arm] then
+					table.insert(untaken, "`" .. event .. "` from `" .. from .. "`")
+				end
+			end
+		end
+		table.sort(untaken)
+		if #untaken > 0 then
+			error("no case took " .. table.concat(untaken, ", ") .. "; draw the states they start from with spec.states, or list them in spec.untaken", 0)
+		end
+	end
 end
 
 -- A plugin through its ways in (ADR 0054), on hegel's engine. Each of
@@ -1512,10 +1568,18 @@ end
 -- another in this VM: what a case changes of the file's own values, the
 -- next one sees.
 function tau._run_cases(name)
+	local held = true
 	while hegel({ op = "next" }) do
 		table.clear(notes)
 		local outcome = run_case(name)
+		held = held and outcome.status ~= "interesting"
 		hegel({ op = "end", status = outcome.status, error = outcome.error, notes = outcome.notes })
+	end
+	-- What a property checks of all its cases, once each held.
+	for _, p in ipairs(properties) do
+		if p.name == name and held and p.after and not p.opts.reproduce then
+			p.after()
+		end
 	end
 	return { done = true }
 end
