@@ -237,13 +237,15 @@ return tau.plugin({
 	continues = 20,
 
 	-- As a message comes in: a `/goal` sets or clears the goal, and the
-	-- model is told; the run's own count of what it cost starts.
+	-- model is told.
 	start = function(plan, ctx)
 		local state = goal.state(ctx.state)
 		state.checks = ctx.jev ~= nil and ctx.run.kind ~= "sub_agent"
 		state.live = ctx.run.id
 		state.evidence = {}
-		state.unchecked = 0
+		-- What runs cost that no check counted yet goes on counting: a
+		-- run whose stop went unchecked still spent it.
+		state.unchecked = state.unchecked or 0
 		state.turn = 0
 		if not state.checks then
 			return nil
@@ -305,7 +307,12 @@ return tau.plugin({
 			return nil
 		end
 		cost = cost or 0
-		local p = answers.met.probability
+		local verdict = type(answers) == "table" and answers.met or nil
+		if type(verdict) ~= "table" or type(verdict.probability) ~= "number" then
+			goal.failed(state, "Jev gave no verdict on the goal")
+			return nil
+		end
+		local p = verdict.probability
 		local spent = g.spent + (state.unchecked or 0) + cost
 		state.unchecked = 0
 		local met = p >= goal.MET_AT

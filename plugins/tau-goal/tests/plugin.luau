@@ -204,3 +204,36 @@ t.property("the banner's buttons follow the goal", function(draw)
 	local edit = r:action("act", { what = "edit" })
 	t.equal(edit, tau.interface("composer", { text = "/goal " .. (status == "met" and "" or "it works") }))
 end)
+
+-- What a run cost while its stop went unchecked (Jev failed, or the goal
+-- was paused) still counts toward the goal's budget: each message's start
+-- set the count to nothing, so the budget counted less than was spent.
+t.case("a run whose stop went unchecked still counts toward the budget", function()
+	local down = true
+	local fake = {
+		ask = function()
+			if down then
+				error("Jev is down", 0)
+			end
+			return { met = { probability = 0.1 } }, 0.25
+		end,
+	}
+	local r = run({ jev = fake })
+	r:start({ input = "/goal --budget 5 the tests pass" })
+	stopping(r, "done?", 1, 0.5)
+	t.equal(#r.state.goal.checks, 0, "not checked")
+	down = false
+	r:start({ input = goal.KEEP_GOING })
+	stopping(r, "done now?", 1, 0.2)
+	t.equal(r.state.goal.spent, 0.5 + 0.2 + 0.25)
+end)
+
+-- An answer of Jev's with no verdict is a check that failed, said in a
+-- note, not a failure of the plugin's.
+t.case("an answer with no verdict is a failed check", function()
+	local r = run({ jev = { ask = function() return {}, 0 end } })
+	r:start({ input = "/goal the tests pass" })
+	t.equal(stopping(r, "done?", 1), nil)
+	t.equal(r.state.goal.error ~= nil, true, "noted")
+	t.equal(#r.state.goal.checks, 0)
+end)

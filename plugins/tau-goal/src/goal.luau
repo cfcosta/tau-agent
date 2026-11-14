@@ -301,8 +301,9 @@ local function note(state, text, detail, tone)
 	state.notes["g" .. count(state.notes)] = { text = text, detail = detail, tone = tone }
 end
 
--- Sets the conversation's goal, anew.
+-- Sets the conversation's goal, anew: what it spends counts from now.
 function goal.set(state, condition, continuations, budget)
+	state.unchecked = 0
 	state.goal = {
 		condition = condition,
 		max_continuations = continuations,
