@@ -2,6 +2,8 @@
 -- `blocked`, `flagged`, `held`, `error`), and what they come to: a
 -- run's state as its view draws it, and the counts the repository's
 -- page shows.
+local tau = require("tau")
+
 local checks = {}
 
 -- The name the plugin goes by, in what it tells the model.
@@ -82,13 +84,14 @@ function checks.answer_request(answer, found)
 	return { state = { final_answer = answer }, questions = questions }
 end
 
--- Asks `jev` with `request`, of `count` questions: each rule's score in
+-- Asks Jev with `request`, of `count` questions: each rule's score in
 -- order, and what it cost; else nil and why.
-function checks.ask(jev, request, count)
-	local ok, answers, cost = pcall(jev.ask, request)
+function checks.ask(request, count)
+	local ok, answers, cost = pcall(tau.await, tau.cmd.jev.ask(request))
 	if not ok then
 		return nil, tostring(answers)
 	end
+	answers = if type(answers) == "table" then answers else {}
 	local scores = {}
 	for n = 1, count do
 		local answer = answers[checks.question_id(n)]

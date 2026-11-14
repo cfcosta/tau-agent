@@ -16,7 +16,43 @@ local rules = require("rules")
 local checks = require("checks")
 local page = require("page")
 
+local cmd = tau.cmd
 local NAME = checks.NAME
+
+-- The repository's store, as commands: a read awaits it, a write is
+-- given and lands when the step ends, before the next read.
+local store = {
+	get = function(key)
+		return tau.await(cmd.store.get(key))
+	end,
+	list = function(prefix)
+		return tau.await(cmd.store.list(prefix))
+	end,
+	put = function(key, value)
+		tau.give(cmd.store.put(key, value))
+	end,
+	delete = function(key)
+		tau.give(cmd.store.delete(key))
+	end,
+}
+
+-- Whether two values read from the store hold the same.
+local function same(a, b)
+	if type(a) ~= "table" or type(b) ~= "table" then
+		return a == b
+	end
+	for key, value in pairs(a) do
+		if not same(value, b[key]) then
+			return false
+		end
+	end
+	for key in pairs(b) do
+		if a[key] == nil then
+			return false
+		end
+	end
+	return true
+end
 
 -- How many past calls, and answers, the store keeps for Try it.
 local SAMPLE_CALLS = 24
@@ -31,12 +67,9 @@ local HANDLED = 30
 -- How long a run's title, its first message's first line, may be.
 local TITLE_CHARS = 60
 
--- The repository's constitution, checked; none stored is no rules, and
--- no store is none. Else nil and why.
-local function constitution_of(store)
-	if store == nil then
-		return rules.default()
-	end
+-- The repository's constitution, checked; none stored is no rules.
+-- Else nil and why.
+local function constitution_of()
 	return rules.from_stored(store.get("constitution"))
 end
 
@@ -46,7 +79,7 @@ local function stored(constitution)
 end
 
 -- Tells the page and the sidebar that what they draw changed.
-local function bump(store)
+local function bump()
 	store.put("rev", (store.get("rev") or 0) + 1)
 end
 
@@ -65,10 +98,7 @@ end
 
 -- Keeps a call for Try it, when a rule, or a place the editor offers,
 -- reads its tool.
-local function sample_call(store, constitution, call)
-	if store == nil then
-		return
-	end
+local function sample_call(constitution, call)
 	local tools = constitution and rules.tools(constitution) or {}
 	for _, place in ipairs(page.PLACES) do
 		local target = rules.target(place[1])
@@ -84,8 +114,8 @@ local function sample_call(store, constitution, call)
 	store.put("samples", samples)
 end
 
-local function sample_answer(store, answer)
-	if store == nil or answer == "" then
+local function sample_answer(answer)
+	if answer == "" then
 		return
 	end
 	local samples = store.get("samples") or {}
@@ -94,7 +124,7 @@ local function sample_answer(store, answer)
 end
 
 -- Something the rules handled, for the page's list.
-local function handled(store, entry)
+local function handled(entry)
 	local list = array({})
 	for _, known in ipairs(store.get("handled") or {}) do
 		table.insert(list, known)
@@ -107,7 +137,7 @@ local function handled(store, entry)
 end
 
 -- A flagged call or answer, for a person to look at.
-local function waiting(store, item)
+local function waiting(item)
 	local seq = (store.get("seq") or 0) + 1
 	store.put("seq", seq)
 	item.id = string.format("review/%09d", seq)
@@ -115,7 +145,7 @@ local function waiting(store, item)
 end
 
 -- What rule `rule` last caught, for its caption.
-local function caught(store, rule, shown)
+local function caught(rule, shown)
 	local last = store.get("caught") or {}
 	last[rule] = checks.cut(string.match(shown, "^[^\n]*"), TITLE_CHARS)
 	store.put("caught", last)
@@ -125,23 +155,21 @@ end
 -- repository's page shows of them: the run's counts, what waits for a
 -- person, and what the rules handled. `call` is the call checked (nil
 -- for the final answer), `shown` what its rules read, and `answer` the
--- final answer.
-local function apply(state, ctx, records, call, shown, answer)
+-- final answer. The run's state is folded first, in one step; the store's
+-- reads after it may wait, and its last write reads the state again.
+local function apply(model, env, records, call, shown, answer)
+	local state = checks.state(model)
 	for _, record in ipairs(records) do
 		checks.fold(state, record, answer, shown)
 	end
-	local store = ctx.store
-	if store == nil then
-		return
-	end
-	local title = state.title or ctx.run.id
+	local title = state.title or env.run.id
 	if call ~= nil then
 		local verdict = (state.calls[call.id] or {}).verdict
 		if verdict and verdict.kind == "blocked" then
-			handled(store, { what = "blocked", shown = call.name .. " " .. shown, rule = verdict.rule, title = title })
+			handled({ what = "blocked", shown = call.name .. " " .. shown, rule = verdict.rule, title = title })
 		elseif verdict then
-			waiting(store, {
-				run = ctx.run.id,
+			waiting({
+				run = env.run.id,
 				tool = call.name,
 				shown = shown,
 				rule = verdict.rule,
@@ -150,16 +178,16 @@ local function apply(state, ctx, records, call, shown, answer)
 			})
 		end
 		if verdict then
-			caught(store, verdict.rule, shown)
+			caught(verdict.rule, shown)
 		end
 	end
 	for _, record in ipairs(records) do
 		if record.kind == "held" then
-			handled(store, { what = "held", shown = "final answer", rule = record.rule, title = title })
-			caught(store, record.rule, "final answer, " .. title)
+			handled({ what = "held", shown = "final answer", rule = record.rule, title = title })
+			caught(record.rule, "final answer, " .. title)
 		elseif record.kind == "flagged" and record.call_id == nil then
-			waiting(store, {
-				run = ctx.run.id,
+			waiting({
+				run = env.run.id,
 				shown = checks.cut(answer or "", checks.SHOWN_CHARS),
 				rule = record.rule,
 				score = record.score,
@@ -167,8 +195,10 @@ local function apply(state, ctx, records, call, shown, answer)
 			})
 		end
 	end
-	store.put("run/" .. ctx.run.id, { title = title, stats = state.stats })
-	bump(store)
+	-- The state as it is now, after the store's reads.
+	state = checks.state(model)
+	store.put("run/" .. env.run.id, { title = state.title or env.run.id, stats = state.stats })
+	bump()
 end
 
 -- The fields every rule about a call reads, as one text.
@@ -275,15 +305,11 @@ end
 
 -- The repository's page: its rules, the editor, and what waits for
 -- review, from its store.
-local function rules_page(params, ctx)
-	local store = ctx.store
-	if store == nil then
-		return ui.empty("Rules need the plugin's store.")
-	end
+local function rules_page(params, _, env)
 	local repo = params.repo
 	local data = {
 		repo = repo,
-		jev = ctx.run.jev == true,
+		jev = env.run.jev == true,
 		focus = params.rule,
 		editor = store.get("editor"),
 		trying = store.get("trying"),
@@ -292,7 +318,7 @@ local function rules_page(params, ctx)
 		caught = store.get("caught") or {},
 		waiting = {},
 	}
-	local constitution, why = constitution_of(store)
+	local constitution, why = constitution_of()
 	if constitution then
 		data.constitution = constitution
 	else
@@ -309,34 +335,24 @@ local function rules_page(params, ctx)
 	return page.tree(data)
 end
 
--- The store, for a page's action.
-local function store_of(ctx)
-	if ctx.store == nil then
-		error("the rules need the plugin's store", 0)
-	end
-	return ctx.store
-end
-
 -- Changes the repository's constitution with `edit`, which checks what
 -- it changes, and saves it; `failed` says what could not be done.
-local function edit(ctx, failed, change)
-	local store = store_of(ctx)
-	local constitution, why = constitution_of(store)
+local function edit(env, failed, change)
+	local constitution, why = constitution_of()
 	if constitution == nil then
-		error(failed .. ": " .. rules.errors.invalid(ctx.run.repo or "", why), 0)
+		error(failed .. ": " .. rules.errors.invalid(env.run.repo or "", why), 0)
 	end
 	local ok, refused = change(constitution)
 	if ok == nil then
 		error(failed .. ": " .. refused, 0)
 	end
 	store.put("constitution", stored(constitution))
-	bump(store)
+	bump()
 end
 
 -- Changes the rule being written with `change`; `fresh` drops what
 -- trying it gave.
-local function drafting(ctx, fresh, change)
-	local store = store_of(ctx)
+local function drafting(fresh, change)
 	local draft = store.get("editor")
 	if draft == nil then
 		return
@@ -346,61 +362,58 @@ local function drafting(ctx, fresh, change)
 	if fresh then
 		store.delete("trying")
 	end
-	bump(store)
+	bump()
 end
 
 local actions = {
 	-- Opens the editor on a new rule, or on `rule`.
-	open = function(args, ctx)
-		local store = store_of(ctx)
-		local constitution = constitution_of(store)
+	open = function(args, _, env)
+		local constitution = constitution_of()
 		local rule = constitution and args.rule and rules.find(constitution, args.rule)
 		store.put("editor", page.draft(rule))
 		store.delete("trying")
-		bump(store)
+		bump()
 	end,
-	close = function(_, ctx)
-		local store = store_of(ctx)
+	close = function(_, _, env)
 		store.delete("editor")
 		store.delete("trying")
-		bump(store)
+		bump()
 	end,
 	-- Enter in the rule's field: what it said is the rule.
-	write = function(args, ctx)
-		drafting(ctx, false, function(draft)
+	write = function(args, _, env)
+		drafting(false, function(draft)
 			if rules.trim(args.text or "") ~= "" then
 				draft.text = args.text
 			end
 		end)
 	end,
-	place = function(args, ctx)
-		drafting(ctx, true, function(draft)
+	place = function(args, _, env)
+		drafting(true, function(draft)
 			page.toggle_place(draft, args.place)
 		end)
 	end,
 	-- Enter in the field's field: the field it names.
-	add_place = function(args, ctx)
-		drafting(ctx, true, function(draft)
+	add_place = function(args, _, env)
+		drafting(true, function(draft)
 			page.add_place(draft, args.text or "")
 		end)
 	end,
-	preset = function(args, ctx)
-		drafting(ctx, false, function(draft)
+	preset = function(args, _, env)
+		drafting(false, function(draft)
 			local preset = page.preset_named(args.preset)
 			if preset then
 				draft.review, draft.block = preset.review, preset.block
 			end
 		end)
 	end,
-	nudge = function(args, ctx)
-		drafting(ctx, false, function(draft)
+	nudge = function(args, _, env)
+		drafting(false, function(draft)
 			page.nudge(draft, args.mark, args.delta)
 		end)
 	end,
 	-- Adds or saves the rule; with something missing, the editor says
 	-- what.
-	save = function(_, ctx)
-		local store = store_of(ctx)
+	save = function(_, _, env)
 		local draft = store.get("editor")
 		if draft == nil then
 			return
@@ -408,16 +421,16 @@ local actions = {
 		if page.problem(draft) then
 			draft.tried_to_save = true
 			store.put("editor", draft)
-			bump(store)
+			bump()
 			return
 		end
 		local text = rules.trim(draft.text)
 		if draft.editing then
-			edit(ctx, "Could not save the rule", function(constitution)
+			edit(env, "Could not save the rule", function(constitution)
 				return rules.replace(constitution, draft.editing, text, draft.places, draft.review, draft.block)
 			end)
 		else
-			edit(ctx, "Could not add the rule", function(constitution)
+			edit(env, "Could not add the rule", function(constitution)
 				return rules.add(constitution, text, draft.places, draft.review, draft.block)
 			end)
 		end
@@ -426,8 +439,7 @@ local actions = {
 	end,
 	-- Tries the rule being written on the latest calls and answers it
 	-- reads, with Jev.
-	try = function(_, ctx)
-		local store = store_of(ctx)
+	try = function(_, _, env)
 		local draft = store.get("editor")
 		if draft == nil then
 			return
@@ -435,31 +447,36 @@ local actions = {
 		if page.problem(draft) then
 			draft.tried_to_save = true
 			store.put("editor", draft)
-			bump(store)
+			bump()
 			return
 		end
-		if ctx.jev == nil then
+		if not env.run.jev then
 			store.put("trying", { failed = "Trying a rule asks Jev: add a TypeSafe key on the Models screen." })
 		else
 			local calls, answers = page.trial_samples(draft, store.get("samples") or {})
-			local trials, cost = page.try(ctx.jev, draft, calls, answers)
+			local trials, cost = page.try(draft, calls, answers)
+			-- The rule as it is now: changed or closed while Jev answered,
+			-- what it gave is not this rule's.
+			if not same(store.get("editor"), draft) then
+				return
+			end
 			if trials == nil then
 				store.put("trying", { failed = cost })
 			else
 				store.put("trying", { trials = trials, cost = cost })
 			end
 		end
-		bump(store)
+		bump()
 	end,
-	remove = function(args, ctx)
-		edit(ctx, "Could not remove the rule", function(constitution)
+	remove = function(args, _, env)
+		edit(env, "Could not remove the rule", function(constitution)
 			rules.remove(constitution, args.id)
 			return true
 		end)
 	end,
 	-- What Jev cannot answer, and how many times an answer may go back.
-	settings = function(args, ctx)
-		edit(ctx, "Could not save the constitution", function(constitution)
+	settings = function(args, _, env)
+		edit(env, "Could not save the constitution", function(constitution)
 			constitution.on_error = args.blocks_unchecked and "block" or "allow"
 			constitution.max_holds = args.max_holds
 			return true
@@ -467,33 +484,30 @@ local actions = {
 	end,
 	-- Asks to remove rules that cannot be read, to be confirmed, or
 	-- takes the question back.
-	ask_reset = function(args, ctx)
-		local store = store_of(ctx)
+	ask_reset = function(args, _, env)
 		if args.yes then
 			store.put("resetting", true)
 		else
 			store.delete("resetting")
 		end
-		bump(store)
+		bump()
 	end,
 	-- Removes them, as confirmed: no rules, to start again.
-	reset = function(_, ctx)
-		local store = store_of(ctx)
+	reset = function(_, _, env)
 		store.put("constitution", stored(rules.default()))
 		store.delete("resetting")
-		bump(store)
+		bump()
 	end,
 	-- A flagged call or answer looked fine: off the queue, for good.
-	fine = function(args, ctx)
-		local store = store_of(ctx)
+	fine = function(args, _, env)
 		local item = args.id and store.get(args.id)
 		if item == nil then
 			return
 		end
 		store.delete(args.id)
 		local shown = item.tool and (item.tool .. " " .. item.shown) or ("final answer: " .. item.shown)
-		handled(store, { what = "fine", shown = shown, rule = item.rule, title = item.title })
-		bump(store)
+		handled({ what = "fine", shown = shown, rule = item.rule, title = item.title })
+		bump()
 	end,
 }
 
@@ -505,22 +519,23 @@ return tau.plugin({
 	-- As a message comes in: what the checks say before anything is
 	-- checked. Rules that cannot be read fail the run, once there is a
 	-- key to check them with: they are never skipped.
-	start = function(plan, ctx)
-		local state = checks.state(ctx.state)
+	start = function(plan, model, env)
+		local state = checks.state(model)
 		state.holds = 0
 		state.live = true
-		state.repo = ctx.run.repo
+		state.repo = env.run.repo
 		if state.title == nil then
 			state.title = checks.cut(string.match(plan.input or "", "^[^\n]*"), TITLE_CHARS)
 		end
-		if ctx.jev == nil then
+		if not env.run.jev then
 			state.starting = checks.starting(false)
 			return nil
 		end
-		local constitution, why = constitution_of(ctx.store)
+		local constitution, why = constitution_of()
+		state = checks.state(model)
 		if constitution == nil then
 			state.starting = checks.starting(true, nil)
-			return tau.fail(rules.errors.invalid(ctx.run.repo or "", why))
+			return tau.fail(rules.errors.invalid(env.run.repo or "", why))
 		end
 		state.starting = checks.starting(true, #constitution.rules)
 		return nil
@@ -528,11 +543,10 @@ return tau.plugin({
 
 	-- Before a call: the rules that read one of its fields, all in one
 	-- request.
-	before_tool = function(call, ctx)
-		local state = checks.state(ctx.state)
-		local constitution = constitution_of(ctx.store)
-		sample_call(ctx.store, constitution, call)
-		if ctx.jev == nil or constitution == nil then
+	before_tool = function(call, model, env)
+		local constitution = constitution_of()
+		sample_call(constitution, call)
+		if not env.run.jev or constitution == nil then
 			return nil
 		end
 		local about = rules.for_call(constitution, call.name, call.args)
@@ -540,7 +554,7 @@ return tau.plugin({
 			return nil
 		end
 		local shown = shown_of(about)
-		local scores, cost = checks.ask(ctx.jev, checks.call_request(call.name, about), #about)
+		local scores, cost = checks.ask(checks.call_request(call.name, about), #about)
 		local records, reason
 		if scores == nil then
 			local record
@@ -549,7 +563,7 @@ return tau.plugin({
 		else
 			records, reason = checks.of_call(call, about, scores, cost)
 		end
-		apply(state, ctx, records, call, shown, nil)
+		apply(model, env, records, call, shown, nil)
 		if reason then
 			return tau.block(reason)
 		end
@@ -557,11 +571,10 @@ return tau.plugin({
 	end,
 
 	-- Before the run stops: the rules on the final answer.
-	before_stop = function(stop, ctx)
-		local state = checks.state(ctx.state)
-		local constitution = constitution_of(ctx.store)
-		sample_answer(ctx.store, stop.text or "")
-		if ctx.jev == nil or constitution == nil then
+	before_stop = function(stop, model, env)
+		local constitution = constitution_of()
+		sample_answer(stop.text or "")
+		if not env.run.jev or constitution == nil then
 			return nil
 		end
 		local found = rules.for_final_answer(constitution)
@@ -569,8 +582,9 @@ return tau.plugin({
 			return nil
 		end
 		local answer = stop.text or ""
-		local holds = state.holds or 0
-		local scores, cost = checks.ask(ctx.jev, checks.answer_request(answer, found), #found)
+		local scores, cost = checks.ask(checks.answer_request(answer, found), #found)
+		-- The holds as they are now, after Jev answered.
+		local holds = model.holds or 0
 		local records, message
 		if scores == nil then
 			local record
@@ -579,41 +593,49 @@ return tau.plugin({
 		else
 			records, message = checks.of_answer(found, scores, cost, holds, constitution.max_holds)
 		end
-		apply(state, ctx, records, nil, nil, answer)
+		-- The hold is counted before the store's reads in `apply`, so
+		-- nothing comes between reading the holds and counting this one.
+		local state = checks.state(model)
+		if message ~= nil then
+			state.holds = holds + 1
+		end
+		apply(model, env, records, nil, nil, answer)
 		if message == nil then
 			return nil
 		end
-		state.holds = holds + 1
+		state = checks.state(model)
 		-- Its note says it: the message draws as nothing.
 		state.said[message] = true
 		return tau.continue(message)
 	end,
 
-	run_end = function(_, ctx)
-		ctx.state.live = nil
+	run_end = function(_, model)
+		model.live = nil
 	end,
 
-	view = function(state, ctx)
-		state = checks.state(state)
+	-- Of a frozen copy: what `checks.state` would fill in is read as
+	-- empty, not written.
+	view = function(state)
 		local notes = {}
-		for key, entry in pairs(state.notes) do
+		for key, entry in pairs(state.notes or {}) do
 			notes[key] = note_tree(entry)
 		end
 		local calls = {}
-		for id, call in pairs(state.calls) do
+		for id, call in pairs(state.calls or {}) do
 			calls[id] = call_tree(call, state.repo)
 		end
 		local messages = {}
-		for text in pairs(state.said) do
+		for text in pairs(state.said or {}) do
 			messages[text] = ui.stack({})
 		end
-		local status, tone = checks.status(state)
+		local shown = { stats = state.stats or checks.stats(), starting = state.starting, live = state.live, repo = state.repo }
+		local status, tone = checks.status(shown)
 		return {
 			notes = notes,
 			calls = calls,
 			messages = messages,
 			status = status and ui.status(status, nil, tone),
-			inspector = inspector(state),
+			inspector = inspector(shown),
 		}
 	end,
 
@@ -621,12 +643,8 @@ return tau.plugin({
 	pages = { rules = rules_page },
 	repo_nav = { label = "Constitution", page = "rules", icon = "blocked" },
 	-- The sidebar's entry: how many rules, and what waits for a person.
-	repo_data = function(ctx)
-		local store = ctx.store
-		if store == nil then
-			return {}
-		end
-		local constitution = constitution_of(store)
+	repo_data = function()
+		local constitution = constitution_of()
 		local count = constitution and #constitution.rules or 0
 		local waiting = #store.list("review/")
 		return {

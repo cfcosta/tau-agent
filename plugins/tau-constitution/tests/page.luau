@@ -140,10 +140,17 @@ t.case("a rule is tried on what a check would show", function()
 	local draft = page.draft(nil)
 	draft.text = "No unwrap."
 	draft.places = { "write.content" }
+	-- Trying awaits Jev, so it runs as a hook does.
+	local r = t.run({ jev = fake })
+	local function try(calls, answers)
+		return r:call(function()
+			return { page.try(draft, calls, answers) }
+		end)
+	end
 	local calls, answers = page.trial_samples(draft, samples)
 	t.equal(#calls, 2)
 	t.equal(answers, {})
-	local trials, cost = page.try(fake, draft, calls, answers)
+	local trials, cost = table.unpack(try(calls, answers), 1, 2)
 	t.equal(trials, { { tool = "write", shown = "x.unwrap()", score = 0.9 }, { tool = "write", shown = "Ok(x)", score = 0.9 } })
 	t.equal(cost > 0, true)
 	-- Jev saw what the check sees: the tool and the field, nothing else.
@@ -152,12 +159,12 @@ t.case("a rule is tried on what a check would show", function()
 	-- A final-answer rule tries the answers.
 	draft.places = { "final answer" }
 	calls, answers = page.trial_samples(draft, samples)
-	trials = page.try(fake, draft, calls, answers)
+	trials = try(calls, answers)[1]
 	t.equal(trials, { { shown = "Done.", score = 0.9 } })
 	t.equal(asked[3].state, { final_answer = "Done." })
 	-- A place that names nothing is refused.
 	draft.places = { "nowhere" }
-	t.equal({ page.try(fake, draft, {}, {}) }, { nil, rules.errors.no_target("nowhere") })
+	t.equal(try({}, {}), { nil, rules.errors.no_target("nowhere") })
 end)
 
 t.case("a rule is tried and says what it would do", function()
@@ -292,4 +299,37 @@ t.case("the page says what there is", function()
 	t.equal(has(drawn, "A final answer that breaks a rule stands, flagged."), true)
 	t.equal(has(drawn, "Add TypeSafe key"), false)
 	t.equal(r:repo_data().nav.detail, "1 rules")
+end)
+
+-- The rule is rewritten while Jev tries it: what Jev said was of the
+-- rule as it was, so it is not kept as the new rule's (ADR 0056).
+t.case("a rule changed while it is tried keeps no trial", function()
+	local r
+	local fake = {
+		ask = function(request)
+			r:action("write", { text = "Never touch any database." })
+			local answers = {}
+			for id in pairs(request.questions) do
+				answers[id] = { probability = 0.9 }
+			end
+			return answers, 0.001
+		end,
+	}
+	r = page_run({ samples = { calls = { { tool = "exec_command", args = { cmd = "psql prod" } } }, answers = {} } }, fake)
+	r:action("open", {})
+	r:action("write", { text = "Never touch the production database." })
+	r:action("place", { place = "exec_command.cmd" })
+	r:action("try", {})
+	t.equal(r.store.editor.text, "Never touch any database.")
+	t.equal(r.store.trying, nil, "no trial of the rule as it was")
+	-- Tried again, as it is now: kept.
+	fake.ask = function(request)
+		local answers = {}
+		for id in pairs(request.questions) do
+			answers[id] = { probability = 0.9 }
+		end
+		return answers, 0.001
+	end
+	r:action("try", {})
+	t.equal(r.store.trying.trials, { { tool = "exec_command", shown = "psql prod", score = 0.9 } })
 end)

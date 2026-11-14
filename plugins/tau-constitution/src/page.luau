@@ -155,11 +155,11 @@ function page.trial_samples(draft, samples)
 	return calls, answers
 end
 
--- Asks `jev` what a rule being written makes of past `calls` and
+-- Asks Jev what a rule being written makes of past `calls` and
 -- `answers`, as a check would ask about each, one request each: the
 -- trials, `{ tool, shown, score }`, and what Jev cost; else nil and
 -- why. Nothing runs again; Jev sees only what a check would show it.
-function page.try(jev, draft, calls, answers)
+function page.try(draft, calls, answers)
 	for _, place in ipairs(draft.places) do
 		local target, why = rules.target(place)
 		if target == nil then
@@ -186,7 +186,7 @@ function page.try(jev, draft, calls, answers)
 	end
 	local trials, cost = array({}), 0
 	for _, ask in ipairs(asks) do
-		local scores, spent = checks.ask(jev, ask.request, 1)
+		local scores, spent = checks.ask(ask.request, 1)
 		if scores == nil then
 			return nil, spent
 		end
