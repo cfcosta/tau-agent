@@ -155,22 +155,23 @@ local function unschedule(args, model, env)
 	return "Nothing is scheduled as `" .. name .. "`."
 end
 
--- One wake-up: its name, when it comes due, the way to cancel it, and
--- its note.
+-- One wake-up: its name, when it comes due and the way to cancel it;
+-- under them its note, dimmed.
 local function row(run, one)
 	return ui.stack({
 		ui.row({
-			ui.heading(one.name),
+			ui.mono(one.name),
 			ui.spacer(),
 			ui.due(run .. "-" .. one.name, one.at * 1000),
 			ui.button("cancel", "cancel", { name = one.name }, "secondary"),
 		}),
-		ui.text(one.note),
+		ui.toned(one.note, "neutral"),
 	})
 end
 
 -- The message a chat woke on: each wake-up that came due, the time it
--- was for as a figure beside its name, its day and its note.
+-- was for as a figure beside its name, that it was scheduled and for
+-- which day, and its note.
 local function card(woken)
 	local blocks = {}
 	for index, one in ipairs(woken) do
@@ -178,12 +179,16 @@ local function card(woken)
 			table.insert(blocks, ui.rule())
 		end
 		local day, time = string.match(one.due, "^(.-)%s*(%d+:%d+)$")
+		local said = "scheduled"
+		if day ~= nil and day ~= "" then
+			said ..= " · " .. day
+		end
 		table.insert(
 			blocks,
 			ui.row({
 				ui.figure(time or one.due),
 				ui.stack({
-					ui.row({ ui.heading(one.name), ui.spacer(), ui.mono(day or "") }),
+					ui.row({ ui.title(one.name), ui.spacer(), ui.toned(said, "neutral", true) }),
 					ui.text(one.note),
 				}),
 			})
@@ -334,8 +339,12 @@ return heiko.plugin({
 		local view = {}
 		local list = state.waiting or {}
 		if #list > 0 then
-			local rows = { ui.heading("Scheduled") }
-			for _, one in ipairs(list) do
+			-- Its section's head, with how many wait, over a ruled row each.
+			local rows = { ui.header("Scheduled", { meta = #list }) }
+			for index, one in ipairs(list) do
+				if index > 1 then
+					table.insert(rows, ui.rule())
+				end
 				table.insert(rows, row(env.run.id, one))
 			end
 			view.inspector = ui.stack(rows)

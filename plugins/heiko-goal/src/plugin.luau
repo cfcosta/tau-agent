@@ -31,6 +31,12 @@ local function target(ink)
 	return ui.kanji("的", ink)
 end
 
+-- A note's or the banner's title, in the display face; `ink` is the
+-- color it asks for.
+local function title(text, ink)
+	return ui.title(text, nil, ink)
+end
+
 local function button(label, kind, what)
 	return ui.button(label, "act", { what = what }, kind)
 end
@@ -64,10 +70,10 @@ end
 -- from here.
 local function note_tree(entry, stopped)
 	if entry.kind == "met" then
-		return ui.row({ target("good"), ui.stack({ ui.heading("Goal met", "good"), ui.row(squares(entry.checks or {})) }) })
+		return ui.row({ target("good"), ui.stack({ title("Goal met", "good"), ui.row(squares(entry.checks or {})) }) })
 	elseif entry.kind == "stopped" then
 		local body = {
-			ui.heading("Goal stopped, not met", "bad"),
+			title("Goal stopped, not met", "bad"),
 			ui.row(squares(entry.checks or {}, ui.square("■", "filled", "bad"))),
 		}
 		if stopped then
@@ -117,25 +123,26 @@ end
 
 local STATUS = { active = "not met", paused = "paused", met = "met", stopped = "stopped · not met" }
 
--- Above the transcript while the conversation has a goal: the goal under
--- its mark, each check a square, the continuations as ticks, why
--- nothing checks it when nothing does, and its actions.
+-- Above the transcript while the conversation has a goal: the goal
+-- beside its mark, each check a square, how many continuations it took
+-- over them as ticks the banner's width, and its actions, then why
+-- nothing checks it when nothing does.
 local function banner(g, why)
 	local tone = goal.tone(g)
-	local title, actions, last
+	local heading, actions, last
 	if g.status == "active" then
-		title = g.condition
+		heading = g.condition
 		last = ui.square(tostring(#g.checks + 1))
 		actions = { button("pause", "secondary", "pause"), button("edit", "secondary", "edit"), button("clear", "secondary", "clear") }
 	elseif g.status == "paused" then
-		title = g.condition
+		heading = g.condition
 		last = ui.square(tostring(#g.checks + 1))
 		actions = { button("resume", "primary", "keep_going"), button("edit", "secondary", "edit"), button("clear", "secondary", "clear") }
 	elseif g.status == "met" then
-		title = "Goal met"
+		heading = "Goal met"
 		actions = { button("new goal", "secondary", "edit"), button("clear", "secondary", "clear") }
 	else
-		title = "Goal stopped, not met"
+		heading = "Goal stopped, not met"
 		last = ui.square("■", "filled", "bad")
 		actions = {
 			button("raise the limit", "primary", "keep_going"),
@@ -143,23 +150,28 @@ local function banner(g, why)
 			button("clear", "secondary", "clear"),
 		}
 	end
-	local checks = squares(met_of(g), last)
-	table.insert(checks, ui.spacer())
-	table.insert(checks, ui.ticks(g.continuations, g.max_continuations, tone == "bad" and "bad" or "good"))
-	table.insert(checks, ui.mono(g.continuations .. " of " .. g.max_continuations))
-	table.insert(actions, ui.spacer())
 	if why ~= nil then
+		table.insert(actions, ui.spacer())
 		table.insert(actions, ui.toned(why, "warn"))
 	elseif g.error ~= nil then
+		table.insert(actions, ui.spacer())
 		table.insert(actions, ui.toned("the last check failed", "bad"))
 	end
 	local body
-	if title == g.condition then
-		body = { ui.row({ ui.heading(title), ui.spacer(), ui.toned(STATUS[g.status], tone) }) }
+	if heading == g.condition then
+		body = { title(heading) }
 	else
-		body = { ui.heading(title, g.status == "met" and "good" or "bad"), ui.text(g.condition) }
+		body = { title(heading, g.status == "met" and "good" or "bad"), ui.text(g.condition) }
 	end
-	table.insert(body, ui.row(checks))
+	table.insert(body, ui.row(squares(met_of(g), last)))
+	-- Where it stands, when it is not just going, and the count, over
+	-- the strip.
+	local count = { ui.spacer(), ui.mono(g.continuations .. " of " .. g.max_continuations) }
+	if g.status == "paused" then
+		table.insert(count, 1, ui.toned(STATUS[g.status], tone))
+	end
+	table.insert(body, ui.row(count))
+	table.insert(body, ui.ticks(g.continuations, g.max_continuations, tone == "bad" and "bad" or "good"))
 	table.insert(body, ui.row(actions))
 	return ui.row({ target(g.status == "stopped" and "bad" or "good"), ui.stack(body) })
 end

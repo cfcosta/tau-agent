@@ -462,11 +462,17 @@ fn plugin_states(
                     )
                     .flex_1(),
                 )
-                .child(mono(
-                    plugin.state.clone(),
-                    Type::CAPTION,
-                    t.tone(plugin.tone),
-                ));
+                // A long state wraps under the name, and is cut at the
+                // panel's edge.
+                .child(
+                    mono(
+                        plugin.state.clone(),
+                        Type::CAPTION,
+                        t.tone(plugin.tone),
+                    )
+                    .max_w_full()
+                    .truncate(),
+                );
             div().flex().flex_col().child(row).when(open, |column| {
                 column.child(plugin_settings(ws, run, &plugin.name, t, cx))
             })

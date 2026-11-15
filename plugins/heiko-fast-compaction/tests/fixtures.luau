@@ -35,20 +35,21 @@ local DECIDED = {
 	{ "c9", "read", "drop_result", 0.58, 0.11 },
 }
 
--- Every call before the rewrite, as the ledger page lists it: the first
--- ones pinned with the prompt, the rest judged.
+-- Every call before the rewrite, as the ledger page lists it, with its
+-- short argument: the first ones pinned with the prompt, the rest
+-- judged.
 local CALLS = {
-	{ "c1", "memory_read", '{"id":"n-0388","title":"Retry policy honors server hints"}', 40 },
-	{ "c1a", "ls", '{"path":"crates/heiko-ai/src"}', 90 },
-	{ "c2", "grep", '{"path":"crates/heiko-ai/src","pattern":"retry_after|RetryPolicy"}', 120 },
-	{ "c3", "read", '{"path":"crates/heiko-ai/src/retry.rs"}', 3100 },
-	{ "c4", "edit", '{"edits":[{"newText":"retry_after","oldText":"delay"}],"path":"crates/heiko-ai/src/retry.rs"}', 210 },
-	{ "c5", "edit", '{"edits":[{"newText":"server_hint","oldText":"backoff"}],"path":"crates/heiko-ai/src/retry.rs"}', 640 },
-	{ "c5t", "exec_command", '{"cmd":"cargo nextest run -p heiko-ai"}', 1900 },
-	{ "c6", "exec_command", '{"cmd":"rm -rf target/debug/incremental"}', 20 },
-	{ "c7", "exec_command", '{"cmd":"cargo nextest run --workspace"}', 1100 },
-	{ "c8", "read", '{"path":"crates/heiko-ai/src/client.rs"}', 7600 },
-	{ "c9", "read", '{"path":"crates/heiko-testing/src/fake_openai.rs"}', 5000 },
+	{ "c1", "memory_read", "n-0388 · Retry policy honors server hints", 40 },
+	{ "c1a", "ls", "crates/heiko-ai/src", 90 },
+	{ "c2", "grep", '"retry_after|RetryPolicy" crates/heiko-ai/src', 120 },
+	{ "c3", "read", "crates/heiko-ai/src/retry.rs", 3100 },
+	{ "c4", "edit", "crates/heiko-ai/src/retry.rs", 210 },
+	{ "c5", "edit", "crates/heiko-ai/src/retry.rs", 640 },
+	{ "c5t", "exec_command", "cargo nextest run -p heiko-ai", 1900 },
+	{ "c6", "exec_command", "rm -rf target/debug/incremental", 20 },
+	{ "c7", "exec_command", "cargo nextest run --workspace", 1100 },
+	{ "c8", "read", "crates/heiko-ai/src/client.rs", 7600 },
+	{ "c9", "read", "crates/heiko-testing/src/fake_openai.rs", 5000 },
 }
 
 local function decided_of(call_id)

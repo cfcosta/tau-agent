@@ -220,19 +220,21 @@ local function by()
 	return ui.toned(NAME, "neutral", true)
 end
 
--- One of its notes: a check Jev could not answer, or an answer held,
--- sent back with a square for each time it may go, or flagged.
+-- A note's title, in the display face; `ink` is the color it asks for.
+local function note_title(text, ink)
+	return ui.title(text, nil, ink)
+end
+
+-- One of its notes: a check Jev could not answer, or an answer held
+-- under its mark: its title, the rule, and a square for each time it
+-- may go back; or one flagged.
 local function note_tree(note)
 	local held = note.held
 	if held == nil then
 		return ui.row({ ui.mark("failing"), ui.text(note.text), ui.spacer(), ui.mono(note.detail), by() })
 	end
 	local body = {
-		ui.row({
-			ui.heading(held.kind == "held" and "Held, sent back" or "Flagged for review", "yellow"),
-			ui.spacer(),
-			by(),
-		}),
+		note_title(held.kind == "held" and "Held, sent back" or "Flagged for review", "yellow"),
 		ui.text(held.rule .. ": " .. held.text),
 	}
 	if held.hold and held.max_holds then

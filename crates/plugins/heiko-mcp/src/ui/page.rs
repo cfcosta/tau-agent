@@ -305,8 +305,14 @@ pub fn tree(
                     .into(),
         });
     }
-    for server in &servers.servers {
-        page.push(Node::Rule);
+    // On a computer a server waiting for approval is a table's row,
+    // ruled under: the first server needs no rule of its own after it.
+    let ruled =
+        !compact && !servers.pending.is_empty() && servers.errors.is_empty();
+    for (at, server) in servers.servers.iter().enumerate() {
+        if at > 0 || !ruled {
+            page.push(Node::Rule);
+        }
         let removing = held.removing.as_deref() == Some(server.name.as_str());
         let open = held.open.contains(&server.name);
         page.push(server_node(repo, server, removing, open, compact));
@@ -768,10 +774,10 @@ fn server_node(
         };
         lines.push(toned(error.clone(), tone));
     }
-    if !server.tools.is_empty() {
-        lines.push(tool_names(server));
-    }
-    lines.push(toggle(repo, server));
+    // Its tools, and at the row's end whether it is on.
+    let mut last = tool_names(server);
+    last.extend(toggle(repo, server));
+    lines.push(Node::row(last));
     if open {
         lines.extend(details(server));
     }
@@ -791,7 +797,7 @@ fn tool_tone(tool: &ToolRow) -> Tone {
 
 /// A server's first [`CHIPS`] tools by name, in mono, and the rest
 /// counted.
-fn tool_names(server: &ServerRow) -> Node {
+fn tool_names(server: &ServerRow) -> Vec<Node> {
     let more = server.tools.len().saturating_sub(CHIPS);
     let mut names: Vec<Node> = server
         .tools
@@ -802,7 +808,7 @@ fn tool_names(server: &ServerRow) -> Node {
     if more > 0 {
         names.push(toned(format!("+{more}"), Tone::Neutral));
     }
-    Node::row(names)
+    names
 }
 
 /// Whether `server` is one of the user's that is on and runs once per
@@ -835,10 +841,11 @@ pub fn reach(server: &ServerRow, repo: Option<&str>) -> &'static str {
 
 /// What turns `server` on or off at the page's level, or why it
 /// cannot: where it reaches, then two segments, the one that holds
-/// outlined and the other a click away.
-fn toggle(repo: Option<&str>, server: &ServerRow) -> Node {
+/// outlined and the other a click away. They stand at the end of the
+/// row they are put in.
+fn toggle(repo: Option<&str>, server: &ServerRow) -> Vec<Node> {
     if let Some(why) = locked(server, repo.is_some()) {
-        return mono(why);
+        return vec![Node::Spacer, toned(why, Tone::Neutral)];
     }
     let segment = |label: &str, enabled: bool| {
         let chosen = server.enabled == enabled;
@@ -863,7 +870,7 @@ fn toggle(repo: Option<&str>, server: &ServerRow) -> Node {
             },
         }
     };
-    Node::row([
+    vec![
         Node::Spacer,
         Node::Toned {
             text: reach(server, repo).into(),
@@ -872,7 +879,7 @@ fn toggle(repo: Option<&str>, server: &ServerRow) -> Node {
         },
         segment("off", false),
         segment("on", true),
-    ])
+    ]
 }
 
 

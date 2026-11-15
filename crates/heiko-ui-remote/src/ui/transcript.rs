@@ -56,7 +56,8 @@ pub fn item(
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
     let edge = sp(if compact { 4. } else { 7. });
-    let side = sp(if compact { 4. } else { 6. });
+    // On a phone, the margin its header and composer keep: 18 px.
+    let side = sp(if compact { 4.5 } else { 6. });
     // Past the items, the landing card, while a landing is open, where
     // a landed chat's work went, or a main chat's card for its last push.
     if index == run.items.len() {

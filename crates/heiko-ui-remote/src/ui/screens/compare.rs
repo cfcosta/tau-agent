@@ -77,7 +77,7 @@ pub fn render(
             )
             .child(checkpoints(main, fork, at, steer, t))
             .child(columns)
-            .child(code(ws, main, fork, compact, t)),
+            .child(code(ws, main, fork, compact, t, cx)),
     )
     .into_any_element()
 }
@@ -192,6 +192,10 @@ fn checkpoints(
 /// How many lines of a file's diff the screen shows before cutting.
 const DIFF_LINES: usize = 60;
 
+/// What the fork keeps, among its folding cards, while "Where they
+/// differ" is hidden.
+const DIFFER: &str = "compare:differ";
+
 /// The code of both branches: what each changed after the fork point,
 /// and how the fork's code differs from the run's.
 fn code(
@@ -200,6 +204,7 @@ fn code(
     fork: &RunView,
     compact: bool,
     t: &Theme,
+    cx: &mut Context<Workspace>,
 ) -> Div {
     let section = div().flex().flex_col().gap(sp(4.));
     let code = match ws.branch_code(&main.id, &fork.id) {
@@ -258,6 +263,18 @@ fn code(
             )
             .children(files.iter().map(|file| file_row(file, t)))
     };
+    // Shown until the person hides it.
+    let hidden = ws.card_open(&fork.id, DIFFER);
+    let toggle = (!code.between.is_empty()).then(|| {
+        let fork = fork.id.clone();
+        div()
+            .id("compare-differ-toggle")
+            .flex_shrink_0()
+            .child(ui::link_action(if hidden { "show" } else { "hide" }, t))
+            .on_click(cx.listener(move |ws, _, _, cx| {
+                ws.toggle_card(&fork, DIFFER, cx)
+            }))
+    });
     let between = if code.between.is_empty() {
         ui::text("Both branches have the same code.", Type::SMALL, t.muted)
     } else {
@@ -271,8 +288,10 @@ fn code(
                     .flex()
                     .flex_col()
                     .child(file_row(&file.stat, t))
-                    .child(heiko_ui_kit::diff::view(
+                    .child(heiko_ui_kit::diff::numbered(
                         shown,
+                        // A diff that came without its numbers has none.
+                        file.numbers.get(..shown.len()),
                         heiko_ui_kit::syntax::Lang::of_path(&file.stat.path),
                         t,
                     ))
@@ -301,18 +320,21 @@ fn code(
             div()
                 .flex()
                 .flex_col()
-                .child(ui::section_header(
-                    "Where they differ",
-                    Some(
-                        match code.between.len() {
-                            1 => "1 file".to_owned(),
-                            n => format!("{n} files"),
-                        }
-                        .into(),
-                    ),
-                    t,
-                ))
-                .child(between),
+                .child(
+                    ui::section_header(
+                        "Where they differ",
+                        Some(
+                            match code.between.len() {
+                                1 => "1 file".to_owned(),
+                                n => format!("{n} files"),
+                            }
+                            .into(),
+                        ),
+                        t,
+                    )
+                    .children(toggle),
+                )
+                .when(!hidden, |differ| differ.child(between)),
         )
 }
 

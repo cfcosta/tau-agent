@@ -12,6 +12,7 @@ use super::{
     CAP,
     Form,
     GO,
+    KEYS,
     MCP,
     MODEL,
     NAME_INPUT,
@@ -19,9 +20,11 @@ use super::{
     OPEN,
     OVERVIEW,
     PURPOSE_INPUT,
+    SECTION,
     SERVERS,
     SET,
     START,
+    WAKES,
     WINDOW,
     act_button,
     allowance,
@@ -42,6 +45,9 @@ const COLUMNS: usize = 3;
 
 /// Every agent: those that need the person first, then a column each.
 pub(super) fn overview(view: &mut ViewCx<'_, AgentsUi>) -> Node {
+    if let Some(section) = section(view) {
+        return section;
+    }
     let overview = view.data.clone();
     // A column opens its agent's conversation: its main chat, or the
     // first run the window knows in its repository.
@@ -61,6 +67,57 @@ pub(super) fn overview(view: &mut ViewCx<'_, AgentsUi>) -> Node {
             .map(str::to_owned)
     };
     overview_tree(&overview, &runs, view.compact, &draft)
+}
+
+/// The agent and the part of it the page is opened for, when its
+/// parameters name both: an agent's sidebar rows send them.
+fn asked<'a>(view: &ViewCx<'a, AgentsUi>) -> Option<(&'a Agent, &'a str)> {
+    let agent = view.data.agent(view.params.get("repo")?)?;
+    let section = view.params.get(SECTION)?.as_str();
+    matches!(section, WAKES | KEYS).then_some((agent, section))
+}
+
+/// The page's title: the agent's name when it shows one part of an
+/// agent, else "Agents".
+pub(super) fn title(view: &mut ViewCx<'_, AgentsUi>) -> String {
+    match asked(view) {
+        Some((agent, _)) => agent.name.clone(),
+        None => "Agents".into(),
+    }
+}
+
+/// The part of an agent the page is opened for, as the whole page.
+fn section(view: &mut ViewCx<'_, AgentsUi>) -> Option<Node> {
+    let (agent, section) = asked(view)?;
+    section_tree(agent, section)
+}
+
+/// One part of `agent` as a page: its name over what wakes it
+/// ([`WAKES`]) or its keys ([`KEYS`]); nothing for another `section`.
+pub fn section_tree(agent: &Agent, section: &str) -> Option<Node> {
+    let (title, count, rows) = match section {
+        WAKES => (
+            "What wakes it",
+            agent.triggers.len() + agent.scheduled.len(),
+            super::run::wakes(agent, super::run::PAGE_ROOM),
+        ),
+        KEYS => ("Keys", agent.secrets.len(), super::run::secrets(agent)),
+        _ => return None,
+    };
+    let mut page = vec![
+        Node::Title {
+            text: agent.name.clone(),
+            subtitle: None,
+            tone: Default::default(),
+        },
+        Node::Header {
+            title: title.into(),
+            meta: (count > 0).then(|| count.to_string()),
+            actions: vec![],
+        },
+    ];
+    page.extend(rows);
+    Some(Node::Stack { children: page })
 }
 
 /// The Agents page's tree: `runs` are what each agent's column opens, in
@@ -270,6 +327,7 @@ fn agent_column(agent: &Agent, run: Option<String>) -> [Node; 2] {
         Node::Title {
             text: agent.name.clone(),
             subtitle: None,
+            tone: Default::default(),
         },
         Node::Spacer,
     ];
@@ -398,6 +456,7 @@ pub fn new_agent_tree(form: &Form, servers: &[String], taken: bool) -> Node {
         Node::Title {
             text: "New agent".into(),
             subtitle: None,
+            tone: Default::default(),
         },
         label("Name"),
         Node::Input {

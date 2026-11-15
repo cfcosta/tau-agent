@@ -33,13 +33,21 @@ impl Workspace {
             .id("send")
             .on_click(cx.listener(|ws, _, _, cx| ws.submit_from_button(cx)));
         let send = if compact {
-            send.child(ui::square_button(
-                "phone-send",
-                Icon::Send,
-                t.accent,
-                None,
-                t,
-            ))
+            // The phone's one printed block, as tall as a finger needs.
+            send.child(
+                div().id("phone-send").child(
+                    ui::primary_block(
+                        if self.forking.is_some() {
+                            "Fork"
+                        } else {
+                            "Send"
+                        },
+                        ui::BlockSize::Large,
+                        t,
+                    )
+                    .h(control::LARGE),
+                ),
+            )
         } else {
             // The one printed block of the chat. The field's placeholder
             // says what sending does.
@@ -102,61 +110,62 @@ impl Workspace {
             })
             .collect();
         let field = if compact {
-            // On a phone: stop, the field in an outline, and send.
+            // On a phone: the message in large type under the rule, then
+            // the model, the paperclip, stop while the run goes, and
+            // Send.
             div()
                 .flex()
-                // A taller field keeps the buttons by its last line.
-                .items_end()
-                .gap(sp(2.5))
-                .when(live, |row| {
-                    row.child(
-                        ui::square_button(
-                            "phone-cancel",
-                            Icon::Stop,
-                            t.red,
-                            Some(t.red_border),
-                            t,
-                        )
-                        .on_click(cx.listener(|ws, _, _, cx| ws.cancel(cx))),
-                    )
-                })
+                .flex_col()
+                .gap(sp(2.))
                 .child(
                     div()
-                        .flex_1()
+                        .typeset(Type::LEAD.sized(17.).leading(1.4))
+                        .py(sp(1.))
+                        .child(self.composer.clone()),
+                )
+                .child(
+                    div()
                         .flex()
-                        .items_end()
-                        .gap(sp(2.5))
-                        .min_h(control::LARGE)
-                        .px(sp(3.5))
-                        .py(sp(2.))
-                        .well(t)
+                        .items_center()
+                        .gap(sp(3.))
+                        .when_some(self.composer_target(), |row, target| {
+                            row.child(self.model_chip(target, t, cx))
+                        })
+                        .child(div().flex_1())
                         .child(
-                            // As tall as a line of the field, so it lines
-                            // up with the first line of text.
                             div()
                                 .id("attach")
-                                .h(control::SMALL)
+                                .size(control::LARGE)
+                                .flex_shrink_0()
                                 .flex()
                                 .items_center()
+                                .justify_center()
                                 .cursor_pointer()
                                 .child(ui::icon(
                                     Icon::Paperclip,
-                                    IconSize::BASE,
+                                    IconSize::LARGE,
                                     t.muted,
                                 ))
                                 .on_click(cx.listener(|ws, _, _, cx| {
                                     ws.pick_attachments(cx)
                                 })),
                         )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w(rems(0.))
-                                .py(sp(0.75))
-                                .child(self.composer.clone()),
-                        ),
+                        .when(live, |row| {
+                            row.child(
+                                ui::square_button(
+                                    "phone-cancel",
+                                    Icon::Stop,
+                                    t.red,
+                                    Some(t.red_border),
+                                    t,
+                                )
+                                .on_click(
+                                    cx.listener(|ws, _, _, cx| ws.cancel(cx)),
+                                ),
+                            )
+                        })
+                        .child(send),
                 )
-                .child(send)
         } else {
             // On a desktop: the message in large type, then who it goes
             // to, what else the field takes, and Send.
@@ -219,20 +228,13 @@ impl Workspace {
                 style.opacity(0.7)
             })
             .children(self.slash_popover(compact, t, cx))
-            .px(sp(if compact { 3. } else { 6. }))
-            .pt(sp(if compact { 2.5 } else { 3. }))
+            // On a phone, in from the window's sides as the rest of
+            // the screen is.
+            .px(sp(if compact { 4.5 } else { 6. }))
+            .pt(sp(if compact { 2. } else { 3. }))
             .pb(sp(if compact { 4.5 } else { 6. }))
-            .when(compact, |bar| bar.chrome(ui::Edge::Bottom, t))
             // On a desktop, the transcript's column.
             .when(!compact, |bar| bar.w_full().max_w(rems(50.5)).mx_auto())
-            .when_some(
-                self.composer_target().filter(|_| compact),
-                |bar, target| {
-                    bar.child(
-                        div().flex().child(self.model_chip(target, t, cx)),
-                    )
-                },
-            )
             .when_some(self.fork_banner(t, cx), |bar, banner| bar.child(banner))
             .when_some(self.composer_note(), |bar, text| {
                 bar.child(
@@ -277,11 +279,11 @@ impl Workspace {
                 div()
                     .flex()
                     .flex_col()
-                    .when(!compact, |block| {
-                        block.pt(sp(2.)).border_t_2().border_color(t.rule)
-                    })
+                    .pt(sp(2.))
+                    .border_t_2()
+                    .border_color(t.rule)
                     .children(attached)
-                    .child(div().pt(sp(if compact { 2. } else { 1.5 })).child(field)),
+                    .child(div().pt(sp(1.5)).child(field)),
             )
     }
 

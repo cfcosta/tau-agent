@@ -86,22 +86,9 @@
         {
           "children": [
             {
-              "children": [
-                {
-                  "piece": "heading",
-                  "text": "All tests in heiko-ai pass and cargo clippy is clean"
-                },
-                {
-                  "piece": "spacer"
-                },
-                {
-                  "mono": false,
-                  "piece": "toned",
-                  "text": "not met",
-                  "tone": "warn"
-                }
-              ],
-              "piece": "row"
+              "piece": "title",
+              "subtitle": null,
+              "text": "All tests in heiko-ai pass and cargo clippy is clean"
             },
             {
               "children": [
@@ -122,16 +109,14 @@
                   "piece": "square",
                   "style": "quiet",
                   "tone": "neutral"
-                },
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "children": [
                 {
                   "piece": "spacer"
-                },
-                {
-                  "lit": 2,
-                  "marked": [],
-                  "piece": "ticks",
-                  "tone": "good",
-                  "total": 10
                 },
                 {
                   "piece": "mono",
@@ -139,6 +124,13 @@
                 }
               ],
               "piece": "row"
+            },
+            {
+              "lit": 2,
+              "marked": [],
+              "piece": "ticks",
+              "tone": "good",
+              "total": 10
             },
             {
               "children": [
@@ -168,9 +160,6 @@
                   "kind": "secondary",
                   "label": "clear",
                   "piece": "button"
-                },
-                {
-                  "piece": "spacer"
                 }
               ],
               "piece": "row"

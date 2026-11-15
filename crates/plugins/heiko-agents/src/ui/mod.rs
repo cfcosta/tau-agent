@@ -455,7 +455,7 @@ impl UiPlugin for AgentsUi {
             .page(
                 Page::new(OVERVIEW, page::overview)
                     .framed()
-                    .title(|_| "Agents".into()),
+                    .title(page::title),
             )
             .page(
                 Page::new(NEW, page::new_agent)

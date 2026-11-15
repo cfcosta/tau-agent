@@ -213,7 +213,7 @@
                   "tone": "neutral"
                 }
               ],
-              "meta": "2 of 3",
+              "meta": "2 of 3 · 2 chosen",
               "piece": "header",
               "title": "heiko asks"
             },
@@ -231,7 +231,7 @@
                 {
                   "mono": false,
                   "piece": "toned",
-                  "text": "·",
+                  "text": "  ·  ",
                   "tone": "neutral"
                 },
                 {
@@ -241,7 +241,7 @@
                 {
                   "mono": false,
                   "piece": "toned",
-                  "text": "·",
+                  "text": "  ·  ",
                   "tone": "neutral"
                 },
                 {
@@ -256,7 +256,7 @@
                 {
                   "mono": false,
                   "piece": "toned",
-                  "text": "›",
+                  "text": "  ›  ",
                   "tone": "neutral"
                 },
                 {
@@ -267,15 +267,6 @@
                   "kind": "secondary",
                   "label": "submit",
                   "piece": "button"
-                },
-                {
-                  "piece": "spacer"
-                },
-                {
-                  "mono": true,
-                  "piece": "toned",
-                  "text": "pick any · 2 chosen",
-                  "tone": "neutral"
                 }
               ],
               "piece": "row"
@@ -300,14 +291,30 @@
                   "wide": true
                 },
                 {
-                  "action": "choose",
-                  "args": {
-                    "row": 1
-                  },
-                  "kind": "secondary",
-                  "label": "2  Desktop notification",
-                  "piece": "button",
-                  "wide": true
+                  "head": [],
+                  "piece": "table",
+                  "rows": [
+                    [
+                      {
+                        "action": "choose",
+                        "args": {
+                          "row": 1
+                        },
+                        "label": "2",
+                        "piece": "square",
+                        "style": "quiet",
+                        "tone": "neutral"
+                      },
+                      {
+                        "piece": "text",
+                        "text": "Desktop notification"
+                      }
+                    ]
+                  ],
+                  "widths": [
+                    1,
+                    22
+                  ]
                 },
                 {
                   "action": "choose",
@@ -322,21 +329,35 @@
                   "wide": true
                 },
                 {
-                  "children": [
-                    {
-                      "piece": "mono",
-                      "text": "4"
-                    },
-                    {
-                      "id": "ask-other-retry-after-call_ask-1",
-                      "keep": true,
-                      "multiline": false,
-                      "piece": "input",
-                      "placeholder": "Your own answer…",
-                      "submit": "other-done"
-                    }
+                  "head": [],
+                  "piece": "table",
+                  "rows": [
+                    [
+                      {
+                        "label": "4",
+                        "piece": "square",
+                        "style": "quiet",
+                        "tone": "neutral"
+                      },
+                      {
+                        "children": [
+                          {
+                            "id": "ask-other-retry-after-call_ask-1",
+                            "keep": true,
+                            "multiline": false,
+                            "piece": "input",
+                            "placeholder": "Your own answer…",
+                            "submit": "other-done"
+                          }
+                        ],
+                        "piece": "row"
+                      }
+                    ]
                   ],
-                  "piece": "row"
+                  "widths": [
+                    1,
+                    22
+                  ]
                 },
                 {
                   "focus": 2,

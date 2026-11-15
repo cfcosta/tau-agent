@@ -63,7 +63,6 @@ use crate::{
     },
     ui::{
         self,
-        Material as _,
         chrome,
         components::ButtonKind,
         inspector,
@@ -2314,7 +2313,7 @@ impl Workspace {
             input.set_placeholder(if forking {
                 "What should the fork try instead?"
             } else if live {
-                "Steer the run, or @ a file, agent or checkpoint"
+                "Steer the run"
             } else if continues {
                 "Reply to go on with this run"
             } else {

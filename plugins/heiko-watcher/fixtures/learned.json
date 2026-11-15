@@ -35,22 +35,9 @@
           {
             "children": [
               {
-                "children": [
-                  {
-                    "piece": "heading",
-                    "text": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision.",
-                    "tone": "bright"
-                  },
-                  {
-                    "piece": "spacer"
-                  },
-                  {
-                    "label": "Heads up",
-                    "piece": "stamp",
-                    "tone": "cyan"
-                  }
-                ],
-                "piece": "row"
+                "piece": "title",
+                "subtitle": null,
+                "text": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
               },
               {
                 "children": [
@@ -105,6 +92,14 @@
                     "kind": "secondary",
                     "label": "chat about it",
                     "piece": "button"
+                  },
+                  {
+                    "piece": "spacer"
+                  },
+                  {
+                    "label": "Heads up",
+                    "piece": "stamp",
+                    "tone": "cyan"
                   }
                 ],
                 "piece": "row"

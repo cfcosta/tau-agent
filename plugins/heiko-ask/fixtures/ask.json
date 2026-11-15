@@ -221,7 +221,7 @@
                 {
                   "mono": false,
                   "piece": "toned",
-                  "text": "·",
+                  "text": "  ·  ",
                   "tone": "neutral"
                 },
                 {
@@ -236,7 +236,7 @@
                 {
                   "mono": false,
                   "piece": "toned",
-                  "text": "·",
+                  "text": "  ·  ",
                   "tone": "neutral"
                 },
                 {
@@ -251,7 +251,7 @@
                 {
                   "mono": false,
                   "piece": "toned",
-                  "text": "›",
+                  "text": "  ›  ",
                   "tone": "neutral"
                 },
                 {
@@ -262,15 +262,6 @@
                   "kind": "secondary",
                   "label": "submit",
                   "piece": "button"
-                },
-                {
-                  "piece": "spacer"
-                },
-                {
-                  "mono": true,
-                  "piece": "toned",
-                  "text": "pick one",
-                  "tone": "neutral"
                 }
               ],
               "piece": "row"
@@ -295,41 +286,87 @@
                   "wide": true
                 },
                 {
-                  "action": "choose",
-                  "args": {
-                    "row": 1
-                  },
-                  "kind": "secondary",
-                  "label": "2  End the turn",
-                  "piece": "button",
-                  "wide": true
-                },
-                {
-                  "action": "choose",
-                  "args": {
-                    "row": 2
-                  },
-                  "kind": "secondary",
-                  "label": "3  Hold, then time out",
-                  "piece": "button",
-                  "wide": true
-                },
-                {
-                  "children": [
-                    {
-                      "piece": "mono",
-                      "text": "4"
-                    },
-                    {
-                      "id": "ask-other-retry-after-call_ask-0",
-                      "keep": true,
-                      "multiline": false,
-                      "piece": "input",
-                      "placeholder": "Your own answer…",
-                      "submit": "other-done"
-                    }
+                  "head": [],
+                  "piece": "table",
+                  "rows": [
+                    [
+                      {
+                        "action": "choose",
+                        "args": {
+                          "row": 1
+                        },
+                        "label": "2",
+                        "piece": "square",
+                        "style": "quiet",
+                        "tone": "neutral"
+                      },
+                      {
+                        "piece": "text",
+                        "text": "End the turn"
+                      }
+                    ]
                   ],
-                  "piece": "row"
+                  "widths": [
+                    1,
+                    22
+                  ]
+                },
+                {
+                  "head": [],
+                  "piece": "table",
+                  "rows": [
+                    [
+                      {
+                        "action": "choose",
+                        "args": {
+                          "row": 2
+                        },
+                        "label": "3",
+                        "piece": "square",
+                        "style": "quiet",
+                        "tone": "neutral"
+                      },
+                      {
+                        "piece": "text",
+                        "text": "Hold, then time out"
+                      }
+                    ]
+                  ],
+                  "widths": [
+                    1,
+                    22
+                  ]
+                },
+                {
+                  "head": [],
+                  "piece": "table",
+                  "rows": [
+                    [
+                      {
+                        "label": "4",
+                        "piece": "square",
+                        "style": "quiet",
+                        "tone": "neutral"
+                      },
+                      {
+                        "children": [
+                          {
+                            "id": "ask-other-retry-after-call_ask-0",
+                            "keep": true,
+                            "multiline": false,
+                            "piece": "input",
+                            "placeholder": "Your own answer…",
+                            "submit": "other-done"
+                          }
+                        ],
+                        "piece": "row"
+                      }
+                    ]
+                  ],
+                  "widths": [
+                    1,
+                    22
+                  ]
                 },
                 {
                   "children": [

@@ -105,7 +105,8 @@
         {
           "children": [
             {
-              "piece": "heading",
+              "piece": "title",
+              "subtitle": null,
               "text": "Goal met",
               "tone": "good"
             },
@@ -132,16 +133,14 @@
                   "piece": "square",
                   "style": "filled",
                   "tone": "good"
-                },
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "children": [
                 {
                   "piece": "spacer"
-                },
-                {
-                  "lit": 2,
-                  "marked": [],
-                  "piece": "ticks",
-                  "tone": "good",
-                  "total": 10
                 },
                 {
                   "piece": "mono",
@@ -149,6 +148,13 @@
                 }
               ],
               "piece": "row"
+            },
+            {
+              "lit": 2,
+              "marked": [],
+              "piece": "ticks",
+              "tone": "good",
+              "total": 10
             },
             {
               "children": [
@@ -169,9 +175,6 @@
                   "kind": "secondary",
                   "label": "clear",
                   "piece": "button"
-                },
-                {
-                  "piece": "spacer"
                 }
               ],
               "piece": "row"
@@ -426,7 +429,8 @@
           {
             "children": [
               {
-                "piece": "heading",
+                "piece": "title",
+                "subtitle": null,
                 "text": "Goal met",
                 "tone": "good"
               },

@@ -18,6 +18,9 @@ local M = {}
 -- What the way into an import says.
 M.IMPORT = "Import from Claude Code or Codex…"
 
+-- The same on the notes page's bar, beside the kinds: one word.
+M.IMPORT_SHORT = "import"
+
 -- The review page's search input.
 M.SEARCH = "review-search"
 
@@ -55,7 +58,7 @@ function M.import_button(imports)
 	if not M.any_found(imports) then
 		return nil
 	end
-	return start(M.IMPORT, "secondary")
+	return start(M.IMPORT_SHORT, "secondary")
 end
 
 -- A repository menu's entry, when either tool is on this computer.

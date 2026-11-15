@@ -146,6 +146,12 @@ pub fn render(
             .children(picture.map(|picture| div().flex().child(picture)))
             .child(body)
     } else {
+        // The welcome's diagram starts level with its title; a link's
+        // sits beside the rows under it.
+        let down = match step {
+            SetupStep::Welcome => 0.,
+            _ => 29.,
+        };
         div()
             .w_full()
             .flex()
@@ -153,7 +159,7 @@ pub fn render(
             .gap(sp(10.))
             .pl(sp(30.))
             .pr(sp(14.))
-            .pt(sp(14.))
+            .pt(sp(24.))
             .pb(sp(12.))
             .child(body.w(rems(width)).min_w(rems(0.)))
             .children(picture.map(|picture| {
@@ -162,7 +168,7 @@ pub fn render(
                     .min_w(rems(0.))
                     .flex()
                     .justify_center()
-                    .pt(sp(6.))
+                    .pt(sp(down))
                     .child(picture)
             }))
     };
@@ -362,7 +368,12 @@ fn service_square(
 /// A 1 px line across, in `color`; dashed while not connected.
 fn wire(color: Hsla, dashed: bool) -> Div {
     if dashed {
-        div().border_t_1().border_dashed().border_color(color)
+        // A line with no height draws no border.
+        div()
+            .h(rems(0.0625))
+            .border_t_1()
+            .border_dashed()
+            .border_color(color)
     } else {
         div().h(rems(0.0625)).bg(color)
     }
@@ -641,7 +652,14 @@ fn main_action(
         .flex()
         .flex_col()
         .when(compact, |action| action.w_full())
-        .child(primary_block(label, size, t))
+        .child(
+            primary_block(label, size, t)
+                // A screen of onboarding has one thing to do: its block
+                // is the largest heiko prints.
+                .when(size == BlockSize::Large && !compact, |block| {
+                    block.h(rems(2.875)).px(sp(5.5))
+                }),
+        )
 }
 
 /// A ruled, numbered row: what a step is called, and what it is for.
@@ -655,8 +673,8 @@ fn step_row(
     div()
         .flex()
         .items_center()
-        .gap(sp(3.))
-        .py(sp(2.75))
+        .gap(sp(3.5))
+        .py(sp(3.))
         .border_b_1()
         .border_color(t.hairline)
         .child(square((n + 1).to_string(), SquareStyle::Quiet, t))

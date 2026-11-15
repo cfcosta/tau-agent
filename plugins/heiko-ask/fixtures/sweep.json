@@ -132,7 +132,7 @@
                 {
                   "mono": false,
                   "piece": "toned",
-                  "text": "›",
+                  "text": "  ›  ",
                   "tone": "neutral"
                 },
                 {
@@ -143,15 +143,6 @@
                   "kind": "secondary",
                   "label": "submit",
                   "piece": "button"
-                },
-                {
-                  "piece": "spacer"
-                },
-                {
-                  "mono": true,
-                  "piece": "toned",
-                  "text": "pick one",
-                  "tone": "neutral"
                 }
               ],
               "piece": "row"
@@ -176,31 +167,61 @@
                   "wide": true
                 },
                 {
-                  "action": "choose",
-                  "args": {
-                    "row": 1
-                  },
-                  "kind": "secondary",
-                  "label": "2  Keep them",
-                  "piece": "button",
-                  "wide": true
+                  "head": [],
+                  "piece": "table",
+                  "rows": [
+                    [
+                      {
+                        "action": "choose",
+                        "args": {
+                          "row": 1
+                        },
+                        "label": "2",
+                        "piece": "square",
+                        "style": "quiet",
+                        "tone": "neutral"
+                      },
+                      {
+                        "piece": "text",
+                        "text": "Keep them"
+                      }
+                    ]
+                  ],
+                  "widths": [
+                    1,
+                    22
+                  ]
                 },
                 {
-                  "children": [
-                    {
-                      "piece": "mono",
-                      "text": "3"
-                    },
-                    {
-                      "id": "ask-other-sweep-workspaces-call_sweep-0",
-                      "keep": true,
-                      "multiline": false,
-                      "piece": "input",
-                      "placeholder": "Your own answer…",
-                      "submit": "other-done"
-                    }
+                  "head": [],
+                  "piece": "table",
+                  "rows": [
+                    [
+                      {
+                        "label": "3",
+                        "piece": "square",
+                        "style": "quiet",
+                        "tone": "neutral"
+                      },
+                      {
+                        "children": [
+                          {
+                            "id": "ask-other-sweep-workspaces-call_sweep-0",
+                            "keep": true,
+                            "multiline": false,
+                            "piece": "input",
+                            "placeholder": "Your own answer…",
+                            "submit": "other-done"
+                          }
+                        ],
+                        "piece": "row"
+                      }
+                    ]
                   ],
-                  "piece": "row"
+                  "widths": [
+                    1,
+                    22
+                  ]
                 }
               ],
               "piece": "stack"

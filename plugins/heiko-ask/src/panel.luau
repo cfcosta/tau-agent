@@ -1,7 +1,7 @@
 -- What heiko-ask draws: the panel in the composer's place while a call
 -- waits for the person (its head, a word per question and one to review,
--- the question large over its choices as full-width rows, a field for the
--- person's own answer, a note per answer, and the keys that work them),
+-- the question large over its choices as full-width ruled rows, a field
+-- for the person's own answer, a note per answer, and the keys that work them),
 -- and the card of an `ask` call.
 --
 -- The panel takes the keys when it first appears. With them: up and
@@ -35,22 +35,31 @@ local function button(label, kind, action, args, size)
 end
 
 -- The panel's head: whose question it is, which of how many is in
--- view, and the keys that work it.
+-- view and how many answers it has, and the keys that work it.
 local function head(questions, draft)
 	local reviewing = ask.reviewing(questions, draft)
 	local last = #questions.questions
-	local hints
+	local hints, meta
 	if reviewing then
 		hints = "← back · ↵ send"
+		meta = "review · " .. ask.count(draft) .. " of " .. last .. " answered"
 	elseif questions.questions[draft.tab + 1].multi_select then
 		hints = "↑↓ move · space toggle · n note"
+		meta = (draft.tab + 1) .. " of " .. last .. " · " .. #draft.picked[draft.tab + 1] .. " chosen"
 	else
 		hints = "↑↓ move · n note"
+		meta = (draft.tab + 1) .. " of " .. last
 	end
 	return ui.header("heiko asks", {
-		meta = reviewing and "review" or ((draft.tab + 1) .. " of " .. last),
+		meta = meta,
 		actions = { ui.toned(hints, "neutral", true) },
 	})
+end
+
+-- What parts two tab words: a mark with room at both its sides, in
+-- spaces a line does not drop.
+local function between(mark)
+	return ui.toned("\u{A0}\u{A0}" .. mark .. "\u{A0}\u{A0}", "neutral")
 end
 
 -- A tab's word where it is the one in view: bright, and not a link.
@@ -59,8 +68,7 @@ local function current(label)
 end
 
 -- A word per question, marked once answered, and one to review, a dot
--- between each two and the one in view bright; what the question in
--- view takes, beside them.
+-- with room around it between each two and the one in view bright.
 local function tabs(questions, draft)
 	local row = {}
 	local last = #questions.questions
@@ -74,7 +82,7 @@ local function tabs(questions, draft)
 			label ..= " ✎"
 		end
 		if i > 1 then
-			table.insert(row, ui.toned("·", "neutral"))
+			table.insert(row, between("·"))
 		end
 		if not reviewing and draft.tab == i - 1 then
 			table.insert(row, current(label))
@@ -82,49 +90,48 @@ local function tabs(questions, draft)
 			table.insert(row, button(label, "secondary", "go", { to = i - 1 }))
 		end
 	end
-	table.insert(row, ui.toned("›", "neutral"))
+	table.insert(row, between("›"))
 	if reviewing then
 		table.insert(row, current("submit"))
 	else
 		table.insert(row, button("submit", "secondary", "go", { to = last }))
 	end
-	local mode
-	if reviewing then
-		mode = ask.count(draft) .. " of " .. last .. " answered"
-	elseif questions.questions[draft.tab + 1].multi_select then
-		mode = "pick any · " .. #draft.picked[draft.tab + 1] .. " chosen"
-	else
-		mode = "pick one"
-	end
-	table.insert(row, ui.spacer())
-	table.insert(row, ui.toned(mode, "neutral", true))
 	return ui.row(row)
 end
 
--- A row's key, `›` before the row in focus; rows past the ninth take
--- none.
-local function digit(k, focused)
-	local key = k < 9 and tostring(k + 1) or " "
-	return (focused and "› " or "") .. key
+-- A row's key; rows past the ninth take none.
+local function digit(k)
+	return k < 9 and tostring(k + 1) or " "
+end
+
+-- The shares of a ruled row's width: its key, then its label.
+local RULED = { widths = { 1, 22 } }
+
+-- A row's key in a square, outlined where the row is in focus; a click
+-- on it carries out `action`.
+local function key_square(k, focused, action, args)
+	return ui.square(digit(k), focused and "outlined" or "quiet", focused and "info" or nil, action, args)
 end
 
 -- Row `k` (from 0) of question `i`, as wide as the panel: its key, then
 -- its label. It is the large block once picked, what it means inside
 -- it; where one answer is picked and none is yet, the row in focus is.
--- Any other row is a quiet one, `description` under it when given.
+-- Any other row is a ruled one: its key in a square that picks it, its
+-- label in plain text, a hairline under it, and `description` under the
+-- label when given.
 local function choice_row(draft, i, k, choice, description, multi)
 	local picked = ask.has(draft.picked[i + 1], k)
 	local focused = draft.cursor[i + 1] == k
 	local on = picked or (not multi and #draft.picked[i + 1] == 0 and not draft.other_on[i + 1] and focused)
-	local label = digit(k, focused) .. "  " .. choice.label
 	if on then
-		return { ui.button(label, "choose", { row = k }, "primary", nil, "large", true, choice.description) }, true
+		local label = (focused and "› " or "") .. digit(k) .. "  " .. choice.label
+		return ui.button(label, "choose", { row = k }, "primary", nil, "large", true, choice.description), true
 	end
-	local row = { ui.button(label, "choose", { row = k }, "secondary", nil, nil, true) }
+	local label = ui.text(choice.label)
 	if description ~= nil then
-		table.insert(row, ui.toned(description, "neutral"))
+		label = ui.stack({ label, ui.toned(description, "neutral") })
 	end
-	return row, false
+	return ui.table({}, { { key_square(k, focused, "choose", { row = k }), label } }, RULED), false
 end
 
 -- The question in view: the question, large; its choices as rows the
@@ -150,14 +157,11 @@ local function question_view(key, questions, draft, focus)
 		local focused = draft.cursor[i + 1] == k - 1
 		local row, on =
 			choice_row(draft, i, k - 1, choice, (focused and not previews) and choice.description or nil, question.multi_select)
-		for _, piece in ipairs(row) do
-			table.insert(pieces, piece)
-		end
+		table.insert(pieces, row)
 		chosen[k] = on
 	end
 	local other = #question.options
-	local own = {
-		ui.mono(digit(other, draft.cursor[i + 1] == other)),
+	local field = {
 		ui.input(panel.other_input(key.run, key.call, i), {
 			placeholder = "Your own answer…",
 			submit = "other-done",
@@ -166,9 +170,9 @@ local function question_view(key, questions, draft, focus)
 		}),
 	}
 	if draft.other_on[i + 1] then
-		table.insert(own, ui.mark("met"))
+		table.insert(field, ui.mark("met"))
 	end
-	table.insert(pieces, ui.row(own))
+	table.insert(pieces, ui.table({}, { { key_square(other, draft.cursor[i + 1] == other), ui.row(field) } }, RULED))
 	if previews then
 		-- What the row in focus means, unless its row says so already.
 		local at = draft.cursor[i + 1] + 1

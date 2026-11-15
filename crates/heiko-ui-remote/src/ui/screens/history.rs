@@ -361,8 +361,9 @@ fn history_row(
         ))
         .child(
             mono(kind, Type::MICRO, t.dim)
-                .w(rems(1.625))
-                .flex_shrink_0(),
+                .w(rems(2.))
+                .flex_shrink_0()
+                .whitespace_nowrap(),
         )
         .child(
             div()

@@ -688,6 +688,10 @@ pub struct FileStat {
 pub struct FileChange {
     pub stat: FileStat,
     pub lines: Vec<DiffLine>,
+    /// Each line's number in its own version of the file; none when
+    /// whoever sent it did not say.
+    #[serde(default)]
+    pub numbers: Vec<u32>,
 }
 
 /// The code of a run and one of its forks, side by side.

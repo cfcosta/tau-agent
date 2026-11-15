@@ -222,8 +222,13 @@ local function marks(review, block, score, tone)
 	)
 end
 
--- What the rules did over the repository's runs, each count in its
--- tone, and the way to add a rule.
+-- The two thresholds as numbers, small and muted.
+local function thresholds(review, block)
+	return ui.toned("review " .. checks.two(review) .. " · block " .. checks.two(block), "neutral", true)
+end
+
+-- The page's head: what the rules did over the repository's runs, each
+-- count in its tone, and the way to add a rule.
 local function intro(totals)
 	local held = 0
 	for _, counts in pairs(totals.per_rule) do
@@ -246,9 +251,8 @@ local function intro(totals)
 			end
 		end
 	end
-	table.insert(counts, ui.spacer())
 	table.insert(counts, button("add a rule", "open"))
-	return ui.row(counts)
+	return ui.header("Constitution", { actions = counts })
 end
 
 -- Rules that cannot be read from the store: why, what it means, and
@@ -361,19 +365,20 @@ local function id_square(rule, totals)
 end
 
 -- One rule as a ruled row: the id, the rule over where it reads, its
--- thresholds marked on a strip, what it caught, and the ways to edit
--- or remove it.
+-- thresholds as numbers over the strip that marks them, what it caught,
+-- and the ways to edit or remove it.
 local function rule_row(rule, totals, caught)
 	return {
 		id_square(rule, totals),
 		ui.stack({ ui.rich("**" .. rule.text .. "**"), reads(rule, caught) }),
-		marks(rule.review, rule.block),
+		ui.stack({ thresholds(rule.review, rule.block), marks(rule.review, rule.block) }),
 		status(rule, totals),
 		rule_actions(rule),
 	}
 end
 
-local WIDTHS = { 0.6, 7, 2.6, 1.4, 1.6 }
+-- The columns' shares: the strip's is the row's right third.
+local WIDTHS = { 0.6, 5.4, 4.5, 1.4, 1.6 }
 
 -- The rule the page was opened on, above the list.
 local function focused(rule, totals, caught)
@@ -406,8 +411,7 @@ local function settings(constitution)
 	end
 	table.insert(sent_back, button("+", "settings", set(page.next_holds(holds, 1))))
 	return ui.stack({
-		ui.heading("Settings"),
-		ui.rule(),
+		ui.header("Settings"),
 		ui.row({
 			ui.text("When Jev can't answer"),
 			ui.spacer(),
@@ -420,6 +424,7 @@ local function settings(constitution)
 		}),
 		ui.rule(),
 		ui.row(sent_back),
+		ui.rule(),
 	})
 end
 
@@ -511,7 +516,7 @@ local function try_section(draft, trying, jev)
 			if trial.score >= draft.block then
 				tone, would = "bad", "would block"
 			elseif trial.score >= draft.review then
-				tone, would = "warn", "would flag"
+				tone, would = "warn", "would review"
 			end
 			table.insert(rows, {
 				ui.mono(trial.tool or "answer"),
@@ -597,7 +602,7 @@ local function editor(draft, trying, jev)
 		ui.heading("Strictness"),
 		ui.row(presets),
 		marks(draft.review, draft.block),
-		ui.row({ stepper("flag", "review", draft.review), ui.spacer(), stepper("block", "block", draft.block) }),
+		ui.row({ stepper("review", "review", draft.review), ui.spacer(), stepper("block", "block", draft.block) }),
 	})
 
 	local body = {

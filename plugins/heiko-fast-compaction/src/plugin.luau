@@ -119,6 +119,49 @@ local function detail(stats)
 		.. stats.state_stage
 end
 
+-- The fields a call's argument is read from, the first it has: a
+-- command, a path, what it looks for.
+local ARGUMENT_FIELDS = { "cmd", "command", "path", "file_path", "url", "query", "name" }
+
+-- A call's short argument, from its input as JSON text: its pattern
+-- (quoted, before where it looks), its command or its path; a note's id
+-- and title; else its first text, by field name. An input that is not a
+-- JSON object is its own.
+local function argument(input)
+	if string.sub(input, 1, 1) ~= "{" then
+		return input
+	end
+	local ok, args = pcall(json.decode, input)
+	if not ok or type(args) ~= "table" then
+		return input
+	end
+	local function text(field)
+		local value = args[field]
+		return type(value) == "string" and value ~= "" and value or nil
+	end
+	local pattern = text("pattern")
+	if pattern then
+		local where = text("path")
+		return '"' .. pattern .. '"' .. (where and (" " .. where) or "")
+	end
+	for _, field in ipairs(ARGUMENT_FIELDS) do
+		if text(field) then
+			return text(field)
+		end
+	end
+	if text("id") then
+		return text("id") .. (text("title") and (" · " .. text("title")) or "")
+	end
+	local fields = {}
+	for field in pairs(args) do
+		if type(field) == "string" and text(field) then
+			table.insert(fields, field)
+		end
+	end
+	table.sort(fields)
+	return fields[1] and args[fields[1]] or input
+end
+
 -- A pass between turns: asks Jev about every unpinned call, merges the
 -- decisions into the ledger, and rewrites the transcript when that saves
 -- enough. Nothing when there is nothing to ask or too little to save;
@@ -220,7 +263,7 @@ local function pass(view, model, settings)
 		table.insert(judged, {
 			call_id = call.call_id,
 			tool = call.tool,
-			input = estimate.truncate(call.input, 120),
+			input = estimate.truncate(argument(call.input), 120),
 			tokens = estimate.div_ceil(utf8.len(call.input) + call.result_chars, 4),
 			matters = decision and decision.keep_call or json.null,
 			verbatim = decision and decision.keep_result or json.null,
@@ -343,19 +386,23 @@ local function counted(n, what)
 	return ui.stack({ ui.figure(tostring(n)), ui.toned(what, "neutral") })
 end
 
--- A decision in the ledger: a square, filled for what is pinned or
--- dropped, and its name.
+-- A decision in the ledger: a small square, filled for what is pinned
+-- or dropped and hollow for what is kept, and its name.
 local function decision(of)
 	local square
 	if of == "pinned" then
-		square = ui.square("", "filled", "bright")
+		square = ui.heading("■", "bright")
 	elseif of == "keep" then
-		square = ui.square("")
+		square = ui.heading("□")
 	else
-		square = ui.square("", "filled", TONE[of])
+		square = ui.heading("■", TONE[of])
 	end
 	return ui.row({ square, ui.toned(LABEL[of], TONE[of], true) })
 end
+
+-- How many characters of a call's argument a ledger row shows: what
+-- fits its column on one line.
+local ARGUMENT_CHARS = 52
 
 -- The ledger page, one piece: what the run's context was before and
 -- after the last pass, and what it decided for each tool call.
@@ -400,7 +447,7 @@ local function ledger_page(state_now)
 		end
 		table.insert(rows, {
 			ui.mono(entry.tool),
-			ui.mono(entry.input),
+			ui.mono(estimate.truncate(argument(entry.input), ARGUMENT_CHARS)),
 			ui.mono(tokens_text(entry.tokens)),
 			odds(entry.matters),
 			odds(entry.verbatim),
@@ -442,7 +489,7 @@ local function ledger_page(state_now)
 			or ui.table(
 				{ "tool", "input", "size", "still matters", "verbatim", "decision" },
 				rows,
-				{ widths = { 1.5, 5, 0.8, 2, 2, 1.5 } }
+				{ widths = { 1.3, 5, 0.7, 2, 2, 1.5 } }
 			),
 	})
 end
@@ -535,7 +582,7 @@ return heiko.plugin({
 		for at, one in ipairs(passes) do
 			view.notes["pass-" .. at] = ui.stack({
 				ui.row({
-					ui.heading("Pruned " .. tokens_text(math.max(one.before - one.after, 0)) .. " tokens"),
+					ui.title("Pruned " .. tokens_text(math.max(one.before - one.after, 0)) .. " tokens"),
 					ui.spacer(),
 					ui.mono(NAME),
 					ledger_link(),

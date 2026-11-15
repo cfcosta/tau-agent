@@ -612,10 +612,6 @@ end
 -- A line in a tone: `good` for a passed test, `neutral` dims it.
 -- `mono` sets it in the monospace face.
 -- A big line, as a screen's headline, with a line under it.
-function ui.title(text, subtitle)
-	return { piece = "title", text = tostring(text), subtitle = subtitle and tostring(subtitle) or json.null }
-end
-
 function ui.toned(text, of, mono)
 	return { piece = "toned", text = tostring(text), tone = tone(of), mono = mono == true }
 end
@@ -768,6 +764,16 @@ end
 -- A small label over a group, in the color `of` when given.
 function ui.heading(text, of)
 	return { piece = "heading", text = tostring(text), tone = of ~= nil and ink(of) or nil }
+end
+
+-- A title, in an ink when `of` names one.
+function ui.title(text, subtitle, of)
+	return {
+		piece = "title",
+		text = tostring(text),
+		subtitle = subtitle and tostring(subtitle) or json.null,
+		tone = of ~= nil and ink(of) or nil,
+	}
 end
 
 -- Where a click goes: `opts.page` of this plugin, or of `opts.plugin`,

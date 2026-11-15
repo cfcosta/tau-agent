@@ -275,9 +275,12 @@ t.case("the inspector lists what waits, each with a way to cancel it", function(
 	run:tool("schedule", { name = "recheck", note = "Did #412 merge?", ["in"] = "2h" })
 	local view = run:view()
 	local rows = view.inspector.children
-	t.equal(rows[1], { piece = "heading", text = "Scheduled" })
+	t.equal(rows[1].piece, "header")
+	t.equal(rows[1].title, "Scheduled")
+	t.equal(rows[1].meta, "1")
 	local head = rows[2].children[1].children
-	t.equal(head[1], { piece = "heading", text = "recheck" })
+	t.equal(head[1], { piece = "mono", text = "recheck" })
+	t.equal(rows[2].children[2].text, "Did #412 merge?")
 	t.equal(head[3], { piece = "due", id = "r1-recheck", at = 1767610800000 })
 	t.equal(head[4].action, "cancel")
 	t.equal(head[4].label, "cancel")
@@ -298,8 +301,9 @@ t.case("the message a chat woke on shows each wake-up's time as a figure", funct
 	t.equal(blocks[2], { piece = "rule" })
 	t.equal(blocks[1].children[1].text, "12:01")
 	local first = blocks[1].children[2].children
-	t.equal(first[1].children[1], { piece = "heading", text = "a" })
-	t.equal(first[1].children[3], { piece = "mono", text = "2026-01-05" })
+	t.equal(first[1].children[1].piece, "title")
+	t.equal(first[1].children[1].text, "a")
+	t.equal(first[1].children[3].text, "scheduled · 2026-01-05")
 	t.equal(blocks[3].children[1].text, "12:02")
 	t.equal(blocks[3].children[2].children[2], { piece = "text", text = "Two" })
 end)

@@ -230,7 +230,7 @@ t.case("the panel draws the question in view, its preview, and the review", func
 	-- The word of the question in view is bright, the others links.
 	t.equal(tabs.children[1], { piece = "rich", text = "**Waiting**" })
 	t.equal(tabs.children[3].label, "Surfaces")
-	t.equal(tabs.children[#tabs.children].text, "pick one")
+	t.equal(tabs.children[#tabs.children].label, "submit", "the tabs' line holds the tabs alone")
 	-- The question, large; the rows, the person's own field last; and the
 	-- preview of the row in focus, its description over it.
 	t.equal(question.children[1].piece, "title")
@@ -242,14 +242,21 @@ t.case("the panel draws the question in view, its preview, and the review", func
 	t.equal(first.size, "large")
 	t.equal(first.wide, true, "a row the panel's width")
 	t.equal(first.detail, "Block until the answer comes.", "what it means, inside it")
-	t.equal(second.label, "2  End the turn")
-	t.equal(second.kind, "secondary")
-	t.equal(second.wide, true)
-	t.equal(second.detail, nil)
+	-- A row not chosen is ruled: its key in a square that picks it, its
+	-- label in plain text.
+	t.equal(second.piece, "table")
+	local key, label = second.rows[1][1], second.rows[1][2]
+	t.equal(key.piece, "square")
+	t.equal(key.label, "2")
+	t.equal(key.style, "quiet")
+	t.equal(key.action, "choose")
+	t.equal(key.args, { row = 1 })
+	t.equal(label, { piece = "text", text = "End the turn" })
 	-- The person's own answer, after the choices; then the preview.
 	local own, side = question.children[#question.children - 1], question.children[#question.children]
-	t.equal(own.piece, "row")
-	t.equal(own.children[2].id, "ask-other-r1-c1-0")
+	t.equal(own.piece, "table")
+	t.equal(own.rows[1][1].label, "3")
+	t.equal(own.rows[1][2].children[1].id, "ask-other-r1-c1-0")
 	t.equal(#side.children, 1, "its row says what it means already")
 	t.equal(side.children[1].text, "select! { a = rx => a }")
 	t.equal(foot.children[3].action, "heiko.cancel")
@@ -259,6 +266,7 @@ t.case("the panel draws the question in view, its preview, and the review", func
 	run:action("key", { key = "1" })
 	run:action("key", { key = "right" })
 	tree = run:view().composer
+	t.equal(tree.children[1].children[1].meta, "review · 1 of 2 answered")
 	local review = tree.children[1].children[3]
 	t.equal(review.piece, "table")
 	t.equal(review.rows[1][2].text, "Hold the call open (Recommended)")
@@ -335,8 +343,9 @@ t.machine("the view shows the first call still waiting", {
 			-- The row of the person's own answer: its key, then its field.
 			local id = nil
 			for _, piece in ipairs(view.composer.children[1].children[3].children) do
-				if piece.piece == "row" and piece.children[2] and piece.children[2].piece == "input" then
-					id = piece.children[2].id
+				local field = piece.piece == "table" and piece.rows[1][2] or nil
+				if field and field.piece == "row" and field.children[1].piece == "input" then
+					id = field.children[1].id
 				end
 			end
 			t.equal(id, "ask-other-r1-" .. first .. "-0")

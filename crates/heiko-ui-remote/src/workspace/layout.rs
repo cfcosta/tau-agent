@@ -14,9 +14,13 @@ pub(super) fn sidebar_width(wide: bool) -> gpui::Rems {
 /// window's right edge, in spacing steps.
 const INSET: (f32, f32) = (13., 11.);
 
+/// How far a desktop pane's bar and body stand in from its left edge,
+/// in spacing steps.
+const PANE_INSET: f32 = 7.;
+
 /// How far a phone's screen stands in from the window's sides, in
-/// spacing steps.
-const PHONE_GUTTER: f32 = 4.;
+/// spacing steps: 18 px, as its header and lists do.
+const PHONE_GUTTER: f32 = 4.5;
 
 impl Workspace {
     /// How wide a screen beside the sidebar is drawn: the window less
@@ -456,8 +460,7 @@ impl Workspace {
             .flex()
             .flex_shrink_0()
             .items_center()
-            .gap(sp(4.))
-            .typeset(Type::LEAD)
+            .gap(sp(3.5))
             .children(ui::push::header(self, run, t, cx))
             .children(compare.map(|route| {
                 div()
@@ -525,9 +528,18 @@ impl Workspace {
             });
         header(t)
             .child(name(&run.title, t.bright))
-            .child(div().flex_shrink_0().text_color(color).child(state))
+            // Small print sits on the title's baseline, not its middle.
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .pt(sp(1.))
+                    .text_color(color)
+                    .child(state),
+            )
             .children(context.map(|context| {
-                ui::mono(context, Type::CAPTION, t.dim).flex_shrink_0()
+                ui::mono(context, Type::CAPTION, t.dim)
+                    .flex_shrink_0()
+                    .pt(sp(1.))
             }))
             .child(div().flex_1())
             .child(actions)
@@ -546,15 +558,19 @@ impl Workspace {
             .min_h(rems(0.))
             .border_l_1()
             .border_color(t.hairline)
+            // As tall as the chat's header, so its heavy rule goes on
+            // across the panel.
             .child(
                 div()
-                    .h(rems(3.))
+                    .h(rems(4.75))
                     .flex_shrink_0()
                     .flex()
-                    .items_center()
-                    .px(sp(4.))
-                    .border_b_1()
-                    .border_color(t.hairline)
+                    .flex_col()
+                    .justify_end()
+                    .mx(sp(4.))
+                    .pb(sp(3.))
+                    .border_b_2()
+                    .border_color(t.rule)
                     .children(run.map(|run| inspector::header(self, run, t))),
             )
             .child(
@@ -597,7 +613,31 @@ impl Workspace {
                         )
                     })
                     .unwrap_or_default();
-                screen.children(banners)
+                // In the transcript's column on a desktop; on a phone,
+                // in from the window's sides.
+                screen.when(!banners.is_empty(), |screen| {
+                    screen.child(
+                        div()
+                            .w_full()
+                            .flex_shrink_0()
+                            .flex()
+                            .flex_col()
+                            .when(!compact, |column| {
+                                column.max_w(rems(50.5)).mx_auto()
+                            })
+                            .px(sp(if compact { PHONE_GUTTER } else { 6. }))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .pt(sp(4.))
+                                    .pb(sp(3.))
+                                    .border_b_1()
+                                    .border_color(t.hairline)
+                                    .children(banners),
+                            ),
+                    )
+                })
             })
             .child(self.transcript(compact, t, cx))
             // A main chat's crew, docked above its composer.
@@ -610,7 +650,7 @@ impl Workspace {
                             .when(!compact, |column| {
                                 column.max_w(rems(50.5)).mx_auto()
                             })
-                            .px(sp(if compact { 4. } else { 6. }))
+                            .px(sp(if compact { PHONE_GUTTER } else { 6. }))
                             .pb(sp(2.5))
                             .child(tray)
                     }),
@@ -636,7 +676,7 @@ impl Workspace {
                             .when(!compact, |column| {
                                 column.max_w(rems(50.5)).mx_auto()
                             })
-                            .px(sp(if compact { 4. } else { 6. }))
+                            .px(sp(if compact { PHONE_GUTTER } else { 6. }))
                             .pb(sp(2.5))
                             .children(bands)
                     }),
@@ -1005,12 +1045,17 @@ impl Workspace {
             .iter()
             .rev()
             .find(|happened| !happened.day.is_empty())
-            .map(|happened| happened.day.as_str());
+            .map(|happened| (happened.day.as_str(), happened.when.as_str()));
         let title = match oldest {
-            None | Some("Today") => "Today".to_owned(),
-            Some("Yesterday") => "Since yesterday".to_owned(),
-            Some("Earlier") => "Earlier".to_owned(),
-            Some(day) => format!("Since {day}"),
+            None | Some(("Today", _)) => "Today".to_owned(),
+            // Yesterday's is said with its part of the day; older, by
+            // its date.
+            Some(("Yesterday", when)) => match part_of_day(when) {
+                Some(part) => format!("Since yesterday {part}"),
+                None => "Since yesterday".to_owned(),
+            },
+            Some(("Earlier", _)) => "Earlier".to_owned(),
+            Some((day, _)) => format!("Since {day}"),
         };
         div()
             .flex()
@@ -1082,37 +1127,47 @@ impl Workspace {
         t: &Theme,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
+        // As a screen's header: on a desktop as tall as the chat's, so
+        // the two heavy rules meet; on a phone as its other headers.
         let bar = div()
-            .h(rems(if compact { 3.5 } else { 3. }))
             .flex_shrink_0()
             .flex()
             .items_center()
-            .gap(sp(2.))
-            .px(sp(if compact { 1.5 } else { 4. }))
-            .border_b_1()
-            .border_color(t.hairline)
+            .gap(sp(3.))
+            .border_b_2()
+            .border_color(t.rule)
+            .when(compact, |bar| {
+                bar.min_h(rems(3.5)).mx(sp(PHONE_GUTTER)).pt(sp(2.))
+            })
+            .when(!compact, |bar| {
+                bar.min_h(rems(4.75))
+                    .ml(sp(PANE_INSET))
+                    .mr(sp(INSET.1))
+                    .pt(sp(6.))
+                    .pb(sp(2.5))
+            })
             .child(
                 div()
                     .flex_1()
                     .min_w(rems(0.))
                     .truncate()
-                    .typeset(Type::SECTION.sized(if compact {
-                        17.
+                    .typeset(if compact {
+                        Type::PAGE_TITLE.sized(19.)
                     } else {
-                        15.
-                    }))
+                        Type::SECTION
+                    })
                     .text_color(t.bright)
-                    .when(compact, |title| title.pl(sp(2.5)))
                     .child(pane.title),
             )
             .child(
-                heiko_ui_kit::components::icon_button(
-                    "pane-close",
-                    Icon::Close,
-                    if compact { 44. } else { 28. },
-                    t,
-                )
-                .on_click(cx.listener(|ws, _, _, cx| ws.toggle_pane(cx))),
+                div()
+                    .id("pane-close")
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .when(compact, |close| close.min_h(control::LARGE))
+                    .child(ui::text_link("close", Type::SMALL, t))
+                    .on_click(cx.listener(|ws, _, _, cx| ws.toggle_pane(cx))),
             );
         div()
             .flex()
@@ -1130,8 +1185,11 @@ impl Workspace {
                     .flex_col()
                     .overflow_hidden()
                     // On a phone, in from the window's sides as the
-                    // screen it covers is.
+                    // screen it covers is; on a desktop, under its bar.
                     .when(compact, |body| body.px(sp(PHONE_GUTTER)))
+                    .when(!compact, |body| {
+                        body.pl(sp(PANE_INSET)).pr(sp(INSET.1))
+                    })
                     .child(pane.body),
             )
     }
@@ -1429,6 +1487,17 @@ fn header(t: &Theme) -> gpui::Div {
         .typeset(Type::BODY)
 }
 
+/// The part of the day a time of day (`19:02`) is in, as a title says
+/// it. None for anything else, such as `now`.
+fn part_of_day(when: &str) -> Option<&'static str> {
+    let hour: u8 = when.split_once(':')?.0.parse().ok()?;
+    Some(match hour {
+        0..=11 => "morning",
+        12..=17 => "afternoon",
+        _ => "evening",
+    })
+}
+
 /// One thing that happened, in Home's list: when, its mark, whose it
 /// is, what happened, and its one action; the loud one when it waits on
 /// the person.
@@ -1476,7 +1545,7 @@ fn happened_row(
         .child(div().flex_shrink_0().pt(sp(0.75)).child(sign))
         .child(
             div()
-                .w(rems(6.5))
+                .w(rems(8.75))
                 .flex_shrink_0()
                 .truncate()
                 .font_weight(weight::STRONG)

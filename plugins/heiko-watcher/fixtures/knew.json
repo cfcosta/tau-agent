@@ -35,10 +35,18 @@
           {
             "children": [
               {
+                "mono": false,
+                "piece": "toned",
+                "text": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision.",
+                "tone": "neutral"
+              },
+              {
                 "children": [
                   {
-                    "piece": "heading",
-                    "text": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
+                    "mono": false,
+                    "piece": "toned",
+                    "text": "You knew this.",
+                    "tone": "neutral"
                   },
                   {
                     "piece": "spacer"
@@ -50,12 +58,6 @@
                   }
                 ],
                 "piece": "row"
-              },
-              {
-                "mono": false,
-                "piece": "toned",
-                "text": "You knew this.",
-                "tone": "neutral"
               }
             ],
             "piece": "stack"

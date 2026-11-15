@@ -57,6 +57,7 @@ pub(super) async fn branch_code(
             .map(|file| FileChange {
                 stat: file_stat(file),
                 lines: heiko_ui_kit::diff::parse(&file.text),
+                numbers: heiko_ui_kit::diff::line_numbers(&file.text),
             })
             .collect(),
     })

@@ -421,7 +421,7 @@ t.case("a repository's notes page lists, filters, searches and opens its notes",
 	t.equal(find(page, "pill").text, "All 2")
 	t.equal(find(page, "input") ~= nil, true, "the search")
 	-- No tool on this computer: no way to import.
-	t.equal(find(page, "button", "Import from Claude Code or Codex…"), nil)
+	t.equal(find(page, "button", "import"), nil)
 
 	-- A link out and a backlink both count.
 	for _, r in ipairs(list.rows) do
@@ -542,7 +542,7 @@ t.case("a banner on a repository's notes leads to what its tools kept", function
 	t.equal(shows(page, "Claude Code kept 1 note for ~/work/shop."), true, "what they kept")
 	local bring = find(page, "button", "Bring what they kept")
 	t.equal(bring.kind, "primary")
-	t.equal(find(page, "button", "Import from Claude Code or Codex…") ~= nil, true, "the way to import")
+	t.equal(find(page, "button", "import") ~= nil, true, "the way to import")
 	t.equal(run:action(bring.action, bring.args).heiko_interface.action, "open")
 	settle(run)
 	local ready = run:page("notes", { repo = "shop" })

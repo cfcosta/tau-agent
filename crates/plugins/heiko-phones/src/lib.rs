@@ -392,6 +392,13 @@ fn paired(phones: &PhonesData) -> Vec<Node> {
     children
 }
 
+/// How wide the pairing QR code is, in pixels: it fits its half of the
+/// column beside the code.
+const QR: f32 = 180.;
+
+/// How many groups of the certificate's fingerprint stand on a line.
+const CERTIFICATE_GROUPS: usize = 3;
+
 /// What pairs a phone: the way to show a code, or the code shown: the
 /// QR code beside the code in big print, then where it reaches the
 /// computer and the certificate, as ruled rows.
@@ -420,21 +427,28 @@ fn pair(phones: &PhonesData) -> Vec<Node> {
                 button("hide code", &Act::HideCode, Kind::Secondary),
             ],
         ),
-        Node::row([
-            Node::Qr {
-                text: code.text.clone(),
-                size: 200.,
-                offset: true,
-            },
-            Node::stack([
-                small("code"),
-                Node::Figure {
-                    text: code.secret.clone(),
+        // Side by side, ruled under: the code and what to do with it
+        // wrap in their half, beside the QR code.
+        Node::Table {
+            head: vec![],
+            rows: vec![vec![
+                Node::Qr {
+                    text: code.text.clone(),
+                    size: QR,
+                    offset: true,
                 },
-                Node::text("In heiko on your phone, tap Scan pairing code."),
-            ]),
-        ]),
-        Node::Rule,
+                Node::stack([
+                    small("code"),
+                    Node::Figure {
+                        text: code.secret.clone(),
+                    },
+                    Node::text(
+                        "In heiko on your phone, tap Scan pairing code.",
+                    ),
+                ]),
+            ]],
+            widths: vec![1., 1.1],
+        },
         Node::Table {
             head: vec![],
             rows: vec![
@@ -455,7 +469,9 @@ fn pair(phones: &PhonesData) -> Vec<Node> {
                 vec![
                     Node::Stack { children: vec![] },
                     Node::stack(
-                        code.lines.iter().map(|line| small(line.clone())),
+                        code.lines
+                            .chunks(CERTIFICATE_GROUPS)
+                            .map(|groups| small(groups.join(" "))),
                     ),
                 ],
             ],

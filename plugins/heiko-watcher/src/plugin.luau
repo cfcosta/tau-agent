@@ -46,23 +46,24 @@ local function actions(note)
 	return buttons
 end
 
--- A note under the watcher's mark: its line with its tag, the
+-- A note under the watcher's mark: its line as a title, the
 -- explanation once the person asked for it, and what they can do about
--- it. Grey once answered.
+-- it, its tag after them. Grey once answered.
 local function heads_up(note)
 	local muted = note.status == "knew" or note.status == "dismissed"
 	local ink = muted and "neutral" or "cyan"
-	local children = { ui.row({ ui.heading(note.line, not muted and "bright" or nil), ui.spacer(), ui.stamp(note.tag, ink) }) }
+	-- A stack's own piece, so a long line wraps.
+	local children = { muted and ui.toned(note.line, "neutral") or ui.title(note.line) }
 	if note.status == "learned" and note.explain then
 		table.insert(children, ui.stack({ ui.rich("**" .. note.explain.title .. "**"), ui.list(note.explain.bullets) }))
 	end
+	local last = actions(note)
 	if note.status == "knew" then
-		table.insert(children, ui.toned("You knew this.", "neutral"))
+		table.insert(last, ui.toned("You knew this.", "neutral"))
 	end
-	local buttons = actions(note)
-	if #buttons > 0 then
-		table.insert(children, ui.row(buttons))
-	end
+	table.insert(last, ui.spacer())
+	table.insert(last, ui.stamp(note.tag, ink))
+	table.insert(children, ui.row(last))
 	return ui.row({ ui.kanji("報", ink), ui.stack(children) })
 end
 

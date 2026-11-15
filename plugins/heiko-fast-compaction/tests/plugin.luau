@@ -164,6 +164,35 @@ t.case("a pass marks what it drops on the calls' cards", function()
 	t.equal(rewrite.rewrite.details.stats.results_dropped, 1)
 end)
 
+-- The ledger keeps a call's short argument, not its input as JSON, and
+-- its page draws the argument of an input kept as JSON.
+t.case("the ledger shows a call's short argument", function()
+	local run = running({ a = "drop_result" })
+	t.equal(run:rewrite_context(view_of(messages_of({ "a" }))) ~= nil, true)
+	t.equal(run.state.ledger[1].input, "a.rs")
+	local long = string.rep("x", 80)
+	local drawn = running({}, {
+		state = {
+			passes = {
+				{ before = 100, after = 50, results_dropped = 0, calls_dropped = 0, reduction_ratio = 0.5, detail = "d", window = 1000 },
+			},
+			ledger = {
+				{ call_id = "a", tool = "grep", input = '{"path":"src","pattern":"a|b"}', tokens = 1, matters = 0.9, verbatim = 0.9, decision = "keep" },
+				{ call_id = "b", tool = "exec_command", input = '{"cmd":"make test"}', tokens = 1, matters = 0.9, verbatim = 0.9, decision = "keep" },
+				{ call_id = "c", tool = "memory_read", input = '{"id":"n-1","title":"Retries"}', tokens = 1, matters = 0.9, verbatim = 0.9, decision = "keep" },
+				{ call_id = "d", tool = "read", input = long, tokens = 1, matters = 0.9, verbatim = 0.9, decision = "keep" },
+				{ call_id = "e", tool = "wait", input = '{"seconds":3}', tokens = 1, matters = 0.9, verbatim = 0.9, decision = "keep" },
+			},
+		},
+	}):view().page
+	local rows = drawn.children[#drawn.children].rows
+	t.equal(rows[1][2].text, '"a|b" src')
+	t.equal(rows[2][2].text, "make test")
+	t.equal(rows[3][2].text, "n-1 · Retries")
+	t.equal(rows[4][2].text, string.rep("x", 51) .. "…", "cut to a line")
+	t.equal(rows[5][2].text, '{"seconds":3}', "nothing to name it by: the input")
+end)
+
 -- Every decision has its card label: pinned and kept calls show none.
 t.case("each decision has its card label", function()
 	local run = running({}, {
@@ -181,6 +210,19 @@ t.case("each decision has its card label", function()
 	})
 	local view = run:view()
 	t.equal(view.page.piece, "stack", "the ledger page is one piece")
+	-- A row: the tool, the call's argument, its size, the odds each as a
+	-- strip and its number, and the decision as a small square and its
+	-- word.
+	local rows = view.page.children[#view.page.children].rows
+	t.equal(rows[1][1], { piece = "mono", text = "read" })
+	t.equal(rows[1][4].text, "·", "a pinned call was not judged")
+	t.equal(rows[1][6].children[1], { piece = "heading", text = "■", tone = "bright" })
+	t.equal(rows[2][4].children[1].lit, 9)
+	t.equal(rows[2][4].children[2].text, "0.90")
+	t.equal(rows[2][6].children[1], { piece = "heading", text = "□" })
+	t.equal(rows[3][6].children[1].tone, "info")
+	t.equal(rows[3][6].children[2].text, "drop result")
+	t.equal(rows[4][6].children[2].text, "drop call")
 	local calls = view.calls
 	t.equal(calls.p, nil)
 	t.equal(calls.k, nil)

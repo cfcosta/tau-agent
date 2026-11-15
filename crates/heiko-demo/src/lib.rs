@@ -1446,7 +1446,12 @@ pub fn branch_code() -> BranchCode {
         added,
         removed,
     };
-    let lines = |text: &str| heiko_ui_kit::diff::parse(text);
+    // A file's diff, from its hunk on: its lines, and each one's number.
+    let change = |stat: FileStat, text: &str| FileChange {
+        stat,
+        lines: heiko_ui_kit::diff::parse(text),
+        numbers: heiko_ui_kit::diff::line_numbers(text),
+    };
     BranchCode {
         main: vec![
             stat(
@@ -1467,48 +1472,40 @@ pub fn branch_code() -> BranchCode {
             stat("crates/heiko-ai/src/retry.rs", FileKind::Modified, 6, 1),
         ],
         between: vec![
-            FileChange {
-                stat: stat(
+            change(
+                stat(
                     "crates/heiko-ai/src/transport/pool.rs",
                     FileKind::Modified,
                     3,
                     6,
                 ),
-                lines: lines(
-                    " fn next_rotation(&self, now: Instant) -> Instant {\n\
-                     -    let jitter = self.rng.gen_range(0..=self.max_jitter);\n\
-                     -    now + self.period + jitter\n\
-                     +    // Back off instead of jittering: the pool waits longer\n\
-                     +    // after each failed rotation.\n\
-                     +    now + self.period * 2u32.pow(self.failures.min(4))\n\
-                      }\n",
-                ),
-            },
-            FileChange {
-                stat: stat(
-                    "crates/heiko-ai/src/retry.rs",
-                    FileKind::Modified,
-                    6,
-                    1,
-                ),
-                lines: lines(
-                    " pub fn delay(&self, attempt: u32) -> Duration {\n\
-                     -    self.base * attempt\n\
-                     +    self.base * 2u32.pow(attempt.min(6))\n\
-                      }\n",
-                ),
-            },
-            FileChange {
-                stat: stat(
+                "@@ -88,4 +88,5 @@\n\
+                 \x20fn next_rotation(&self, now: Instant) -> Instant {\n\
+                 -    let jitter = self.rng.gen_range(0..=self.max_jitter);\n\
+                 -    now + self.period + jitter\n\
+                 +    // Back off instead of jittering: the pool waits longer\n\
+                 +    // after each failed rotation.\n\
+                 +    now + self.period * 2u32.pow(self.failures.min(4))\n\
+                 \x20}\n",
+            ),
+            change(
+                stat("crates/heiko-ai/src/retry.rs", FileKind::Modified, 6, 1),
+                "@@ -27,3 +27,3 @@\n\
+                 \x20pub fn delay(&self, attempt: u32) -> Duration {\n\
+                 -    self.base * attempt\n\
+                 +    self.base * 2u32.pow(attempt.min(6))\n\
+                 \x20}\n",
+            ),
+            change(
+                stat(
                     "crates/heiko-ai/tests/rotation.rs",
                     FileKind::Removed,
                     0,
                     38,
                 ),
-                lines: lines(
-                    "-#[test]\n-fn rotation_is_jittered() {\n-    // ...\n-}\n",
-                ),
-            },
+                "@@ -1,4 +0,0 @@\n\
+                 -#[test]\n-fn rotation_is_jittered() {\n-    // ...\n-}\n",
+            ),
         ],
     }
 }

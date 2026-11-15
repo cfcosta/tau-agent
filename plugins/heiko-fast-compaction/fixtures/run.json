@@ -122,7 +122,7 @@
         {
           "call_id": "c1",
           "decision": "pinned",
-          "input": "{\"id\":\"n-0388\",\"title\":\"Retry policy honors server hints\"}",
+          "input": "n-0388 · Retry policy honors server hints",
           "matters": null,
           "tokens": 40,
           "tool": "memory_read",
@@ -131,7 +131,7 @@
         {
           "call_id": "c1a",
           "decision": "pinned",
-          "input": "{\"path\":\"crates/heiko-ai/src\"}",
+          "input": "crates/heiko-ai/src",
           "matters": null,
           "tokens": 90,
           "tool": "ls",
@@ -140,7 +140,7 @@
         {
           "call_id": "c2",
           "decision": "keep",
-          "input": "{\"path\":\"crates/heiko-ai/src\",\"pattern\":\"retry_after|RetryPolicy\"}",
+          "input": "\"retry_after|RetryPolicy\" crates/heiko-ai/src",
           "matters": 0.64,
           "tokens": 120,
           "tool": "grep",
@@ -149,7 +149,7 @@
         {
           "call_id": "c3",
           "decision": "drop_result",
-          "input": "{\"path\":\"crates/heiko-ai/src/retry.rs\"}",
+          "input": "crates/heiko-ai/src/retry.rs",
           "matters": 0.71,
           "tokens": 3100,
           "tool": "read",
@@ -158,7 +158,7 @@
         {
           "call_id": "c4",
           "decision": "pinned",
-          "input": "{\"edits\":[{\"newText\":\"retry_after\",\"oldText\":\"delay\"}],\"path\":\"crates/heiko-ai/src/retry.rs\"}",
+          "input": "crates/heiko-ai/src/retry.rs",
           "matters": null,
           "tokens": 210,
           "tool": "edit",
@@ -167,7 +167,7 @@
         {
           "call_id": "c5",
           "decision": "keep",
-          "input": "{\"edits\":[{\"newText\":\"server_hint\",\"oldText\":\"backoff\"}],\"path\":\"crates/heiko-ai/src/retry.rs\"}",
+          "input": "crates/heiko-ai/src/retry.rs",
           "matters": 0.94,
           "tokens": 640,
           "tool": "edit",
@@ -176,7 +176,7 @@
         {
           "call_id": "c5t",
           "decision": "pinned",
-          "input": "{\"cmd\":\"cargo nextest run -p heiko-ai\"}",
+          "input": "cargo nextest run -p heiko-ai",
           "matters": null,
           "tokens": 1900,
           "tool": "exec_command",
@@ -185,7 +185,7 @@
         {
           "call_id": "c6",
           "decision": "keep",
-          "input": "{\"cmd\":\"rm -rf target/debug/incremental\"}",
+          "input": "rm -rf target/debug/incremental",
           "matters": 0.18,
           "tokens": 20,
           "tool": "exec_command",
@@ -194,7 +194,7 @@
         {
           "call_id": "c7",
           "decision": "keep",
-          "input": "{\"cmd\":\"cargo nextest run --workspace\"}",
+          "input": "cargo nextest run --workspace",
           "matters": 0.62,
           "tokens": 1100,
           "tool": "exec_command",
@@ -203,7 +203,7 @@
         {
           "call_id": "c8",
           "decision": "drop_result",
-          "input": "{\"path\":\"crates/heiko-ai/src/client.rs\"}",
+          "input": "crates/heiko-ai/src/client.rs",
           "matters": 0.52,
           "tokens": 7600,
           "tool": "read",
@@ -212,7 +212,7 @@
         {
           "call_id": "c9",
           "decision": "drop_result",
-          "input": "{\"path\":\"crates/heiko-testing/src/fake_openai.rs\"}",
+          "input": "crates/heiko-testing/src/fake_openai.rs",
           "matters": 0.58,
           "tokens": 5000,
           "tool": "read",
@@ -314,7 +314,8 @@
             {
               "children": [
                 {
-                  "piece": "heading",
+                  "piece": "title",
+                  "subtitle": null,
                   "text": "Pruned 91k tokens"
                 },
                 {
@@ -588,7 +589,7 @@
                 },
                 {
                   "piece": "mono",
-                  "text": "{\"id\":\"n-0388\",\"title\":\"Retry policy honors server hints\"}"
+                  "text": "n-0388 · Retry policy honors server hints"
                 },
                 {
                   "piece": "mono",
@@ -609,9 +610,8 @@
                 {
                   "children": [
                     {
-                      "label": "",
-                      "piece": "square",
-                      "style": "filled",
+                      "piece": "heading",
+                      "text": "■",
                       "tone": "bright"
                     },
                     {
@@ -631,7 +631,7 @@
                 },
                 {
                   "piece": "mono",
-                  "text": "{\"path\":\"crates/heiko-ai/src\"}"
+                  "text": "crates/heiko-ai/src"
                 },
                 {
                   "piece": "mono",
@@ -652,9 +652,8 @@
                 {
                   "children": [
                     {
-                      "label": "",
-                      "piece": "square",
-                      "style": "filled",
+                      "piece": "heading",
+                      "text": "■",
                       "tone": "bright"
                     },
                     {
@@ -674,7 +673,7 @@
                 },
                 {
                   "piece": "mono",
-                  "text": "{\"path\":\"crates/heiko-ai/src\",\"pattern\":\"retry_after|RetryPolicy\"}"
+                  "text": "\"retry_after|RetryPolicy\" crates/heiko-ai/src"
                 },
                 {
                   "piece": "mono",
@@ -715,10 +714,8 @@
                 {
                   "children": [
                     {
-                      "label": "",
-                      "piece": "square",
-                      "style": "quiet",
-                      "tone": "neutral"
+                      "piece": "heading",
+                      "text": "□"
                     },
                     {
                       "mono": true,
@@ -737,7 +734,7 @@
                 },
                 {
                   "piece": "mono",
-                  "text": "{\"path\":\"crates/heiko-ai/src/retry.rs\"}"
+                  "text": "crates/heiko-ai/src/retry.rs"
                 },
                 {
                   "piece": "mono",
@@ -778,9 +775,8 @@
                 {
                   "children": [
                     {
-                      "label": "",
-                      "piece": "square",
-                      "style": "filled",
+                      "piece": "heading",
+                      "text": "■",
                       "tone": "info"
                     },
                     {
@@ -800,7 +796,7 @@
                 },
                 {
                   "piece": "mono",
-                  "text": "{\"edits\":[{\"newText\":\"retry_after\",\"oldText\":\"delay\"}],\"path\":\"crates/heiko-ai/src/retry.rs\"}"
+                  "text": "crates/heiko-ai/src/retry.rs"
                 },
                 {
                   "piece": "mono",
@@ -821,9 +817,8 @@
                 {
                   "children": [
                     {
-                      "label": "",
-                      "piece": "square",
-                      "style": "filled",
+                      "piece": "heading",
+                      "text": "■",
                       "tone": "bright"
                     },
                     {
@@ -843,7 +838,7 @@
                 },
                 {
                   "piece": "mono",
-                  "text": "{\"edits\":[{\"newText\":\"server_hint\",\"oldText\":\"backoff\"}],\"path\":\"crates/heiko-ai/src/retry.rs\"}"
+                  "text": "crates/heiko-ai/src/retry.rs"
                 },
                 {
                   "piece": "mono",
@@ -884,10 +879,8 @@
                 {
                   "children": [
                     {
-                      "label": "",
-                      "piece": "square",
-                      "style": "quiet",
-                      "tone": "neutral"
+                      "piece": "heading",
+                      "text": "□"
                     },
                     {
                       "mono": true,
@@ -906,7 +899,7 @@
                 },
                 {
                   "piece": "mono",
-                  "text": "{\"cmd\":\"cargo nextest run -p heiko-ai\"}"
+                  "text": "cargo nextest run -p heiko-ai"
                 },
                 {
                   "piece": "mono",
@@ -927,9 +920,8 @@
                 {
                   "children": [
                     {
-                      "label": "",
-                      "piece": "square",
-                      "style": "filled",
+                      "piece": "heading",
+                      "text": "■",
                       "tone": "bright"
                     },
                     {
@@ -949,7 +941,7 @@
                 },
                 {
                   "piece": "mono",
-                  "text": "{\"cmd\":\"rm -rf target/debug/incremental\"}"
+                  "text": "rm -rf target/debug/incremental"
                 },
                 {
                   "piece": "mono",
@@ -990,10 +982,8 @@
                 {
                   "children": [
                     {
-                      "label": "",
-                      "piece": "square",
-                      "style": "quiet",
-                      "tone": "neutral"
+                      "piece": "heading",
+                      "text": "□"
                     },
                     {
                       "mono": true,
@@ -1012,7 +1002,7 @@
                 },
                 {
                   "piece": "mono",
-                  "text": "{\"cmd\":\"cargo nextest run --workspace\"}"
+                  "text": "cargo nextest run --workspace"
                 },
                 {
                   "piece": "mono",
@@ -1053,10 +1043,8 @@
                 {
                   "children": [
                     {
-                      "label": "",
-                      "piece": "square",
-                      "style": "quiet",
-                      "tone": "neutral"
+                      "piece": "heading",
+                      "text": "□"
                     },
                     {
                       "mono": true,
@@ -1075,7 +1063,7 @@
                 },
                 {
                   "piece": "mono",
-                  "text": "{\"path\":\"crates/heiko-ai/src/client.rs\"}"
+                  "text": "crates/heiko-ai/src/client.rs"
                 },
                 {
                   "piece": "mono",
@@ -1116,9 +1104,8 @@
                 {
                   "children": [
                     {
-                      "label": "",
-                      "piece": "square",
-                      "style": "filled",
+                      "piece": "heading",
+                      "text": "■",
                       "tone": "info"
                     },
                     {
@@ -1138,7 +1125,7 @@
                 },
                 {
                   "piece": "mono",
-                  "text": "{\"path\":\"crates/heiko-testing/src/fake_openai.rs\"}"
+                  "text": "crates/heiko-testing/src/fake_openai.rs"
                 },
                 {
                   "piece": "mono",
@@ -1179,9 +1166,8 @@
                 {
                   "children": [
                     {
-                      "label": "",
-                      "piece": "square",
-                      "style": "filled",
+                      "piece": "heading",
+                      "text": "■",
                       "tone": "info"
                     },
                     {
@@ -1196,9 +1182,9 @@
               ]
             ],
             "widths": [
-              1.5,
+              1.3,
               5,
-              0.8,
+              0.7,
               2,
               2,
               1.5

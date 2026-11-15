@@ -93,16 +93,20 @@ fn title_bar(
     div()
         .flex_shrink_0()
         .mx(sp(4.))
-        .pt(sp(3.))
-        .pb(sp(2.5))
+        .pt(sp(2.))
+        .pb(sp(1.5))
         .flex()
         .items_center()
-        .gap(sp(2.))
+        .gap(sp(1.))
         .border_b_2()
         .border_color(t.rule)
         .when(ws.can_go_back(), |bar| {
             bar.child(
+                // Its chevron on the screen's margin, the title close
+                // beside it, as a phone's other headers.
                 icon_button("task-back", Icon::Back, 44., t)
+                    .w(rems(1.5))
+                    .justify_start()
                     .on_click(cx.listener(|ws, _, _, cx| ws.back(cx))),
             )
         })

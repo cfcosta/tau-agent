@@ -1306,6 +1306,14 @@ fn state_words(run: &RunView, t: &Theme) -> (Hsla, SharedString) {
     }
 }
 
+/// Back, in a phone's header: as tall as a finger needs, its chevron on
+/// the screen's margin and the title close beside it.
+fn phone_back(t: &Theme) -> Stateful<Div> {
+    icon_button("phone-back", Icon::Back, 44., t)
+        .w(rems(1.5))
+        .justify_start()
+}
+
 /// The phone's header above a run: back and its title, with Push for a
 /// main chat ahead of the forge; then its state in words, and the ways
 /// to its pane, its details and closing it; over a heavy rule.
@@ -1323,7 +1331,7 @@ pub fn phone_run_bar(
     let word = |id: &'static str, label: &'static str| {
         div()
             .id(id)
-            .min_h(rems(2.75))
+            .min_h(rems(2.25))
             .flex()
             .items_center()
             .child(text_link(label, Type::SMALL, t))
@@ -1334,7 +1342,7 @@ pub fn phone_run_bar(
         .flex_col()
         .mx(sp(PHONE_MARGIN))
         .pt(sp(2.))
-        .pb(sp(2.5))
+        .pb(sp(1.5))
         .border_b_2()
         .border_color(t.rule)
         .child(
@@ -1344,8 +1352,7 @@ pub fn phone_run_bar(
                 .gap(sp(1.))
                 .min_h(rems(2.75))
                 .child(
-                    icon_button("phone-back", Icon::Back, 44., t)
-                        .ml(sp(-3.))
+                    phone_back(t)
                         .on_click(cx.listener(|ws, _, _, cx| ws.back(cx))),
                 )
                 .child(
@@ -1411,7 +1418,7 @@ pub fn phone_header(
         .flex_shrink_0()
         .flex()
         .items_center()
-        .gap(sp(2.))
+        .gap(sp(1.))
         .min_h(rems(3.5))
         .mx(sp(PHONE_MARGIN))
         .pt(sp(2.))
@@ -1419,9 +1426,7 @@ pub fn phone_header(
         .border_color(t.rule)
         .when(!ws.route.is_top_level(), |bar| {
             bar.child(
-                icon_button("phone-back", Icon::Back, 44., t)
-                    .ml(sp(-3.))
-                    .on_click(cx.listener(|ws, _, _, cx| ws.back(cx))),
+                phone_back(t).on_click(cx.listener(|ws, _, _, cx| ws.back(cx))),
             )
         })
         .child(
@@ -1449,6 +1454,8 @@ pub fn phone_header(
             bar.child(
                 div()
                     .id("phone-add-repo")
+                    .flex_shrink_0()
+                    .ml(sp(2.))
                     .min_h(rems(2.75))
                     .flex()
                     .items_center()
@@ -1478,7 +1485,7 @@ pub fn phone_run_list(
         .flex()
         .flex_col()
         .px(sp(PHONE_MARGIN))
-        .pb(sp(4.))
+        .pb(sp(6.))
         .children(groups)
         .when(ws.catalog.listed().next().is_none(), |list| {
             list.child(super::empty(
@@ -1584,10 +1591,14 @@ fn phone_kind(
             .into_iter()
             .next()
             .map(|line| {
+                // One line: what a plugin draws past it is cut, not
+                // wrapped under the row.
                 div()
-                    .truncate()
+                    .h(rems(1.125))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
                     .font_family(MONO)
-                    .typeset(Type::CAPTION)
+                    .typeset(Type::CAPTION.leading(1.5))
                     .text_color(t.dim)
                     .child(line)
                     .into_any_element()
@@ -1609,7 +1620,9 @@ fn phone_kind(
                 row.child(
                     hot_action(format!("{waits} need you"), t)
                         .typeset(Type::CAPTION)
-                        .font_weight(weight::STRONG),
+                        .font_weight(weight::STRONG)
+                        // Clear of the block's offset at the margin.
+                        .mr(sp(0.5)),
                 )
             })
             .on_click(cx.listener(move |ws, _, _, cx| ws.open_agent(&name, cx)))
@@ -1684,7 +1697,7 @@ fn phone_group(
         .flex_wrap()
         .items_center()
         .gap_x(sp(4.))
-        .min_h(rems(2.75))
+        .py(sp(1.))
         .border_b_1()
         .border_color(t.hairline)
         .typeset(Type::SMALL);
@@ -1700,7 +1713,9 @@ fn phone_group(
                 .flex()
                 .items_center()
                 .gap(sp(2.))
-                .min_h(rems(2.75))
+                // Two rows of them, when they wrap, stay a finger apart
+                // without standing as far apart as the runs under them.
+                .min_h(rems(2.25))
                 .cursor_pointer()
                 .child(link_action(entry.label.clone(), t))
                 .children(

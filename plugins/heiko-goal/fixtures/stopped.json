@@ -117,7 +117,8 @@
         {
           "children": [
             {
-              "piece": "heading",
+              "piece": "title",
+              "subtitle": null,
               "text": "Goal stopped, not met",
               "tone": "bad"
             },
@@ -150,16 +151,14 @@
                   "piece": "square",
                   "style": "filled",
                   "tone": "bad"
-                },
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "children": [
                 {
                   "piece": "spacer"
-                },
-                {
-                  "lit": 2,
-                  "marked": [],
-                  "piece": "ticks",
-                  "tone": "bad",
-                  "total": 2
                 },
                 {
                   "piece": "mono",
@@ -167,6 +166,13 @@
                 }
               ],
               "piece": "row"
+            },
+            {
+              "lit": 2,
+              "marked": [],
+              "piece": "ticks",
+              "tone": "bad",
+              "total": 2
             },
             {
               "children": [
@@ -196,9 +202,6 @@
                   "kind": "secondary",
                   "label": "clear",
                   "piece": "button"
-                },
-                {
-                  "piece": "spacer"
                 }
               ],
               "piece": "row"
@@ -481,7 +484,8 @@
           {
             "children": [
               {
-                "piece": "heading",
+                "piece": "title",
+                "subtitle": null,
                 "text": "Goal stopped, not met",
                 "tone": "bad"
               },

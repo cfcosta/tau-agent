@@ -898,23 +898,10 @@
             {
               "children": [
                 {
-                  "children": [
-                    {
-                      "piece": "heading",
-                      "text": "Held, sent back",
-                      "tone": "yellow"
-                    },
-                    {
-                      "piece": "spacer"
-                    },
-                    {
-                      "mono": true,
-                      "piece": "toned",
-                      "text": "heiko-constitution",
-                      "tone": "neutral"
-                    }
-                  ],
-                  "piece": "row"
+                  "piece": "title",
+                  "subtitle": null,
+                  "text": "Held, sent back",
+                  "tone": "yellow"
                 },
                 {
                   "piece": "text",
@@ -1230,23 +1217,10 @@
             {
               "children": [
                 {
-                  "children": [
-                    {
-                      "piece": "heading",
-                      "text": "Held, sent back",
-                      "tone": "yellow"
-                    },
-                    {
-                      "piece": "spacer"
-                    },
-                    {
-                      "mono": true,
-                      "piece": "toned",
-                      "text": "heiko-constitution",
-                      "tone": "neutral"
-                    }
-                  ],
-                  "piece": "row"
+                  "piece": "title",
+                  "subtitle": null,
+                  "text": "Held, sent back",
+                  "tone": "yellow"
                 },
                 {
                   "piece": "text",

@@ -141,71 +141,12 @@ pub fn panel_tree(
         )]));
     }
     panel.push(Node::Stack { children: today });
-    // What wakes it, a ruled row each: its kind, what, and when.
-    let mut wakes: Vec<Vec<Node>> = agent
-        .triggers
-        .iter()
-        .map(|trigger| {
-            // A stream says whether it is open; the rest, when they fire
-            // next or fired last.
-            let when = match (trigger.connection(), trigger.next, trigger.last)
-            {
-                (Some(connection), ..) => Some(Node::Toned {
-                    text: connection.into(),
-                    tone: if trigger.live == Some(true) {
-                        Tone::Good
-                    } else {
-                        Tone::Neutral
-                    },
-                    mono: true,
-                }),
-                (None, Some(next), _) => Some(Node::Due {
-                    id: format!("trigger-{}-{}-next", agent.name, trigger.name),
-                    at: next * 1000,
-                }),
-                (None, None, Some(last)) => Some(Node::Ago {
-                    id: format!("trigger-{}-{}-last", agent.name, trigger.name),
-                    at: last * 1000,
-                }),
-                (None, None, None) => None,
-            };
-            let mut what = vec![Node::Mono {
-                text: trigger.label(),
-            }];
-            // A poll or a stream that failed says why, under it.
-            if let Some(error) = &trigger.error {
-                what.push(Node::Toned {
-                    text: error.clone(),
-                    tone: Tone::Bad,
-                    mono: true,
-                });
-            }
-            let mut end = vec![Node::Spacer];
-            end.extend(when);
-            vec![
-                kind(trigger.kind_label(), trigger.error.is_some()),
-                Node::Stack { children: what },
-                Node::Row { children: end },
-            ]
-        })
-        .collect();
-    wakes.extend(scheduled(agent));
-    let count = wakes.len();
+    let wakes = wakes(agent, PANEL_ROOM);
     panel.push(gap());
     panel.push(section(
         "What wakes it",
-        count,
-        vec![if wakes.is_empty() {
-            Node::Empty {
-                text: "Nothing yet.".into(),
-            }
-        } else {
-            Node::Table {
-                head: vec![],
-                rows: wakes,
-                widths: WAKES.to_vec(),
-            }
-        }],
+        agent.triggers.len() + agent.scheduled.len(),
+        wakes,
     ));
     panel.push(gap());
     panel.push(section("Keys", agent.secrets.len(), secrets(agent)));
@@ -244,9 +185,19 @@ pub fn panel_tree(
     Node::Stack { children: panel }
 }
 
-/// The shares of the panel's width a thing that wakes the agent gives
-/// its kind, what it is, and when.
-const WAKES: [f32; 3] = [1.3, 4., 2.];
+/// How many characters wide the kind of a thing that wakes the agent
+/// is set: the longest, `schedule`.
+const KIND_WIDTH: usize = 8;
+
+/// How many characters of what wakes it a row of the narrow panel has
+/// room for, beside its kind and when.
+const PANEL_ROOM: usize = 22;
+
+/// The same on a page of its own.
+pub(super) const PAGE_ROOM: usize = 96;
+
+/// How many of those characters a row's "drop" takes.
+const DROP_ROOM: usize = 6;
 
 /// What kind of thing wakes it, in mono: red when it is `failing`.
 fn kind(label: &str, failing: bool) -> Node {
@@ -257,37 +208,131 @@ fn kind(label: &str, failing: bool) -> Node {
     }
 }
 
-/// What `agent` scheduled for itself, soonest first, a row of the
-/// panel's table each: whether it repeats, what it is over the note it
-/// left itself, and when, with a way for the person to drop it.
-fn scheduled(agent: &Agent) -> Vec<Vec<Node>> {
+/// The kind at the head of a row of what wakes the agent: on one line,
+/// filled to [`KIND_WIDTH`] so every row's text starts in one column.
+fn wake_kind(label: &str, failing: bool) -> Node {
+    Node::Pill {
+        text: format!("{label:\u{a0}<width$}", width = KIND_WIDTH),
+        tone: if failing { Tone::Bad } else { Tone::Info },
+    }
+}
+
+/// `text`, cut to `room` characters, the last a mark that it goes on.
+fn clipped(text: &str, room: usize) -> String {
+    if text.chars().count() <= room {
+        return text.to_owned();
+    }
+    let mut cut: String = text.chars().take(room.saturating_sub(1)).collect();
+    cut.push('…');
+    cut
+}
+
+/// One thing that wakes the agent: a line of its kind, what it is, cut
+/// to `room` characters, and `end` at the right; then `under`, each a
+/// line of its own.
+fn wake(
+    kind: Node,
+    what: &str,
+    room: usize,
+    end: Vec<Node>,
+    under: Vec<Node>,
+) -> Node {
+    let mut row = vec![
+        kind,
+        // One line, in mono: it never breaks inside a word.
+        Node::Marked {
+            text: clipped(what, room),
+            spans: vec![],
+        },
+        Node::Spacer,
+    ];
+    row.extend(end);
+    let mut lines = vec![Node::Row { children: row }];
+    lines.extend(under);
+    Node::Stack { children: lines }
+}
+
+/// What wakes `agent`, a ruled row each: its triggers, then what it
+/// scheduled for itself. `room` is how many characters of what each is
+/// a row shows.
+pub(super) fn wakes(agent: &Agent, room: usize) -> Vec<Node> {
+    let mut rows: Vec<Node> = agent
+        .triggers
+        .iter()
+        .map(|trigger| {
+            // A stream says whether it is open; the rest, when they fire
+            // next or fired last.
+            let when = match (trigger.connection(), trigger.next, trigger.last)
+            {
+                (Some(connection), ..) => Some(Node::Toned {
+                    text: connection.into(),
+                    tone: if trigger.live == Some(true) {
+                        Tone::Good
+                    } else {
+                        Tone::Neutral
+                    },
+                    mono: true,
+                }),
+                (None, Some(next), _) => Some(Node::Due {
+                    id: format!("trigger-{}-{}-next", agent.name, trigger.name),
+                    at: next * 1000,
+                }),
+                (None, None, Some(last)) => Some(Node::Ago {
+                    id: format!("trigger-{}-{}-last", agent.name, trigger.name),
+                    at: last * 1000,
+                }),
+                (None, None, None) => None,
+            };
+            // A poll or a stream that failed says why, under it.
+            let error = trigger.error.as_ref().map(|error| Node::Toned {
+                text: error.clone(),
+                tone: Tone::Bad,
+                mono: true,
+            });
+            wake(
+                wake_kind(trigger.kind_label(), trigger.error.is_some()),
+                &trigger.label(),
+                room,
+                when.into_iter().collect(),
+                error.into_iter().collect(),
+            )
+        })
+        .collect();
+    rows.extend(scheduled(agent, room));
+    if rows.is_empty() {
+        return vec![Node::Empty {
+            text: "Nothing yet.".into(),
+        }];
+    }
+    ruled(rows)
+}
+
+/// What `agent` scheduled for itself, soonest first, a row each:
+/// whether it repeats, its name, and when, with a way for the person to
+/// drop it; under it, when it repeats and the note it left itself.
+fn scheduled(agent: &Agent, room: usize) -> Vec<Node> {
     agent
         .scheduled
         .iter()
         .map(|scheduled| {
             let repeats = !matches!(scheduled.when, crate::When::Once { .. });
-            vec![
-                kind(if repeats { "repeats" } else { "once" }, false),
-                Node::stack([
-                    Node::Mono {
-                        text: if repeats {
-                            format!(
-                                "{} · {}",
-                                scheduled.name,
-                                scheduled.when.label()
-                            )
-                        } else {
-                            scheduled.name.clone()
-                        },
-                    },
-                    Node::Toned {
-                        text: scheduled.note.clone(),
-                        tone: Tone::Neutral,
-                        mono: false,
-                    },
-                ]),
-                Node::row([
-                    Node::Spacer,
+            let note = match (repeats, scheduled.note.is_empty()) {
+                (true, true) => scheduled.when.label(),
+                (true, false) => {
+                    format!("{} · {}", scheduled.when.label(), scheduled.note)
+                }
+                (false, _) => scheduled.note.clone(),
+            };
+            let under = (!note.is_empty()).then(|| Node::Toned {
+                text: note,
+                tone: Tone::Neutral,
+                mono: false,
+            });
+            wake(
+                wake_kind(if repeats { "repeats" } else { "once" }, false),
+                &scheduled.name,
+                room.saturating_sub(DROP_ROOM),
+                vec![
                     Node::Due {
                         id: format!(
                             "scheduled-{}-{}",
@@ -303,15 +348,16 @@ fn scheduled(agent: &Agent) -> Vec<Vec<Node>> {
                             name: scheduled.name.clone(),
                         },
                     ),
-                ]),
-            ]
+                ],
+                under.into_iter().collect(),
+            )
         })
         .collect()
 }
 
 /// The secrets `agent` names, a ruled row each, and a way to save one:
 /// heiko's secret store holds the values, which never come back here.
-fn secrets(agent: &Agent) -> Vec<Node> {
+pub(super) fn secrets(agent: &Agent) -> Vec<Node> {
     let mut rows: Vec<Node> = ruled(
         agent
             .secrets

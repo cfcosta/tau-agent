@@ -347,6 +347,9 @@ pub enum Node {
         text: String,
         #[serde(default)]
         subtitle: Option<String>,
+        /// The title's ink; a note's title takes its tone.
+        #[serde(default, skip_serializing_if = "is_default")]
+        tone: Ink,
     },
     List {
         #[serde(default, deserialize_with = "nodes")]
@@ -1593,7 +1596,11 @@ impl<'a> Draw<'a> {
                         )
                 }))
                 .into_any_element(),
-            Node::Title { text, subtitle } => match subtitle {
+            Node::Title {
+                text,
+                subtitle,
+                tone,
+            } => match subtitle {
                 Some(subtitle) => heiko_ui_kit::components::screen_title(
                     text.clone(),
                     subtitle.clone(),
@@ -1602,7 +1609,11 @@ impl<'a> Draw<'a> {
                 .into_any_element(),
                 None => {
                     heiko_ui_kit::components::title(text.clone(), Type::TITLE)
-                        .text_color(t.text)
+                        .text_color(if *tone == Ink::default() {
+                            t.text
+                        } else {
+                            tone.color(t)
+                        })
                         .into_any_element()
                 }
             },

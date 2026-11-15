@@ -48,7 +48,7 @@ use heiko_ui_plugin::{
         SetupRepo,
         SetupView,
     },
-    tree::{Ink, Kind, MarkState, Node, SquareLook, Tab, Tone, draft_key},
+    tree::{GapSize, Ink, Kind, MarkState, Node, SquareLook, Tab, Tone, draft_key},
 };
 
 use crate::{
@@ -823,6 +823,7 @@ fn allow_card(ask: &crate::Ask, at: &AtCard) -> Node {
         Node::Title {
             text: ask.title.clone(),
             subtitle: None,
+            tone: Default::default(),
         },
         small(ask.plugin.clone()),
     ])];
@@ -2386,6 +2387,7 @@ fn plugin_row(entry: &Entry) -> [Node; 3] {
         Node::Title {
             text: entry.name.clone(),
             subtitle: None,
+            tone: Default::default(),
         },
         standing_row(entry),
     ];
@@ -2485,10 +2487,14 @@ fn plugin_page(entry: &str, view: &mut ViewCx<'_, LuauPluginsUi>) -> Node {
     }
     let mut page = vec![
         back,
+        Node::Gap {
+            size: GapSize::Small,
+        },
         Node::Title {
             text: found.name.clone(),
             subtitle: (!found.description.is_empty())
                 .then(|| found.description.clone()),
+            tone: Default::default(),
         },
         standing_row(&found),
     ];
@@ -2525,47 +2531,38 @@ fn plugin_page(entry: &str, view: &mut ViewCx<'_, LuauPluginsUi>) -> Node {
         _ => {}
     }
 
+    // A section for each thing there is to say, a ruled row each; one
+    // with nothing to say is left out.
+    let mono = |text: String| Node::Mono { text };
     if let Some(declaration) = &found.declaration {
-        let seams = steps_in(declaration);
-        page.push(section(
+        page.extend(listed(
             "Where it steps in",
-            vec![if seams.is_empty() {
-                small("only in the interface")
-            } else {
-                stamps(seams)
-            }],
+            steps_in(declaration).into_iter().map(mono).collect(),
         ));
-        let reach = reaches(&declaration.uses);
-        page.push(section(
+        page.extend(listed(
             "What it may reach",
-            vec![if reach.is_empty() {
-                small("nothing beyond the run it is in")
-            } else {
-                Node::row(reach.into_iter().map(|text| Node::Mono { text }))
-            }],
+            reaches(&declaration.uses).into_iter().map(mono).collect(),
         ));
     }
     // What its view puts on its page, from the newest run that drew one;
     // its buttons act on that run.
     if let Some((run, _, drawn)) = page_run(entry, view) {
-        let title = if run.title.is_empty() {
-            "In its last run".to_owned()
-        } else {
-            format!("In {}", run.title)
-        };
-        page.push(section(
-            &title,
-            vec![embed_as(&drawn, entry, LUAU_PAGE)],
-        ));
+        let drawn = embed_as(&drawn, entry, LUAU_PAGE);
+        if !blank(&drawn) {
+            let title = if run.title.is_empty() {
+                "In its last run".to_owned()
+            } else {
+                format!("In {}", run.title)
+            };
+            page.push(section(&title, None, vec![drawn]));
+        }
     }
-    page.push(section(
+    page.extend(listed(
         "Tests",
-        if found.tests.is_empty() {
-            vec![Node::Empty {
-                text: "It has none yet.".into(),
-            }]
-        } else {
-            ruled(found.tests.iter().map(|test| {
+        found
+            .tests
+            .iter()
+            .map(|test| {
                 Node::row([
                     mark(if test.passed {
                         MarkState::Met
@@ -2574,8 +2571,8 @@ fn plugin_page(entry: &str, view: &mut ViewCx<'_, LuauPluginsUi>) -> Node {
                     }),
                     Node::stack(test_lines(test)),
                 ])
-            }))
-        },
+            })
+            .collect(),
     ));
     let has_settings = found
         .declaration
@@ -2584,22 +2581,49 @@ fn plugin_page(entry: &str, view: &mut ViewCx<'_, LuauPluginsUi>) -> Node {
     if has_settings {
         page.push(section(
             "Settings",
+            None,
             vec![scopes(entry, view), Node::Rule, crate::pane::render(view)],
         ));
     }
     Node::stack(page)
 }
 
-/// A section of a plugin's page: its head, which does not fold, over
-/// `children`.
-fn section(title: &str, children: Vec<Node>) -> Node {
+/// A section of a plugin's page: its head, which does not fold, with
+/// `meta` at its end, over `children`.
+fn section(title: &str, meta: Option<String>, children: Vec<Node>) -> Node {
     let mut section = vec![Node::Header {
         title: title.to_owned(),
-        meta: None,
+        meta,
         actions: vec![],
     }];
     section.extend(children);
     Node::stack(section)
+}
+
+/// A section of a plugin's page that lists `rows`: its head with how
+/// many there are, over a ruled row each, the last closed by a rule;
+/// none when there are no rows.
+fn listed(title: &str, rows: Vec<Node>) -> Option<Node> {
+    if rows.is_empty() {
+        return None;
+    }
+    let count = rows.len().to_string();
+    let mut rows = ruled(rows);
+    rows.push(Node::Rule);
+    Some(section(title, Some(count), rows))
+}
+
+/// Whether `node` draws nothing: no text, or a group with nothing in it.
+fn blank(node: &Node) -> bool {
+    match node {
+        Node::Text { text } | Node::Rich { text } | Node::Mono { text } => {
+            text.trim().is_empty()
+        }
+        Node::Stack { children }
+        | Node::Row { children }
+        | Node::Card { children } => children.iter().all(blank),
+        _ => false,
+    }
 }
 
 /// "Applies to", then everywhere and each of the person's repositories,

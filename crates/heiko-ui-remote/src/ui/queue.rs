@@ -152,11 +152,23 @@ fn queue_card(
                 .on_click(cx.listener(move |ws, _, _, cx| ws.unqueue(&id, cx))),
             )
     });
-    div()
-        .flex()
-        .flex_col()
-        .child(ui::section_header(title, Some(note.into()), t))
-        .children(rows)
+    // A note at the end of the chat, as a landing's is: under a rule in
+    // the color of what lands, its rows between hairlines.
+    super::landing::note(
+        title,
+        Some(ui::text(note, Type::SMALL, t.dim)),
+        t.blue,
+        t,
+    )
+    .child(
+        div()
+            .flex()
+            .flex_col()
+            .mt(sp(2.5))
+            .border_t_1()
+            .border_color(t.hairline)
+            .children(rows),
+    )
 }
 
 fn conflicts_card(

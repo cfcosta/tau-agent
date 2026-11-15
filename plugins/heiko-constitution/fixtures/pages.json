@@ -2,7 +2,7 @@
   "constitution": {
     "children": [
       {
-        "children": [
+        "actions": [
           {
             "mono": true,
             "piece": "toned",
@@ -34,9 +34,6 @@
             "tone": "info"
           },
           {
-            "piece": "spacer"
-          },
-          {
             "action": "open",
             "args": {},
             "kind": "secondary",
@@ -44,7 +41,9 @@
             "piece": "button"
           }
         ],
-        "piece": "row"
+        "meta": null,
+        "piece": "header",
+        "title": "Constitution"
       },
       {
         "id": "rules-tabs",
@@ -100,24 +99,35 @@
                       "piece": "stack"
                     },
                     {
-                      "labels": [
+                      "children": [
                         {
-                          "at": 6,
-                          "text": "review"
+                          "mono": true,
+                          "piece": "toned",
+                          "text": "review 0.30 · block 0.60",
+                          "tone": "neutral"
                         },
                         {
-                          "at": 12,
-                          "text": "block"
+                          "labels": [
+                            {
+                              "at": 6,
+                              "text": "review"
+                            },
+                            {
+                              "at": 12,
+                              "text": "block"
+                            }
+                          ],
+                          "lit": 0,
+                          "marked": [
+                            6,
+                            12
+                          ],
+                          "piece": "ticks",
+                          "tone": "neutral",
+                          "total": 20
                         }
                       ],
-                      "lit": 0,
-                      "marked": [
-                        6,
-                        12
-                      ],
-                      "piece": "ticks",
-                      "tone": "neutral",
-                      "total": 20
+                      "piece": "stack"
                     },
                     {
                       "label": "1 flagged",
@@ -192,24 +202,35 @@
                       "piece": "stack"
                     },
                     {
-                      "labels": [
+                      "children": [
                         {
-                          "at": 6,
-                          "text": "review"
+                          "mono": true,
+                          "piece": "toned",
+                          "text": "review 0.30 · block 0.80",
+                          "tone": "neutral"
                         },
                         {
-                          "at": 16,
-                          "text": "block"
+                          "labels": [
+                            {
+                              "at": 6,
+                              "text": "review"
+                            },
+                            {
+                              "at": 16,
+                              "text": "block"
+                            }
+                          ],
+                          "lit": 0,
+                          "marked": [
+                            6,
+                            16
+                          ],
+                          "piece": "ticks",
+                          "tone": "neutral",
+                          "total": 20
                         }
                       ],
-                      "lit": 0,
-                      "marked": [
-                        6,
-                        16
-                      ],
-                      "piece": "ticks",
-                      "tone": "neutral",
-                      "total": 20
+                      "piece": "stack"
                     },
                     {
                       "label": "1 blocked",
@@ -272,24 +293,35 @@
                       "piece": "stack"
                     },
                     {
-                      "labels": [
+                      "children": [
                         {
-                          "at": 8,
-                          "text": "review"
+                          "mono": true,
+                          "piece": "toned",
+                          "text": "review 0.40 · block 0.85",
+                          "tone": "neutral"
                         },
                         {
-                          "at": 17,
-                          "text": "block"
+                          "labels": [
+                            {
+                              "at": 8,
+                              "text": "review"
+                            },
+                            {
+                              "at": 17,
+                              "text": "block"
+                            }
+                          ],
+                          "lit": 0,
+                          "marked": [
+                            8,
+                            17
+                          ],
+                          "piece": "ticks",
+                          "tone": "neutral",
+                          "total": 20
                         }
                       ],
-                      "lit": 0,
-                      "marked": [
-                        8,
-                        17
-                      ],
-                      "piece": "ticks",
-                      "tone": "neutral",
-                      "total": 20
+                      "piece": "stack"
                     },
                     {
                       "children": [
@@ -363,24 +395,35 @@
                       "piece": "stack"
                     },
                     {
-                      "labels": [
+                      "children": [
                         {
-                          "at": 10,
-                          "text": "review"
+                          "mono": true,
+                          "piece": "toned",
+                          "text": "review 0.50 · block 0.90",
+                          "tone": "neutral"
                         },
                         {
-                          "at": 18,
-                          "text": "block"
+                          "labels": [
+                            {
+                              "at": 10,
+                              "text": "review"
+                            },
+                            {
+                              "at": 18,
+                              "text": "block"
+                            }
+                          ],
+                          "lit": 0,
+                          "marked": [
+                            10,
+                            18
+                          ],
+                          "piece": "ticks",
+                          "tone": "neutral",
+                          "total": 20
                         }
                       ],
-                      "lit": 0,
-                      "marked": [
-                        10,
-                        18
-                      ],
-                      "piece": "ticks",
-                      "tone": "neutral",
-                      "total": 20
+                      "piece": "stack"
                     },
                     {
                       "children": [
@@ -454,24 +497,35 @@
                       "piece": "stack"
                     },
                     {
-                      "labels": [
+                      "children": [
                         {
-                          "at": 7,
-                          "text": "review"
+                          "mono": true,
+                          "piece": "toned",
+                          "text": "review 0.35 · block 0.80",
+                          "tone": "neutral"
                         },
                         {
-                          "at": 16,
-                          "text": "block"
+                          "labels": [
+                            {
+                              "at": 7,
+                              "text": "review"
+                            },
+                            {
+                              "at": 16,
+                              "text": "block"
+                            }
+                          ],
+                          "lit": 0,
+                          "marked": [
+                            7,
+                            16
+                          ],
+                          "piece": "ticks",
+                          "tone": "neutral",
+                          "total": 20
                         }
                       ],
-                      "lit": 0,
-                      "marked": [
-                        7,
-                        16
-                      ],
-                      "piece": "ticks",
-                      "tone": "neutral",
-                      "total": 20
+                      "piece": "stack"
                     },
                     {
                       "children": [
@@ -557,24 +611,35 @@
                       "piece": "stack"
                     },
                     {
-                      "labels": [
+                      "children": [
                         {
-                          "at": 8,
-                          "text": "review"
+                          "mono": true,
+                          "piece": "toned",
+                          "text": "review 0.40 · block 0.75",
+                          "tone": "neutral"
                         },
                         {
-                          "at": 15,
-                          "text": "block"
+                          "labels": [
+                            {
+                              "at": 8,
+                              "text": "review"
+                            },
+                            {
+                              "at": 15,
+                              "text": "block"
+                            }
+                          ],
+                          "lit": 0,
+                          "marked": [
+                            8,
+                            15
+                          ],
+                          "piece": "ticks",
+                          "tone": "neutral",
+                          "total": 20
                         }
                       ],
-                      "lit": 0,
-                      "marked": [
-                        8,
-                        15
-                      ],
-                      "piece": "ticks",
-                      "tone": "neutral",
-                      "total": 20
+                      "piece": "stack"
                     },
                     {
                       "label": "1 held",
@@ -608,8 +673,8 @@
                 ],
                 "widths": [
                   0.6,
-                  7,
-                  2.6,
+                  5.4,
+                  4.5,
                   1.4,
                   1.6
                 ]
@@ -617,11 +682,10 @@
               {
                 "children": [
                   {
-                    "piece": "heading",
-                    "text": "Settings"
-                  },
-                  {
-                    "piece": "rule"
+                    "actions": [],
+                    "meta": null,
+                    "piece": "header",
+                    "title": "Settings"
                   },
                   {
                     "children": [
@@ -713,6 +777,9 @@
                       }
                     ],
                     "piece": "row"
+                  },
+                  {
+                    "piece": "rule"
                   }
                 ],
                 "piece": "stack"
@@ -1148,7 +1215,7 @@
                   {
                     "mono": true,
                     "piece": "toned",
-                    "text": "flag",
+                    "text": "review",
                     "tone": "neutral"
                   },
                   {
@@ -1535,7 +1602,7 @@
                   {
                     "mono": true,
                     "piece": "toned",
-                    "text": "flag",
+                    "text": "review",
                     "tone": "neutral"
                   },
                   {
@@ -1648,15 +1715,12 @@
   "rules-broken": {
     "children": [
       {
-        "children": [
+        "actions": [
           {
             "mono": false,
             "piece": "toned",
             "text": "Nothing checked yet.",
             "tone": "neutral"
-          },
-          {
-            "piece": "spacer"
           },
           {
             "action": "open",
@@ -1666,7 +1730,9 @@
             "piece": "button"
           }
         ],
-        "piece": "row"
+        "meta": null,
+        "piece": "header",
+        "title": "Constitution"
       },
       {
         "children": [

@@ -215,7 +215,7 @@
                   "tone": "neutral"
                 }
               ],
-              "meta": "review",
+              "meta": "review · 3 of 3 answered",
               "piece": "header",
               "title": "heiko asks"
             },
@@ -233,7 +233,7 @@
                 {
                   "mono": false,
                   "piece": "toned",
-                  "text": "·",
+                  "text": "  ·  ",
                   "tone": "neutral"
                 },
                 {
@@ -248,7 +248,7 @@
                 {
                   "mono": false,
                   "piece": "toned",
-                  "text": "·",
+                  "text": "  ·  ",
                   "tone": "neutral"
                 },
                 {
@@ -263,21 +263,12 @@
                 {
                   "mono": false,
                   "piece": "toned",
-                  "text": "›",
+                  "text": "  ›  ",
                   "tone": "neutral"
                 },
                 {
                   "piece": "rich",
                   "text": "**submit**"
-                },
-                {
-                  "piece": "spacer"
-                },
-                {
-                  "mono": true,
-                  "piece": "toned",
-                  "text": "3 of 3 answered",
-                  "tone": "neutral"
                 }
               ],
               "piece": "row"

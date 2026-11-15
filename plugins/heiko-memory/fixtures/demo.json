@@ -1260,7 +1260,7 @@
                 "request": {}
               },
               "kind": "secondary",
-              "label": "Import from Claude Code or Codex…",
+              "label": "import",
               "piece": "button"
             }
           ],
@@ -1437,7 +1437,7 @@
                 "request": {}
               },
               "kind": "secondary",
-              "label": "Import from Claude Code or Codex…",
+              "label": "import",
               "piece": "button"
             }
           ],
@@ -2075,7 +2075,7 @@
                 "request": {}
               },
               "kind": "secondary",
-              "label": "Import from Claude Code or Codex…",
+              "label": "import",
               "piece": "button"
             }
           ],

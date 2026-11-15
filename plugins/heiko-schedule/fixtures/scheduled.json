@@ -31,15 +31,17 @@
     "inspector": {
       "children": [
         {
-          "piece": "heading",
-          "text": "Scheduled"
+          "actions": [],
+          "meta": "2",
+          "piece": "header",
+          "title": "Scheduled"
         },
         {
           "children": [
             {
               "children": [
                 {
-                  "piece": "heading",
+                  "piece": "mono",
                   "text": "recheck-415"
                 },
                 {
@@ -63,18 +65,23 @@
               "piece": "row"
             },
             {
-              "piece": "text",
-              "text": "If #415 has its second approval, land it; if CI is red, read the failing job before touching anything."
+              "mono": false,
+              "piece": "toned",
+              "text": "If #415 has its second approval, land it; if CI is red, read the failing job before touching anything.",
+              "tone": "neutral"
             }
           ],
           "piece": "stack"
+        },
+        {
+          "piece": "rule"
         },
         {
           "children": [
             {
               "children": [
                 {
-                  "piece": "heading",
+                  "piece": "mono",
                   "text": "release-notes"
                 },
                 {
@@ -98,8 +105,10 @@
               "piece": "row"
             },
             {
-              "piece": "text",
-              "text": "Tomorrow's release: check the notes mention the plugins tree change from #412."
+              "mono": false,
+              "piece": "toned",
+              "text": "Tomorrow's release: check the notes mention the plugins tree change from #412.",
+              "tone": "neutral"
             }
           ],
           "piece": "stack"
@@ -121,15 +130,18 @@
                   {
                     "children": [
                       {
-                        "piece": "heading",
+                        "piece": "title",
+                        "subtitle": null,
                         "text": "look-at-415"
                       },
                       {
                         "piece": "spacer"
                       },
                       {
-                        "piece": "mono",
-                        "text": "2026-10-12"
+                        "mono": true,
+                        "piece": "toned",
+                        "text": "scheduled · 2026-10-12",
+                        "tone": "neutral"
                       }
                     ],
                     "piece": "row"

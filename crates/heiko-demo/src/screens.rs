@@ -1352,7 +1352,7 @@ fn agents(
                 queued: 3,
                 last: Some(Last {
                     at: now - 2 * 3600,
-                    line: "reached its $1.00 for today".into(),
+                    line: "reached today's allowance".into(),
                 }),
                 ..agent(
                     "release-notes",
