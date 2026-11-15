@@ -1498,6 +1498,24 @@ impl Host {
         self.runtime.spawn(job(self.clone()))
     }
 
+    /// Keeps how late the runtime wakes a task that asked for ten
+    /// milliseconds, as `host lag` (`heiko-perf`): it grows when the
+    /// runtime's threads are all busy.
+    pub fn measure_lag(&self) {
+        self.runtime.spawn(async {
+            let every = std::time::Duration::from_millis(10);
+            loop {
+                let asked = std::time::Instant::now();
+                tokio::time::sleep(every).await;
+                heiko_perf::record(
+                    "thread",
+                    "host lag",
+                    asked.elapsed().saturating_sub(every),
+                );
+            }
+        });
+    }
+
     /// Waits for `future` while the host is being built, before anything
     /// runs on its runtime.
     #[allow(

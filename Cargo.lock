@@ -4322,6 +4322,7 @@ dependencies = [
  "heiko-codemode-host",
  "heiko-demo",
  "heiko-luau-plugins-host",
+ "heiko-perf",
  "heiko-plugins",
  "heiko-ui",
  "heiko-ui-plugin",
@@ -4663,6 +4664,7 @@ dependencies = [
  "heiko-codemode-host",
  "heiko-jev",
  "heiko-luau-plugins",
+ "heiko-perf",
  "heiko-plugins",
  "heiko-scripted",
  "heiko-store",
@@ -4788,6 +4790,14 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+]
+
+[[package]]
+name = "heiko-perf"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -5050,6 +5060,7 @@ dependencies = [
  "heiko-luau-plugins-host",
  "heiko-mcp",
  "heiko-mcp-host",
+ "heiko-perf",
  "heiko-phones",
  "heiko-plugins",
  "heiko-remote",
@@ -5139,6 +5150,7 @@ dependencies = [
  "heiko-chatgpt",
  "heiko-codemode",
  "heiko-luau-plugins",
+ "heiko-perf",
  "heiko-plugins",
  "heiko-remote",
  "heiko-store",

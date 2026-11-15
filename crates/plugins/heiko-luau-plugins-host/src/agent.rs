@@ -599,10 +599,34 @@ impl Inner {
             .await
     }
 
+    /// [`Self::run_hook_whole`], its time kept under the plugin's name
+    /// and the hook's (`heiko-perf`).
+    #[allow(clippy::too_many_arguments)]
+    async fn run_hook_of(
+        &self,
+        active: &Active,
+        hook: &Hook,
+        input: Value,
+        state: &mut RunState,
+        ctx: &PluginCtx,
+        reach: Arc<dyn Reach>,
+        call: Option<&str>,
+    ) -> Option<Outcome> {
+        let outcome = self
+            .run_hook_whole(active, hook, input, state, ctx, reach, call)
+            .await?;
+        // A tool's name is the model's to pick: its hook is `tool`.
+        let path = hook.path();
+        let hook = path.first().map_or("hook", String::as_str);
+        let name = &active.loaded.declaration.name;
+        heiko_perf::record("hook", &format!("{name} {hook}"), outcome.wall);
+        Some(outcome)
+    }
+
     /// [`Self::run_hook`], for a tool's `call` the call's id as
     /// `ctx.run.call`.
     #[allow(clippy::too_many_arguments)]
-    async fn run_hook_of(
+    async fn run_hook_whole(
         &self,
         active: &Active,
         hook: &Hook,
@@ -725,7 +749,8 @@ impl Inner {
             }
             None => (None, model),
         };
-        let actor = Actor::new(&active.loaded.modules, "plugin", &model)?;
+        let actor = Actor::new(&active.loaded.modules, "plugin", &model)?
+            .named(&active.loaded.declaration.name);
         let keep = Arc::new(RunKeep {
             ctx: ctx.clone(),
             plugin: name.clone(),

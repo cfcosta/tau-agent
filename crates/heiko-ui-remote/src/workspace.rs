@@ -1008,6 +1008,7 @@ impl Workspace {
 
     /// Applies what the host says, and echoes it while mirrored.
     pub fn apply(&mut self, update: HostUpdate, cx: &mut Context<Self>) {
+        let _span = heiko_perf::span("apply", update.kind());
         if self.mirrored {
             cx.emit(update.clone());
         }

@@ -153,6 +153,7 @@ heiko-codemode-host = { path = "crates/plugins/heiko-codemode-host", version = "
 heiko-agents = { path = "crates/plugins/heiko-agents", version = "0.1.0" }
 heiko-agents-host = { path = "crates/plugins/heiko-agents-host", version = "0.1.0" }
 heiko-clock = { path = "crates/heiko-clock", version = "0.1.0" }
+heiko-perf = { path = "crates/heiko-perf", version = "0.1.0" }
 heiko-scripted = { path = "crates/heiko-scripted", version = "0.1.0" }
 heiko-luau-plugins = { path = "crates/plugins/heiko-luau-plugins", version = "0.1.0" }
 heiko-luau-plugins-host = { path = "crates/plugins/heiko-luau-plugins-host", version = "0.1.0" }

@@ -216,6 +216,53 @@ pub enum HostUpdate {
 }
 
 impl HostUpdate {
+    /// Which update it is, in words: the name its time is measured under
+    /// (`heiko-perf`). A run's event says which event.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Event(event) => event_kind(event),
+            Self::Reasoned { .. } => "reasoned",
+            Self::History(..) => "history",
+            Self::Run(..) => "run",
+            Self::Catalog(..) => "catalog",
+            Self::Alert { .. } => "alert",
+            Self::Stopped(..) => "stopped",
+            Self::QueryResult(..) => "query result",
+            Self::PullRequest { .. } => "pull request",
+            Self::PullRequestState { .. } => "pull request state",
+            Self::Pushed { .. } => "pushed",
+            Self::LandingPreview { .. } => "landing preview",
+            Self::Forecast { .. } => "forecast",
+            Self::Landed { .. } => "landed",
+            Self::Dropped { .. } => "dropped",
+            Self::LandingQueue { .. } => "landing queue",
+            Self::LandingFinished(..) => "landing finished",
+            Self::LandedItself(..) => "landed itself",
+            Self::HeikoTurn { .. } => "heiko turn",
+            Self::BranchCode { .. } => "branch code",
+            Self::Steered { .. } => "steered",
+            Self::Resumed { .. } => "resumed",
+            Self::Pictures { .. } => "pictures",
+            Self::Picture { .. } => "picture",
+            Self::ResumeFailed(..) => "resume failed",
+            Self::PluginRecord { .. } => "plugin record",
+            Self::PluginFold { .. } => "plugin fold",
+            Self::PluginRestate { .. } => "plugin restate",
+            Self::PluginReply { .. } => "plugin reply",
+            Self::Called { .. } => "called",
+            Self::Views { .. } => "views",
+            Self::PluginFetched { .. } => "plugin fetched",
+            Self::Titled { .. } => "titled",
+            Self::Repo { .. } => "repo",
+            Self::Setup(..) => "setup",
+            Self::BranchKept(..) => "branch kept",
+            Self::Closed(..) => "closed",
+            Self::Snapshot(..) => "snapshot",
+            Self::Ui(..) => "ui",
+            Self::UiState(..) => "ui state",
+        }
+    }
+
     pub fn alert(title: impl Into<String>, message: impl Into<String>) -> Self {
         Self::Alert {
             title: title.into(),
@@ -284,5 +331,28 @@ impl Catalog {
     pub fn for_phones(mut self) -> Self {
         self.strip_for_phones();
         self
+    }
+}
+
+/// Which event it is, in words: the name its time is measured under.
+pub fn event_kind(event: &RunEvent) -> &'static str {
+    match event {
+        RunEvent::RunStart { .. } => "event: run start",
+        RunEvent::TurnStart { .. } => "event: turn start",
+        RunEvent::TextDelta { .. } => "event: text delta",
+        RunEvent::ThinkingDelta { .. } => "event: thinking delta",
+        RunEvent::ToolCallDelta { .. } => "event: tool call delta",
+        RunEvent::ToolStart { .. } => "event: tool start",
+        RunEvent::ToolUpdate { .. } => "event: tool update",
+        RunEvent::ToolEnd { .. } => "event: tool end",
+        RunEvent::TurnEnd { .. } => "event: turn end",
+        RunEvent::ContextRewritten { .. } => "event: context rewritten",
+        RunEvent::Retry { .. } => "event: retry",
+        RunEvent::Steered { .. } => "event: steered",
+        RunEvent::Continued { .. } => "event: continued",
+        RunEvent::PluginReport { .. } => "event: plugin report",
+        RunEvent::PluginCharged { .. } => "event: plugin charged",
+        RunEvent::PluginError { .. } => "event: plugin error",
+        RunEvent::RunEnd { .. } => "event: run end",
     }
 }

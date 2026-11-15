@@ -156,6 +156,8 @@ pub struct Actor {
     lua: Lua,
     actor: Table,
     deadline: Arc<Mutex<Option<(Instant, Duration)>>>,
+    /// Whose it is: the name its time on the thread is kept under.
+    name: String,
 }
 
 impl std::fmt::Debug for Actor {
@@ -219,7 +221,14 @@ impl Actor {
             lua,
             actor,
             deadline,
+            name: "plugin".into(),
         })
+    }
+
+    /// The actor, its time kept under `name` (`heiko-perf`).
+    pub fn named(mut self, name: &str) -> Self {
+        self.name = name.to_owned();
+        self
     }
 
     /// Takes `message` in one step, which may run for `limit`.
@@ -286,7 +295,11 @@ impl Actor {
     ) -> Result<T, String> {
         *self.deadline.lock().expect("not poisoned") =
             Some((Instant::now() + limit, limit));
+        // The thread is the VM's alone meanwhile: what a slow plugin
+        // costs whatever else runs there.
+        let started = Instant::now();
         let result = run();
+        heiko_perf::record("luau", &self.name, started.elapsed());
         *self.deadline.lock().expect("not poisoned") = None;
         result.map_err(|error| heiko_codemode_host::error_text(&error))
     }

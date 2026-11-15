@@ -2614,6 +2614,95 @@ fn edit(path: &str, new_text: &str, lines: &str) -> (Value, ToolOutput) {
     )
 }
 
+/// A long run played fast, to measure the interface under load
+/// (`heiko --demo --stress <rounds>`, with `HEIKO_PERF`): each round is a
+/// turn that thinks, says a few paragraphs with code in them, reads a
+/// file, edits one and runs a command, an update every few
+/// milliseconds; then one long answer.
+pub fn stress(rounds: usize) -> Vec<Step> {
+    let mut s = Script::new();
+    let run = s.run.clone();
+    s.at(0, RunUpdate::User("Go through every module and tidy it.".into()));
+    s.event(
+        0,
+        RunEvent::RunStart {
+            run: run.clone(),
+            parent: None,
+            agent: Arc::from("coder"),
+            call: None,
+        },
+    );
+    for round in 0..rounds {
+        s.turn();
+        s.think("The module has two callers, and both pass the same delay.");
+        s.say(&format!(
+            "Module {round} keeps its own copy of the delay, so the two \
+             callers can drift apart. I'll read it first, then fold the \
+             copies into one **policy** value that both take.\n\n\
+             ```rust\n\
+             pub fn delay(policy: &Policy, attempt: u32) -> Duration {{\n\
+             \x20   let base = policy.base.mul_f64(2f64.powi(attempt as i32));\n\
+             \x20   base.min(policy.max)\n\
+             }}\n\
+             ```\n\n\
+             The cap stays where it is, and the tests for `retry-after` \
+             cover the header's two forms, seconds and a date."
+        ));
+        let path = format!("crates/heiko-ai/src/module_{round}.rs");
+        s.tool(
+            20,
+            &format!("s{round}-read"),
+            "read",
+            json!({ "path": path }),
+            lines(160),
+        );
+        let (args, output) = edit(
+            &path,
+            "base.min(policy.max)",
+            "-    let base = self.base * 2u32.pow(attempt);\n\
+             +    let base = policy.base.mul_f64(2f64.powi(attempt as i32));\n\
+             \x20   ...\n\
+             -    base\n\
+             +    base.min(policy.max)\n",
+        );
+        s.tool(20, &format!("s{round}-edit"), "edit", args, output);
+        let passed: String = (0..24)
+            .map(|n| {
+                let test = format!("heiko-ai module_{round}::tests::case_{n}");
+                pass(0.012, &test)
+            })
+            .collect();
+        s.tool(
+            40,
+            &format!("s{round}-test"),
+            "exec_command",
+            json!({
+                "cmd": format!("cargo nextest run -p heiko-ai module_{round}"),
+            }),
+            term_output(&passed, 0, 1, None),
+        );
+        s.end_turn(18_000 + 4_000 * round as u64, 900, 0.018);
+    }
+    // One long answer, as a report at the end of a run is: what is drawn
+    // of it grows with every word.
+    s.turn();
+    let section = "The policy now owns the delay, and each caller asks it \
+                   rather than keeping a copy. `retry-after` wins over the \
+                   computed delay, capped at the policy's longest.\n\n\
+                   - the header's seconds form is parsed as an integer\n\
+                   - its date form is read against the response's `date`\n\n\
+                   ```rust\n\
+                   let wait = header.unwrap_or(computed).min(policy.max);\n\
+                   ```\n\n";
+    s.say(&section.repeat(60));
+    s.end_turn(400_000, 9_000, 0.2);
+    // Ten times as fast as the demo's own script.
+    s.steps
+        .into_iter()
+        .map(|(wait, update)| (wait / 10, update))
+        .collect()
+}
+
 /// The whole session, from the user's message to the notes memory
 /// suggests keeping.
 pub fn script() -> Vec<Step> {

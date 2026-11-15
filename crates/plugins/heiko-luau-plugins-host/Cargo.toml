@@ -28,6 +28,7 @@ sqlx.workspace = true
 heiko-tools-host.workspace = true
 # The host's local time, which `ctx.now` and `ctx.time` read (ADR 0050, gap D).
 heiko-clock.workspace = true
+heiko-perf.workspace = true
 # The bytes of the files Luau plugins keep (`ctx.blobs`), and what
 # images they are (`ctx.files.image`, ADR 0050 gap G).
 heiko-artifacts.workspace = true

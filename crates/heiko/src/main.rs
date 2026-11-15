@@ -58,6 +58,9 @@ struct Args {
     prompt: Option<String>,
     frame: Option<(f32, f32)>,
     steps: Option<usize>,
+    /// The demo plays `demo::stress` of this many rounds instead of its
+    /// script.
+    stress: Option<usize>,
     /// `None` takes gpt-6.1-sol.
     model: Option<String>,
     reduce_motion: bool,
@@ -99,6 +102,7 @@ fn args() -> Args {
             Some((w.parse().ok()?, h.parse().ok()?))
         }),
         steps: value("--steps").and_then(|steps| steps.parse().ok()),
+        stress: value("--stress").and_then(|rounds| rounds.parse().ok()),
         model: value("--model"),
         reduce_motion: flag("--reduce-motion"),
     }
@@ -185,8 +189,26 @@ fn main() {
                 )
             });
             follow_motion_preference(&workspace, args.reduce_motion, cx);
+            // `HEIKO_PERF=<file>`: this thread beats, a thread watches
+            // the beats, and the file gets where the time went.
+            let measured = heiko_perf::asked();
+            if let Some(path) = measured.clone() {
+                heiko_perf::watch(path);
+                cx.spawn(async move |cx| {
+                    loop {
+                        cx.background_executor()
+                            .timer(heiko_perf::BEAT_EVERY)
+                            .await;
+                        heiko_perf::beat();
+                    }
+                })
+                .detach();
+            }
             match host {
                 Some(Ok((host, events))) => {
+                    if measured.is_some() {
+                        host.measure_lag();
+                    }
                     let signed_in = host.signed_in();
                     with_notices(host, &workspace, window, cx)
                         .attach(&workspace, events, cx);
@@ -303,7 +325,36 @@ fn demo_workspace(
     if !phone {
         workspace.navigate(Route::Run(demo::run_id()), cx);
     }
-    if let Some(steps) = args.steps {
+    if let Some(rounds) = args.stress {
+        workspace.replay(demo::run_id(), demo::stress(rounds), cx);
+        // The person leaves the run and comes back while it plays: a
+        // long chat is laid out anew each time.
+        cx.spawn(async move |this, cx| {
+            let mut away = false;
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(3))
+                    .await;
+                away = !away;
+                let route = if away {
+                    Route::Home
+                } else {
+                    Route::Run(demo::run_id())
+                };
+                let went = this.update(cx, |ws, cx| {
+                    let _span = heiko_perf::span(
+                        "navigate",
+                        if away { "home" } else { "run" },
+                    );
+                    ws.navigate(route, cx)
+                });
+                if went.is_err() {
+                    return;
+                }
+            }
+        })
+        .detach();
+    } else if let Some(steps) = args.steps {
         for (_, update) in demo::script().into_iter().take(steps) {
             workspace.update_run(&demo::run_id(), update, cx);
         }

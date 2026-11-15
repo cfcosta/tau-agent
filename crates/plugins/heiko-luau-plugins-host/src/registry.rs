@@ -1404,7 +1404,8 @@ impl Registry {
             model => model.clone(),
         };
         let actor =
-            crate::actor::Actor::new(&loaded.modules, "plugin", &model)?;
+            crate::actor::Actor::new(&loaded.modules, "plugin", &model)?
+                .named(&loaded.declaration.name);
         let logs = Arc::new(crate::mailbox::KeepLogs::default());
         let made = Arc::new(Idle {
             mailbox: crate::mailbox::Mailbox::new(actor, logs.clone()),

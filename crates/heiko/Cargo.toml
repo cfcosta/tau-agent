@@ -14,6 +14,7 @@ gpui = { package = "gpui-pre", version = "=0.3.7" }
 heiko-codemode-host.workspace = true
 heiko-luau-plugins-host.workspace = true
 heiko-agents-host.workspace = true
+heiko-perf.workspace = true
 heiko-demo.workspace = true
 heiko-ui.workspace = true
 heiko-ui-plugin.workspace = true

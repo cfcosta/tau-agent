@@ -31,6 +31,7 @@ serde.workspace = true
 serde_json.workspace = true
 heiko-agent = { workspace = true, features = ["serde"] }
 heiko-ai.workspace = true
+heiko-perf.workspace = true
 heiko-remote.workspace = true
 heiko-store.workspace = true
 # Draws the view tree's terminals.

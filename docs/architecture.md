@@ -12,6 +12,8 @@ heiko-agent/
 │   │                 # limits, sub-agents, forks, context estimate
 │   ├── heiko-clock/    # the host's clock and local days: agents' schedules,
 │   │                 # Luau plugins' local time (ADR 0037, 0050)
+│   ├── heiko-perf/     # where the time goes: timings, and stalls of the
+│   │                 # interface's thread (docs/reference/performance.md)
 │   ├── heiko-store/    # runs, messages, fork transcripts: the types and the
 │   │                 # Backend a Store is, with no database driver
 │   ├── heiko-store-sqlite/ # the Backend on SQLite via sqlx, with migrations

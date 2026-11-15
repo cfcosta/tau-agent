@@ -43,6 +43,7 @@ impl Render for Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let _span = heiko_perf::span("render", "workspace");
         self.sync_transcript();
         self.release_focus(window, cx);
         self.plugin_focus(window, cx);

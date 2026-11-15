@@ -21,6 +21,7 @@ mod landing;
 mod local;
 mod notify;
 mod offline_model;
+mod perf;
 mod phone_model;
 mod phones;
 mod plugin_services;
