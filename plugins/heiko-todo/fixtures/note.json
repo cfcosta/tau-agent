@@ -12,8 +12,7 @@
       {
         "calls": [
           "call_todo_1",
-          "call_todo_2",
-          "call_todo_3"
+          "call_todo_2"
         ],
         "claimed": true,
         "id": "td-0cad",
@@ -21,12 +20,14 @@
           "filed",
           "claimed by this run"
         ],
-        "steps": true,
         "title": "Honor retry-after on 429 and 503",
         "undo": {
           "forget": "td-0cad"
         }
       }
+    ],
+    "step_calls": [
+      "call_todo_3"
     ],
     "steps": [
       {
@@ -51,8 +52,19 @@
     "band": {
       "children": [
         {
-          "piece": "text",
-          "text": "Next: Pass the parsed header to the retry policy, 1/4"
+          "children": [
+            {
+              "mono": true,
+              "piece": "toned",
+              "text": "td-0cad",
+              "tone": "good"
+            },
+            {
+              "piece": "text",
+              "text": "Honor retry-after on 429 and 503"
+            }
+          ],
+          "piece": "row"
         },
         {
           "children": [
@@ -158,10 +170,31 @@
         }
       ],
       "id": "todo-band",
-      "open": true,
+      "lead": [
+        {
+          "piece": "pips",
+          "tones": [
+            "good",
+            "warn",
+            "neutral",
+            "neutral"
+          ]
+        },
+        {
+          "mono": true,
+          "piece": "toned",
+          "text": "2 of 4",
+          "tone": "warn"
+        },
+        {
+          "piece": "text",
+          "text": "Pass the parsed header to the retry policy"
+        }
+      ],
+      "open": false,
       "piece": "section",
-      "small": false,
-      "title": "td-0cad · Honor retry-after on 429 and 503"
+      "small": true,
+      "title": ""
     },
     "calls": {
       "call_todo_1": {
@@ -171,12 +204,6 @@
         }
       },
       "call_todo_2": {
-        "head": {
-          "children": [],
-          "piece": "stack"
-        }
-      },
-      "call_todo_3": {
         "body": {
           "children": [
             {
@@ -220,73 +247,6 @@
                   "piece": "slip",
                   "text": "Honor retry-after on 429 and 503",
                   "tone": "good"
-                },
-                {
-                  "children": [
-                    {
-                      "children": [
-                        {
-                          "label": "✓",
-                          "piece": "square",
-                          "style": "filled",
-                          "tone": "good"
-                        },
-                        {
-                          "mono": false,
-                          "piece": "toned",
-                          "text": "Find where the loop reads the header",
-                          "tone": "neutral"
-                        }
-                      ],
-                      "piece": "row"
-                    },
-                    {
-                      "children": [
-                        {
-                          "label": "",
-                          "piece": "square",
-                          "style": "outlined",
-                          "tone": "warn"
-                        },
-                        {
-                          "piece": "text",
-                          "text": "Pass the parsed header to the retry policy"
-                        }
-                      ],
-                      "piece": "row"
-                    },
-                    {
-                      "children": [
-                        {
-                          "label": "",
-                          "piece": "square",
-                          "style": "quiet",
-                          "tone": "neutral"
-                        },
-                        {
-                          "piece": "text",
-                          "text": "Cap the wait at the policy's longest delay"
-                        }
-                      ],
-                      "piece": "row"
-                    },
-                    {
-                      "children": [
-                        {
-                          "label": "",
-                          "piece": "square",
-                          "style": "quiet",
-                          "tone": "neutral"
-                        },
-                        {
-                          "piece": "text",
-                          "text": "Add tests against the fake server"
-                        }
-                      ],
-                      "piece": "row"
-                    }
-                  ],
-                  "piece": "stack"
                 }
               ],
               "piece": "stack"
@@ -294,6 +254,12 @@
           ],
           "piece": "row"
         },
+        "head": {
+          "children": [],
+          "piece": "stack"
+        }
+      },
+      "call_todo_3": {
         "head": {
           "children": [],
           "piece": "stack"

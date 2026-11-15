@@ -28,33 +28,28 @@
     "calls": {
       "call_skill": {
         "body": {
+          "first_line": null,
+          "lang": "markdown",
+          "piece": "code",
+          "text": "Run scripts/commits.sh with the two tags, group what it lists, and lead with what users will notice."
+        },
+        "folds": true,
+        "head": {
           "children": [
             {
-              "piece": "text",
-              "text": "Writes release notes from the commits between two tags: groups by kind, leads with what users notice."
+              "piece": "mono",
+              "text": "release-notes"
             },
             {
-              "children": [
-                {
-                  "first_line": null,
-                  "lang": "markdown",
-                  "piece": "code",
-                  "text": "Run scripts/commits.sh with the two tags, group what it lists, and lead with what users will notice."
-                }
-              ],
-              "id": "skill-call_skill",
-              "open": false,
-              "piece": "section",
-              "small": true,
-              "title": "~/.agents/skills/release-notes/SKILL.md"
+              "mono": false,
+              "piece": "toned",
+              "text": "Writes release notes from the commits between two tags: groups by kind, leads with what users notice.",
+              "tone": "neutral"
             }
           ],
-          "piece": "stack"
+          "piece": "line"
         },
-        "head": {
-          "piece": "mono",
-          "text": "release-notes"
-        }
+        "label": "1 line"
       }
     }
   }

@@ -837,6 +837,7 @@ pub fn body(
         if !rest.is_empty() {
             body.push(Node::Section {
                 small: true,
+                lead: Vec::new(),
                 id: format!("codemode-calls-{call_id}/more"),
                 title: format!("+ {} more", rest.len()),
                 open: false,
@@ -1001,6 +1002,7 @@ fn store_section(state: &State, run: Option<&RunId>) -> Node {
         section.extend(inference.into_iter().map(|(id, trace)| {
             Node::Section {
                 small: false,
+                lead: Vec::new(),
                 id: format!("codemode-trace-{run}-{id}"),
                 title: format!("{id} · {}", trace.status()),
                 open: false,
@@ -1166,6 +1168,7 @@ fn promotions_section(records: &[promotion::Record], run: &RunId) -> Node {
             )),
             Node::Section {
                 small: false,
+                lead: Vec::new(),
                 id: format!("codemode-promotion-{run}-{}", request.id),
                 title: "Show exact request".into(),
                 open: false,
@@ -1267,6 +1270,7 @@ fn version_row(
         )),
         Node::Section {
             small: false,
+            lead: Vec::new(),
             id: id("source"),
             title: "Show source".into(),
             open: false,
@@ -1274,6 +1278,7 @@ fn version_row(
         },
         Node::Section {
             small: false,
+            lead: Vec::new(),
             id: id("signatures"),
             title: "Show signatures".into(),
             open: false,
@@ -1347,6 +1352,7 @@ fn test_section(
     }
     Node::Section {
         small: false,
+        lead: Vec::new(),
         id,
         title: format!(
             "{} · test {} · {}",

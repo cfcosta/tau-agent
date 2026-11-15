@@ -620,6 +620,12 @@ function ui.stack(children)
 	return { piece = "stack", children = pieces(children) }
 end
 
+-- Pieces on one line that never wraps: the last takes what is left of
+-- the width, cut where it does not fit.
+function ui.line(children)
+	return { piece = "line", children = pieces(children) }
+end
+
 function ui.row(children)
 	return { piece = "row", children = pieces(children) }
 end
@@ -959,6 +965,7 @@ function ui.section(id, title, children, opts)
 		title = tostring(title),
 		open = (opts and opts.open) == true,
 		small = (opts and opts.small) == true,
+		lead = pieces(opts and opts.lead or {}),
 		children = pieces(children),
 	}
 end

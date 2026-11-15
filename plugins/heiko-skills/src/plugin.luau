@@ -155,17 +155,17 @@ return heiko.plugin({
 		},
 	},
 
-	-- Each loaded skill's card: which, what it is for, and what the model
-	-- read: its file, which opens onto its instructions as written.
+	-- Each loaded skill's line: which, and what it is for. A click opens
+	-- what the model read: its instructions as written.
 	view = function(model)
 		local calls = {}
 		for call, loaded in pairs(model.loaded or {}) do
+			local _, breaks = string.gsub(loaded.instructions, "\n", "")
 			calls[call] = {
-				head = ui.mono(loaded.name),
-				body = ui.stack({
-					ui.text(loaded.description),
-					ui.section("skill-" .. call, loaded.file, { ui.code("markdown", loaded.instructions) }, { small = true }),
-				}),
+				head = ui.line({ ui.mono(loaded.name), ui.toned(loaded.description, "neutral") }),
+				label = breaks == 0 and "1 line" or ((breaks + 1) .. " lines"),
+				body = ui.code("markdown", loaded.instructions),
+				folds = true,
 			}
 		end
 		if next(calls) == nil then

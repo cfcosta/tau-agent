@@ -30,10 +30,10 @@ t.case("a run lists the skills and loads one by name", function()
 	t.equal(ok, false)
 	t.equal(why, 'There is no skill "nope". The skills are: principle-small, release-notes.')
 	local card = r:view().calls.c1
-	t.equal(card.head.text, "release-notes")
-	local file = card.body.children[2]
-	t.equal({ file.piece, file.title, file.open, file.small }, { "section", "/mine/release-notes/SKILL.md", false, true })
-	t.equal(file.children[1], heiko.ui.code("markdown", "Group the commits by kind."))
+	t.equal(card.head.children[1].text, "release-notes")
+	t.equal(card.label, "1 line")
+	t.equal(card.folds, true)
+	t.equal(card.body, heiko.ui.code("markdown", "Group the commits by kind."))
 end)
 
 t.case("the page shows each skill, and the folder's button reveals it", function()

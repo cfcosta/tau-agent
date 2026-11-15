@@ -15,7 +15,8 @@ t.case("refuses two steps in progress", function()
 	t.equal(ok, false)
 end)
 
-t.case("its band says the next step and how many are done", function()
+t.case("its band says the step it is on and which of how many", function()
 	local run = t.run({ state = { steps = { { text = "read", status = "done" }, { text = "fix", status = "in_progress" } } } })
-	t.equal(run:view().band.title, "Next: fix, 1/2")
+	local lead = run:view().band.lead
+	t.equal({ lead[2].text, lead[3].text }, { "2 of 2", "fix" })
 end)

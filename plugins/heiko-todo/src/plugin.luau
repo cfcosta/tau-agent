@@ -393,60 +393,48 @@ local function fold(model, env, issue, said, undo)
 	return note
 end
 
--- The note the run's steps show under: the last issue it filed that it
--- holds and has not closed.
-local function steps_note(model)
-	local notes = model.notes or {}
-	for at = #notes, 1, -1 do
-		if notes[at].claimed and not notes[at].closed then
-			return notes[at]
-		end
-	end
-	return nil
-end
-
--- A step of a note's checklist: done ones filled and dimmed, the one in
--- progress outlined, the rest quiet.
-local function note_step(step)
-	local line = step.text
-	if step.issue then
-		line = line .. " → " .. step.issue
-	end
-	if step.status == "done" then
-		return ui.row({ ui.square("✓", "filled", "good"), ui.toned(line, "neutral") })
-	end
-	return ui.row({ ui.square("", step.status == "in_progress" and "outlined" or "quiet", step.status == "in_progress" and "warn" or nil), ui.text(line) })
-end
-
 -- An issue's note: under its mark, what the run did to it so far with
--- its id and the undo, its title on a slip, and the run's steps when
--- they are for it.
-local function note_tree(note, list)
+-- its id and the undo, and its title on a slip.
+local function note_tree(note)
 	local head = { ui.toned(table.concat(note.said, " · "), "neutral", true), ui.spacer(), ui.toned(note.id, "neutral", true) }
 	if note.undo then
 		table.insert(head, ui.button("undo", "undo", note.undo, "secondary"))
 	end
-	local body = { ui.row(head), ui.slip(note.title, "good") }
-	if note.steps and #list > 0 then
-		local lines = {}
-		for _, step in ipairs(list) do
-			table.insert(lines, note_step(step))
-		end
-		table.insert(body, ui.stack(lines))
+	return ui.row({ ui.kanji("件", "good"), ui.stack({ ui.row(head), ui.slip(note.title, "good") }) })
+end
+
+-- The line a list of steps leaves in the chat once all are done: how
+-- many, a square for each, and the steps behind it.
+local function finished_line(call, list)
+	local inks, lines = {}, {}
+	for _, step in ipairs(list) do
+		table.insert(inks, "good")
+		local line = step.issue and (step.text .. " → " .. step.issue) or step.text
+		table.insert(lines, ui.row({ ui.square("✓", "filled", "good"), ui.toned(line, "neutral") }))
 	end
-	return ui.row({ ui.kanji("件", "good"), ui.stack(body) })
+	local count = #list == 1 and "1 step" or (#list .. " steps")
+	return ui.section("steps-" .. call, "", lines, { small = true, lead = { ui.toned(count, "good", true), ui.pips(inks) } })
 end
 
 -- How the calls the run's notes fold draw: the last call about an issue
 -- as its note, with no line of its own, and the ones before it as
--- nothing at all.
+-- nothing at all. A call that set the run's steps draws nothing either:
+-- they are over the composer while any is left, and the call that
+-- finished a list is the line it leaves.
 local function folded(model)
 	local calls = nil
 	for _, note in ipairs(model.notes or {}) do
 		for at, call in ipairs(note.calls) do
 			calls = calls or {}
-			calls[call] = { head = ui.stack({}), body = at == #note.calls and note_tree(note, model.steps or {}) or nil }
+			calls[call] = { head = ui.stack({}), body = at == #note.calls and note_tree(note) or nil }
 		end
+	end
+	for _, call in ipairs(model.step_calls or {}) do
+		calls = calls or {}
+		calls[call] = { head = ui.stack({}) }
+	end
+	for _, done in ipairs(model.finished or {}) do
+		calls[done.call].body = finished_line(done.call, done.steps)
 	end
 	return calls
 end
@@ -754,15 +742,21 @@ local tools = {
 				end
 			end
 			model.steps = list
-			-- The steps of an issue the run filed and holds show in its
-			-- note, and this call with them.
-			local note = steps_note(model)
-			if note then
-				for _, other in ipairs(model.notes) do
-					other.steps = nil
+			model.step_calls = model.step_calls or {}
+			table.insert(model.step_calls, env.run.call)
+			-- A list all done leaves its line where this call is; sent
+			-- again, the line moves here.
+			if steps.done(list) == #list and #list > 0 then
+				model.finished = model.finished or {}
+				local last = model.finished[#model.finished]
+				local same = last ~= nil and #last.steps == #list
+				for at, step in ipairs(list) do
+					same = same and last.steps[at].text == step.text
 				end
-				note.steps = true
-				table.insert(note.calls, env.run.call)
+				if same then
+					table.remove(model.finished)
+				end
+				table.insert(model.finished, { call = env.run.call, steps = list })
 			end
 			return { steps = #list, done = steps.done(list) }
 		end,
@@ -1470,22 +1464,46 @@ local function refreshing(f)
 	end
 end
 
--- The band over the composer: the issue the run holds, then its steps.
+-- The band over the composer, one line that opens: the step the run is
+-- on while any is left, or else the issue it holds. Opened, the issue's
+-- criteria and the steps.
 local function band(model)
 	local list = model.steps or {}
 	local held_issue = model.held
 	local id = held_issue and held_issue.id
-	local lines = {}
-	local head
+	local left = #list > 0 and steps.done(list) < #list
+	local lead, lines = {}, {}
+	if left then
+		local inks, on = {}, nil
+		for at, step in ipairs(list) do
+			if step.status == "in_progress" then
+				on = at
+			end
+			table.insert(inks, step.status == "done" and "good" or step.status == "in_progress" and "warn" or "neutral")
+		end
+		table.insert(lead, ui.pips(inks))
+		table.insert(lead, ui.toned((on or steps.done(list)) .. " of " .. #list, "warn", true))
+		table.insert(lead, on and ui.text(list[on].text) or ui.toned(held_issue and held_issue.title or "Steps", "neutral"))
+	end
 	if held_issue then
 		local done, total = 0, #held_issue.criteria
 		for _, criterion in ipairs(held_issue.criteria) do
 			if criterion.done then
 				done += 1
 			end
+		end
+		local name = { ui.toned(id, "good", true), ui.text(held_issue.title) }
+		if total > 0 then
+			table.insert(name, ui.toned(done .. "/" .. total, "neutral", true))
+		end
+		if left then
+			table.insert(lines, ui.row(name))
+		else
+			lead = name
+		end
+		for _, criterion in ipairs(held_issue.criteria) do
 			table.insert(lines, ui.row({ check(criterion.done), ui.toned(criterion.text, criterion.done and "good" or "neutral") }))
 		end
-		head = id .. " · " .. held_issue.title .. (total > 0 and (", " .. done .. "/" .. total) or "")
 		if #held_issue.found > 0 then
 			table.insert(lines, ui.mono("found: " .. table.concat(held_issue.found, ", ")))
 		end
@@ -1493,22 +1511,18 @@ local function band(model)
 			table.insert(lines, ui.mono("next ready: " .. table.concat(held_issue.next, ", ")))
 		end
 	end
-	if #list > 0 then
-		local current = steps.current(list)
-		local step_head = (current and ("Next: " .. current.text) or "Steps") .. ", " .. steps.done(list) .. "/" .. #list
-		if head then
-			table.insert(lines, ui.text(step_head))
-		else
-			head = step_head
-		end
+	if left then
 		for _, line in ipairs(step_lines(list)) do
 			table.insert(lines, line)
 		end
 	end
-	if not head then
+	if #lead == 0 then
 		return nil, nil
 	end
-	return ui.section("todo-band", head, lines, { open = true }), id
+	if #lines == 0 then
+		return ui.row(lead), id
+	end
+	return ui.section("todo-band", "", lines, { small = true, lead = lead }), id
 end
 
 for _, tool in pairs(tools) do

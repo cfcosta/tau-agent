@@ -332,6 +332,9 @@ pub(crate) fn rewrite(node: Node, f: &mut dyn FnMut(Node) -> Node) -> Node {
         Node::Row { children } => Node::Row {
             children: each(children, f),
         },
+        Node::Line { children } => Node::Line {
+            children: each(children, f),
+        },
         Node::Scroll { height, children } => Node::Scroll {
             height,
             children: each(children, f),
@@ -377,12 +380,14 @@ pub(crate) fn rewrite(node: Node, f: &mut dyn FnMut(Node) -> Node) -> Node {
             title,
             open,
             small,
+            lead,
             children,
         } => Node::Section {
             id,
             title,
             open,
             small,
+            lead: each(lead, f),
             children: each(children, f),
         },
         Node::Modal {
@@ -557,12 +562,14 @@ fn embed_as(piece: &Value, plugin: &str, mark: &str) -> Node {
             title,
             open,
             small,
+            lead,
             children,
         } => Node::Section {
             id: own(id),
             title,
             open,
             small,
+            lead,
             children,
         },
         Node::Tabs { id, tabs } => Node::Tabs { id: own(id), tabs },
@@ -2273,6 +2280,7 @@ fn pane(state: &State) -> Option<heiko_ui_plugin::points::PaneView> {
 /// `calls = { [call_id] = { head, label } }`. A head that is an empty
 /// stack leaves the call no line at all: only its `body` shows, a note
 /// in the call's place, or nothing.
+/// With `folds`, the `body` is closed until the person clicks the line.
 fn card_header(state: &State, call_id: &str) -> Option<CardView> {
     state
         .plugins
@@ -2282,15 +2290,28 @@ fn card_header(state: &State, call_id: &str) -> Option<CardView> {
             let call = plugin.view.get("calls")?.get(call_id)?;
             let head = call.get("head").filter(|head| !head.is_null());
             let label = call.get("label").and_then(Value::as_str);
-            if head.is_none() && label.is_none() {
+            let body = folding(call);
+            if head.is_none() && label.is_none() && body.is_none() {
                 return None;
             }
             Some(CardView {
                 head: head.map(|head| embed(head, name)),
                 label: label.map(str::to_owned),
+                folds: body.is_some(),
+                body: body.map(|body| embed(body, name)),
                 ..CardView::default()
             })
         })
+}
+
+/// The body of a call's view that folds: one with `folds = true`.
+fn folding(call: &Value) -> Option<&Value> {
+    call.get("folds")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        .then(|| call.get("body"))
+        .flatten()
+        .filter(|body| !body.is_null())
 }
 
 fn on_card(state: &State, call_id: &str, place: &str) -> Option<Node> {
@@ -2299,7 +2320,12 @@ fn on_card(state: &State, call_id: &str, place: &str) -> Option<Node> {
         .iter()
         .filter(|(_, plugin)| plugin.off.is_none())
         .filter_map(|(name, plugin)| {
-            let piece = plugin.view.get("calls")?.get(call_id)?.get(place)?;
+            let call = plugin.view.get("calls")?.get(call_id)?;
+            // A body that folds is the card's own, under its line.
+            if place == "body" && folding(call).is_some() {
+                return None;
+            }
+            let piece = call.get(place)?;
             (!piece.is_null()).then(|| embed(piece, name))
         })
         .collect();
@@ -2627,6 +2653,7 @@ fn blank(node: &Node) -> bool {
         }
         Node::Stack { children }
         | Node::Row { children }
+        | Node::Line { children }
         | Node::Card { children } => children.iter().all(blank),
         _ => false,
     }
@@ -3331,6 +3358,30 @@ mod tests {
         assert_eq!(on_card(&state, "c1", "body"), None);
         let body = format!("{:?}", on_card(&state, "c2", "body").unwrap());
         assert!(body.contains("the note"), "{body}");
+    }
+
+    /// A call whose view says `folds` gives its `body` to the card, closed
+    /// under its line, and not to what plugins draw under a call.
+    #[test]
+    fn a_views_call_that_folds_keeps_its_body_closed() {
+        let mut state = State::default();
+        let mut run = heiko_ui_plugin::testing::FakeRun::default();
+        state.apply(
+            Record::View {
+                plugin: "skills".into(),
+                view: json!({ "calls": { "c1": {
+                    "head": { "piece": "mono", "text": "review" },
+                    "body": { "piece": "text", "text": "the file" },
+                    "folds": true,
+                } } }),
+            },
+            &mut run,
+        );
+        let card = card_header(&state, "c1").unwrap();
+        assert!(card.folds);
+        let body = format!("{:?}", card.body.unwrap());
+        assert!(body.contains("the file"), "{body}");
+        assert_eq!(on_card(&state, "c1", "body"), None);
     }
 
     /// A view's `calls` that say `mark` mark their cards, refused with

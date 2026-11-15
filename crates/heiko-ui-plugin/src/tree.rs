@@ -390,6 +390,12 @@ pub enum Node {
         #[serde(default, deserialize_with = "nodes")]
         children: Vec<Node>,
     },
+    /// Pieces on one line that never wraps: the last takes what is left
+    /// of the width, and what does not fit of it is cut.
+    Line {
+        #[serde(default, deserialize_with = "nodes")]
+        children: Vec<Node>,
+    },
     /// Pieces one under the other that scroll past `height` rems.
     Scroll {
         #[serde(default)]
@@ -435,7 +441,8 @@ pub enum Node {
     /// A heading that opens and closes the pieces under it. Whether it
     /// is open is the interface's state, under the plugin's `id`; until
     /// the person clicks, `open` says. A `small` one is a line inside a
-    /// note: its title in the mono face over a hairline.
+    /// note: its title in the mono face, over a hairline once open,
+    /// with the pieces of `lead` before the title.
     Section {
         id: String,
         title: String,
@@ -443,6 +450,8 @@ pub enum Node {
         open: bool,
         #[serde(default)]
         small: bool,
+        #[serde(default, deserialize_with = "nodes")]
+        lead: Vec<Node>,
         #[serde(default, deserialize_with = "nodes")]
         children: Vec<Node>,
     },
@@ -1743,6 +1752,23 @@ impl<'a> Draw<'a> {
                     .child(rest)
                     .into_any_element()
             }
+            Node::Line { children } => {
+                let mut drawn = self.children(children, depth, path, cx);
+                let last = drawn.pop();
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(sp(3.))
+                    .children(
+                        drawn
+                            .into_iter()
+                            .map(|piece| div().flex_shrink_0().child(piece)),
+                    )
+                    .children(last.map(|piece| {
+                        div().flex_1().min_w(rems(0.)).truncate().child(piece)
+                    }))
+                    .into_any_element()
+            }
             Node::Scroll { height, children } => div()
                 .id(SharedString::from(format!("{path}:scroll")))
                 .flex()
@@ -1816,6 +1842,7 @@ impl<'a> Draw<'a> {
                 title,
                 open,
                 small,
+                lead,
                 children,
             } => {
                 let key = self.key(open_key(id));
@@ -1828,11 +1855,21 @@ impl<'a> Draw<'a> {
                 let head = if *small {
                     div()
                         .flex()
-                        .items_baseline()
+                        .items_center()
                         .gap(sp(3.))
-                        .pb(sp(1.5))
-                        .border_b_1()
-                        .border_color(t.hairline)
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .when(open, |head| {
+                            head.pb(sp(1.5))
+                                .border_b_1()
+                                .border_color(t.hairline)
+                        })
+                        .children(self.children(
+                            lead,
+                            depth,
+                            &format!("{path}:lead"),
+                            cx,
+                        ))
                         .child(
                             heiko_ui_kit::components::mono(
                                 title.clone(),

@@ -608,7 +608,9 @@ heiko-luau-plugins the plugins repository.
   with no `body` the call draws nothing at all, nor does reasoning
   without words right before it. A plugin folds calls about one thing
   this way, the last as the note and the ones before it as nothing
-  (`heiko-todo`'s note of an issue a run filed). A call that was
+  (`heiko-todo`'s note of an issue a run filed). With `folds = true`
+  the `body` is closed under the line until the person clicks it
+  (`heiko-skills`' line of a loaded skill). A call that was
   refused, flagged, dropped or given a badge keeps its line. A
   button, a switch, an input's Enter or a key in one of its trees
   names one of the plugin's actions, which the interface hands to

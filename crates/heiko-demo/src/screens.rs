@@ -402,8 +402,7 @@ pub static SCREENS: &[(&str, Screen)] = &[
     }),
     // heiko-ask's panel in the composer's place (ADR 0019): a question
     // with previews; a checklist with a note being written; the review.
-    // heiko-skills: the Skills screen; a skill loaded, its card open; a
-    // skill not there.
+    // heiko-skills: the Skills screen; a skill loaded; a skill not there.
     ("skills", |ws, _, cx| {
         let link =
             heiko_luau_plugins::ui::entry_link(heiko_luau_plugins::names::SKILLS);
@@ -1942,8 +1941,8 @@ fn watcher(
     .detach();
 }
 
-/// heiko-agent's main chat with a `skill` call: release-notes loaded, its
-/// card open, as heiko-skills' fixture draws it; or a skill not there.
+/// heiko-agent's main chat with a `skill` call: release-notes loaded, as
+/// the line heiko-skills' fixture draws; or a skill not there.
 fn skill(workspace: &mut Workspace, found: bool, cx: &mut Context<Workspace>) {
     let run = run_id();
     let call = "call_skill".to_owned();
@@ -1996,12 +1995,11 @@ fn skill(workspace: &mut Workspace, found: bool, cx: &mut Context<Workspace>) {
                 cx,
             );
         }
-        workspace.toggle_card(&run, &call, cx);
     }
 }
 
 /// heiko-agent's main chat after it filed an issue, claimed it and wrote
-/// its steps: heiko-todo's one note for the three calls.
+/// its steps: heiko-todo's one note, and the steps over the composer.
 fn todo(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
     let run = run_id();
     workspace.navigate(Route::Run(run.clone()), cx);

@@ -1330,6 +1330,7 @@ fn the_body_lists_the_calls_and_keeps_the_script_closed() {
         open,
         small,
         children: rest,
+        ..
     }) = children.last()
     else {
         panic!("no more: {children:?}");
