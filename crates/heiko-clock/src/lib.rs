@@ -151,18 +151,25 @@ pub fn local(clock: &dyn Clock, at: i64) -> String {
 }
 
 /// `YYYY-MM-DD HH:MM`, the host's local time, in seconds since the
-/// epoch.
+/// epoch: exactly as [`local`] writes it, so a field with a sign or
+/// another width (which `str::parse` would take) is none, and so is a
+/// year past 9999.
 pub fn parse_local(clock: &dyn Clock, text: &str) -> Option<i64> {
-    let (date, time) = text.trim().split_once(' ')?;
-    let mut parts = date.split('-');
-    let year: i64 = parts.next()?.parse().ok()?;
-    let month: u32 = parts.next()?.parse().ok()?;
-    let day: u32 = parts.next()?.parse().ok()?;
-    if parts.next().is_some() {
+    let text = text.trim();
+    let shape = text.len() == 16
+        && text.bytes().enumerate().all(|(i, byte)| match i {
+            4 | 7 => byte == b'-',
+            10 => byte == b' ',
+            13 => byte == b':',
+            _ => byte.is_ascii_digit(),
+        });
+    if !shape {
         return None;
     }
-    let days = days_from_civil(year, month, day)?;
-    let wall = days * DAY + time_of_day(time)?;
+    let field = |range: std::ops::Range<usize>| text[range].parse::<u32>().ok();
+    let year = i64::from(field(0..4)?);
+    let days = days_from_civil(year, field(5..7)?, field(8..10)?)?;
+    let wall = days * DAY + time_of_day(&text[11..])?;
     // The offset is the one at that time, not now's: across a change
     // of the clocks, the first guess is an hour out.
     let guess = wall - i64::from(clock.offset(wall));
@@ -329,20 +336,160 @@ mod tests {
         );
     }
 
-    /// What is not a local time, or not a date, reads as none.
+    /// The days from 1970-01-01 to a date, counted a year and then a
+    /// month at a time: an oracle apart from [`days_from_civil`].
+    fn days_counted(year: i64, month: u32, day: u32) -> i64 {
+        let long = |year: i64| 365 + i64::from(month_days(year, 2) == 29);
+        let years: i64 = if year >= 1970 {
+            (1970..year).map(long).sum()
+        } else {
+            -(year..1970).map(long).sum::<i64>()
+        };
+        let months: i64 =
+            (1..month).map(|m| i64::from(month_days(year, m))).sum();
+        years + months + i64::from(day) - 1
+    }
+
+    /// A date and time written as `local` writes one, from fields
+    /// drawn past every range: a year with a sign or five digits, month
+    /// 0 and 13, day 0 and 32 (and often February 29th), hour 24,
+    /// minute 60. It reads as a time
+    /// exactly when every field is in range, as the time counted apart,
+    /// less the offset; and that time writes back as the same text.
+    #[hegel::test(test_cases = 500)]
+    fn a_written_time_reads_as_its_fields_say(tc: TestCase) {
+        let year = tc.draw(hegel::one_of!(
+            gs::sampled_from(vec![
+                -1_i64, 0, 1900, 1969, 1970, 2000, 2024, 2100, 9999, 10_000
+            ]),
+            gs::integers::<i64>().min_value(-200).max_value(10_200),
+        ));
+        // A leap day, or not one, half the time.
+        let (month, day) = if tc.draw(gs::booleans()) {
+            (2, 29)
+        } else {
+            let month = tc.draw(hegel::one_of!(
+                gs::sampled_from(vec![0_u32, 1, 2, 12, 13]),
+                gs::integers::<u32>().max_value(13),
+            ));
+            let day = tc.draw(hegel::one_of!(
+                gs::sampled_from(vec![0_u32, 1, 28, 29, 30, 31, 32]),
+                gs::integers::<u32>().max_value(32),
+            ));
+            (month, day)
+        };
+        let hour = tc.draw(hegel::one_of!(
+            gs::sampled_from(vec![-1_i64, 0, 23, 24]),
+            gs::integers::<i64>().min_value(-1).max_value(25),
+        ));
+        let minute = tc.draw(hegel::one_of!(
+            gs::sampled_from(vec![-1_i64, 0, 59, 60]),
+            gs::integers::<i64>().min_value(-1).max_value(61),
+        ));
+        let quarters =
+            tc.draw(gs::integers::<i32>().min_value(-56).max_value(56));
+        let clock = FakeClock::new(0, quarters * 900);
+        let text =
+            format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}");
+        let real = (0..=9999).contains(&year)
+            && (1..=12).contains(&month)
+            && (1..=month_days(year, month.max(1))).contains(&day)
+            && (0..24).contains(&hour)
+            && (0..60).contains(&minute);
+        let read = parse_local(&clock, &text);
+        if !real {
+            assert_eq!(read, None, "{text:?}");
+            return;
+        }
+        let expected =
+            days_counted(year, month, day) * DAY + hour * 3600 + minute * 60
+                - i64::from(quarters * 900);
+        assert_eq!(read, Some(expected), "{text:?}");
+        assert_eq!(local(&clock, expected), text);
+    }
+
+    /// Any text, junk or nearly a time, reads without panicking, and
+    /// reads as a time only when it is that time as `local` writes it.
+    #[hegel::test(test_cases = 1000)]
+    fn only_what_local_writes_reads_as_a_time(tc: TestCase) {
+        let quarters =
+            tc.draw(gs::integers::<i32>().min_value(-56).max_value(56));
+        let clock = FakeClock::new(0, quarters * 900);
+        let text = if tc.draw(gs::booleans()) {
+            near_a_time(&tc, &clock)
+        } else {
+            junk(&tc)
+        };
+        if let Some(at) = parse_local(&clock, &text) {
+            assert_eq!(local(&clock, at), text.trim(), "{text:?}");
+        }
+    }
+
+    /// A time as `local` writes it, with a few characters put in,
+    /// changed or taken out: a sign, a digit, a space, a separator.
+    fn near_a_time(tc: &TestCase, clock: &FakeClock) -> String {
+        let at = tc.draw(
+            gs::integers::<i64>()
+                .min_value(-62_167_219_200)
+                .max_value(253_402_300_799),
+        );
+        let mut text: Vec<char> = local(clock, at).chars().collect();
+        for _ in 0..tc.draw(gs::integers::<u8>().min_value(1).max_value(3)) {
+            let at = tc.draw(gs::integers::<usize>().max_value(text.len()));
+            let put =
+                tc.draw(gs::sampled_from(vec!['+', '-', '0', '9', ' ', ':']));
+            match tc.draw(gs::integers::<u8>().max_value(2)) {
+                0 => text.insert(at, put),
+                1 if at < text.len() => text[at] = put,
+                _ if at < text.len() => {
+                    text.remove(at);
+                }
+                _ => text.push(put),
+            }
+        }
+        text.into_iter().collect()
+    }
+
+    /// Text that is mostly not a time: signs, spaces, fields too short
+    /// or too long, huge numbers, or anything at all.
+    fn junk(tc: &TestCase) -> String {
+        tc.draw(hegel::one_of!(
+            gs::from_regex(
+                r"[ +-]?[+-]?[0-9]{1,20}-[+-]?[0-9]{1,3}-[+-]?[0-9]{1,3}[ ]{1,2}[+-]?[0-9]{1,3}:[+-]?[0-9]{1,3}[ ]?"
+            )
+            .fullmatch(true),
+            gs::text().alphabet("0123456789-+: ").max_size(24),
+            gs::text().max_size(24),
+        ))
+    }
+
+    /// Cases the properties found or guard: signed and short fields,
+    /// which `str::parse` takes; years too long to count in seconds;
+    /// days and times past their range; and the last minute the
+    /// four-digit years hold.
     #[test]
-    fn what_is_not_a_local_time_reads_as_none() {
+    fn what_is_not_written_as_local_writes_reads_as_none() {
         let clock = FakeClock::new(0, 3 * 3600);
         for text in [
+            "+2026-+1-+5 10:00",
+            "2026-1-5 10:00",
+            "2026-01-05 +9:00",
+            "2026-01-05 9:00",
+            "02026-01-05 09:00",
+            "99999999999999999-01-01 00:00",
+            "-001-01-01 00:00",
             "2026-02-29 09:00",
             "2026-13-01 09:00",
             "2026-10-12",
             "2026-10-12 25:00",
             "2026-10-12 09:60",
             "2026-10-12-01 09:00",
+            "2026-10-12  09:00",
         ] {
             assert_eq!(parse_local(&clock, text), None, "{text:?}");
         }
+        let last = parse_local(&clock, "9999-12-31 23:59").unwrap();
+        assert_eq!(local(&clock, last), "9999-12-31 23:59");
         assert!(parse_local(&clock, "2028-02-29 09:00").is_some());
     }
 
