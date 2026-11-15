@@ -1,0 +1,550 @@
+{
+  "name": "heiko-todo",
+  "description": "Issues the repository keeps for its runs, like beads, and each run's steps.",
+  "uses": {
+    "tools": [],
+    "jev": false,
+    "infer": false,
+    "change_args": false,
+    "network": [],
+    "secrets": [],
+    "model": null,
+    "store": true,
+    "transcript": false,
+    "archive": false,
+    "chats": false,
+    "files": []
+  },
+  "settings": null,
+  "tools": [
+    {
+      "name": "todo_check",
+      "description": "Checks one of an issue's done-when criteria, by its number from 1; done false unchecks it.",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "criterion": {
+            "type": "integer"
+          },
+          "done": {
+            "type": "boolean"
+          },
+          "id": {
+            "description": "The issue's id, such as td-4e1b.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "criterion"
+        ],
+        "type": "object"
+      },
+      "card": true
+    },
+    {
+      "name": "todo_claim",
+      "description": "Claims an issue for this run: it goes in progress, yours until it is closed or your run ends. Refused when another run holds it.",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "The issue's id, such as td-4e1b.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "card": true
+    },
+    {
+      "name": "todo_close",
+      "description": "Closes an issue with the reason; with reopen, opens a closed one again. Closing with criteria unmet is allowed, but the reason says why. An epic closes once its children have.",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "The issue's id, such as td-4e1b.",
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "reopen": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "card": true
+    },
+    {
+      "name": "todo_comment",
+      "description": "Adds a comment to an issue.",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "The issue's id, such as td-4e1b.",
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "text"
+        ],
+        "type": "object"
+      },
+      "card": true
+    },
+    {
+      "name": "todo_create",
+      "description": "Files a new issue. What you find outside your issue goes here rather than into your work: it is found while the issue you hold. Give the step it comes from, when it is one of yours, and the step is done, naming it.",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "criteria": {
+            "description": "What done means, a line each.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "description": {
+            "description": "Markdown.",
+            "type": "string"
+          },
+          "labels": {
+            "description": "Labels, such as phone.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "parent": {
+            "description": "The epic it is part of.",
+            "type": "string"
+          },
+          "priority": {
+            "description": "P0 drop everything, to P4 some day; P2 by default.",
+            "enum": [
+              "P0",
+              "P1",
+              "P2",
+              "P3",
+              "P4"
+            ],
+            "type": "string"
+          },
+          "step": {
+            "description": "Your step it comes from, from 1.",
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "bug",
+              "feature",
+              "task",
+              "epic",
+              "chore"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "type": "object"
+      },
+      "card": true
+    },
+    {
+      "name": "todo_defer",
+      "description": "Defers an issue, until a date (2026-11-10) when given: it is not ready until then.",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "The issue's id, such as td-4e1b.",
+            "type": "string"
+          },
+          "until": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "card": true
+    },
+    {
+      "name": "todo_dispatch",
+      "description": "Asks the person to start a chat on an issue, with it claimed, or to send it to a chat that exists (to, its run id). It is the one thing you cannot do alone: the person allows it, or says why not.",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "The issue's id, such as td-4e1b.",
+            "type": "string"
+          },
+          "to": {
+            "description": "The chat's run id; none starts a new chat.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "card": false
+    },
+    {
+      "name": "todo_link",
+      "description": "Links an issue: blocks (on blocks id, which waits for it), parent (on is the epic over id), found_while (id was found while on was worked), related. A blocks link that closes a cycle is refused. remove takes a link away.",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "The issue's id, such as td-4e1b.",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "blocks",
+              "parent",
+              "found_while",
+              "related"
+            ],
+            "type": "string"
+          },
+          "on": {
+            "description": "The other issue.",
+            "type": "string"
+          },
+          "remove": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "on"
+        ],
+        "type": "object"
+      },
+      "card": true
+    },
+    {
+      "name": "todo_list",
+      "description": "Issues by status, label, type, priority or claim; with tree, each epic's children under it.",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "claim": {
+            "description": "The run that holds them.",
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "priority": {
+            "description": "P0 drop everything, to P4 some day; P2 by default.",
+            "enum": [
+              "P0",
+              "P1",
+              "P2",
+              "P3",
+              "P4"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "in_progress",
+              "blocked",
+              "deferred",
+              "closed"
+            ],
+            "type": "string"
+          },
+          "tree": {
+            "type": "boolean"
+          },
+          "type": {
+            "enum": [
+              "bug",
+              "feature",
+              "task",
+              "epic",
+              "chore"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "card": true
+    },
+    {
+      "name": "todo_ready",
+      "description": "The ready issues: open, not deferred, blocked by nothing open, sorted by priority then age. Ask before choosing work. With blocked, what waits on what instead.",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "blocked": {
+            "description": "List what is blocked, and on what.",
+            "type": "boolean"
+          },
+          "label": {
+            "type": "string"
+          },
+          "priority": {
+            "description": "P0 drop everything, to P4 some day; P2 by default.",
+            "enum": [
+              "P0",
+              "P1",
+              "P2",
+              "P3",
+              "P4"
+            ],
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "bug",
+              "feature",
+              "task",
+              "epic",
+              "chore"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "card": true
+    },
+    {
+      "name": "todo_search",
+      "description": "Issues whose title, description or comments hold the text, any case.",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "type": "object"
+      },
+      "card": true
+    },
+    {
+      "name": "todo_show",
+      "description": "One issue whole: its description, criteria, links, what blocks it and its comments.",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "The issue's id, such as td-4e1b.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "card": true
+    },
+    {
+      "name": "todo_steps",
+      "description": "Replace this run's steps with a new list: your own checklist of how you mean to do what you are doing. Each step has its text and a status, pending, in_progress or done; at most one is in progress. Send the whole list each time.",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "steps": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "status": {
+                  "enum": [
+                    "pending",
+                    "in_progress",
+                    "done"
+                  ],
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text",
+                "status"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "steps"
+        ],
+        "type": "object"
+      },
+      "card": false
+    },
+    {
+      "name": "todo_update",
+      "description": "Changes an issue's title, description, type, priority, labels, criteria (replaced, unchecked) or status. A blocked status says what outside heiko it waits on; to wait on an issue, link it.",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "blocked": {
+            "description": "With status blocked: what it waits on.",
+            "type": "string"
+          },
+          "criteria": {
+            "description": "What done means, a line each.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "description": "The issue's id, such as td-4e1b.",
+            "type": "string"
+          },
+          "labels": {
+            "description": "Labels.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "priority": {
+            "description": "P0 drop everything, to P4 some day; P2 by default.",
+            "enum": [
+              "P0",
+              "P1",
+              "P2",
+              "P3",
+              "P4"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "in_progress",
+              "blocked",
+              "deferred"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "bug",
+              "feature",
+              "task",
+              "epic",
+              "chore"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "card": true
+    }
+  ],
+  "hooks": {
+    "start": true,
+    "before_tool": false,
+    "before_request": false,
+    "after_tool_result": false,
+    "rewrite_context": false,
+    "rewritten": false,
+    "before_stop": false,
+    "turn_end": true,
+    "on_event": false,
+    "title": false,
+    "notify": false,
+    "repo_data": true,
+    "recover": true,
+    "run_end": true,
+    "view": true,
+    "settings_view": false,
+    "app": false,
+    "page": false,
+    "setup": false,
+    "models": false
+  },
+  "actions": [
+    "ask",
+    "block",
+    "cancel",
+    "check",
+    "close",
+    "comment",
+    "defer",
+    "dispatch",
+    "import",
+    "let_go",
+    "move",
+    "promote",
+    "reopen",
+    "sent",
+    "start",
+    "started",
+    "undo"
+  ],
+  "events": [],
+  "fills": [],
+  "compaction": null,
+  "forge": null,
+  "nav": null,
+  "commands": [],
+  "jobs": [],
+  "pages": [
+    "board"
+  ],
+  "repo_nav": {
+    "label": "Todo",
+    "page": "board",
+    "icon": "list"
+  },
+  "picker_auto": null,
+  "continues": null,
+  "listed_commands": false
+}

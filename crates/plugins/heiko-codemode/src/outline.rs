@@ -2,12 +2,12 @@
 //! which opens on a click to what the item holds. The items come from
 //! the result's details ([`crate::result::output_details`]), so a
 //! string the script gave stays text and any other value stays JSON.
-//! It is a view tree (ADR 0045): each item a section, whether it is
-//! open the interface's state.
+//! It is a view tree (ADR 0045): each item a line after its numbered
+//! square, whether it is open the plugin's UI state.
 
-use serde_json::{Map, Value};
 use heiko_ui_kit::assets::Icon;
-use heiko_ui_plugin::tree::{KeyValue, Node, Tone};
+use heiko_ui_plugin::tree::{Ink, KeyValue, Node, SquareLook, Tone, open_key};
+use serde_json::{Map, Value, json};
 
 use crate::result::preview;
 
@@ -224,47 +224,73 @@ pub fn starts_open(total: usize) -> bool {
     total == 1
 }
 
-/// The id of the section a call's item opens in.
+/// The id a call's item opens under: its UI state key is this id's
+/// [`open_key`].
 pub fn key(call_id: &str, index: usize) -> String {
     format!("codemode-output-{call_id}-{index}")
 }
 
-/// The outline of a call's `items`: one section per item, which opens
-/// to what it holds; an image, which holds nothing to read, a line.
-pub fn outline(call_id: &str, items: &[Shown]) -> Node {
-    Node::stack(items.iter().enumerate().map(|(index, item)| {
-        let line = line(item);
-        let mut title = format!("{}  {}", index + 1, line.title);
-        for part in [&line.rest, &line.meta] {
-            if !part.is_empty() {
-                title.push_str(" · ");
-                title.push_str(part);
-            }
-        }
-        if matches!(item, Shown::Image { .. }) {
-            return Node::row([
-                Node::Icon {
-                    name: icon_name(line.icon).into(),
-                    tone: Tone::Neutral,
-                },
-                Node::Mono { text: title },
-            ]);
-        }
-        Node::Section {
-            id: key(call_id, index),
-            title,
-            open: starts_open(items.len()),
-            children: opened(item),
-        }
-    }))
-}
+/// The action of an item's square: set the UI state `key` to `open`.
+pub const OPEN: &str = "open";
 
-/// An icon's name in a tree: its file's.
-fn icon_name(icon: Icon) -> &'static str {
-    icon.path()
-        .strip_prefix("icons/")
-        .and_then(|file| file.strip_suffix(".svg"))
-        .unwrap_or_default()
+/// The outline of a call's `items`: each a line after its numbered
+/// square, a hairline between them. A click on the square opens the
+/// item to what it holds, on a band under its line; `open` says which
+/// are. An image, which holds nothing to read, does not open.
+pub fn outline(
+    call_id: &str,
+    items: &[Shown],
+    open: &dyn Fn(usize) -> bool,
+) -> Node {
+    let quiet = |text: &str| Node::Toned {
+        text: text.to_owned(),
+        tone: Tone::Neutral,
+        mono: true,
+    };
+    let mut rows = Vec::new();
+    for (index, item) in items.iter().enumerate() {
+        if index > 0 {
+            rows.push(Node::Rule);
+        }
+        let line = line(item);
+        let opens = !matches!(item, Shown::Image { .. });
+        let open = opens && open(index);
+        let mut row = vec![
+            Node::Square {
+                label: (index + 1).to_string(),
+                style: if open {
+                    SquareLook::Filled
+                } else {
+                    SquareLook::Quiet
+                },
+                tone: if open { Ink::Info } else { Ink::Neutral },
+                action: opens.then(|| OPEN.to_owned()),
+                args: if opens {
+                    json!({
+                        "key": open_key(&key(call_id, index)),
+                        "open": !open,
+                    })
+                } else {
+                    Value::Null
+                },
+            },
+            Node::Mono { text: line.title },
+        ];
+        if !line.rest.is_empty() {
+            row.push(quiet(&line.rest));
+        }
+        row.push(Node::Spacer);
+        if !line.meta.is_empty() {
+            row.push(quiet(&line.meta));
+        }
+        rows.push(Node::row(row));
+        if open {
+            rows.push(Node::Band {
+                children: opened(item),
+            });
+        }
+    }
+    Node::stack(rows)
 }
 
 /// What an open item holds.
@@ -325,7 +351,11 @@ fn object(fields: &Map<String, Value>) -> Vec<Node> {
             .collect(),
     }];
     for (key, value) in fields.iter().filter(|(_, value)| long(value)) {
-        nodes.push(Node::Heading { text: key.clone(), tone: Default::default() });
+        nodes.push(Node::Toned {
+            text: key.clone(),
+            tone: Tone::Neutral,
+            mono: true,
+        });
         nodes.extend(text_block(value.as_str().unwrap_or_default()));
     }
     nodes

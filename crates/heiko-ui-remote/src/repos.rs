@@ -92,7 +92,7 @@ pub enum TreeOf {
     /// conversation and what is under it (ADR 0037).
     Agent(String),
     /// A kind's own pages: the list of its repositories, the agents.
-    Kind(&'static str, RepoKind),
+    Kind(&'static str, Box<RepoKind>),
 }
 
 static NO_REPO: LazyLock<Repo> = LazyLock::new(Repo::default);
@@ -133,7 +133,7 @@ impl Workspace {
                     self.kind_route(plugin, link).as_ref() == Some(&self.route)
                 });
             if on_page {
-                return Some(TreeOf::Kind(*plugin, kind.clone()));
+                return Some(TreeOf::Kind(plugin, Box::new(kind.clone())));
             }
         }
         let about = self.route.repo().map(str::to_owned).or_else(|| {
@@ -357,21 +357,6 @@ impl Workspace {
         })
     }
 
-    /// The chats of the plugins repository, which the sidebar lists
-    /// under Plugins: open while Plugins is.
-    pub fn plugins_rows(&self) -> Option<RepoRows<'_>> {
-        let repo = self.plugins_repo()?;
-        self.rows_of(repo, self.plugins_open, "")
-    }
-
-    /// The runs of `name`'s repository, of a kind a plugin makes, which
-    /// its row lists while it is open: an agent's (ADR 0037).
-    pub fn kind_rows(&self, name: &str) -> Option<RepoRows<'_>> {
-        let repo =
-            self.catalog.repo(name).filter(|repo| repo.kind.is_some())?;
-        self.rows_of(repo, self.open_agents.contains(name), "")
-    }
-
     /// The kinds of repository plugins make, each with its section of
     /// the sidebar (`REPO_KIND`), and the plugin that makes it.
     pub fn repo_kinds(&self) -> Vec<(&'static str, RepoKind)> {
@@ -516,20 +501,6 @@ impl Workspace {
             .map(|repo| repo.name.clone())
             .collect();
         cx.emit(WorkspaceEvent::OpenRepos(open));
-    }
-
-    /// Opens or folds the sidebar's Plugins.
-    pub fn toggle_plugins_open(&mut self, cx: &mut Context<Self>) {
-        self.plugins_open = !self.plugins_open;
-        cx.notify();
-    }
-
-    /// Opens or folds an agent's row in the sidebar.
-    pub fn toggle_agent_open(&mut self, name: &str, cx: &mut Context<Self>) {
-        if !self.open_agents.remove(name) {
-            self.open_agents.insert(name.to_owned());
-        }
-        cx.notify();
     }
 
     /// Opens an agent's conversation: its repository's main chat, with

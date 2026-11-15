@@ -128,10 +128,16 @@ impl Route {
         }
     }
 
-    /// Screens that take the whole window, without the sidebar: a task
-    /// to finish before going back to the runs.
-    pub fn is_focused(&self) -> bool {
-        matches!(self, Self::Setup(_) | Self::Pair(_) | Self::PullRequest(_))
+    /// Screens that take the whole window, without the sidebar or the
+    /// phone's bars: a task to finish before going back to the runs.
+    /// Setup and pairing do everywhere; a run's pull request does on a
+    /// `phone` only, as a desktop draws it beside the sidebar.
+    pub fn is_focused(&self, phone: bool) -> bool {
+        match self {
+            Self::Setup(_) | Self::Pair(_) => true,
+            Self::PullRequest(_) => phone,
+            _ => false,
+        }
     }
 
     /// Top-level screens get the phone's tab bar.
@@ -151,10 +157,11 @@ mod tests {
 
     /// Every screen knows its run, its repository, its tab, and whether
     /// it is top-level or focused: the table lists each kind of screen.
-    /// Each tab leads to a top-level screen under itself.
+    /// A pull request is focused on a phone alone. Each tab leads to a
+    /// top-level screen under itself.
     #[test]
     fn every_screen_knows_its_run_repository_and_tab() {
-        // (screen, run, repository, tab, top-level, focused)
+        // (screen, run, repository, tab, top-level, focused on a phone)
         type Row<'a> =
             (Route, Option<&'a RunId>, Option<&'a str>, Tab, bool, bool);
         let (main, fork) = (RunId(Arc::from("main")), RunId(Arc::from("fork")));
@@ -255,9 +262,15 @@ mod tests {
                     route.repo(),
                     route.tab(),
                     route.is_top_level(),
-                    route.is_focused()
+                    route.is_focused(true)
                 ),
                 (*run, *repo, *tab, *top, *focused),
+                "{route:?}"
+            );
+            // A desktop keeps the sidebar beside a pull request.
+            assert_eq!(
+                route.is_focused(false),
+                *focused && !matches!(route, Route::PullRequest(_)),
                 "{route:?}"
             );
         }

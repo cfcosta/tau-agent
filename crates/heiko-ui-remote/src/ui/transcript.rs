@@ -9,7 +9,6 @@ use gpui::{
     IntoElement,
     SharedString,
     Stateful,
-    Window,
     div,
     prelude::*,
     rems,
@@ -54,7 +53,6 @@ pub fn item(
     index: usize,
     t: &Theme,
     compact: bool,
-    _window: &Window,
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
     let edge = sp(if compact { 4. } else { 7. });
@@ -550,7 +548,7 @@ fn reasoning(
         _ => parts.push(format!("{words} words")),
     }
     let said = match parts.split_first() {
-        Some((word, rest)) if rest.is_empty() => word.clone(),
+        Some((word, [])) => word.clone(),
         Some((word, rest)) => format!("{word} {}", rest.join(" · ")),
         None => String::new(),
     };
@@ -574,8 +572,9 @@ fn duration(secs: u64) -> String {
 
 /// A tool call, as one line of the transcript: the tool's name in the
 /// color of its kind, its arguments, and what came back at the line's
-/// end. Its body, when open, sits under it on a flat band. A refused
-/// call stands under a red rule, with what it proposed.
+/// end, or under the line on a phone. Its body, when open, sits under
+/// it on a flat band. A refused call stands under a red rule, with what
+/// it proposed.
 fn tool(
     ws: &Workspace,
     run: &RunView,
@@ -627,10 +626,47 @@ fn tool(
     );
     let badges =
         ws.drawn_with(heiko_ui_plugin::points::CARD_BADGE, context_of, cx);
-    let extras =
-        ws.drawn_with(heiko_ui_plugin::points::CARD_BODY, context_of, cx);
-
     let blocked = matches!(card.state, ToolState::Blocked { .. });
+    // What plugins draw under a call. Under a refused one it is the
+    // verdict of the plugin that refused it: a row's first piece says
+    // why, and the rest measure it, beside that.
+    let mut extras = Vec::new();
+    let (mut why, mut measure) = (Vec::new(), Vec::new());
+    if blocked {
+        use heiko_ui_plugin::tree::Node;
+        let found = ws.contributions_named(
+            heiko_ui_plugin::points::CARD_BODY,
+            context_of,
+        );
+        for (n, (plugin, node)) in found.into_iter().enumerate() {
+            let Some(at) = context_of(plugin) else {
+                continue;
+            };
+            let mut draw = |name: usize, node: &Node| {
+                let id =
+                    format!("{plugin}-verdict-{}-{n}-{name}", card.call_id);
+                let origin = crate::plugins::Origin::at(at);
+                ws.plugin_tree(plugin, &id, node, origin, cx)
+            };
+            match &node {
+                Node::Row { children } if children.len() > 1 => {
+                    for (m, child) in children.iter().enumerate() {
+                        let drawn = draw(m, child);
+                        if m == 0 {
+                            why.push(drawn);
+                        } else {
+                            measure.push(drawn);
+                        }
+                    }
+                }
+                whole => why.push(draw(0, whole)),
+            }
+        }
+    } else {
+        extras =
+            ws.drawn_with(heiko_ui_plugin::points::CARD_BODY, context_of, cx);
+    }
+
     let failed =
         view.failed.is_some() || matches!(card.state, ToolState::Failed(_));
     let name = if blocked || failed {
@@ -662,9 +698,14 @@ fn tool(
     // A body that folds starts closed; its line opens it.
     let folds = view.folds && card_body.is_some();
     let open = !folds || ws.card_open(&run.id, &card.call_id);
+    // A call that came back with nothing to say has no label.
+    let silent = view.failed.is_none()
+        && view.label.is_none()
+        && matches!(card.state, ToolState::Done { summary: None });
     // A failed call whose shape already stamps how it ended (`exit
     // 100`) says it once: the shape stands for the failure.
     let label = match &view.failed {
+        _ if silent => None,
         _ if failed && !blocked && shape.is_some() => None,
         Some(failure) => Some(stamp(failure.clone(), Tone::Danger, t)),
         None => Some(match (&card.state, view.label) {
@@ -674,6 +715,27 @@ fn tool(
             _ => state_label(card, quiet, t),
         }),
     };
+    // What came back ends the line; on a phone it goes under the line,
+    // so the arguments keep the line's width.
+    let came: Vec<AnyElement> = label
+        .map(IntoElement::into_any_element)
+        .into_iter()
+        .chain(badges)
+        .collect();
+    let (at_end, under) = if compact {
+        (Vec::new(), came)
+    } else {
+        (came, Vec::new())
+    };
+    let under = (!under.is_empty()).then(|| {
+        div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(sp(3.))
+            .pb(sp(1.5))
+            .children(under)
+    });
     let header = div()
         .id(SharedString::from(format!("tool-{}", card.call_id)))
         .flex()
@@ -695,8 +757,7 @@ fn tool(
         .child(summary)
         // The call's stamp or diffstat, then what came back.
         .children(shape.map(|shape| div().flex_shrink_0().child(shape)))
-        .children(label)
-        .children(badges)
+        .children(at_end)
         .when(folds, |row| {
             let run_id = run.id.clone();
             let call_id = card.call_id.clone();
@@ -710,15 +771,10 @@ fn tool(
                 )
         });
 
-    // What the plugin that refused a call draws goes beside its reason.
-    let (verdict, extras) = if blocked {
-        (extras, Vec::new())
-    } else {
-        (Vec::new(), extras)
-    };
     let body: Option<AnyElement> = match &card.state {
         ToolState::Blocked { reason, .. } => Some(
-            blocked_body(card, reason, verdict, t, compact).into_any_element(),
+            blocked_body(card, reason, why, measure, t, compact)
+                .into_any_element(),
         ),
         ToolState::Flagged { .. } => None,
         _ => card_body.filter(|_| open).map(|body| {
@@ -726,7 +782,6 @@ fn tool(
                 .w_full()
                 .mt(sp(1.5))
                 .mb(sp(2.))
-                .bg(t.card)
                 .child(body)
                 .into_any_element()
         }),
@@ -789,6 +844,7 @@ fn tool(
             card.pt(sp(2.5)).border_t_2().border_color(t.red)
         })
         .child(header)
+        .children(under)
         .children(body)
         .children(cut)
         .children(extras)
@@ -1032,12 +1088,15 @@ fn state_label(card: &ToolCard, quiet: Hsla, t: &Theme) -> Div {
 }
 
 /// Under a refused call's line: what the model proposed on a flat
-/// dark-red band, then the reason it got back, with what the plugin
-/// that refused it draws (its verdict) beside the reason.
+/// dark-red band, then why. The plugin that refused it says `why` and
+/// draws its `measure` beside that; when it draws nothing, the reason
+/// the model got back stands there. On a phone they go one under the
+/// other.
 fn blocked_body(
     card: &ToolCard,
     reason: &str,
-    verdict: Vec<AnyElement>,
+    why: Vec<AnyElement>,
+    measure: Vec<AnyElement>,
     t: &Theme,
     compact: bool,
 ) -> Div {
@@ -1047,6 +1106,37 @@ fn blocked_body(
         .get("path")
         .and_then(serde_json::Value::as_str)
         .and_then(Lang::of_path);
+    let went = || {
+        div()
+            .typeset(Type::SMALL)
+            .text_color(t.dim)
+            .child("The reason went back to the model.")
+    };
+    let said = div()
+        .when(!compact, |column| column.flex_1())
+        .min_w(rems(0.))
+        .flex()
+        .flex_col()
+        .gap(sp(1.))
+        .when(why.is_empty(), |column| {
+            column.child(
+                div()
+                    .typeset(Type::LEAD.leading(1.6))
+                    .text_color(t.text)
+                    .child(rich(reason, t.text, t)),
+            )
+        })
+        .children(why)
+        .when(!compact, |column| column.child(went()));
+    let measured = (!measure.is_empty()).then(|| {
+        div()
+            .flex_shrink_0()
+            .when(!compact, |column| column.w(rems(13.125)))
+            .flex()
+            .flex_col()
+            .gap(sp(1.5))
+            .children(measure)
+    });
     div()
         .flex()
         .flex_col()
@@ -1060,36 +1150,9 @@ fn blocked_body(
                 .when(!compact, |row| row.items_start())
                 .gap(sp(if compact { 3. } else { 7. }))
                 .pt(sp(3.))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(rems(0.))
-                        .flex()
-                        .flex_col()
-                        .gap(sp(0.5))
-                        .typeset(Type::LEAD.leading(1.6))
-                        .child(
-                            div()
-                                .text_color(t.text)
-                                .child(rich(reason, t.text, t)),
-                        )
-                        .child(
-                            div()
-                                .text_color(t.dim)
-                                .child("The reason went back to the model."),
-                        ),
-                )
-                .when(!verdict.is_empty(), |row| {
-                    row.child(
-                        div()
-                            .flex_shrink_0()
-                            .when(!compact, |column| column.w(rems(13.125)))
-                            .flex()
-                            .flex_col()
-                            .gap(sp(1.5))
-                            .children(verdict),
-                    )
-                }),
+                .child(said)
+                .children(measured)
+                .when(compact, |row| row.child(went())),
         )
 }
 

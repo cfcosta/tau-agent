@@ -125,6 +125,7 @@ fn what_the_computer_builds_is_what_it_draws(cx: &mut TestAppContext) {
                 repo: repo.name.clone(),
             };
             count(same!(points::SIDEBAR_REPO, at()));
+            count(same!(points::HOME, at()));
             count(same!(points::REPO_MENU, at()));
             count(same!(points::REPO_ACTIONS, at()));
         }

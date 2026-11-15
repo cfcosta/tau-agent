@@ -336,19 +336,57 @@ pub fn primary_block(
     block(label.into(), None, size, t)
 }
 
+/// [`primary_block`] across the whole width it is given, its label at
+/// the left; `detail`, when there is one, is a second line in smaller
+/// text under the label, inside the block.
+pub fn wide_block(
+    label: impl Into<SharedString>,
+    detail: Option<SharedString>,
+    size: BlockSize,
+    t: &Theme,
+) -> Div {
+    let (height, pad, style, by, _) = block_metrics(size);
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .justify_center()
+        .gap(sp(0.5))
+        .min_h(rems(height / 16.))
+        .px(sp(pad))
+        .when(detail.is_some(), |block| block.py(sp(2.)))
+        .printed(by, t)
+        .cursor_pointer()
+        .hover(|style| style.opacity(0.9))
+        .child(
+            div()
+                .typeset(style.weighted(weight::STRONG))
+                .child(label.into()),
+        )
+        .children(
+            detail.map(|detail| div().typeset(Type::CAPTION).child(detail)),
+        )
+}
+
+/// A block's height and side padding, its label's style, its offset and
+/// its icon's size.
+fn block_metrics(size: BlockSize) -> (f32, f32, Type, f32, IconSize) {
+    match size {
+        BlockSize::Small => (30., 3., Type::SMALL, 3., IconSize::COMPACT),
+        BlockSize::Medium => {
+            (34., 3.5, Type::SMALL.sized(13.5), 3., IconSize::BASE)
+        }
+        BlockSize::Large => (40., 4.5, Type::BODY, 4., IconSize::LARGE),
+    }
+}
+
 fn block(
     label: SharedString,
     glyph: Option<Icon>,
     size: BlockSize,
     t: &Theme,
 ) -> Div {
-    let (height, pad, style, by, glyph_size) = match size {
-        BlockSize::Small => (30., 3., Type::SMALL, 3., IconSize::COMPACT),
-        BlockSize::Medium => {
-            (34., 3.5, Type::SMALL.sized(13.5), 3., IconSize::BASE)
-        }
-        BlockSize::Large => (40., 4.5, Type::BODY, 4., IconSize::LARGE),
-    };
+    let (height, pad, style, by, glyph_size) = block_metrics(size);
     div()
         .flex()
         .items_center()
@@ -366,6 +404,38 @@ fn block(
             glyph.map(|glyph| icon(glyph, glyph_size, t.roles.on_primary)),
         )
         .child(label)
+}
+
+/// One of a row of labelled choices: the `picked` one outlined in blue
+/// over the hard offset, the others quiet flat blocks.
+pub fn segment(label: impl Into<SharedString>, picked: bool, t: &Theme) -> Div {
+    let segment = div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .flex_shrink_0()
+        .h(rems(1.875))
+        .px(sp(3.))
+        .typeset(Type::SMALL)
+        .whitespace_nowrap()
+        .cursor_pointer()
+        .child(label.into());
+    if picked {
+        // Filled with the page's ground, so the offset shows only at
+        // its edges.
+        segment
+            .bg(t.bg)
+            .border(px(1.5))
+            .border_color(t.blue)
+            .text_color(t.bright)
+            .font_weight(weight::EMPHASIS)
+            .shadow(offset(3., t.offset))
+    } else {
+        segment
+            .bg(t.card)
+            .text_color(t.muted)
+            .hover(|style| style.bg(t.raised))
+    }
 }
 
 /// What a button does, and so how loud it is.
@@ -799,6 +869,52 @@ pub fn marked_ticks(
     tick_strip(lit, total, 10., color, t.hairline, &marked)
 }
 
+/// [`marked_ticks`], with `labels` in small muted mono under the strip,
+/// each centred under the tick at its index: what a threshold stands
+/// for.
+pub fn labelled_ticks(
+    lit: usize,
+    total: usize,
+    color: Hsla,
+    marked: &[usize],
+    labels: &[(usize, SharedString)],
+    t: &Theme,
+) -> Div {
+    let strip = marked_ticks(lit, total, color, marked, t);
+    if labels.is_empty() {
+        return strip;
+    }
+    // The room a label is centred in: wider than any label is.
+    const ROOM: f32 = 8.;
+    let total = total.max(1);
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap(sp(1.))
+        .child(strip)
+        .child(
+            div().relative().w_full().h(rems(0.875)).children(
+                labels.iter().filter(|(at, _)| *at < total).map(
+                    |(at, label)| {
+                        div()
+                            .absolute()
+                            .top(rems(0.))
+                            .left(relative((*at as f32 + 0.5) / total as f32))
+                            .w(rems(ROOM))
+                            .ml(rems(-ROOM / 2.))
+                            .flex()
+                            .justify_center()
+                            .child(
+                                mono(label.clone(), Type::MICRO, t.muted)
+                                    .whitespace_nowrap(),
+                            )
+                    },
+                ),
+            ),
+        )
+}
+
 /// A strip of ticks, each in its own color: a whole in its parts.
 pub fn colored_ticks(colors: &[Hsla], _: &Theme) -> Div {
     div().flex().w_full().gap(rems(0.1875)).children(
@@ -1221,7 +1337,8 @@ pub fn weighted_table(
 }
 
 /// A fenced block of code from a reply, in the monospace face on a
-/// flat band, with its language in the corner.
+/// flat band, with its language on a line of its own over it, at the
+/// right.
 pub fn code_block(lang: Option<&str>, text: &str, t: &Theme) -> Div {
     numbered_code_block(lang, text, None, t)
 }
@@ -1248,11 +1365,21 @@ pub fn numbered_code_block(
             .child(numbers.join("\n"))
     });
     div()
-        .relative()
         .w_full()
+        .flex()
+        .flex_col()
         .px(sp(3.5))
         .py(sp(3.))
         .bg(t.card)
+        // Its language, on a line of its own at the right, over the
+        // code and never on it.
+        .children(lang.map(|lang| {
+            div().flex().justify_end().pb(sp(1.)).child(mono(
+                lang.to_owned(),
+                Type::MICRO,
+                t.dim,
+            ))
+        }))
         .child(
             div().flex().children(gutter).child(
                 div()
@@ -1292,13 +1419,6 @@ pub fn numbered_code_block(
                     ),
             ),
         )
-        .children(lang.map(|lang| {
-            div().absolute().top(sp(1.5)).right(sp(2.5)).child(mono(
-                lang.to_owned(),
-                Type::MICRO,
-                t.dim,
-            ))
-        }))
 }
 
 /// One line of code in the mono face, the byte ranges in `marked` on a
@@ -1451,6 +1571,16 @@ pub fn qr_code(text: &str, size: f32) -> Option<Div> {
             .justify_center()
             .bg(gpui::rgb(0xffffff))
             .child(modules),
+    )
+}
+
+/// [`qr_code`] printed over the hard offset: its white plate on a block
+/// of the offset's color, down and right.
+pub fn printed_qr_code(text: &str, size: f32, t: &Theme) -> Option<Div> {
+    Some(
+        qr_code(text, size)?
+            .flex_shrink_0()
+            .shadow(offset(4., t.offset)),
     )
 }
 

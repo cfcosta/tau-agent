@@ -119,6 +119,8 @@ fn answer(asked: &[heiko_ui_plugin::wire::ViewKey]) -> HostUpdate {
                             kind: Kind::Secondary,
                             icon: None,
                             size: Default::default(),
+                            wide: false,
+                            detail: None,
                         })
                         .unwrap(),
                     )

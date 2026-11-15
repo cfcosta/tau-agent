@@ -52,7 +52,7 @@ end
 local function heads_up(note)
 	local muted = note.status == "knew" or note.status == "dismissed"
 	local ink = muted and "neutral" or "cyan"
-	local children = { ui.row({ ui.heading(note.line), ui.spacer(), ui.stamp(note.tag, ink) }) }
+	local children = { ui.row({ ui.heading(note.line, not muted and "bright" or nil), ui.spacer(), ui.stamp(note.tag, ink) }) }
 	if note.status == "learned" and note.explain then
 		table.insert(children, ui.stack({ ui.rich("**" .. note.explain.title .. "**"), ui.list(note.explain.bullets) }))
 	end

@@ -16,9 +16,11 @@ use super::{
     SECRET_NAME_INPUT,
     SECRET_VALUE_INPUT,
     act_button,
-    allowance,
+    allowance_share,
+    allowance_ticks,
     button,
     events,
+    gap,
     page::{MORE, ruled},
     state_mark,
 };
@@ -62,7 +64,7 @@ pub fn banner_tree(agent: &Agent, compact: bool) -> Node {
     if compact && waits > 0 {
         head.push(button(
             &format!("{waits} for you"),
-            Kind::Primary,
+            Kind::Hot,
             DETAILS,
             Value::Null,
         ));
@@ -98,36 +100,49 @@ pub fn panel_tree(
     agent: &Agent,
     draft: &dyn Fn(&str) -> Option<String>,
 ) -> Node {
-    let section =
-        |id: &str, title: String, children: Vec<Node>| Node::Section {
-            id: format!("agent-panel-{id}"),
-            title,
-            open: true,
-            children,
-        };
-    let counted = |title: &str, count: usize| match count {
-        0 => title.to_owned(),
-        count => format!("{title} · {count}"),
+    // A section: its head, with a count when there is one, over its
+    // rows.
+    let section = |title: &str, count: usize, children: Vec<Node>| {
+        let mut section = vec![Node::Header {
+            title: title.to_owned(),
+            meta: (count > 0).then(|| count.to_string()),
+            actions: vec![],
+        }];
+        section.extend(children);
+        Node::Stack { children: section }
     };
     let mut panel = Vec::new();
     let left = super::notices::rows(agent, false, draft);
     if !left.is_empty() {
-        let title = counted("For you", left.len());
-        panel.push(section("for-you", title, ruled(left)));
+        panel.push(section("For you", left.len(), ruled(left)));
+        panel.push(gap());
     }
-    let mut today = allowance(agent).to_vec();
+    // Today: the share of the allowance at the head's end, over its
+    // strip.
+    let mut today = vec![
+        Node::Header {
+            title: "Today".into(),
+            meta: Some(format!(
+                "{} of today's allowance",
+                allowance_share(agent)
+            )),
+            actions: vec![],
+        },
+        allowance_ticks(agent),
+    ];
     if agent.status == Status::AtCap {
         today.push(Node::row([act_button(
-            "Allow more today",
-            Kind::Primary,
+            "allow more today",
+            Kind::Hot,
             &Act::AllowMore {
                 agent: agent.name.clone(),
                 amount: MORE,
             },
         )]));
     }
-    panel.push(section("today", "Today".into(), today));
-    let mut wakes: Vec<Node> = agent
+    panel.push(Node::Stack { children: today });
+    // What wakes it, a ruled row each: its kind, what, and when.
+    let mut wakes: Vec<Vec<Node>> = agent
         .triggers
         .iter()
         .map(|trigger| {
@@ -148,56 +163,65 @@ pub fn panel_tree(
                     id: format!("trigger-{}-{}-next", agent.name, trigger.name),
                     at: next * 1000,
                 }),
-                (None, None, Some(last)) => Some(ago(
-                    format!("trigger-{}-{}-last", agent.name, trigger.name),
-                    last,
-                )),
+                (None, None, Some(last)) => Some(Node::Ago {
+                    id: format!("trigger-{}-{}-last", agent.name, trigger.name),
+                    at: last * 1000,
+                }),
                 (None, None, None) => None,
             };
-            let mut row = vec![
-                kind(trigger.kind_label(), trigger.error.is_some()),
-                Node::Mono {
-                    text: trigger.label(),
-                },
-                Node::Spacer,
-            ];
-            row.extend(when);
-            let mut rows = vec![Node::Row { children: row }];
+            let mut what = vec![Node::Mono {
+                text: trigger.label(),
+            }];
             // A poll or a stream that failed says why, under it.
             if let Some(error) = &trigger.error {
-                rows.push(Node::Toned {
+                what.push(Node::Toned {
                     text: error.clone(),
                     tone: Tone::Bad,
                     mono: true,
                 });
             }
-            Node::Stack { children: rows }
+            let mut end = vec![Node::Spacer];
+            end.extend(when);
+            vec![
+                kind(trigger.kind_label(), trigger.error.is_some()),
+                Node::Stack { children: what },
+                Node::Row { children: end },
+            ]
         })
         .collect();
     wakes.extend(scheduled(agent));
-    let title = counted("What wakes it", wakes.len());
-    if wakes.is_empty() {
-        wakes.push(Node::Empty {
-            text: "Nothing yet.".into(),
-        });
-    }
-    panel.push(section("wakes", title, ruled(wakes)));
+    let count = wakes.len();
+    panel.push(gap());
     panel.push(section(
-        "keys",
-        counted("Keys", agent.secrets.len()),
-        secrets(agent),
+        "What wakes it",
+        count,
+        vec![if wakes.is_empty() {
+            Node::Empty {
+                text: "Nothing yet.".into(),
+            }
+        } else {
+            Node::Table {
+                head: vec![],
+                rows: wakes,
+                widths: WAKES.to_vec(),
+            }
+        }],
     ));
+    panel.push(gap());
+    panel.push(section("Keys", agent.secrets.len(), secrets(agent)));
     if !agent.versions.is_empty() {
+        panel.push(gap());
         panel.push(section(
-            "versions",
-            "Versions".into(),
+            "Versions",
+            0,
             ruled(agent.versions.iter().map(version_row).collect()),
         ));
     }
     if let Some(problem) = &agent.sandbox {
+        panel.push(gap());
         panel.push(section(
-            "commands",
-            "Commands".into(),
+            "Commands",
+            0,
             vec![Node::Status {
                 text: problem.clone(),
                 detail: None,
@@ -206,9 +230,10 @@ pub fn panel_tree(
         ));
     }
     if let Status::Broken { error } = &agent.status {
+        panel.push(gap());
         panel.push(section(
-            "broken",
-            "Broken".into(),
+            "Broken",
+            0,
             vec![Node::Status {
                 text: error.clone(),
                 detail: None,
@@ -219,6 +244,10 @@ pub fn panel_tree(
     Node::Stack { children: panel }
 }
 
+/// The shares of the panel's width a thing that wakes the agent gives
+/// its kind, what it is, and when.
+const WAKES: [f32; 3] = [1.3, 4., 2.];
+
 /// What kind of thing wakes it, in mono: red when it is `failing`.
 fn kind(label: &str, failing: bool) -> Node {
     Node::Toned {
@@ -228,29 +257,18 @@ fn kind(label: &str, failing: bool) -> Node {
     }
 }
 
-/// The time since `at`, in seconds since the epoch, counting: `4:12 ago`.
-pub(super) fn ago(id: String, at: i64) -> Node {
-    Node::row([
-        Node::Ticker {
-            id,
-            since: at * 1000,
-            until: None,
-        },
-        Node::Mono { text: "ago".into() },
-    ])
-}
-
-/// What `agent` scheduled for itself, soonest first: what and when, a
-/// way for the person to drop it, and the note it left itself under.
-fn scheduled(agent: &Agent) -> Vec<Node> {
+/// What `agent` scheduled for itself, soonest first, a row of the
+/// panel's table each: whether it repeats, what it is over the note it
+/// left itself, and when, with a way for the person to drop it.
+fn scheduled(agent: &Agent) -> Vec<Vec<Node>> {
     agent
         .scheduled
         .iter()
         .map(|scheduled| {
             let repeats = !matches!(scheduled.when, crate::When::Once { .. });
-            Node::stack([
-                Node::row([
-                    kind(if repeats { "repeats" } else { "once" }, false),
+            vec![
+                kind(if repeats { "repeats" } else { "once" }, false),
+                Node::stack([
                     Node::Mono {
                         text: if repeats {
                             format!(
@@ -262,6 +280,13 @@ fn scheduled(agent: &Agent) -> Vec<Node> {
                             scheduled.name.clone()
                         },
                     },
+                    Node::Toned {
+                        text: scheduled.note.clone(),
+                        tone: Tone::Neutral,
+                        mono: false,
+                    },
+                ]),
+                Node::row([
                     Node::Spacer,
                     Node::Due {
                         id: format!(
@@ -279,12 +304,7 @@ fn scheduled(agent: &Agent) -> Vec<Node> {
                         },
                     ),
                 ]),
-                Node::Toned {
-                    text: scheduled.note.clone(),
-                    tone: Tone::Neutral,
-                    mono: false,
-                },
-            ])
+            ]
         })
         .collect()
 }
@@ -395,7 +415,7 @@ fn version_row(version: &crate::Version) -> Node {
 }
 
 /// An event message, drawn as the batch it is: how many came and when,
-/// then a ruled row each with its data under it.
+/// then a ruled row each: its kind, what came with its data, and when.
 pub(super) fn event_card(
     at: &AtMessage,
     _view: &mut ViewCx<'_, AgentsUi>,
@@ -403,9 +423,13 @@ pub(super) fn event_card(
     Some(event_tree(&Message::parse(&at.text)?))
 }
 
+/// The shares of the card's width an event gives its kind, what came,
+/// and when.
+const EVENT: [f32; 3] = [1., 7., 1.4];
+
 /// The event card's tree.
 pub fn event_tree(message: &Message) -> Node {
-    let mut card = vec![Node::row([
+    let head = Node::row([
         Node::Rich {
             text: format!("**{}**", events(message.events.len())),
         },
@@ -415,31 +439,46 @@ pub fn event_tree(message: &Message) -> Node {
             tone: Tone::Neutral,
             mono: true,
         },
-    ])];
-    for event in &message.events {
-        card.push(Node::Rule);
-        card.push(Node::row([
-            kind(event.kind.as_str(), false),
-            Node::Mono {
-                text: event.trigger.clone(),
-            },
-            Node::Toned {
-                text: event.id.clone(),
-                tone: Tone::Neutral,
-                mono: true,
-            },
-            Node::Spacer,
-            Node::Toned {
-                text: event.time.clone(),
-                tone: Tone::Neutral,
-                mono: true,
-            },
-        ]));
-        if !event.data.is_empty() && event.data != "null" {
-            card.push(Node::Mono {
-                text: event.data.clone(),
-            });
-        }
-    }
-    Node::Stack { children: card }
+    ]);
+    let rows = message
+        .events
+        .iter()
+        .map(|event| {
+            let mut what = vec![
+                Node::Mono {
+                    text: event.trigger.clone(),
+                },
+                Node::Toned {
+                    text: event.id.clone(),
+                    tone: Tone::Neutral,
+                    mono: true,
+                },
+            ];
+            if !event.data.is_empty() && event.data != "null" {
+                what.push(Node::Mono {
+                    text: event.data.clone(),
+                });
+            }
+            vec![
+                kind(event.kind.as_str(), false),
+                Node::Row { children: what },
+                Node::row([
+                    Node::Spacer,
+                    Node::Toned {
+                        text: event.time.clone(),
+                        tone: Tone::Neutral,
+                        mono: true,
+                    },
+                ]),
+            ]
+        })
+        .collect();
+    Node::stack([
+        head,
+        Node::Table {
+            head: vec![],
+            rows,
+            widths: EVENT.to_vec(),
+        },
+    ])
 }

@@ -31,7 +31,9 @@ t.case("a run lists the skills and loads one by name", function()
 	t.equal(why, 'There is no skill "nope". The skills are: principle-small, release-notes.')
 	local card = r:view().calls.c1
 	t.equal(card.head.text, "release-notes")
-	t.equal(card.body.children[2].text, "/mine/release-notes/SKILL.md")
+	t.equal(card.body.children[2].children[1], { piece = "stamp", label = "/mine/release-notes/SKILL.md", tone = "neutral" })
+	t.equal(card.body.children[3].piece, "band")
+	t.equal(card.body.children[3].children[1].piece, "markdown")
 end)
 
 t.case("the page shows each skill, and the folder's button reveals it", function()

@@ -86,6 +86,23 @@ local function find(piece, kind, label)
 	return nil
 end
 
+-- The square of the row to tick that says `label`, when one is given;
+-- every such square in `piece` otherwise.
+local function ticks(piece, label)
+	local out = {}
+	for _, each in ipairs(pieces(piece)) do
+		local square, said = (each.children or {})[1], (each.children or {})[2]
+		if each.piece == "row" and square and square.piece == "square" and square.action ~= nil and said then
+			if label == nil then
+				table.insert(out, square)
+			elseif said.children and said.children[1] and said.children[1].text == label then
+				return square
+			end
+		end
+	end
+	return label == nil and out or nil
+end
+
 local function write(run, args)
 	return run:tool("memory_write", args)
 end
@@ -362,12 +379,23 @@ t.case("a recalled note is on a slip, a saved one on a dashed slip", function()
 	local mark = run:view().notes.m0
 	t.equal(find(mark, "kanji").text, "憶")
 	t.equal(find(mark, "slip", "Retries").dashed, false)
-	t.equal(find(mark, "slip", "Terse") ~= nil, true, "the person's note")
+	-- Each opens its note: the repository's on its page, the person's
+	-- on theirs.
+	local retries, terse = find(mark, "slip", "Retries").to, find(mark, "slip", "Terse").to
+	t.equal(retries.page, "notes")
+	t.equal(retries.params, { note = "retry", repo = "shop" })
+	t.equal(terse.page, "notes")
+	t.equal(terse.params, { note = "terse" })
+	-- The plugin's name ends the first line, small.
+	local named = find(mark, "toned", "heiko-memory")
+	t.equal(named ~= nil, true, "the plugin's name")
 
 	local saving = run_with({
 		state = { log = { { kind = "saved", calls = { { tool = "memory_write", details = { id = "retry", title = "Retries" } } } } } },
 	})
-	t.equal(find(saving:view().notes.m0, "slip", "Retries").dashed, true)
+	local saved = find(saving:view().notes.m0, "slip", "Retries")
+	t.equal(saved.dashed, true)
+	t.equal(saved.to.params, { note = "retry", repo = "shop" })
 end)
 
 t.case("a run starts with how many notes its repository has", function()
@@ -386,6 +414,8 @@ t.case("a repository's notes page lists, filters, searches and opens its notes",
 	local list = find(page, "table")
 	t.equal(list.head, {})
 	t.equal(#list.rows, 2)
+	t.equal(find(page, "header").title, "Memory")
+	t.equal(find(page, "header").meta, "2 notes")
 	t.equal(find(page, "link", "Facts 1") ~= nil, true, "a link to the facts")
 	t.equal(find(page, "link", "Gotchas 1") ~= nil, true, "a link to the gotchas")
 	t.equal(find(page, "pill").text, "All 2")
@@ -428,7 +458,7 @@ t.case("the person's notes are a page of the app, and its sidebar entry counts t
 	local run = run_with()
 	write(run, fact("terse answers", { type = "preference", scope = "user" }))
 	local page = run:app_page_of("notes", {})
-	t.equal(find(page, "title").text, "Your notes")
+	t.equal(find(page, "header").title, "Your notes")
 	t.equal(#find(page, "table").rows, 1)
 	t.equal(run:app().nav.detail, "1 notes")
 	t.equal(run:repo_data().nav.detail, "0 notes")
@@ -443,8 +473,8 @@ t.case("an imported note says where it came from", function()
 	settle(run)
 	local review = run:app_page_of("import", {})
 	local ids = {}
-	for _, each in ipairs(pieces(review)) do
-		if each.piece == "switch" and each.args.act and each.args.act.act == "tick" then
+	for _, each in ipairs(ticks(review)) do
+		if each.args.act and each.args.act.act == "tick" then
 			table.insert(ids, each.args.act.id)
 		end
 	end
@@ -482,13 +512,9 @@ t.case("the review page shows what waits, by tab, and keeps what is ticked", fun
 	t.equal(shows(searched, "1 to keep · 0 left for you to decide"), true, "one matches")
 
 	-- Unticking one keeps the other alone.
-	local tick = nil
-	for _, each in ipairs(pieces(page)) do
-		if each.piece == "switch" and each.label == "make-check" then
-			tick = each
-		end
-	end
-	t.equal(tick ~= nil, true, "a switch per proposal")
+	local tick = ticks(page, "make-check")
+	t.equal(tick ~= nil, true, "a tick per proposal")
+	t.equal(tick.style, "filled", "kept until unticked")
 	run:action(tick.action, tick.args)
 	local after = run:app_page_of("import", {})
 	t.equal(shows(after, "1 to keep · 1 left for you to decide"), true, "one unticked")
@@ -583,8 +609,8 @@ t.case("the setup step shows each tool found and where its folders go", function
 	t.equal(shows(body, "About you · 1 note"), true, "what is about the person")
 	t.equal(shows(body, "1 other folder"), true, "the folder heiko does not have")
 	t.equal(shows(body, "left out"), true, "left out, unless asked")
-	local others = find(body, "switch", "Also bring folders heiko does not have yet, to use when you add them")
-	t.equal(others.on, false)
+	local others = ticks(body, "Also bring folders heiko does not have yet, to use when you add them")
+	t.equal(others.style, "quiet")
 	run:action(others.action, others.args)
 	local chosen = run:setup(run:app(), { { name = "acme/shop", folder = SHOP } })
 	t.equal(shows(chosen.body, "kept for when you add them"), true, "kept for later")

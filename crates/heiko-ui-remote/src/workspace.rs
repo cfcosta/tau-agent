@@ -595,12 +595,6 @@ pub struct Workspace {
     pub(crate) all_runs: HashSet<String>,
     /// Runs whose forks and sub-agents the sidebar folds away.
     pub(crate) folded: HashSet<RunId>,
-    /// Whether the sidebar's Plugins shows what is under it: the built-in
-    /// plugins, the person's own, and the chats writing them.
-    pub(crate) plugins_open: bool,
-    /// The agents whose rows show what is under them: their last line
-    /// and their sub-agents at work (ADR 0037).
-    pub(crate) open_agents: HashSet<String>,
     /// The repository whose name, at the head of its tree, is under
     /// the pointer: it shows the way to its menu.
     pub(crate) hovered_repo: Option<String>,
@@ -626,9 +620,6 @@ pub struct Workspace {
     transcript: ListState,
     /// The run and item count `transcript` was last told about.
     listed: Option<(RunId, usize)>,
-    /// The transcript's width at its last layout, read before each frame:
-    /// the list cannot be asked while it lays items out.
-    transcript_width: Option<gpui::Pixels>,
     /// Keep the transcript at its bottom as the run grows. Scrolling up
     /// turns it off; scrolling back down turns it on.
     follow: bool,
@@ -880,8 +871,6 @@ impl Workspace {
             open_repos: HashSet::new(),
             all_runs: HashSet::new(),
             folded: HashSet::new(),
-            plugins_open: true,
-            open_agents: HashSet::new(),
             hovered_repo: None,
             repo_menu: None,
             setup_goal: None,
@@ -906,7 +895,6 @@ impl Workspace {
             slash_seen: String::new(),
             transcript: ListState::new(0, ListAlignment::Top, px(600.)),
             listed: None,
-            transcript_width: None,
             follow: true,
             focus: cx.focus_handle(),
             replays: Vec::new(),

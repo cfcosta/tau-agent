@@ -37,6 +37,7 @@ use heiko_ui_kit::{
         icon,
         link,
         mono,
+        printed_qr_code,
         qr_code,
         rule,
         section_header,
@@ -232,6 +233,34 @@ pub enum SquareLook {
     Filled,
 }
 
+/// How much room a [`Node::Gap`] leaves, by name on the wire.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum GapSize {
+    Small,
+    #[default]
+    Medium,
+    Large,
+}
+
+/// A label under a tick of [`Node::Ticks`]: the tick's index, from 0,
+/// and what it says.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TickLabel {
+    pub at: u32,
+    pub text: String,
+}
+
+/// One of the choices of [`Node::Segments`]: what it says, and the
+/// value a click on it sends.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Segment {
+    pub label: String,
+    pub value: Value,
+}
+
 /// A line of [`Node::Rows`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KeyValue {
@@ -351,7 +380,9 @@ pub enum Node {
         #[serde(default, deserialize_with = "nodes")]
         children: Vec<Node>,
     },
-    /// Pieces side by side, wrapping.
+    /// Pieces side by side, wrapping. After a [`Node::Kanji`] they do
+    /// not wrap under it: the glyph keeps its width and the rest takes
+    /// what is left.
     Row {
         #[serde(default, deserialize_with = "nodes")]
         children: Vec<Node>,
@@ -365,6 +396,11 @@ pub enum Node {
     },
     /// A line across.
     Rule,
+    /// Room between two pieces one under the other.
+    Gap {
+        #[serde(default)]
+        size: GapSize,
+    },
     /// Pieces in a group of their own, under a hairline.
     Card {
         #[serde(default, deserialize_with = "nodes")]
@@ -469,10 +505,12 @@ pub enum Node {
         height: Option<f32>,
     },
     /// `text` as a QR code `size` pixels wide, for a phone's camera: a
-    /// pairing code.
+    /// pairing code. With `offset`, printed over the hard offset.
     Qr {
         text: String,
         size: f32,
+        #[serde(default, skip_serializing_if = "is_default")]
+        offset: bool,
     },
     /// A tree the interface fetches and keeps (ADR 0045), as a picture:
     /// `key` names it, and changes when what it shows does; `fetch` is the
@@ -572,7 +610,9 @@ pub enum Node {
     },
     /// A button that asks the plugin to carry out `action` with `args`.
     /// With no label and an icon, a small square around the icon.
-    /// `size` is a primary button's.
+    /// `size` is a primary button's. A `wide` one takes the whole
+    /// width, its label at the left; a wide primary one may have
+    /// `detail`, a second line in smaller text inside the block.
     Button {
         label: String,
         action: String,
@@ -584,6 +624,23 @@ pub enum Node {
         icon: Option<String>,
         #[serde(default, skip_serializing_if = "is_default")]
         size: ButtonSize,
+        #[serde(default, skip_serializing_if = "is_default")]
+        wide: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+    },
+    /// A labelled choice: its `choices` side by side, the one whose
+    /// value is `picked` outlined in blue over the offset, the others
+    /// quiet flat blocks. A click carries out `action`, the plugin's
+    /// own, with `args` and the choice's `value`.
+    Segments {
+        #[serde(default)]
+        choices: Vec<Segment>,
+        #[serde(default)]
+        picked: Value,
+        action: String,
+        #[serde(default)]
+        args: Value,
     },
     /// Text that opens a page.
     Link {
@@ -607,7 +664,8 @@ pub enum Node {
     },
     /// A quantity: `total` square ticks, the first `lit` of them in
     /// `tone`, those at the indexes in `marked` (from 0) white, as
-    /// thresholds on the strip.
+    /// thresholds on the strip. `labels` are small print under it, each
+    /// centred under its tick.
     Ticks {
         #[serde(default)]
         lit: u32,
@@ -616,6 +674,8 @@ pub enum Node {
         tone: Ink,
         #[serde(default)]
         marked: Vec<u32>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        labels: Vec<TickLabel>,
     },
     /// The small mark of a state; with a `count` above one, the count
     /// before it.
@@ -1087,6 +1147,28 @@ impl<'a> Draw<'a> {
         drawn
     }
 
+    /// Pieces one under the other, as a stack draws them: a header that
+    /// is not the first has room over it, so sections stand apart.
+    fn stacked(
+        &self,
+        nodes: &[Node],
+        depth: usize,
+        path: &str,
+        cx: &mut App,
+    ) -> Vec<AnyElement> {
+        self.children(nodes, depth, path, cx)
+            .into_iter()
+            .zip(nodes)
+            .enumerate()
+            .map(|(n, (drawn, node))| match node {
+                Node::Header { .. } if n > 0 => {
+                    div().pt(sp(4.)).child(drawn).into_any_element()
+                }
+                _ => drawn,
+            })
+            .collect()
+    }
+
     /// A board: its columns side by side, each card draggable to another
     /// column, which carries out `action`; too narrow for them, its
     /// columns as tabs.
@@ -1375,7 +1457,7 @@ impl<'a> Draw<'a> {
             Node::Icon { .. }
             | Node::Badge { .. }
             | Node::Pill { .. }
-            | Node::Button { .. }
+            | Node::Button { wide: false, .. }
             | Node::Link { .. }
             | Node::Mark { .. }
             | Node::Stamp { .. }
@@ -1614,15 +1696,33 @@ impl<'a> Draw<'a> {
                 .flex()
                 .flex_col()
                 .gap(sp(2.))
-                .children(self.children(children, depth, path, cx))
+                .children(self.stacked(children, depth, path, cx))
                 .into_any_element(),
-            Node::Row { children } => div()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap(sp(2.))
-                .children(self.children(children, depth, path, cx))
-                .into_any_element(),
+            Node::Row { children } => {
+                let mut drawn = self.children(children, depth, path, cx);
+                let row = div().flex().flex_wrap().items_center().gap(sp(2.));
+                if !matches!(children.first(), Some(Node::Kanji { .. }))
+                    || drawn.len() < 2
+                {
+                    return row.children(drawn).into_any_element();
+                }
+                // The glyph keeps its width; the rest takes what is
+                // left, and wraps there, never under the glyph.
+                let kanji = drawn.remove(0);
+                let rest = div().flex_1().min_w(rems(0.));
+                let rest = if drawn.len() == 1 {
+                    rest.children(drawn)
+                } else {
+                    rest.child(row.children(drawn))
+                };
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(sp(3.))
+                    .child(kanji)
+                    .child(rest)
+                    .into_any_element()
+            }
             Node::Scroll { height, children } => div()
                 .id(SharedString::from(format!("{path}:scroll")))
                 .flex()
@@ -1630,9 +1730,17 @@ impl<'a> Draw<'a> {
                 .gap(sp(2.))
                 .max_h(rems(height.unwrap_or(24.).clamp(2., 80.)))
                 .overflow_y_scroll()
-                .children(self.children(children, depth, path, cx))
+                .children(self.stacked(children, depth, path, cx))
                 .into_any_element(),
             Node::Rule => rule(t).into_any_element(),
+            Node::Gap { size } => div()
+                .flex_shrink_0()
+                .h(sp(match size {
+                    GapSize::Small => 2.,
+                    GapSize::Medium => 4.,
+                    GapSize::Large => 8.,
+                }))
+                .into_any_element(),
             Node::Card { children } => heiko_ui_kit::components::card(t)
                 .gap(sp(2.))
                 .py(sp(3.))
@@ -1713,8 +1821,7 @@ impl<'a> Draw<'a> {
                     .gap(sp(3.))
                     .child(head)
                     .when(open, |column| {
-                        column
-                            .children(self.children(children, depth, path, cx))
+                        column.children(self.stacked(children, depth, path, cx))
                     })
                     .into_any_element()
             }
@@ -1763,7 +1870,7 @@ impl<'a> Draw<'a> {
                     .child(bar)
                     .children(tabs.get(chosen).map(|tab| {
                         div().flex().flex_col().gap(sp(2.)).children(
-                            self.children(
+                            self.stacked(
                                 &tab.children,
                                 depth,
                                 &format!("{path}:{chosen}"),
@@ -1850,10 +1957,17 @@ impl<'a> Draw<'a> {
                     invalid("an image, drawn where the interface keeps one", t)
                 }
             },
-            Node::Qr { text, size } => qr_code(text, *size).map_or_else(
-                || invalid("text too long for a QR code", t),
-                IntoElement::into_any_element,
-            ),
+            Node::Qr { text, size, offset } => {
+                let code = if *offset {
+                    printed_qr_code(text, *size, t)
+                } else {
+                    qr_code(text, *size)
+                };
+                code.map_or_else(
+                    || invalid("text too long for a QR code", t),
+                    IntoElement::into_any_element,
+                )
+            }
             Node::Fetched { key, fetch } => match self.fetches {
                 Some(fetches) => match fetches(key, fetch, cx) {
                     Some(Ok(answer)) => {
@@ -2151,35 +2265,98 @@ impl<'a> Draw<'a> {
                 args,
                 kind,
                 size,
+                wide,
+                detail,
                 ..
             } => match self.click(Act::Plugin {
                 action: action.clone(),
                 args: args.clone(),
             }) {
-                Some(click) => match kind {
-                    Kind::Primary => heiko_ui_kit::components::primary_block(
-                        label.clone(),
-                        (*size).into(),
-                        t,
-                    ),
-                    Kind::Hot => {
-                        heiko_ui_kit::components::hot_action(label.clone(), t)
-                            .typeset(Type::SMALL)
-                    }
-                    Kind::Secondary | Kind::Danger => {
-                        button(label.clone(), (*kind).into(), t)
-                    }
+                Some(click) => {
+                    let drawn = match kind {
+                        Kind::Primary if *wide => {
+                            heiko_ui_kit::components::wide_block(
+                                label.clone(),
+                                detail.clone().map(SharedString::from),
+                                (*size).into(),
+                                t,
+                            )
+                        }
+                        Kind::Primary => {
+                            heiko_ui_kit::components::primary_block(
+                                label.clone(),
+                                (*size).into(),
+                                t,
+                            )
+                        }
+                        Kind::Hot => heiko_ui_kit::components::hot_action(
+                            label.clone(),
+                            t,
+                        )
+                        .typeset(Type::SMALL),
+                        Kind::Secondary | Kind::Danger => {
+                            button(label.clone(), (*kind).into(), t)
+                        }
+                    };
+                    // A wide one that is a word takes the row's width,
+                    // the word at its left.
+                    let drawn = if *wide && *kind != Kind::Primary {
+                        div()
+                            .w_full()
+                            .flex()
+                            .justify_start()
+                            .cursor_pointer()
+                            .child(drawn)
+                    } else {
+                        drawn
+                    };
+                    drawn
+                        .id(SharedString::from(format!("{path}:button")))
+                        .debug_selector(selector("button", label))
+                        .on_click(click)
+                        .into_any_element()
                 }
-                .id(SharedString::from(format!("{path}:button")))
-                .debug_selector(selector("button", label))
-                .on_click(click)
-                .into_any_element(),
                 None => div()
                     .typeset(Type::SMALL)
                     .text_color(t.dim)
                     .child(label.clone())
                     .into_any_element(),
             },
+            Node::Segments {
+                choices,
+                picked,
+                action,
+                args,
+            } => div()
+                .flex()
+                .flex_wrap()
+                .gap(sp(2.))
+                .children(choices.iter().take(MAX_CHILDREN).enumerate().map(
+                    |(n, choice)| {
+                        // What the click sends: the piece's `args`, and
+                        // the choice's value.
+                        let mut sent = match args {
+                            Value::Object(args) => args.clone(),
+                            _ => Map::new(),
+                        };
+                        sent.insert("value".to_owned(), choice.value.clone());
+                        heiko_ui_kit::components::segment(
+                            choice.label.clone(),
+                            !picked.is_null() && *picked == choice.value,
+                            t,
+                        )
+                        .id(SharedString::from(format!("{path}:segment{n}")))
+                        .debug_selector(selector("segment", &choice.label))
+                        .when_some(
+                            self.click(Act::Plugin {
+                                action: action.clone(),
+                                args: Value::Object(sent),
+                            }),
+                            |segment, click| segment.on_click(click),
+                        )
+                    },
+                ))
+                .into_any_element(),
             Node::Link { label, to } => {
                 match self.click(Act::Navigate(to.clone())) {
                     Some(click) => text_link(label.clone(), Type::SMALL, t)
@@ -2202,20 +2379,27 @@ impl<'a> Draw<'a> {
                 total,
                 tone,
                 marked,
+                labels,
             } => {
                 let total = (*total as usize).clamp(1, MAX_TICKS);
                 let marked: Vec<usize> =
                     marked.iter().map(|at| *at as usize).collect();
+                let labels: Vec<(usize, SharedString)> = labels
+                    .iter()
+                    .take(MAX_TICKS)
+                    .map(|label| (label.at as usize, label.text.clone().into()))
+                    .collect();
                 // It takes the room a row gives it, and never less than
                 // its ticks need.
                 div()
                     .flex_1()
                     .min_w(rems(6.))
-                    .child(heiko_ui_kit::components::marked_ticks(
+                    .child(heiko_ui_kit::components::labelled_ticks(
                         (*lit as usize).min(total),
                         total,
                         tone.color(t),
                         &marked,
+                        &labels,
                         t,
                     ))
                     .into_any_element()
@@ -2345,7 +2529,8 @@ fn field_text(draft: &str, t: &Theme) -> AnyElement {
 
 /// A clickable piece's name for tests (`debug_bounds`): its kind and
 /// what it says, `button:Save`, `link:Memory`, `switch:Compact idle
-/// chats`, `section:Details`, `tab:Rules`, `square:1`, `slip:a note`.
+/// chats`, `section:Details`, `tab:Rules`, `square:1`, `slip:a note`,
+/// `segment:Weekly`.
 fn selector(kind: &str, label: &str) -> impl Fn() -> String + 'static {
     let name = format!("{kind}:{label}");
     move || name.clone()
@@ -2420,6 +2605,8 @@ mod tests {
                 kind: Kind::Secondary,
                 icon: None,
                 size: ButtonSize::Small,
+                wide: false,
+                detail: None,
             }
         );
     }
@@ -2557,6 +2744,7 @@ mod tests {
                 total: 10,
                 tone: Ink::Neutral,
                 marked: Vec::new(),
+                labels: Vec::new(),
             }
         );
         assert_eq!(
@@ -2631,6 +2819,8 @@ mod tests {
                 kind: Kind::Primary,
                 icon: None,
                 size: ButtonSize::Large,
+                wide: false,
+                detail: None,
             }
         );
         assert_eq!(
@@ -2672,6 +2862,120 @@ mod tests {
             json!({ "piece": "heading", "text": "x", "tone": "mauve" }),
             json!({ "piece": "marked", "text": "x", "spans": [[1]] }),
             json!({ "piece": "header" }),
+        ] {
+            assert!(matches!(Node::read(&bad), Node::Invalid { .. }), "{bad}");
+        }
+    }
+
+    /// Wide buttons, gaps, tick labels, the printed QR code and segments
+    /// read and write their wire shape; what a builder leaves out is not
+    /// written, so a piece from before them reads and writes as it did.
+    #[test]
+    fn wide_buttons_gaps_labels_and_segments() {
+        let wire = json!({ "piece": "stack", "children": [
+            { "piece": "button", "label": "Start a run", "action": "start", "args": {},
+              "kind": "primary", "icon": null, "size": "large", "wide": true,
+              "detail": "on main, with the plan" },
+            { "piece": "button", "label": "Skip", "action": "skip", "args": {},
+              "kind": "secondary", "icon": null, "wide": true },
+            { "piece": "gap", "size": "large" },
+            { "piece": "ticks", "lit": 6, "total": 21, "tone": "info", "marked": [16],
+              "labels": [{ "at": 0, "text": "0" }, { "at": 16, "text": "compacts" }] },
+            { "piece": "qr", "text": "heiko://pair", "size": 200.0, "offset": true },
+            { "piece": "segments",
+              "choices": [
+                { "label": "Daily", "value": "daily" },
+                { "label": "Weekly", "value": "weekly" },
+                { "label": "3", "value": 3 },
+              ],
+              "picked": "weekly", "action": "every", "args": { "agent": "tidy" } },
+        ]});
+        let node = Node::read(&wire);
+        let Node::Stack { children } = &node else {
+            panic!("a stack: {node:?}")
+        };
+        assert!(
+            children
+                .iter()
+                .all(|child| !matches!(child, Node::Invalid { .. })),
+            "{node:?}"
+        );
+        assert_eq!(node.value(), wire);
+        assert_eq!(Node::read(&node.value()), node);
+        assert_eq!(
+            children[0],
+            Node::Button {
+                label: "Start a run".into(),
+                action: "start".into(),
+                args: json!({}),
+                kind: Kind::Primary,
+                icon: None,
+                size: ButtonSize::Large,
+                wide: true,
+                detail: Some("on main, with the plan".into()),
+            }
+        );
+        assert_eq!(
+            children[3],
+            Node::Ticks {
+                lit: 6,
+                total: 21,
+                tone: Ink::Info,
+                marked: vec![16],
+                labels: vec![
+                    TickLabel {
+                        at: 0,
+                        text: "0".into(),
+                    },
+                    TickLabel {
+                        at: 16,
+                        text: "compacts".into(),
+                    },
+                ],
+            }
+        );
+        // What a builder leaves out: a medium gap, a plain QR code,
+        // nothing picked.
+        assert_eq!(
+            Node::read(&json!({ "piece": "gap" })),
+            Node::Gap {
+                size: GapSize::Medium,
+            }
+        );
+        assert_eq!(
+            Node::read(&json!({ "piece": "qr", "text": "x", "size": 120.0 })),
+            Node::Qr {
+                text: "x".into(),
+                size: 120.,
+                offset: false,
+            }
+        );
+        assert_eq!(
+            Node::read(&json!({ "piece": "segments", "action": "pick" })),
+            Node::Segments {
+                choices: Vec::new(),
+                picked: Value::Null,
+                action: "pick".into(),
+                args: Value::Null,
+            }
+        );
+        // Pieces from before these: nothing new is written for them.
+        for old in [
+            json!({ "piece": "button", "label": "Go", "action": "go", "args": {},
+                    "kind": "primary", "icon": null, "size": "medium" }),
+            json!({ "piece": "ticks", "lit": 2, "total": 10, "tone": "good", "marked": [] }),
+            json!({ "piece": "qr", "text": "x", "size": 200.0 }),
+        ] {
+            let node = Node::read(&old);
+            assert!(!matches!(node, Node::Invalid { .. }), "{node:?}");
+            assert_eq!(node.value(), old);
+        }
+        for bad in [
+            json!({ "piece": "gap", "size": "huge" }),
+            json!({ "piece": "ticks", "total": 4, "labels": [{ "at": 1 }] }),
+            json!({ "piece": "segments", "choices": [{ "label": "x", "value": 1 }] }),
+            json!({ "piece": "segments", "action": "pick", "choices": [{ "value": 1 }] }),
+            json!({ "piece": "button", "label": "Go", "action": "go", "wide": "yes" }),
         ] {
             assert!(matches!(Node::read(&bad), Node::Invalid { .. }), "{bad}");
         }

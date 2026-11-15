@@ -187,8 +187,14 @@ pub struct CallResult {
 /// What a plugin decided about a tool call, for its card.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CardMark {
-    /// Refused; `reason` went back to the model.
-    Blocked { reason: String },
+    /// Refused; `reason` went back to the model. `by` names who refused
+    /// when that is not the plugin that marks the call: a package a
+    /// host plugin runs.
+    Blocked {
+        reason: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        by: Option<String>,
+    },
     /// It ran, and waits for a person to look at it.
     Flagged,
 }

@@ -246,6 +246,12 @@
                 "text": "**Retry latency**"
               },
               {
+                "mono": false,
+                "piece": "toned",
+                "text": "·",
+                "tone": "neutral"
+              },
+              {
                 "action": "pick",
                 "args": {
                   "fresh": 3,
@@ -258,6 +264,9 @@
               }
             ],
             "piece": "row"
+          },
+          {
+            "piece": "rule"
           },
           {
             "children": [
@@ -276,12 +285,17 @@
                 "piece": "image"
               },
               {
-                "piece": "heading",
+                "piece": "rule"
+              },
+              {
+                "piece": "text",
                 "text": "p50 and p99 latency per attempt, before and after the backoff change"
               },
               {
-                "piece": "mono",
-                "text": "1200×640 PNG · target/plots/retry-latency.png"
+                "mono": true,
+                "piece": "toned",
+                "text": "1200×640 PNG · target/plots/retry-latency.png",
+                "tone": "neutral"
               }
             ],
             "piece": "stack"

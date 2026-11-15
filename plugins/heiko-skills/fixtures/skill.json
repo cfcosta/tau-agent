@@ -34,14 +34,23 @@
               "text": "Writes release notes from the commits between two tags: groups by kind, leads with what users notice."
             },
             {
-              "piece": "mono",
-              "text": "~/.agents/skills/release-notes/SKILL.md"
+              "children": [
+                {
+                  "label": "~/.agents/skills/release-notes/SKILL.md",
+                  "piece": "stamp",
+                  "tone": "neutral"
+                }
+              ],
+              "piece": "row"
             },
             {
-              "first_line": null,
-              "lang": "markdown",
-              "piece": "code",
-              "text": "Run scripts/commits.sh with the two tags, group what it lists, and lead with what users will notice."
+              "children": [
+                {
+                  "piece": "markdown",
+                  "text": "Run scripts/commits.sh with the two tags, group what it lists, and lead with what users will notice."
+                }
+              ],
+              "piece": "band"
             }
           ],
           "piece": "stack"

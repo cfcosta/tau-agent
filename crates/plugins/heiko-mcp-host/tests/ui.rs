@@ -944,7 +944,7 @@ fn window_ui() -> (Handle, Asked) {
     (handle_into(&asked), asked)
 }
 
-/// The button or switch labelled `label` in the tree `node`: its action
+/// The button or segment labelled `label` in the tree `node`: its action
 /// and arguments.
 fn find(node: &Value, label: &str) -> Option<(String, Value)> {
     match node {
@@ -1128,7 +1128,8 @@ fn the_editor_sends_what_it_may() {
     window.click(repo, &servers, "remove it");
     assert_eq!(window.held().removing, None);
     // The rest asks the host half as clicked.
-    window.click(None, &servers, "On in every repository");
+    // The first server is on: its "off" segment is the one to click.
+    window.click(None, &servers, "off");
     window.click(repo, &servers, "Approve");
     window.click(repo, &servers, "reconnect");
     let mut unstarted = servers.clone();

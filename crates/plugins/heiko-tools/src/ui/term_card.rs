@@ -60,6 +60,8 @@ pub fn body(id: &str, term: &TermOutput, cut: Option<&OutputCut>) -> Node {
             kind: Kind::Secondary,
             icon: None,
             size: Default::default(),
+            wide: false,
+            detail: None,
         },
     ])
 }
@@ -75,6 +77,8 @@ fn copy(term: &TermOutput) -> Option<Node> {
         kind: Kind::Secondary,
         icon: None,
         size: Default::default(),
+        wide: false,
+        detail: None,
     })
 }
 

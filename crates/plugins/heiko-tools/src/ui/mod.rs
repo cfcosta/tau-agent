@@ -3,7 +3,8 @@
 //! `write_stdin` show their terminal, or the last lines of their output,
 //! and how the command stands as a stamp; `read`, the lines the model
 //! got; `edit` and `write`, the diff they made; `ls`, the directory;
-//! `find`, the paths; `grep`, the matching lines under their files;
+//! `find`, the paths; `grep`, the matching lines under their files, what
+//! it looked for marked in them;
 //! `artifact_read`, how much of the artifact it read.
 //!
 //! The host builds the plugin's tools on the run's workspace, where they
@@ -313,6 +314,8 @@ pub(crate) fn more(key: &str, open: bool, label: String) -> Node {
         kind: Kind::Secondary,
         icon: None,
         size: Default::default(),
+        wide: false,
+        detail: None,
     }
 }
 
@@ -476,7 +479,8 @@ pub fn found(data: &CallData) -> Option<Vec<String>> {
 /// The paths a card shows of a `find` before it is opened.
 pub const FOUND_PEEK: usize = 8;
 
-/// A `find` card's body: its paths, the first few until opened.
+/// A `find` card's body: its paths on a band, the first few until
+/// opened.
 pub fn found_body(paths: &[String], key: &str, open: bool) -> Node {
     let rest = paths.len().saturating_sub(FOUND_PEEK);
     let shown = if open {
@@ -491,7 +495,7 @@ pub fn found_body(paths: &[String], key: &str, open: bool) -> Node {
     if rest > 0 {
         pieces.push(more(key, open, format!("+ {rest} more")));
     }
-    Node::stack(pieces)
+    Node::Band { children: pieces }
 }
 
 /// One line a `grep` gave the model.
@@ -563,12 +567,83 @@ pub fn grep_label(lines: &[GrepLine]) -> String {
     )
 }
 
+/// What a `grep` looked for, when its matches can be found again
+/// without a regex engine: a literal, or literals with `|` between
+/// them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Needles {
+    literals: Vec<String>,
+    ignore_case: bool,
+}
+
+impl Needles {
+    /// The characters that make a pattern more than its own text.
+    const META: &str = r"\.^$*+?()[]{}";
+
+    /// From a `grep` call's arguments. None when the pattern is a regex
+    /// that says more than literals and `|`.
+    pub fn of(args: &Value) -> Option<Self> {
+        let pattern = args.get("pattern")?.as_str()?;
+        let flag =
+            |key: &str| args.get(key).and_then(Value::as_bool).unwrap_or(false);
+        let literals: Vec<String> = if flag("literal") {
+            vec![pattern.to_owned()]
+        } else {
+            pattern.split('|').map(str::to_owned).collect()
+        };
+        let plain =
+            flag("literal") || !pattern.chars().any(|c| Self::META.contains(c));
+        (plain && literals.iter().all(|literal| !literal.is_empty())).then(
+            || Self {
+                literals,
+                ignore_case: flag("ignoreCase"),
+            },
+        )
+    }
+
+    /// Where `text` holds one of the literals: the first and last byte
+    /// of each place, counted from 1, as [`Node::Marked`] takes them.
+    /// Without regard to case, only ASCII letters fold.
+    pub fn spans(&self, text: &str) -> Vec<(u32, u32)> {
+        let bytes = text.as_bytes();
+        let found = |at: usize| {
+            self.literals.iter().map(String::as_bytes).find(|literal| {
+                bytes[at..].get(..literal.len()).is_some_and(|window| {
+                    if self.ignore_case {
+                        window.eq_ignore_ascii_case(literal)
+                    } else {
+                        window == *literal
+                    }
+                })
+            })
+        };
+        let mut spans = Vec::new();
+        let mut at = 0;
+        while at < bytes.len() {
+            match found(at) {
+                Some(literal) => {
+                    spans.push((at as u32 + 1, (at + literal.len()) as u32));
+                    at += literal.len();
+                }
+                None => at += 1,
+            }
+        }
+        spans
+    }
+}
+
 /// The lines a card shows of a `grep` before it is opened.
 pub const GREP_PEEK: usize = 8;
 
-/// A `grep` card's body: each file's path over its lines, every line
-/// after its number, context lines dimmed; the first few until opened.
-pub fn grep_body(lines: &[GrepLine], key: &str, open: bool) -> Node {
+/// A `grep` card's body, on a band: each file's path over its lines,
+/// every line after its number, what `needles` find in a matching line
+/// marked, context lines dimmed; the first few until opened.
+pub fn grep_body(
+    lines: &[GrepLine],
+    needles: Option<&Needles>,
+    key: &str,
+    open: bool,
+) -> Node {
     let rest = lines.len().saturating_sub(GREP_PEEK);
     let shown = if open {
         lines.len()
@@ -585,28 +660,37 @@ pub fn grep_body(lines: &[GrepLine], key: &str, open: bool) -> Node {
     for line in &lines[..shown] {
         if path != Some(&line.path) {
             path = Some(&line.path);
-            pieces.push(Node::Mono {
+            pieces.push(Node::Toned {
                 text: line.path.clone(),
+                tone: TreeTone::Neutral,
+                mono: true,
             });
         }
-        let number = Node::Toned {
-            text: format!("{:>width$}", line.number),
-            tone: TreeTone::Neutral,
-            mono: true,
+        // The number is part of the line, so a long one is cut at the
+        // band's edge beside its number, not moved under it.
+        let number = format!("{:>width$}  ", line.number);
+        let code = line.text.replace('\t', "    ");
+        let spans = match needles {
+            Some(needles) if line.matched => needles
+                .spans(&code)
+                .into_iter()
+                .map(|(first, last)| {
+                    let shift = number.len() as u32;
+                    (first + shift, last + shift)
+                })
+                .collect(),
+            _ => Vec::new(),
         };
-        let text = line.text.replace('\t', "    ");
-        pieces.push(Node::row([
-            number,
-            if line.matched {
-                Node::Mono { text }
-            } else {
-                Node::Toned {
-                    text,
-                    tone: TreeTone::Neutral,
-                    mono: true,
-                }
-            },
-        ]));
+        let text = format!("{number}{code}");
+        pieces.push(if line.matched {
+            Node::Marked { text, spans }
+        } else {
+            Node::Toned {
+                text,
+                tone: TreeTone::Neutral,
+                mono: true,
+            }
+        });
     }
     if rest > 0 {
         pieces.push(more(
@@ -615,7 +699,7 @@ pub fn grep_body(lines: &[GrepLine], key: &str, open: bool) -> Node {
             format!("+ {}", counted(rest, "more line")),
         ));
     }
-    Node::stack(pieces)
+    Node::Band { children: pieces }
 }
 
 /// The ticks an `artifact_read` card draws its share on.
@@ -650,6 +734,7 @@ pub fn artifact_card(start: u64, end: u64, size: Option<u64>) -> CardView {
             total: SHARE_TICKS,
             tone: Ink::Info,
             marked: Vec::new(),
+            labels: Vec::new(),
         }),
         ..CardView::default()
     }
@@ -825,6 +910,8 @@ pub fn inspector(
             kind: Kind::Secondary,
             icon: None,
             size: Default::default(),
+            wide: false,
+            detail: None,
         };
         entry.push(Node::row([
             button("utf8", "Preview text"),
@@ -990,8 +1077,15 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, ToolsUi>) -> Option<CardView> {
             let key = open_key("grep", at);
             Some(CardView {
                 label: Some(grep_label(&lines)),
-                body: (!lines.is_empty())
-                    .then(|| grep_body(&lines, &key, opened(&key, view))),
+                body: (!lines.is_empty()).then(|| {
+                    let needles = Needles::of(&data.args);
+                    grep_body(
+                        &lines,
+                        needles.as_ref(),
+                        &key,
+                        opened(&key, view),
+                    )
+                }),
                 ..CardView::default()
             })
         }
@@ -1092,6 +1186,70 @@ mod tests {
         );
         assert_eq!(grep_label(&[]), "no matches");
         assert_eq!(grep_lines(&ended("bad pattern", None, true)), None);
+    }
+
+    /// A grep for literals marks them in its matching lines, after each
+    /// line's number; a pattern that says more marks nothing.
+    #[test]
+    fn a_grep_for_literals_marks_them() {
+        let needles =
+            Needles::of(&json!({ "pattern": "retry_after|RetryPolicy" }))
+                .expect("literals");
+        assert_eq!(
+            needles.spans("policy: &RetryPolicy, retry_after"),
+            [(10, 20), (23, 33)]
+        );
+        assert!(needles.spans("retrypolicy").is_empty());
+        let folded = Needles::of(
+            &json!({ "pattern": "retrypolicy", "ignoreCase": true }),
+        )
+        .expect("a literal");
+        assert_eq!(folded.spans("é RetryPolicy"), [(4, 14)]);
+        // As a literal, the pattern's characters are its own.
+        let literal =
+            Needles::of(&json!({ "pattern": "a.b(|", "literal": true }))
+                .expect("a literal");
+        assert_eq!(literal.spans("xa.b(|"), [(2, 6)]);
+        for pattern in ["a.b", "fn \\w+", "(a|b)", "a|", "", "^use", "x*"] {
+            assert_eq!(
+                Needles::of(&json!({ "pattern": pattern })),
+                None,
+                "{pattern}"
+            );
+        }
+        assert_eq!(Needles::of(&json!({})), None);
+
+        let line = |number, text: &str, matched| GrepLine {
+            path: "src/a.rs".into(),
+            number,
+            text: text.into(),
+            matched,
+        };
+        let lines = [
+            line(5, "pub struct RetryPolicy {", true),
+            line(12, "    max: u32,", false),
+        ];
+        let Node::Band { children } =
+            grep_body(&lines, Some(&needles), "key", false)
+        else {
+            panic!("a band");
+        };
+        assert_eq!(
+            children[1],
+            Node::Marked {
+                text: " 5  pub struct RetryPolicy {".into(),
+                spans: vec![(16, 26)],
+            }
+        );
+        assert!(matches!(&children[2], Node::Toned { text, .. }
+            if text == "12      max: u32,"));
+        // Without literals to find, the line is there unmarked.
+        let Node::Band { children } = grep_body(&lines, None, "key", false)
+        else {
+            panic!("a band");
+        };
+        assert!(matches!(&children[1], Node::Marked { spans, .. }
+            if spans.is_empty()));
     }
 
     /// A long diff shows its first lines until opened, under its headers.

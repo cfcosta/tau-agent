@@ -184,6 +184,8 @@ fn key_card(data: &Data) -> Vec<Node> {
             kind: Kind::Danger,
             icon: None,
             size: Default::default(),
+            wide: false,
+            detail: None,
         });
     }
     let mut children = vec![

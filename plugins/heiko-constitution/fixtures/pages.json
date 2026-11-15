@@ -100,49 +100,24 @@
                       "piece": "stack"
                     },
                     {
-                      "children": [
+                      "labels": [
                         {
-                          "children": [
-                            {
-                              "mono": true,
-                              "piece": "toned",
-                              "text": "flag",
-                              "tone": "neutral"
-                            },
-                            {
-                              "piece": "mono",
-                              "text": "0.30"
-                            },
-                            {
-                              "piece": "spacer"
-                            },
-                            {
-                              "mono": true,
-                              "piece": "toned",
-                              "text": "block",
-                              "tone": "neutral"
-                            },
-                            {
-                              "mono": true,
-                              "piece": "toned",
-                              "text": "0.60",
-                              "tone": "bad"
-                            }
-                          ],
-                          "piece": "row"
+                          "at": 6,
+                          "text": "review"
                         },
                         {
-                          "lit": 0,
-                          "marked": [
-                            6,
-                            12
-                          ],
-                          "piece": "ticks",
-                          "tone": "neutral",
-                          "total": 20
+                          "at": 12,
+                          "text": "block"
                         }
                       ],
-                      "piece": "stack"
+                      "lit": 0,
+                      "marked": [
+                        6,
+                        12
+                      ],
+                      "piece": "ticks",
+                      "tone": "neutral",
+                      "total": 20
                     },
                     {
                       "label": "1 flagged",
@@ -217,49 +192,24 @@
                       "piece": "stack"
                     },
                     {
-                      "children": [
+                      "labels": [
                         {
-                          "children": [
-                            {
-                              "mono": true,
-                              "piece": "toned",
-                              "text": "flag",
-                              "tone": "neutral"
-                            },
-                            {
-                              "piece": "mono",
-                              "text": "0.30"
-                            },
-                            {
-                              "piece": "spacer"
-                            },
-                            {
-                              "mono": true,
-                              "piece": "toned",
-                              "text": "block",
-                              "tone": "neutral"
-                            },
-                            {
-                              "mono": true,
-                              "piece": "toned",
-                              "text": "0.80",
-                              "tone": "bad"
-                            }
-                          ],
-                          "piece": "row"
+                          "at": 6,
+                          "text": "review"
                         },
                         {
-                          "lit": 0,
-                          "marked": [
-                            6,
-                            16
-                          ],
-                          "piece": "ticks",
-                          "tone": "neutral",
-                          "total": 20
+                          "at": 16,
+                          "text": "block"
                         }
                       ],
-                      "piece": "stack"
+                      "lit": 0,
+                      "marked": [
+                        6,
+                        16
+                      ],
+                      "piece": "ticks",
+                      "tone": "neutral",
+                      "total": 20
                     },
                     {
                       "label": "1 blocked",
@@ -322,49 +272,24 @@
                       "piece": "stack"
                     },
                     {
-                      "children": [
+                      "labels": [
                         {
-                          "children": [
-                            {
-                              "mono": true,
-                              "piece": "toned",
-                              "text": "flag",
-                              "tone": "neutral"
-                            },
-                            {
-                              "piece": "mono",
-                              "text": "0.40"
-                            },
-                            {
-                              "piece": "spacer"
-                            },
-                            {
-                              "mono": true,
-                              "piece": "toned",
-                              "text": "block",
-                              "tone": "neutral"
-                            },
-                            {
-                              "mono": true,
-                              "piece": "toned",
-                              "text": "0.85",
-                              "tone": "bad"
-                            }
-                          ],
-                          "piece": "row"
+                          "at": 8,
+                          "text": "review"
                         },
                         {
-                          "lit": 0,
-                          "marked": [
-                            8,
-                            17
-                          ],
-                          "piece": "ticks",
-                          "tone": "neutral",
-                          "total": 20
+                          "at": 17,
+                          "text": "block"
                         }
                       ],
-                      "piece": "stack"
+                      "lit": 0,
+                      "marked": [
+                        8,
+                        17
+                      ],
+                      "piece": "ticks",
+                      "tone": "neutral",
+                      "total": 20
                     },
                     {
                       "children": [
@@ -438,49 +363,24 @@
                       "piece": "stack"
                     },
                     {
-                      "children": [
+                      "labels": [
                         {
-                          "children": [
-                            {
-                              "mono": true,
-                              "piece": "toned",
-                              "text": "flag",
-                              "tone": "neutral"
-                            },
-                            {
-                              "piece": "mono",
-                              "text": "0.50"
-                            },
-                            {
-                              "piece": "spacer"
-                            },
-                            {
-                              "mono": true,
-                              "piece": "toned",
-                              "text": "block",
-                              "tone": "neutral"
-                            },
-                            {
-                              "mono": true,
-                              "piece": "toned",
-                              "text": "0.90",
-                              "tone": "bad"
-                            }
-                          ],
-                          "piece": "row"
+                          "at": 10,
+                          "text": "review"
                         },
                         {
-                          "lit": 0,
-                          "marked": [
-                            10,
-                            18
-                          ],
-                          "piece": "ticks",
-                          "tone": "neutral",
-                          "total": 20
+                          "at": 18,
+                          "text": "block"
                         }
                       ],
-                      "piece": "stack"
+                      "lit": 0,
+                      "marked": [
+                        10,
+                        18
+                      ],
+                      "piece": "ticks",
+                      "tone": "neutral",
+                      "total": 20
                     },
                     {
                       "children": [
@@ -554,49 +454,24 @@
                       "piece": "stack"
                     },
                     {
-                      "children": [
+                      "labels": [
                         {
-                          "children": [
-                            {
-                              "mono": true,
-                              "piece": "toned",
-                              "text": "flag",
-                              "tone": "neutral"
-                            },
-                            {
-                              "piece": "mono",
-                              "text": "0.35"
-                            },
-                            {
-                              "piece": "spacer"
-                            },
-                            {
-                              "mono": true,
-                              "piece": "toned",
-                              "text": "block",
-                              "tone": "neutral"
-                            },
-                            {
-                              "mono": true,
-                              "piece": "toned",
-                              "text": "0.80",
-                              "tone": "bad"
-                            }
-                          ],
-                          "piece": "row"
+                          "at": 7,
+                          "text": "review"
                         },
                         {
-                          "lit": 0,
-                          "marked": [
-                            7,
-                            16
-                          ],
-                          "piece": "ticks",
-                          "tone": "neutral",
-                          "total": 20
+                          "at": 16,
+                          "text": "block"
                         }
                       ],
-                      "piece": "stack"
+                      "lit": 0,
+                      "marked": [
+                        7,
+                        16
+                      ],
+                      "piece": "ticks",
+                      "tone": "neutral",
+                      "total": 20
                     },
                     {
                       "children": [
@@ -682,49 +557,24 @@
                       "piece": "stack"
                     },
                     {
-                      "children": [
+                      "labels": [
                         {
-                          "children": [
-                            {
-                              "mono": true,
-                              "piece": "toned",
-                              "text": "flag",
-                              "tone": "neutral"
-                            },
-                            {
-                              "piece": "mono",
-                              "text": "0.40"
-                            },
-                            {
-                              "piece": "spacer"
-                            },
-                            {
-                              "mono": true,
-                              "piece": "toned",
-                              "text": "block",
-                              "tone": "neutral"
-                            },
-                            {
-                              "mono": true,
-                              "piece": "toned",
-                              "text": "0.75",
-                              "tone": "bad"
-                            }
-                          ],
-                          "piece": "row"
+                          "at": 8,
+                          "text": "review"
                         },
                         {
-                          "lit": 0,
-                          "marked": [
-                            8,
-                            15
-                          ],
-                          "piece": "ticks",
-                          "tone": "neutral",
-                          "total": 20
+                          "at": 15,
+                          "text": "block"
                         }
                       ],
-                      "piece": "stack"
+                      "lit": 0,
+                      "marked": [
+                        8,
+                        15
+                      ],
+                      "piece": "ticks",
+                      "tone": "neutral",
+                      "total": 20
                     },
                     {
                       "label": "1 held",
@@ -784,23 +634,19 @@
                       },
                       {
                         "action": "settings",
-                        "args": {
-                          "blocks_unchecked": false,
-                          "max_holds": 3
-                        },
-                        "kind": "primary",
-                        "label": "let through",
-                        "piece": "button"
-                      },
-                      {
-                        "action": "settings",
-                        "args": {
-                          "blocks_unchecked": true,
-                          "max_holds": 3
-                        },
-                        "kind": "secondary",
-                        "label": "refuse",
-                        "piece": "button"
+                        "args": {},
+                        "choices": [
+                          {
+                            "label": "let through",
+                            "value": "allow"
+                          },
+                          {
+                            "label": "refuse",
+                            "value": "block"
+                          }
+                        ],
+                        "picked": "allow",
+                        "piece": "segments"
                       }
                     ],
                     "piece": "row"
@@ -820,7 +666,6 @@
                       {
                         "action": "settings",
                         "args": {
-                          "blocks_unchecked": false,
                           "max_holds": 2
                         },
                         "kind": "secondary",
@@ -828,18 +673,30 @@
                         "piece": "button"
                       },
                       {
+                        "action": "settings",
+                        "args": {
+                          "max_holds": 1
+                        },
                         "label": "1",
                         "piece": "square",
                         "style": "outlined",
                         "tone": "warn"
                       },
                       {
+                        "action": "settings",
+                        "args": {
+                          "max_holds": 2
+                        },
                         "label": "2",
                         "piece": "square",
                         "style": "outlined",
                         "tone": "warn"
                       },
                       {
+                        "action": "settings",
+                        "args": {
+                          "max_holds": 3
+                        },
                         "label": "3",
                         "piece": "square",
                         "style": "outlined",
@@ -848,7 +705,6 @@
                       {
                         "action": "settings",
                         "args": {
-                          "blocks_unchecked": false,
                           "max_holds": 4
                         },
                         "kind": "secondary",
@@ -923,6 +779,16 @@
                         "piece": "row"
                       },
                       {
+                        "labels": [
+                          {
+                            "at": 6,
+                            "text": "review"
+                          },
+                          {
+                            "at": 12,
+                            "text": "block"
+                          }
+                        ],
                         "lit": 8,
                         "marked": [
                           6,
@@ -1256,6 +1122,16 @@
             "piece": "row"
           },
           {
+            "labels": [
+              {
+                "at": 6,
+                "text": "review"
+              },
+              {
+                "at": 16,
+                "text": "block"
+              }
+            ],
             "lit": 0,
             "marked": [
               6,
@@ -1381,6 +1257,16 @@
                   "text": "rm -rf target/debug/incremental"
                 },
                 {
+                  "labels": [
+                    {
+                      "at": 6,
+                      "text": "review"
+                    },
+                    {
+                      "at": 16,
+                      "text": "block"
+                    }
+                  ],
                   "lit": 16,
                   "marked": [
                     6,
@@ -1623,6 +1509,16 @@
             "piece": "row"
           },
           {
+            "labels": [
+              {
+                "at": 6,
+                "text": "review"
+              },
+              {
+                "at": 16,
+                "text": "block"
+              }
+            ],
             "lit": 0,
             "marked": [
               6,

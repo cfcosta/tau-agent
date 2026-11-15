@@ -7,14 +7,14 @@
 use heiko_ui_plugin::{
     ViewCx,
     points::{AtRepo, AtRun},
-    tree::{Kind, MarkState, Node, Tone},
+    tree::{ButtonSize, Ink, Kind, MarkState, Node, SquareLook, Tone},
 };
 use serde_json::Value;
 
 use super::DirenvUi;
 use crate::{Act, Record};
 
-/// Every button's and switch's action: carry out the [`Act`] its
+/// Every button's and segment's action: carry out the [`Act`] its
 /// arguments hold.
 const ACT: &str = "act";
 
@@ -27,6 +27,8 @@ fn button(label: &str, kind: Kind, act: &Act) -> Node {
         kind,
         icon: None,
         size: Default::default(),
+        wide: false,
+        detail: None,
     }
 }
 
@@ -34,7 +36,7 @@ fn args(act: &Act) -> Value {
     serde_json::to_value(act).unwrap_or(Value::Null)
 }
 
-/// What every tree's buttons and switches ask: the act in their
+/// What every tree's buttons and segments ask: the act in their
 /// arguments.
 pub fn on_action(action: &str, args: &Value, view: &mut ViewCx<'_, DirenvUi>) {
     if action != ACT {
@@ -57,7 +59,7 @@ pub fn question(at: &AtRun, view: &mut ViewCx<'_, DirenvUi>) -> Option<Node> {
     Some(question_tree(&repo, &envrc))
 }
 
-/// The question's tree: its title, the `.envrc` as direnv runs it (with
+/// The question's tree: its head, the `.envrc` as direnv runs it (with
 /// bash) on a flat band under the file's name, and the two answers:
 /// loading it is the block, running without it a link.
 pub fn question_tree(repo: &str, envrc: &str) -> Node {
@@ -66,23 +68,16 @@ pub fn question_tree(repo: &str, envrc: &str) -> Node {
         load,
     };
     Node::stack([
-        Node::row([
-            Node::Title {
-                text: format!("Load {repo}'s .envrc?"),
-                subtitle: None,
-            },
-            Node::Spacer,
-            Node::Toned {
-                text: "heiko-direnv · asked once".into(),
-                tone: Tone::Neutral,
-                mono: true,
-            },
-        ]),
-        Node::Rule,
+        Node::Header {
+            title: format!("Load {repo}'s .envrc?"),
+            meta: Some("heiko-direnv · asked once".into()),
+            actions: vec![],
+        },
         Node::stack([
-            Node::Mono {
-                text: ".envrc".into(),
-            },
+            Node::row([Node::Stamp {
+                label: ".envrc".into(),
+                tone: Ink::Neutral,
+            }]),
             Node::Code {
                 lang: Some("bash".into()),
                 text: envrc.trim_end().to_owned(),
@@ -90,7 +85,16 @@ pub fn question_tree(repo: &str, envrc: &str) -> Node {
             },
         ]),
         Node::row([
-            button("load it", Kind::Primary, &decide(true)),
+            Node::Button {
+                label: "Load it".into(),
+                action: ACT.into(),
+                args: args(&decide(true)),
+                kind: Kind::Primary,
+                icon: None,
+                size: ButtonSize::Medium,
+                wide: false,
+                detail: None,
+            },
             button("run without it", Kind::Secondary, &decide(false)),
         ]),
     ])
@@ -175,8 +179,8 @@ pub fn menu_entry(
     Some(menu_tree(&at.repo, data.direnv, on))
 }
 
-/// The menu entry's tree: the switch, or, without direnv, why there is
-/// none.
+/// The menu entry's tree: the setting's two segments, or, without
+/// direnv, why there is none.
 pub fn menu_tree(repo: &str, direnv: bool, on: bool) -> Node {
     const LABEL: &str = "Load .envrc for agent commands";
     if !direnv {
@@ -189,16 +193,46 @@ pub fn menu_tree(repo: &str, direnv: bool, on: bool) -> Node {
             },
         ]);
     }
-    Node::Switch {
-        label: LABEL.into(),
-        detail: None,
-        on,
-        action: ACT.into(),
-        args: args(&Act::Decide {
-            repo: repo.to_owned(),
-            load: !on,
-        }),
-    }
+    setting(LABEL, None, repo, on)
+}
+
+/// Whether `repo`'s `.envrc` loads, as a row: `label` over `detail`,
+/// then two segments, the one that holds outlined and the other a click
+/// away.
+fn setting(label: &str, detail: Option<&str>, repo: &str, on: bool) -> Node {
+    let segment = |text: &str, load: bool| {
+        let chosen = load == on;
+        Node::Square {
+            label: text.into(),
+            style: if chosen {
+                SquareLook::Outlined
+            } else {
+                SquareLook::Quiet
+            },
+            tone: if chosen { Ink::Info } else { Ink::Neutral },
+            action: (!chosen).then(|| ACT.to_owned()),
+            args: if chosen {
+                Value::Null
+            } else {
+                args(&Act::Decide {
+                    repo: repo.to_owned(),
+                    load,
+                })
+            },
+        }
+    };
+    let mut said = vec![Node::text(label)];
+    said.extend(detail.map(|detail| Node::Toned {
+        text: detail.into(),
+        tone: Tone::Neutral,
+        mono: false,
+    }));
+    Node::row([
+        Node::Stack { children: said },
+        Node::Spacer,
+        segment("off", false),
+        segment("on", true),
+    ])
 }
 
 /// Its settings pane (ADR 0029): whether each repository's `.envrc`
@@ -218,7 +252,7 @@ pub fn settings_pane(view: &mut ViewCx<'_, DirenvUi>) -> Node {
 }
 
 /// The pane's tree: a row for each repository with an `.envrc` (or the
-/// one in scope, with or without), its switch when it can load.
+/// one in scope, with or without), its segments when it can load.
 pub fn settings_tree(
     repos: &[(String, crate::RepoData, bool)],
     scoped: bool,
@@ -243,16 +277,12 @@ pub fn settings_tree(
                         mono: false,
                     },
                 ]),
-                None => Node::Switch {
-                    label: repo.clone(),
-                    detail: Some("Load its .envrc for agent commands.".into()),
-                    on: *on,
-                    action: ACT.into(),
-                    args: args(&Act::Decide {
-                        repo: repo.clone(),
-                        load: !on,
-                    }),
-                },
+                None => setting(
+                    repo,
+                    Some("Load its .envrc for agent commands."),
+                    repo,
+                    *on,
+                ),
             }
         })
         .collect();
@@ -326,16 +356,31 @@ mod tests {
     }
 
     #[test]
-    fn the_switch_asks_for_the_other_answer() {
-        let Node::Switch { on, args: got, .. } = menu_tree("heiko", true, true)
-        else {
-            panic!("no switch");
-        };
-        assert!(on);
-        let off = Act::Decide {
+    fn the_segment_not_chosen_asks_for_the_other_answer() {
+        let tree = menu_tree("heiko", true, true);
+        let segments: Vec<_> = pieces(&tree)
+            .into_iter()
+            .filter_map(|piece| match piece {
+                Node::Square {
+                    label,
+                    style,
+                    action,
+                    args,
+                    ..
+                } => Some((label.as_str(), *style, action.clone(), args)),
+                _ => None,
+            })
+            .collect();
+        let off = args(&Act::Decide {
             repo: "heiko".into(),
             load: false,
-        };
-        assert_eq!(got, args(&off));
+        });
+        assert_eq!(
+            segments,
+            [
+                ("off", SquareLook::Quiet, Some(ACT.to_owned()), &off),
+                ("on", SquareLook::Outlined, None, &Value::Null),
+            ]
+        );
     }
 }

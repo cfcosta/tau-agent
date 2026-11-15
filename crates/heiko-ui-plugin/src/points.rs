@@ -352,6 +352,53 @@ impl PointCx for AtCard {
     }
 }
 
+/// What a plugin lists on Home for a repository ([`HOME`]): a titled
+/// section of a few rows, under the new run's composer.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HomeList {
+    /// The section's title: `Ready to pick up`.
+    pub title: String,
+    /// Small print at the title's end: `this repository's issues`.
+    pub meta: Option<String>,
+    pub rows: Vec<HomeRow>,
+}
+
+/// A row of a [`HomeList`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HomeRow {
+    /// What the plugin calls the thing, before its title: `td-3f2a`.
+    pub id: String,
+    pub title: String,
+    /// Small print at the row's end: `P2`.
+    pub detail: String,
+    /// What clicking the row does.
+    pub action: HomeAction,
+}
+
+/// What clicking a [`HomeRow`] does.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HomeAction {
+    /// Puts this in the new run's composer, for the person to start.
+    Write(String),
+    /// One of the plugin's own actions, as a button of its page of the
+    /// repository carries it out: with the page parameter `repo`.
+    Act {
+        action: String,
+        args: serde_json::Value,
+    },
+}
+
+impl crate::wire::Wired for HomeList {
+    fn to_wire(&self) -> Option<serde_json::Value> {
+        serde_json::to_value(self).ok()
+    }
+
+    fn from_wire(value: serde_json::Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+}
+
 /// An item in a run's transcript, at a plugin's anchor.
 pub const TRANSCRIPT: Point<AtAnchor> = Point::new("heiko.run.transcript");
 /// One of the plugin's context rewrites, drawn whole.
@@ -418,6 +465,10 @@ pub const EVERYWHERE: Point<AtApp, NavEntry> =
 /// list.
 pub const SIDEBAR_REPO: Point<AtRepo, NavEntry> =
     Point::new("heiko.sidebar.repo");
+/// A section of Home on a desktop, under the new run's composer: what
+/// the plugin has of the selected repository for the person to pick up,
+/// as its ready issues. Every contribution with rows is drawn, in order.
+pub const HOME: Point<AtRepo, HomeList> = Point::new("heiko.home.list");
 /// A section of the Models screen.
 pub const MODELS: Point<AtApp> = Point::new("heiko.models.section");
 /// Hits search offers besides the navigation's entries.
@@ -463,7 +514,7 @@ pub const SETUP: Point<AtSetup, SetupView> = Point::new("heiko.setup.step");
 pub const PANE: Point<AtRun, PaneView> = Point::new("heiko.run.pane");
 
 /// Every point `heiko-ui` declares.
-pub const ALL: [&str; 34] = [
+pub const ALL: [&str; 35] = [
     CARD.name,
     CARD_STAT.name,
     CHANGES.name,
@@ -487,6 +538,7 @@ pub const ALL: [&str; 34] = [
     SIDEBAR.name,
     EVERYWHERE.name,
     SIDEBAR_REPO.name,
+    HOME.name,
     MODELS.name,
     SEARCH.name,
     PLAN_STEPS.name,

@@ -81,7 +81,8 @@
           "children": [
             {
               "piece": "heading",
-              "text": "Goal met"
+              "text": "Goal met",
+              "tone": "good"
             },
             {
               "piece": "text",
@@ -322,6 +323,12 @@
           {
             "piece": "mono",
             "text": "check 1 · turn 6 · p 0.20 · continuing 1 of 10"
+          },
+          {
+            "mono": true,
+            "piece": "toned",
+            "text": "heiko-goal",
+            "tone": "neutral"
           }
         ],
         "piece": "row"
@@ -337,7 +344,8 @@
             "children": [
               {
                 "piece": "heading",
-                "text": "Goal met"
+                "text": "Goal met",
+                "tone": "good"
               },
               {
                 "children": [

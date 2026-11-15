@@ -595,6 +595,21 @@ fn the_crew_is_this_rounds_sub_agents(cx: &mut TestAppContext) {
 /// order: met, working, limit, failing, asks. A state nothing is in
 /// has no mark.
 #[test]
+fn tiles_whose_names_start_alike_show_two_letters() {
+    let letters = heiko_ui_remote::ui::chrome::tile_letters(
+        ["heiko-agent", "docbert", "homelab.nix", "heiko-design", "…"]
+            .into_iter(),
+    );
+    let shown = |name: &str| letters[name].as_str();
+    assert_eq!(shown("docbert"), "d");
+    // The first pair none before it took.
+    assert_eq!(shown("heiko-agent"), "he");
+    assert_eq!(shown("homelab.nix"), "ho");
+    assert_eq!(shown("heiko-design"), "hi");
+    assert_eq!(shown("…"), "?");
+}
+
+#[test]
 fn a_row_says_where_its_run_stands_with_marks() {
     use heiko_ui_kit::assets::State;
     use heiko_ui_remote::attention::{Marks, Queued};

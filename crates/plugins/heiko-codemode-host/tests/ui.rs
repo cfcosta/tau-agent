@@ -958,6 +958,7 @@ fn verdicts_mark_their_rows() {
         "heiko-constitution",
         CardMark::Blocked {
             reason: "rule R1".into(),
+            by: None,
         },
     );
     data.nested_end("call_1/1", &ToolOutput::text("blocked"), true);

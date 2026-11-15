@@ -6,9 +6,9 @@
 //!
 //! The host builds the plugin's tools with the run's workspace, which
 //! they act on (`heiko-vcs-host`); this UI draws what they return. Each
-//! card is a view tree (ADR 0045): a diff card's files are sections the
-//! interface opens and closes, and the change picked in a log is the
-//! plugin's UI state, under [`pick_key`].
+//! card is a view tree (ADR 0045): which of a diff card's files show
+//! their hunks and the change picked in a log are the plugin's UI state,
+//! under [`Card::file_key`] and [`pick_key`].
 
 pub mod change_diff;
 pub mod change_log;
@@ -26,7 +26,7 @@ use heiko_ui_plugin::{
     UiPlugin,
     ViewCx,
     points::{self, AtCard, CardView},
-    tree::{Ink, Kind, Node, SquareLook, Tone},
+    tree::{Ink, Kind, Node, SquareLook, Tone, open_key},
     vcs::{LAND, spawned},
 };
 use serde_json::{Value, json};
@@ -53,7 +53,8 @@ pub const NAME: &str = "heiko-vcs";
 pub struct VcsUi;
 
 /// The action that sets a UI state key: `{"key": …, "value": …}`, a
-/// null value clearing it. A log's rows pick their change with it.
+/// null value clearing it. A log's rows pick their change with it, and
+/// a diff's files open with it.
 const SET: &str = "set";
 /// The action that opens a sub-agent's chat: `{"run": …}`.
 const OPEN_RUN: &str = "open-run";
@@ -64,8 +65,8 @@ pub fn pick_key(run: &RunId, call_id: &str) -> String {
     format!("pick:{}:{call_id}", run.0)
 }
 
-/// The section id of a file in a card, whose open state is the
-/// interface's (`tree::open_key`).
+/// The id of a file in a card; whether its hunks show is the UI state
+/// under this id's `tree::open_key`.
 pub fn file_id(run: &RunId, call_id: &str, path: &str) -> String {
     format!("file:{}:{call_id}:{path}", run.0)
 }
@@ -88,6 +89,11 @@ pub struct Card {
 impl Card {
     pub fn file_id(&self, path: &str) -> String {
         file_id(&self.run, &self.call_id, path)
+    }
+
+    /// The UI state key holding whether `path`'s hunks show.
+    pub fn file_key(&self, path: &str) -> String {
+        open_key(&self.file_id(path))
     }
 
     pub fn pick_key(&self) -> String {
@@ -117,6 +123,8 @@ pub fn open_child(child: &RunId) -> Node {
         kind: Kind::Secondary,
         icon: Some("sub-agent".into()),
         size: Default::default(),
+        wide: false,
+        detail: None,
     }
 }
 
@@ -193,48 +201,55 @@ pub(crate) fn diffstat(added: usize, removed: usize) -> Node {
 /// The files a card lists before it says how many more there are.
 pub(crate) const FILES_PEEK: usize = 12;
 
-/// Each file on a row: its kind (`jj status`'s letter), its path, and
-/// the lines it adds and removes; then how many files are past the
-/// first [`FILES_PEEK`], and that the diff was cut, when it was.
-pub(crate) fn file_rows(
-    files: &[FileDiff],
-    truncated: bool,
-    conflicted: &dyn Fn(&str) -> bool,
-) -> Vec<Node> {
+/// A file's row: its kind (`jj status`'s letter), `name` (its path),
+/// and at the end that it holds a conflict, when `conflicted`, and the
+/// lines it adds and removes.
+pub(crate) fn file_row(file: &FileDiff, name: Node, conflicted: bool) -> Node {
     let toned = |text: String, tone| Node::Toned {
         text,
         tone,
         mono: true,
     };
+    let tone = match file.kind {
+        ChangeKind::Added => Tone::Good,
+        ChangeKind::Modified => Tone::Info,
+        ChangeKind::Removed => Tone::Bad,
+    };
+    let mut row = vec![
+        toned(file.kind.letter().to_string(), tone),
+        name,
+        Node::Spacer,
+    ];
+    if conflicted {
+        row.push(Node::Stamp {
+            label: "conflict".into(),
+            tone: Ink::Bad,
+        });
+    }
+    if file.binary {
+        row.push(quiet("binary"));
+    } else {
+        row.push(toned(format!("+{}", file.added), Tone::Good));
+        row.push(toned(format!("−{}", file.removed), Tone::Bad));
+    }
+    Node::row(row)
+}
+
+/// Each file on a [`file_row`]; then how many files are past the first
+/// [`FILES_PEEK`], and that the diff was cut, when it was.
+pub(crate) fn file_rows(
+    files: &[FileDiff],
+    truncated: bool,
+    conflicted: &dyn Fn(&str) -> bool,
+) -> Vec<Node> {
     let mut rows: Vec<Node> = files
         .iter()
         .take(FILES_PEEK)
         .map(|file| {
-            let tone = match file.kind {
-                ChangeKind::Added => Tone::Good,
-                ChangeKind::Modified => Tone::Info,
-                ChangeKind::Removed => Tone::Bad,
+            let path = Node::Mono {
+                text: file.path.clone(),
             };
-            let mut row = vec![
-                toned(file.kind.letter().to_string(), tone),
-                Node::Mono {
-                    text: file.path.clone(),
-                },
-                Node::Spacer,
-            ];
-            if conflicted(&file.path) {
-                row.push(Node::Stamp {
-                    label: "conflict".into(),
-                    tone: Ink::Bad,
-                });
-            }
-            if file.binary {
-                row.push(quiet("binary"));
-            } else {
-                row.push(toned(format!("+{}", file.added), Tone::Good));
-                row.push(toned(format!("−{}", file.removed), Tone::Bad));
-            }
-            Node::row(row)
+            file_row(file, path, conflicted(&file.path))
         })
         .collect();
     let more = files.len().saturating_sub(FILES_PEEK);
@@ -247,19 +262,19 @@ pub(crate) fn file_rows(
     rows
 }
 
-/// A badge for each of the change's states that wants a look:
+/// A stamp for each of the change's states that wants a look:
 /// `conflict`, `divergent`, `empty`.
 pub(crate) fn flags(change: &Change) -> Vec<Node> {
     let info = &change.info;
     [
-        (info.conflict, "conflict", Tone::Bad),
-        (info.divergent, "divergent", Tone::Warn),
-        (info.empty, "empty", Tone::Neutral),
+        (info.conflict, "conflict", Ink::Bad),
+        (info.divergent, "divergent", Ink::Warn),
+        (info.empty, "empty", Ink::Neutral),
     ]
     .into_iter()
     .filter(|(on, ..)| *on)
-    .map(|(_, text, tone)| Node::Badge {
-        text: text.into(),
+    .map(|(_, label, tone)| Node::Stamp {
+        label: label.into(),
         tone,
     })
     .collect()
@@ -304,7 +319,8 @@ impl UiPlugin for VcsUi {
             .contribute(points::CHANGES, landed::changes)
     }
 
-    /// What a card's buttons ask: a log's pick, or a sub-agent's chat.
+    /// What a card's buttons ask: a log's pick, a diff's file opened,
+    /// or a sub-agent's chat.
     fn on_action(
         &self,
         action: &str,
@@ -380,9 +396,14 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, VcsUi>) -> Option<CardView> {
                     diff_card::commit_body(&diff),
                 )
             } else {
+                let open = |path: &str| {
+                    view.ui_value(&card.file_key(path))
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                };
                 (
                     diff_card::files_summary(&diff),
-                    diff_card::files_body(&card, &diff),
+                    diff_card::files_body(&card, &diff, &open),
                 )
             };
             Some(CardView {

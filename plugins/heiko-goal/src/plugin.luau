@@ -53,16 +53,21 @@ local function squares(checks, last)
 	return row
 end
 
+-- Its name, small and muted: what ends a note of one line.
+local function by()
+	return ui.toned(NAME, "neutral", true)
+end
+
 -- One of heiko-goal's notes: the goal met or stopped under its mark with
 -- its checks, a check not met or not made in a line. `stopped` is
 -- whether the goal still stands stopped by this note, so it can go on
 -- from here.
 local function note_tree(entry, stopped)
 	if entry.kind == "met" then
-		return ui.row({ target("good"), ui.stack({ ui.heading("Goal met"), ui.row(squares(entry.checks or {})) }) })
+		return ui.row({ target("good"), ui.stack({ ui.heading("Goal met", "good"), ui.row(squares(entry.checks or {})) }) })
 	elseif entry.kind == "stopped" then
 		local body = {
-			ui.heading("Goal stopped, not met"),
+			ui.heading("Goal stopped, not met", "bad"),
 			ui.row(squares(entry.checks or {}, ui.square("■", "filled", "bad"))),
 		}
 		if stopped then
@@ -70,9 +75,9 @@ local function note_tree(entry, stopped)
 		end
 		return ui.row({ target("bad"), ui.stack(body) })
 	elseif entry.kind == "failed" then
-		return ui.row({ ui.mark("failing"), ui.text(entry.text), ui.spacer(), ui.mono(entry.detail) })
+		return ui.row({ ui.mark("failing"), ui.text(entry.text), ui.spacer(), ui.mono(entry.detail), by() })
 	end
-	return ui.row({ ui.square("✕", "outlined", "bad"), ui.text(entry.text), ui.spacer(), ui.mono(entry.detail) })
+	return ui.row({ ui.square("✕", "outlined", "bad"), ui.text(entry.text), ui.spacer(), ui.mono(entry.detail), by() })
 end
 
 -- The person setting a goal: the condition, and how many times the goal
@@ -152,7 +157,7 @@ local function banner(g, why)
 	if title == g.condition then
 		body = { ui.row({ ui.heading(title), ui.spacer(), ui.toned(STATUS[g.status], tone) }) }
 	else
-		body = { ui.heading(title), ui.text(g.condition) }
+		body = { ui.heading(title, g.status == "met" and "good" or "bad"), ui.text(g.condition) }
 	end
 	table.insert(body, ui.row(checks))
 	table.insert(body, ui.row(actions))

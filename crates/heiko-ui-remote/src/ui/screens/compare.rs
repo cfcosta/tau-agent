@@ -427,14 +427,15 @@ fn branch(
     let make_default = Some(Workspace::model_of(run)).filter(|choice| {
         ws.catalog.models.default_for("coder").model != choice.model
     });
-    let diff = run.last_diff().map(|(card, lines)| {
+    let diff = run.last_diff().map(|(card, lines, numbers)| {
         div()
             .flex()
             .flex_col()
             .gap(sp(1.))
             .child(mono(card.summary.clone(), Type::CAPTION, t.dim))
-            .child(heiko_ui_kit::diff::view(
+            .child(heiko_ui_kit::diff::numbered(
                 &lines,
+                Some(&numbers),
                 card.args()
                     .get("path")
                     .and_then(serde_json::Value::as_str)

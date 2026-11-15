@@ -219,23 +219,25 @@ impl DemoHost {
                     &self.cx,
                 ));
             }
-            // heiko-memory's, a Luau plugin's: what its fixture keeps of
-            // the repository.
-            let memory = &crate::luau_fixture(
+            // heiko-memory's and heiko-todo's, Luau plugins': what their
+            // fixtures keep of the repository.
+            let values: std::collections::BTreeMap<String, Value> = [
                 heiko_luau_plugins::names::MEMORY,
-                "demo",
-            )["repo_data"][&repo.name];
-            if !memory.is_null() {
-                let values = heiko_luau_plugins::RepoValues(
-                    [(
-                        heiko_luau_plugins::names::MEMORY.to_owned(),
-                        memory.clone(),
-                    )]
-                    .into(),
-                );
+                heiko_luau_plugins::names::TODO,
+            ]
+            .into_iter()
+            .filter_map(|plugin| {
+                let kept = &crate::luau_fixture(plugin, "demo")["repo_data"]
+                    [&repo.name];
+                (!kept.is_null()).then(|| (plugin.to_owned(), kept.clone()))
+            })
+            .collect();
+            if !values.is_empty() {
                 repo.plugins.insert(
                     heiko_luau_plugins::NAME.to_owned(),
-                    PluginValue::typed(values),
+                    PluginValue::typed(heiko_luau_plugins::RepoValues(
+                        values.into_iter().collect(),
+                    )),
                 );
             }
             // No server answers in a demo: heiko-agent's show as a host
@@ -409,6 +411,7 @@ fn luau_built_ins(
             built_in(heiko_luau_plugins::names::REASONING),
             built_in(heiko_luau_plugins::names::SKILLS),
             built_in(heiko_luau_plugins::names::MEMORY),
+            built_in(heiko_luau_plugins::names::TODO),
             github,
         ],
         error: None,

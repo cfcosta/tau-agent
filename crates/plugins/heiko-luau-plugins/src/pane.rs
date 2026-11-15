@@ -155,6 +155,8 @@ pub fn bound(piece: &Value, current: &Value, fields: &str) -> Node {
                     kind: if on { Kind::Primary } else { Kind::Secondary },
                     icon: None,
                     size: Default::default(),
+                    wide: false,
+                    detail: None,
                 }
             }))
         }

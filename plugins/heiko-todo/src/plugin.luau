@@ -786,6 +786,15 @@ local function board_view(all, at, params)
 	return ui.board(out, "move")
 end
 
+-- A section that does not fold, onto `out`: its head, with `meta` at
+-- its end, then `children`.
+local function headed(out, title, children, meta)
+	table.insert(out, ui.header(title, { meta = meta }))
+	for _, child in ipairs(children) do
+		table.insert(out, child)
+	end
+end
+
 -- An issue's panel: its run, description, criteria, links and actions.
 local function panel(all, issue, at)
 	local out = {
@@ -808,7 +817,7 @@ local function panel(all, issue, at)
 				ui.button(criterion.done and "undo" or "done", "check", { id = issue.id, at = n, done = not criterion.done }),
 			}))
 		end
-		table.insert(out, ui.section("criteria-" .. issue.id, "Done when", rows, { open = true }))
+		headed(out, "Done when", rows)
 	end
 	local linked = {}
 	for _, link in ipairs(issue.links or {}) do
@@ -820,7 +829,7 @@ local function panel(all, issue, at)
 		table.insert(linked, ui.text("blocks " .. id .. ": " .. all[id].title))
 	end
 	if #linked > 0 then
-		table.insert(out, ui.section("links-" .. issue.id, "Links", linked, { open = true }))
+		headed(out, "Links", linked)
 	end
 	local comments = {}
 	for _, comment in ipairs(issue.comments or {}) do
@@ -830,7 +839,7 @@ local function panel(all, issue, at)
 		placeholder = issue.claim and "Comment, or steer the run that holds it" or "Comment",
 		submit = "comment",
 	}))
-	table.insert(out, ui.section("comments-" .. issue.id, "Comments", comments, { open = true }))
+	headed(out, "Comments", comments)
 	local actions = {}
 	if issue.status == "closed" then
 		table.insert(actions, ui.button("reopen", "reopen", { id = issue.id }))
@@ -873,7 +882,7 @@ local function list_view(all, at, params)
 			table.insert(rows, { issue_link(issue, params), "P" .. issue.priority, issue.title, issue.claim or "" })
 		end
 		if #rows > 0 then
-			table.insert(out, ui.section("group-" .. group[1], group[2] .. " · " .. #rows, { ui.table({ "Id", "P", "Title", "Run" }, rows) }, { open = true }))
+			headed(out, group[2], { ui.table({ "Id", "P", "Title", "Run" }, rows) }, tostring(#rows))
 		end
 	end
 	if #out == 0 then
@@ -1369,6 +1378,25 @@ for name, action in pairs(actions) do
 	actions[name] = refreshing(action)
 end
 
+-- How many ready issues Home lists.
+local HOME_ROWS = 3
+
+-- What Home lists of the repository: the first ready issues, each
+-- putting what a run on it starts with in the new run's composer.
+local function home(all, ready)
+	local rows = array({})
+	for n = 1, math.min(HOME_ROWS, #ready) do
+		local issue = all[ready[n]]
+		table.insert(rows, {
+			id = issue.id,
+			title = issue.title,
+			detail = "P" .. issue.priority,
+			write = "Work on " .. issue.id .. ": " .. issue.title .. ".",
+		})
+	end
+	return { title = "Ready to pick up", meta = "this repository's issues", rows = rows }
+end
+
 return heiko.plugin({
 	uses = { store = true },
 	tools = tools,
@@ -1380,11 +1408,12 @@ return heiko.plugin({
 		if not ok then
 			return {}
 		end
-		local ready = #graph.ready(all, now(env))
+		local ready = graph.ready(all, now(env))
 		return {
 			rev = STORE.get("rev") or 0,
-			ready = ready,
-			nav = { badge = ready > 0 and tostring(ready) or nil, detail = ready .. " ready" },
+			ready = #ready,
+			nav = { badge = #ready > 0 and tostring(#ready) or nil, detail = #ready .. " ready" },
+			home = home(all, ready),
 		}
 	end,
 	start = function(plan, model, env)

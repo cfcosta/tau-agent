@@ -365,6 +365,8 @@ mod tests {
                 kind: Kind::Secondary,
                 icon: maybe(tc),
                 size: Default::default(),
+                wide: tc.draw(gs::booleans()),
+                detail: maybe(tc),
             },
             _ => Node::stack([Node::text(word(tc)), Node::Rule]),
         }

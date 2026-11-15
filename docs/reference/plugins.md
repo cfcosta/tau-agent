@@ -585,6 +585,20 @@ heiko-luau-plugins the plugins repository.
   Luau, `ui.ticks`, `ui.mark`, `ui.stamp`, `ui.square`, `ui.slip`,
   `ui.figure` and `ui.kanji`. A button's kind says whether it is the
   primary action, drawn as the offset block, or an underlined word.
+  A `wide` button takes the whole width, its label at the left, and a
+  wide primary one may have `detail`, a second line inside the block
+  (`ui.button(label, action, args, kind, icon, size, wide, detail)`).
+  `Gap` is room between two pieces one under the other, `small`,
+  `medium` or `large` (`ui.gap(size)`); a `Header` after other pieces
+  has room over it already. `Ticks` may have `labels`, small print
+  under the strip, each centred under the tick at its index
+  (`ui.ticks(lit, total, ink, marked, { { at = 16, text = "compacts" } })`).
+  A `Qr` with `offset` is printed over the hard offset
+  (`ui.qr(text, { size = 200, offset = true })`). `Segments` is a
+  labelled choice: its choices side by side, the picked one outlined
+  over the offset, a click carrying out its action with its arguments
+  and the choice's `value` (`ui.segments(choices, picked, action,
+  args)`, a choice a string or `{ label, value }`).
   A tool call's part of the tree is still called its card (`AtCard`,
   `CardView`, a Luau tool's `card`): it draws as a line of the
   transcript, with its body under it when open. A

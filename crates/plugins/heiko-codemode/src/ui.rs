@@ -35,7 +35,7 @@ use heiko_ui_plugin::{
     UiPlugin,
     ViewCx,
     points::{self, AtCard, AtRun, CardView},
-    tree::{KeyValue, Kind, MarkState, Node, Tone},
+    tree::{KeyValue, Kind, MarkState, Node, Tone, open_key},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -552,23 +552,36 @@ impl UiPlugin for CodemodeUi {
             })
     }
 
-    /// What a tree's buttons ask: the [`Action`] in their arguments.
+    /// What a tree's buttons ask: the [`Action`] in their arguments,
+    /// or an output item opened or closed.
     fn on_action(
         &self,
         action: &str,
         args: &Value,
         view: &mut ViewCx<'_, Self>,
     ) {
-        if action != ACT {
-            return;
-        }
-        if let Ok(action) = serde_json::from_value::<Action>(args.clone()) {
-            view.handle.act(action);
+        match action {
+            ACT => {
+                if let Ok(action) =
+                    serde_json::from_value::<Action>(args.clone())
+                {
+                    view.handle.act(action);
+                }
+            }
+            outline::OPEN => {
+                if let (Some(key), Some(open)) = (
+                    args.get("key").and_then(Value::as_str),
+                    args.get("open").and_then(Value::as_bool),
+                ) {
+                    view.handle.set_ui(key, Some(Value::Bool(open)));
+                }
+            }
+            _ => {}
         }
     }
 }
 
-/// Every button's action: carry out the [`Action`] its arguments hold.
+/// A button's action: carry out the [`Action`] its arguments hold.
 const ACT: &str = "act";
 
 /// A button that asks the host half for `action`.
@@ -580,6 +593,8 @@ fn button(label: &str, action: &Action) -> Node {
         kind: Kind::Secondary,
         icon: None,
         size: Default::default(),
+        wide: false,
+        detail: None,
     }
 }
 
@@ -595,7 +610,10 @@ fn mono(text: impl Into<String>) -> Node {
 }
 
 fn heading(text: impl Into<String>) -> Node {
-    Node::Heading { text: text.into(), tone: Default::default() }
+    Node::Heading {
+        text: text.into(),
+        tone: Default::default(),
+    }
 }
 
 fn code(lang: &str, text: impl AsRef<str>) -> Node {
@@ -638,7 +656,7 @@ pub fn description(jev: bool) -> String {
 /// The `codemode` card.
 pub fn card(
     at: &AtCard,
-    _view: &mut ViewCx<'_, CodemodeUi>,
+    view: &mut ViewCx<'_, CodemodeUi>,
 ) -> Option<CardView> {
     if at.tool != NAME {
         return None;
@@ -652,7 +670,22 @@ pub fn card(
         .and_then(|result| failure(&result.text, result.error));
     let code = script(data);
     let head = mono(first_line(code));
-    let body = body(&at.call_id, code, &calls, failed.clone(), details);
+    // An output item is open once clicked; a lone one from the start.
+    let items = details.map(outline::items).unwrap_or_default();
+    let open = |index: usize| {
+        view.ui_value(&open_key(&outline::key(&at.call_id, index)))
+            .and_then(Value::as_bool)
+            .unwrap_or_else(|| outline::starts_open(items.len()))
+    };
+    let body = body(
+        &at.call_id,
+        code,
+        &calls,
+        failed.clone(),
+        &items,
+        &open,
+        details,
+    );
     Some(CardView {
         head: Some(head),
         label: Some(label(&calls, details)),
@@ -670,23 +703,34 @@ pub fn card(
 }
 
 /// The card's body: the script, its calls, each a tool's line, its
-/// output (each item a section that opens), why it failed and what it
-/// stored.
+/// output `items` (each a line that opens, `open` saying which are),
+/// why it failed and what it stored.
 pub fn body(
     call_id: &str,
     code: &str,
     calls: &Calls,
     failed: Option<String>,
+    items: &[outline::Shown],
+    open: &dyn Fn(usize) -> bool,
     details: Option<&Value>,
 ) -> Node {
     let mut body = vec![self::code("luau", formatted(code))];
     if !calls.rows.is_empty() {
         body.extend(part("calls", calls.rows.len()));
-        body.push(Node::Table {
-            head: Vec::new(),
-            rows: calls.rows.iter().map(call_row).collect(),
-            widths: vec![0.4, 2., 6., 1.2],
-        });
+        // Every tool's name as wide as the longest, so the arguments
+        // start in one column.
+        let width = calls
+            .rows
+            .iter()
+            .map(|row| row.name.chars().count())
+            .max()
+            .unwrap_or_default();
+        for (n, row) in calls.rows.iter().enumerate() {
+            if n > 0 {
+                body.push(Node::Rule);
+            }
+            body.extend(call_row(row, width));
+        }
         if !calls.complete {
             body.push(Node::Toned {
                 text: "more calls were made than the result lists".into(),
@@ -695,10 +739,9 @@ pub fn body(
             });
         }
     }
-    let items = details.map(outline::items).unwrap_or_default();
     if !items.is_empty() {
         body.extend(part("output", items.len()));
-        body.push(outline::outline(call_id, &items));
+        body.push(outline::outline(call_id, items, open));
     }
     if let Some(error) = failed {
         body.push(marked("blocked", Tone::Bad, error));
@@ -722,12 +765,14 @@ pub fn body(
     Node::stack(body)
 }
 
-/// One call's row, as a tool's line: the mark of how it went, the tool,
-/// its arguments with its error and plugins' verdicts under them, and
-/// its time.
-fn call_row(row: &Row) -> Vec<Node> {
+/// One call, as a tool's line: the mark of how it went, the tool (its
+/// name `width` characters wide), its arguments and, at the end, its
+/// time; then its error and plugins' verdicts, each on a line under it.
+fn call_row(row: &Row, width: usize) -> Vec<Node> {
     let blocked = row.marks.iter().find_map(|mark| match &mark.mark {
-        CardMark::Blocked { reason } => Some((mark.plugin.clone(), reason)),
+        CardMark::Blocked { reason, by } => {
+            Some((by.clone().unwrap_or_else(|| mark.plugin.clone()), reason))
+        }
         CardMark::Flagged => None,
     });
     let flagged = row
@@ -750,44 +795,49 @@ fn call_row(row: &Row) -> Vec<Node> {
         (_, Some(ms)) => format!("{ms} ms"),
         (_, None) => String::new(),
     };
-    let mut what = vec![mono(row.args.clone())];
+    let mut lines = vec![Node::row([
+        status,
+        Node::Toned {
+            text: format!("{:<width$}", row.name),
+            tone: Tone::Info,
+            mono: true,
+        },
+        mono(row.args.clone()),
+        Node::Spacer,
+        Node::Toned {
+            text: when,
+            tone: Tone::Neutral,
+            mono: true,
+        },
+    ])];
     if let Some(error) = &row.error {
-        what.push(marked("blocked", Tone::Bad, error.clone()));
+        lines.push(marked("blocked", Tone::Bad, error.clone()));
     }
     if let Some(progress) = &row.progress {
-        what.push(Node::text(progress.clone()));
+        lines.push(Node::text(progress.clone()));
     }
     if row.usage_uncertain {
-        what.push(Node::Toned {
+        lines.push(Node::Toned {
             text: "reported partial · final usage unknown".into(),
             tone: Tone::Neutral,
             mono: false,
         });
     }
     if let Some((plugin, reason)) = blocked {
-        what.push(marked(
+        lines.push(marked(
             "blocked",
             Tone::Bad,
             format!("blocked by {plugin}: {reason}"),
         ));
     }
     if let Some(plugin) = flagged {
-        what.push(marked(
+        lines.push(marked(
             "warning",
             Tone::Warn,
             format!("flagged by {plugin}"),
         ));
     }
-    vec![
-        status,
-        mono(row.name.clone()),
-        Node::stack(what),
-        Node::Toned {
-            text: when,
-            tone: Tone::Neutral,
-            mono: true,
-        },
-    ]
+    lines
 }
 
 /// The inspector: the store a run's scripts kept, its repository's

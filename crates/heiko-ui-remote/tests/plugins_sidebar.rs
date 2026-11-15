@@ -1,7 +1,7 @@
 //! The sidebar's Plugins (ADR 0036): the plugins built in, the person's
-//! own, which wait for them, and the chats of heiko's plugins repository,
-//! folded away with Plugins. Writing a plugin, from the sidebar or from
-//! a page with no composer, starts on a new run's composer.
+//! own, which wait for them, and the chats of heiko's plugins repository.
+//! Writing a plugin, from the sidebar or from a page with no composer,
+//! starts on a new run's composer.
 
 use gpui::{TestAppContext, VisualTestContext};
 use heiko_agent::tool::RunId;
@@ -117,12 +117,11 @@ fn open(
 
 /// The titles of the plugins repository's chats the sidebar lists.
 fn own_chats(ws: &Workspace) -> Vec<String> {
-    let Some(rows) = ws.plugins_rows() else {
+    let Some(rows) =
+        ws.plugins_repo().and_then(|repo| ws.rows_named(&repo.name))
+    else {
         return Vec::new();
     };
-    if !rows.open {
-        return Vec::new();
-    }
     ws.repo_tree(&rows)
         .into_iter()
         .filter_map(|row| match row {
@@ -137,7 +136,7 @@ fn plugins_lists_the_built_in_the_person_s_own_and_their_chats(
     cx: &mut TestAppContext,
 ) {
     let (workspace, mut cx) = open(cx);
-    workspace.update(&mut cx, |ws, cx| {
+    workspace.update(&mut cx, |ws, _| {
         let catalog = ws.catalog();
         let built_in: Vec<&str> = catalog
             .built_in()
@@ -157,11 +156,7 @@ fn plugins_lists_the_built_in_the_person_s_own_and_their_chats(
             .map(|rows| rows.repo.name.clone())
             .collect();
         assert_eq!(listed, [REPO]);
-        // ...but its chats are under Plugins, until it is folded.
-        assert_eq!(own_chats(ws), ["plugins", "Write commit-style"]);
-        ws.toggle_plugins_open(cx);
-        assert!(own_chats(ws).is_empty());
-        ws.toggle_plugins_open(cx);
+        // ...but its chats are its own tree's.
         assert_eq!(own_chats(ws), ["plugins", "Write commit-style"]);
     });
 }

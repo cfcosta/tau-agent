@@ -253,11 +253,20 @@
                 "piece": "button"
               },
               {
+                "mono": false,
+                "piece": "toned",
+                "text": "·",
+                "tone": "neutral"
+              },
+              {
                 "piece": "rich",
                 "text": "**Canvas plan**"
               }
             ],
             "piece": "row"
+          },
+          {
+            "piece": "rule"
           },
           {
             "children": [

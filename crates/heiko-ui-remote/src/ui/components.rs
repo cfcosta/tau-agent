@@ -6,16 +6,9 @@ pub use heiko_ui_kit::components::*;
 
 use crate::{
     assets::Icon,
-    catalog::Repo,
     theme::{Design as _, Theme, Type, sp},
     workspace::Workspace,
 };
-
-/// A repository's mark: its letter on its color, 20 px in the sidebar
-/// and 26 px on a phone.
-pub fn repo_mark(repo: &Repo, size: f32, t: &Theme) -> Div {
-    heiko_ui_kit::components::repo_mark(&repo.name, size, t)
-}
 
 /// The phone's header on a task screen: back, and the title in the
 /// display face, over a hairline.

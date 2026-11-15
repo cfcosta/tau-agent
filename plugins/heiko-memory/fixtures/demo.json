@@ -1158,6 +1158,12 @@
     "docbert": {
       "children": [
         {
+          "actions": [],
+          "meta": "3 notes",
+          "piece": "header",
+          "title": "Memory"
+        },
+        {
           "children": [
             {
               "piece": "heading",
@@ -1390,6 +1396,12 @@
     },
     "heiko-agent": {
       "children": [
+        {
+          "actions": [],
+          "meta": "8 notes",
+          "piece": "header",
+          "title": "Memory"
+        },
         {
           "children": [
             {
@@ -2023,6 +2035,12 @@
     "homelab.nix": {
       "children": [
         {
+          "actions": [],
+          "meta": "1 note",
+          "piece": "header",
+          "title": "Memory"
+        },
+        {
           "children": [
             {
               "id": "search",
@@ -2224,18 +2242,38 @@
           "rows": [
             [
               {
-                "action": "act",
-                "args": {
-                  "act": {
-                    "act": "tick",
-                    "id": "p-1",
-                    "keep": false
+                "children": [
+                  {
+                    "action": "act",
+                    "args": {
+                      "act": {
+                        "act": "tick",
+                        "id": "p-1",
+                        "keep": false
+                      }
+                    },
+                    "label": "✓",
+                    "piece": "square",
+                    "style": "filled",
+                    "tone": "info"
+                  },
+                  {
+                    "children": [
+                      {
+                        "piece": "text",
+                        "text": "Answers lead with the result"
+                      },
+                      {
+                        "mono": false,
+                        "piece": "toned",
+                        "text": "The outcome first, then the detail that backs it. · Claude Code · memory/result-first.md",
+                        "tone": "neutral"
+                      }
+                    ],
+                    "piece": "stack"
                   }
-                },
-                "detail": "The outcome first, then the detail that backs it. · Claude Code · memory/result-first.md",
-                "label": "Answers lead with the result",
-                "on": true,
-                "piece": "switch"
+                ],
+                "piece": "row"
               },
               {
                 "children": [
@@ -2250,18 +2288,38 @@
             ],
             [
               {
-                "action": "act",
-                "args": {
-                  "act": {
-                    "act": "tick",
-                    "id": "p-2",
-                    "keep": false
+                "children": [
+                  {
+                    "action": "act",
+                    "args": {
+                      "act": {
+                        "act": "tick",
+                        "id": "p-2",
+                        "keep": false
+                      }
+                    },
+                    "label": "✓",
+                    "piece": "square",
+                    "style": "filled",
+                    "tone": "info"
+                  },
+                  {
+                    "children": [
+                      {
+                        "piece": "text",
+                        "text": "Commits are small, and each one builds"
+                      },
+                      {
+                        "mono": false,
+                        "piece": "toned",
+                        "text": "One change per commit; every commit passes the tests. · Claude Code · memory/small-commits.md, and 1 more",
+                        "tone": "neutral"
+                      }
+                    ],
+                    "piece": "stack"
                   }
-                },
-                "detail": "One change per commit; every commit passes the tests. · Claude Code · memory/small-commits.md, and 1 more",
-                "label": "Commits are small, and each one builds",
-                "on": true,
-                "piece": "switch"
+                ],
+                "piece": "row"
               },
               {
                 "children": [
@@ -2295,18 +2353,38 @@
           "rows": [
             [
               {
-                "action": "act",
-                "args": {
-                  "act": {
-                    "act": "tick",
-                    "id": "p-6",
-                    "keep": false
+                "children": [
+                  {
+                    "action": "act",
+                    "args": {
+                      "act": {
+                        "act": "tick",
+                        "id": "p-6",
+                        "keep": false
+                      }
+                    },
+                    "label": "✓",
+                    "piece": "square",
+                    "style": "filled",
+                    "tone": "info"
+                  },
+                  {
+                    "children": [
+                      {
+                        "piece": "text",
+                        "text": "Searches go through the BM25 index first"
+                      },
+                      {
+                        "mono": false,
+                        "piece": "toned",
+                        "text": "Candidates come from BM25 before ColBERT reranks them. · Claude Code · memory/bm25-first.md",
+                        "tone": "neutral"
+                      }
+                    ],
+                    "piece": "stack"
                   }
-                },
-                "detail": "Candidates come from BM25 before ColBERT reranks them. · Claude Code · memory/bm25-first.md",
-                "label": "Searches go through the BM25 index first",
-                "on": true,
-                "piece": "switch"
+                ],
+                "piece": "row"
               },
               {
                 "children": [
@@ -2321,18 +2399,38 @@
             ],
             [
               {
-                "action": "act",
-                "args": {
-                  "act": {
-                    "act": "tick",
-                    "id": "p-7",
-                    "keep": false
+                "children": [
+                  {
+                    "action": "act",
+                    "args": {
+                      "act": {
+                        "act": "tick",
+                        "id": "p-7",
+                        "keep": false
+                      }
+                    },
+                    "label": "✓",
+                    "piece": "square",
+                    "style": "filled",
+                    "tone": "info"
+                  },
+                  {
+                    "children": [
+                      {
+                        "piece": "text",
+                        "text": "Embeddings are rebuilt when the model changes"
+                      },
+                      {
+                        "mono": false,
+                        "piece": "toned",
+                        "text": "The cache is keyed by model, so a new model re-encodes. · Codex · task summary, 2026-10-02",
+                        "tone": "neutral"
+                      }
+                    ],
+                    "piece": "stack"
                   }
-                },
-                "detail": "The cache is keyed by model, so a new model re-encodes. · Codex · task summary, 2026-10-02",
-                "label": "Embeddings are rebuilt when the model changes",
-                "on": true,
-                "piece": "switch"
+                ],
+                "piece": "row"
               },
               {
                 "children": [
@@ -2361,18 +2459,38 @@
           "rows": [
             [
               {
-                "action": "act",
-                "args": {
-                  "act": {
-                    "act": "tick",
-                    "id": "p-3",
-                    "keep": true
+                "children": [
+                  {
+                    "action": "act",
+                    "args": {
+                      "act": {
+                        "act": "tick",
+                        "id": "p-3",
+                        "keep": true
+                      }
+                    },
+                    "label": "",
+                    "piece": "square",
+                    "style": "quiet",
+                    "tone": "info"
+                  },
+                  {
+                    "children": [
+                      {
+                        "piece": "text",
+                        "text": "Run the integration suite with --features live"
+                      },
+                      {
+                        "mono": false,
+                        "piece": "toned",
+                        "text": "Says the suite needs the staging database; heiko has n-0441 saying it runs offline. · Codex · task summary, 2026-10-09",
+                        "tone": "neutral"
+                      }
+                    ],
+                    "piece": "stack"
                   }
-                },
-                "detail": "Says the suite needs the staging database; heiko has n-0441 saying it runs offline. · Codex · task summary, 2026-10-09",
-                "label": "Run the integration suite with --features live",
-                "on": false,
-                "piece": "switch"
+                ],
+                "piece": "row"
               },
               {
                 "children": [
@@ -2392,18 +2510,38 @@
             ],
             [
               {
-                "action": "act",
-                "args": {
-                  "act": {
-                    "act": "tick",
-                    "id": "p-4",
-                    "keep": false
+                "children": [
+                  {
+                    "action": "act",
+                    "args": {
+                      "act": {
+                        "act": "tick",
+                        "id": "p-4",
+                        "keep": false
+                      }
+                    },
+                    "label": "✓",
+                    "piece": "square",
+                    "style": "filled",
+                    "tone": "info"
+                  },
+                  {
+                    "children": [
+                      {
+                        "piece": "text",
+                        "text": "The fixture server needs a free port"
+                      },
+                      {
+                        "mono": false,
+                        "piece": "toned",
+                        "text": "Bind port 0 and read it back; a fixed port collides in CI. · Claude Code · chat on 2026-10-04",
+                        "tone": "neutral"
+                      }
+                    ],
+                    "piece": "stack"
                   }
-                },
-                "detail": "Bind port 0 and read it back; a fixed port collides in CI. · Claude Code · chat on 2026-10-04",
-                "label": "The fixture server needs a free port",
-                "on": true,
-                "piece": "switch"
+                ],
+                "piece": "row"
               },
               {
                 "children": [
@@ -2418,18 +2556,38 @@
             ],
             [
               {
-                "action": "act",
-                "args": {
-                  "act": {
-                    "act": "tick",
-                    "id": "p-5",
-                    "keep": true
+                "children": [
+                  {
+                    "action": "act",
+                    "args": {
+                      "act": {
+                        "act": "tick",
+                        "id": "p-5",
+                        "keep": true
+                      }
+                    },
+                    "label": "",
+                    "piece": "square",
+                    "style": "quiet",
+                    "tone": "info"
+                  },
+                  {
+                    "children": [
+                      {
+                        "piece": "text",
+                        "text": "[redacted] token for the staging API"
+                      },
+                      {
+                        "mono": false,
+                        "piece": "toned",
+                        "text": "The chat pasted a secret; heiko kept it out of the note. · Codex · chat on 2026-09-22",
+                        "tone": "neutral"
+                      }
+                    ],
+                    "piece": "stack"
                   }
-                },
-                "detail": "The chat pasted a secret; heiko kept it out of the note. · Codex · chat on 2026-09-22",
-                "label": "[redacted] token for the staging API",
-                "on": false,
-                "piece": "switch"
+                ],
+                "piece": "row"
               },
               {
                 "children": [
@@ -2610,8 +2768,10 @@
                         "piece": "spacer"
                       },
                       {
-                        "piece": "mono",
-                        "text": "heiko-memory"
+                        "mono": true,
+                        "piece": "toned",
+                        "text": "heiko-memory",
+                        "tone": "neutral"
                       }
                     ],
                     "piece": "row"
@@ -2622,18 +2782,42 @@
                         "dashed": false,
                         "piece": "slip",
                         "text": "Retry policy honors server hints",
+                        "to": {
+                          "page": "notes",
+                          "params": {
+                            "note": "n-0388",
+                            "repo": "heiko-agent"
+                          },
+                          "plugin": null
+                        },
                         "tone": "teal"
                       },
                       {
                         "dashed": false,
                         "piece": "slip",
                         "text": "429 vs 503 in the Responses API",
+                        "to": {
+                          "page": "notes",
+                          "params": {
+                            "note": "n-0390",
+                            "repo": "heiko-agent"
+                          },
+                          "plugin": null
+                        },
                         "tone": "teal"
                       },
                       {
                         "dashed": false,
                         "piece": "slip",
                         "text": "Tests use the fake OpenAI server",
+                        "to": {
+                          "page": "notes",
+                          "params": {
+                            "note": "n-0205",
+                            "repo": "heiko-agent"
+                          },
+                          "plugin": null
+                        },
                         "tone": "teal"
                       }
                     ],
@@ -2717,8 +2901,10 @@
                         "piece": "spacer"
                       },
                       {
-                        "piece": "mono",
-                        "text": "heiko-memory"
+                        "mono": true,
+                        "piece": "toned",
+                        "text": "heiko-memory",
+                        "tone": "neutral"
                       }
                     ],
                     "piece": "row"
@@ -2729,18 +2915,42 @@
                         "dashed": false,
                         "piece": "slip",
                         "text": "Retry policy honors server hints",
+                        "to": {
+                          "page": "notes",
+                          "params": {
+                            "note": "n-0388",
+                            "repo": "heiko-agent"
+                          },
+                          "plugin": null
+                        },
                         "tone": "teal"
                       },
                       {
                         "dashed": false,
                         "piece": "slip",
                         "text": "429 vs 503 in the Responses API",
+                        "to": {
+                          "page": "notes",
+                          "params": {
+                            "note": "n-0390",
+                            "repo": "heiko-agent"
+                          },
+                          "plugin": null
+                        },
                         "tone": "teal"
                       },
                       {
                         "dashed": false,
                         "piece": "slip",
                         "text": "Tests use the fake OpenAI server",
+                        "to": {
+                          "page": "notes",
+                          "params": {
+                            "note": "n-0205",
+                            "repo": "heiko-agent"
+                          },
+                          "plugin": null
+                        },
                         "tone": "teal"
                       }
                     ],
@@ -2771,8 +2981,10 @@
                         "piece": "spacer"
                       },
                       {
-                        "piece": "mono",
-                        "text": "heiko-memory"
+                        "mono": true,
+                        "piece": "toned",
+                        "text": "heiko-memory",
+                        "tone": "neutral"
                       }
                     ],
                     "piece": "row"
@@ -2783,12 +2995,28 @@
                         "dashed": true,
                         "piece": "slip",
                         "text": "Malformed retry-after falls back to backoff",
+                        "to": {
+                          "page": "notes",
+                          "params": {
+                            "note": "n-0441",
+                            "repo": "heiko-agent"
+                          },
+                          "plugin": null
+                        },
                         "tone": "teal"
                       },
                       {
                         "dashed": true,
                         "piece": "slip",
                         "text": "Cap applies to server hints too",
+                        "to": {
+                          "page": "notes",
+                          "params": {
+                            "note": "n-0442",
+                            "repo": "heiko-agent"
+                          },
+                          "plugin": null
+                        },
                         "tone": "teal"
                       }
                     ],
@@ -2883,40 +3111,80 @@
               "text": "~/.claude"
             },
             {
-              "action": "setup_choose",
-              "args": {
-                "choice": {
-                  "others": false,
-                  "parts": {
-                    "claude_chats": true,
-                    "claude_saved": false,
-                    "codex_chats": true,
-                    "codex_saved": true
-                  }
+              "children": [
+                {
+                  "action": "setup_choose",
+                  "args": {
+                    "choice": {
+                      "others": false,
+                      "parts": {
+                        "claude_chats": true,
+                        "claude_saved": false,
+                        "codex_chats": true,
+                        "codex_saved": true
+                      }
+                    }
+                  },
+                  "label": "✓",
+                  "piece": "square",
+                  "style": "filled",
+                  "tone": "info"
+                },
+                {
+                  "children": [
+                    {
+                      "piece": "text",
+                      "text": "Its memory · 501 notes"
+                    },
+                    {
+                      "mono": false,
+                      "piece": "toned",
+                      "text": "Notes it saved in 54 folders. Copied as they are, without the model.",
+                      "tone": "neutral"
+                    }
+                  ],
+                  "piece": "stack"
                 }
-              },
-              "detail": "Notes it saved in 54 folders. Copied as they are, without the model.",
-              "label": "Its memory · 501 notes",
-              "on": true,
-              "piece": "switch"
+              ],
+              "piece": "row"
             },
             {
-              "action": "setup_choose",
-              "args": {
-                "choice": {
-                  "others": false,
-                  "parts": {
-                    "claude_chats": false,
-                    "claude_saved": true,
-                    "codex_chats": true,
-                    "codex_saved": true
-                  }
+              "children": [
+                {
+                  "action": "setup_choose",
+                  "args": {
+                    "choice": {
+                      "others": false,
+                      "parts": {
+                        "claude_chats": false,
+                        "claude_saved": true,
+                        "codex_chats": true,
+                        "codex_saved": true
+                      }
+                    }
+                  },
+                  "label": "✓",
+                  "piece": "square",
+                  "style": "filled",
+                  "tone": "info"
+                },
+                {
+                  "children": [
+                    {
+                      "piece": "text",
+                      "text": "Its chats · 180 conversations"
+                    },
+                    {
+                      "mono": false,
+                      "piece": "toned",
+                      "text": "Your model reads them and writes down what was decided, fixed or preferred.",
+                      "tone": "neutral"
+                    }
+                  ],
+                  "piece": "stack"
                 }
-              },
-              "detail": "Your model reads them and writes down what was decided, fixed or preferred.",
-              "label": "Its chats · 180 conversations",
-              "on": true,
-              "piece": "switch"
+              ],
+              "piece": "row"
             },
             {
               "head": [],
@@ -2999,40 +3267,80 @@
               "text": "~/.codex"
             },
             {
-              "action": "setup_choose",
-              "args": {
-                "choice": {
-                  "others": false,
-                  "parts": {
-                    "claude_chats": true,
-                    "claude_saved": true,
-                    "codex_chats": true,
-                    "codex_saved": false
-                  }
+              "children": [
+                {
+                  "action": "setup_choose",
+                  "args": {
+                    "choice": {
+                      "others": false,
+                      "parts": {
+                        "claude_chats": true,
+                        "claude_saved": true,
+                        "codex_chats": true,
+                        "codex_saved": false
+                      }
+                    }
+                  },
+                  "label": "✓",
+                  "piece": "square",
+                  "style": "filled",
+                  "tone": "info"
+                },
+                {
+                  "children": [
+                    {
+                      "piece": "text",
+                      "text": "Its memories · 93 summaries"
+                    },
+                    {
+                      "mono": false,
+                      "piece": "toned",
+                      "text": "What Codex kept from past tasks, grouped by folder. Your model splits them into notes.",
+                      "tone": "neutral"
+                    }
+                  ],
+                  "piece": "stack"
                 }
-              },
-              "detail": "What Codex kept from past tasks, grouped by folder. Your model splits them into notes.",
-              "label": "Its memories · 93 summaries",
-              "on": true,
-              "piece": "switch"
+              ],
+              "piece": "row"
             },
             {
-              "action": "setup_choose",
-              "args": {
-                "choice": {
-                  "others": false,
-                  "parts": {
-                    "claude_chats": true,
-                    "claude_saved": true,
-                    "codex_chats": false,
-                    "codex_saved": true
-                  }
+              "children": [
+                {
+                  "action": "setup_choose",
+                  "args": {
+                    "choice": {
+                      "others": false,
+                      "parts": {
+                        "claude_chats": true,
+                        "claude_saved": true,
+                        "codex_chats": false,
+                        "codex_saved": true
+                      }
+                    }
+                  },
+                  "label": "✓",
+                  "piece": "square",
+                  "style": "filled",
+                  "tone": "info"
+                },
+                {
+                  "children": [
+                    {
+                      "piece": "text",
+                      "text": "Its chats · 748 sessions"
+                    },
+                    {
+                      "mono": false,
+                      "piece": "toned",
+                      "text": "Read in full by your model. It keeps going after setup.",
+                      "tone": "neutral"
+                    }
+                  ],
+                  "piece": "stack"
                 }
-              },
-              "detail": "Read in full by your model. It keeps going after setup.",
-              "label": "Its chats · 748 sessions",
-              "on": true,
-              "piece": "switch"
+              ],
+              "piece": "row"
             },
             {
               "head": [],
@@ -3091,22 +3399,36 @@
           "piece": "card"
         },
         {
-          "action": "setup_choose",
-          "args": {
-            "choice": {
-              "others": true,
-              "parts": {
-                "claude_chats": true,
-                "claude_saved": true,
-                "codex_chats": true,
-                "codex_saved": true
-              }
+          "children": [
+            {
+              "action": "setup_choose",
+              "args": {
+                "choice": {
+                  "others": true,
+                  "parts": {
+                    "claude_chats": true,
+                    "claude_saved": true,
+                    "codex_chats": true,
+                    "codex_saved": true
+                  }
+                }
+              },
+              "label": "",
+              "piece": "square",
+              "style": "quiet",
+              "tone": "info"
+            },
+            {
+              "children": [
+                {
+                  "piece": "text",
+                  "text": "Also bring folders heiko does not have yet, to use when you add them"
+                }
+              ],
+              "piece": "stack"
             }
-          },
-          "detail": null,
-          "label": "Also bring folders heiko does not have yet, to use when you add them",
-          "on": false,
-          "piece": "switch"
+          ],
+          "piece": "row"
         },
         {
           "children": [

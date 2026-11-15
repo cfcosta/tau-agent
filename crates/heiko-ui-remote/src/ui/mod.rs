@@ -16,14 +16,13 @@ pub mod screens;
 pub mod transcript;
 
 pub use components::*;
-use gpui::{Hsla, IntoElement, SharedString, prelude::*, rems};
+use gpui::{Hsla, SharedString};
 use heiko_agent::event::{LimitKind, StopReason};
 pub use heiko_ui_kit::prose::*;
 
 use crate::{
-    assets::Icon,
     attention::Attention,
-    theme::{IconSize, Theme},
+    theme::Theme,
     view::{RunStatus, RunView},
 };
 
@@ -40,27 +39,6 @@ pub fn status_mark_state(status: &RunStatus) -> State {
         // Waiting for the person, whether it stopped or was stopped.
         RunStatus::Finished(StopReason::Stop | StopReason::Cancelled)
         | RunStatus::Interrupted => State::Idle,
-    }
-}
-
-/// The mark a run is shown with for what it needs: its state's own, or,
-/// when it needs nothing in particular, its `status`'s
-/// ([`status_mark_state`]).
-pub fn attention_mark_state(
-    attention: &Attention,
-    status: &RunStatus,
-) -> State {
-    match attention {
-        Attention::Working { .. } => State::Working,
-        Attention::Asks { .. } => State::Asks,
-        Attention::ReadyToLand { .. } | Attention::Landed => State::Met,
-        Attention::WouldConflict { .. } | Attention::ConflictsOnMain { .. } => {
-            State::Failing
-        }
-        Attention::Queued(_) | Attention::Interrupted | Attention::Dropped => {
-            State::Idle
-        }
-        Attention::Failed | Attention::Idle => status_mark_state(status),
     }
 }
 
@@ -101,40 +79,6 @@ pub fn stop_look(stop: &StopReason, t: &Theme) -> (Hsla, SharedString) {
     }
 }
 
-/// The mark a run shows in lists, `size` px wide.
-pub fn status_icon(
-    run: &RunView,
-    t: &Theme,
-    size: IconSize,
-) -> gpui::AnyElement {
-    mark(status_mark_state(&run.status), t)
-        .size(rems(size.0 / 16.))
-        .into_any_element()
-}
-
-/// The mark a run's row shows for what it needs
-/// ([`attention_mark_state`]), dimmed once the run is closed; a `nested`
-/// row under a run that needs nothing shows the fork icon.
-pub fn attention_icon(
-    attention: &Attention,
-    run: &RunView,
-    nested: bool,
-    t: &Theme,
-    size: IconSize,
-) -> gpui::AnyElement {
-    if nested && *attention == Attention::Idle {
-        return icon(Icon::Fork, size, t.blue).into_any_element();
-    }
-    let drawn = mark(attention_mark_state(attention, &run.status), t)
-        .size(rems(size.0 / 16.));
-    match attention {
-        Attention::Landed | Attention::Dropped => drawn.text_color(t.dim),
-        Attention::Queued(_) => drawn.text_color(t.accent),
-        _ => drawn,
-    }
-    .into_any_element()
-}
-
 /// The color of a run's line for what it needs: its mark's.
 pub fn attention_color(attention: &Attention, t: &Theme) -> Hsla {
     match attention {
@@ -148,15 +92,5 @@ pub fn attention_color(attention: &Attention, t: &Theme) -> Hsla {
         Attention::Working { .. }
         | Attention::Interrupted
         | Attention::Idle => t.muted,
-    }
-}
-
-/// The tint behind a run's row while it waits on the person to answer
-/// or to land it.
-pub fn attention_tint(attention: &Attention, t: &Theme) -> Option<Hsla> {
-    match attention {
-        Attention::Asks { .. } => Some(t.blue.opacity(0.06)),
-        Attention::ReadyToLand { .. } => Some(t.green.opacity(0.06)),
-        _ => None,
     }
 }

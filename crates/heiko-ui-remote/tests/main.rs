@@ -7,6 +7,7 @@ mod attention;
 mod core_names_no_plugin;
 mod design;
 mod fresh_main;
+mod home_list;
 mod landed_itself;
 mod markdown;
 mod own_repo;

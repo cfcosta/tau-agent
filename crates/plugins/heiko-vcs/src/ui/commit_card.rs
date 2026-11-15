@@ -1,8 +1,9 @@
 //! The `vcs_commit` card, as a view tree (ADR 0045), drawn as the
-//! stack the commit made, each change a square on the line: the new
-//! working copy on top, the new change under it (the filled square), and
-//! the parent below. Each has its files, so a commit that took only
-//! some paths shows what went into the change and what stayed in `@`.
+//! stack the commit made, each change a square on the line that joins
+//! them: the new working copy on top, the new change under it (the
+//! filled square), and the parent below. Each has its files on a band
+//! under it, so a commit that took only some paths shows what went into
+//! the change and what stayed in `@`.
 
 use heiko_ui_plugin::tree::Node;
 use serde::Deserialize;
@@ -100,33 +101,48 @@ pub fn summary(commit: &Commit) -> Node {
     }
 }
 
-/// The stack the commit made: `@` on top with what stayed in it, the
-/// new change with its message and files, and the parent below.
+/// A change's row on the line, and `under` it on a band, when there is
+/// any: its message, its files.
+fn step(row: Vec<Node>, under: Vec<Node>) -> Node {
+    let row = Node::row(row);
+    if under.is_empty() {
+        row
+    } else {
+        Node::stack([row, Node::Band { children: under }])
+    }
+}
+
+/// The stack the commit made, its squares joined by the line: `@` on
+/// top with what stayed in it, the new change with its message and
+/// files, and the parent below.
 pub fn body(commit: &Commit) -> Node {
     let change = &commit.change;
-    let mut column = vec![match commit.left.len() {
-        0 => Node::row([
+    let working_copy = match commit.left.len() {
+        0 => vec![
             node(false),
             quiet("(empty)"),
             Node::text("new working copy"),
-        ]),
-        left => Node::row([
+        ],
+        left => vec![
             node(false),
             short_id(&commit.working_copy),
             Node::text(match left {
                 1 => "working copy · still holds 1 file".to_owned(),
                 n => format!("working copy · still holds {n} files"),
             }),
-        ]),
-    }];
-    column.extend(file_rows(&commit.left, commit.left_truncated, &|_| false));
+        ],
+    };
+    let mut steps = vec![step(
+        working_copy,
+        file_rows(&commit.left, commit.left_truncated, &|_| false),
+    )];
     let mut committed =
         vec![node(true), short_id(change), Node::text(first_line(change))];
     committed.push(Node::Spacer);
     committed.extend(bookmarks(change));
-    column.push(Node::row(committed));
-    column.extend(message(change));
-    column.extend(file_rows(&commit.files, commit.truncated, &|_| false));
+    let mut holds = message(change);
+    holds.extend(file_rows(&commit.files, commit.truncated, &|_| false));
+    steps.push(step(committed, holds));
     if let Some(parent) = &commit.parent {
         let mut row = vec![
             node(false),
@@ -135,7 +151,7 @@ pub fn body(commit: &Commit) -> Node {
         ];
         row.push(Node::Spacer);
         row.extend(bookmarks(parent));
-        column.push(Node::row(row));
+        steps.push(step(row, Vec::new()));
     }
-    Node::stack(column)
+    Node::Rail { children: steps }
 }

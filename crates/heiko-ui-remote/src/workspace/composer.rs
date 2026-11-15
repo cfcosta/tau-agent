@@ -26,7 +26,7 @@ impl Workspace {
         // On New Run the message starts a run, whatever the open run does.
         let live = self.route != Route::NewRun && self.is_live();
         let queued = self
-            .current()
+            .shown_run()
             .and_then(|run| self.queued.get(&run.id))
             .map(|texts| texts.join(" · "));
         let send = div()
@@ -43,15 +43,22 @@ impl Workspace {
         } else {
             // The one printed block of the chat. The field's placeholder
             // says what sending does.
-            send.child(ui::primary_block(
-                if self.forking.is_some() {
-                    "Fork"
-                } else {
-                    "Send"
-                },
-                ui::BlockSize::Medium,
-                t,
-            ))
+            send.child(
+                ui::primary_block(
+                    if self.forking.is_some() {
+                        "Fork"
+                    } else {
+                        "Send"
+                    },
+                    ui::BlockSize::Medium,
+                    t,
+                )
+                .child(ui::mono(
+                    "\u{21b5}",
+                    Type::CAPTION,
+                    t.roles.on_primary,
+                )),
+            )
         };
         // What is attached, a ruled row each: an image shows itself, a
         // file its name.
@@ -168,9 +175,18 @@ impl Workspace {
                         .flex()
                         .items_center()
                         .gap(sp(2.))
+                        // The model and effort, as Home words them.
                         .when_some(self.composer_target(), |row, target| {
-                            row.child(div().text_color(t.dim).child("with"))
-                                .child(self.model_chip(target, t, cx))
+                            row.child(
+                                div()
+                                    .typeset(Type::LEAD)
+                                    .text_color(t.dim)
+                                    .child("with"),
+                            )
+                            .child(
+                                self.model_chip(target, t, cx)
+                                    .typeset(Type::LEAD),
+                            )
                         })
                         .child(div().flex_1())
                         .child(

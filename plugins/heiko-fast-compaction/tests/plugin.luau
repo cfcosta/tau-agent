@@ -179,7 +179,9 @@ t.case("each decision has its card label", function()
 			},
 		},
 	})
-	local calls = run:view().calls
+	local view = run:view()
+	t.equal(view.page.piece, "stack", "the ledger page is one piece")
+	local calls = view.calls
 	t.equal(calls.p, nil)
 	t.equal(calls.k, nil)
 	t.equal(calls.r.badge.label, "result dropped")

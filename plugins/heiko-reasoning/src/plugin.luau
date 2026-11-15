@@ -20,14 +20,14 @@ end
 -- How many ticks a probability is drawn on.
 local TICKS = 20
 
--- The effort scale: one square a level, the one the run goes at outlined.
+-- The effort scale: each level's name outlined, the one the run goes
+-- at in orange.
 local function scale(choice)
-	local squares = {}
+	local stamps = {}
 	for _, level in ipairs(choice.levels) do
-		local picked = level.effort == choice.runs_at
-		table.insert(squares, ui.square(level.effort, picked and "outlined" or "quiet", "warn"))
+		table.insert(stamps, ui.stamp(level.effort, level.effort == choice.runs_at and "warn" or "neutral"))
 	end
-	return ui.row(squares)
+	return ui.row(stamps)
 end
 
 -- One level a row: its name, its probability as ticks, and what it suits.
@@ -82,14 +82,14 @@ end
 -- that Jev could not score.
 local function note(entry, state)
 	if entry.kind == "failed" then
-		return ui.row({ ui.mark("failing"), ui.text(entry.message), ui.spacer(), ui.mono(entry.detail) })
+		return ui.row({ ui.mark("failing"), ui.text(entry.message), ui.spacer(), ui.mono(entry.detail), ui.toned(NAME, "neutral", true) })
 	end
 	local choice = state.choices[entry.choice]
 	return ui.stack({
 		ui.row({
-			ui.heading("Reasoning: " .. (choice.runs_at or "default")),
+			ui.heading("Reasoning: " .. (choice.runs_at or "default"), "warn"),
 			ui.spacer(),
-			ui.mono(NAME),
+			ui.toned(NAME, "neutral", true),
 			ui.link("details", "luau-plugins", { plugin = "heiko-luau-plugins", params = { entry = NAME } }),
 		}),
 		scale(choice),

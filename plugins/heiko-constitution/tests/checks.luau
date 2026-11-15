@@ -465,7 +465,7 @@ end, { cases = 200 })
 t.case("a verdict marks its call, and every call shows its scores", function()
 	local state = checks.state({ repo = "heiko-agent" })
 	for _, r in ipairs({
-		{ kind = "blocked", rule = "R1", text = "No deletes.", score = 0.95, call_id = "c1", tool = "exec_command", reason = "Rule R1 forbids it" },
+		{ kind = "blocked", rule = "R1", text = "No deletes.", score = 0.95, review = 0.6, block = 0.9, call_id = "c1", tool = "exec_command", reason = "Rule R1 forbids it" },
 		{ kind = "flagged", rule = "R2", text = "No unwrap.", score = 0.55, call_id = "c2", tool = "write" },
 		{ kind = "checked", call_id = "c2", tool = "write", scores = { { rule = "R2", score = 0.55 } }, cost = 0 },
 		{ kind = "checked", call_id = "c3", tool = "write", scores = { { rule = "R2", score = 0.05 }, { rule = "R5", score = 0.1 } }, cost = 0 },
@@ -475,9 +475,19 @@ t.case("a verdict marks its call, and every call shows its scores", function()
 	local view = heiko.test.load().view(state, {})
 	t.equal(view.calls.c1.mark, "blocked")
 	t.equal(view.calls.c1.reason, "Rule R1 forbids it")
-	-- Under a blocked one: the mark, the rule, and Jev's score on a strip.
+	-- Under a blocked one, a row: the rule, a link to it, then Jev's
+	-- score on a strip. The call's line has the mark already.
+	t.equal(view.calls.c1.body.piece, "row")
+	t.equal(#view.calls.c1.body.children, 2)
+	t.equal(view.calls.c1.body.children[1].children[1].piece, "link")
+	t.equal(view.calls.c1.body.children[1].children[1].label, "Rule R1")
 	local body = json.encode(view.calls.c1.body)
-	t.equal(has(body, "止") and has(body, "Blocked by rule R1") and has(body, "No deletes.") and has(body, "0.95"), true, body)
+	t.equal(has(body, "No deletes.") and has(body, "p(violation)") and has(body, "0.95"), true, body)
+	t.equal(has(body, "止") or has(body, "Blocked by"), false, body)
+	-- The rule's two marks are named on the strip, not in a line of
+	-- their own.
+	t.equal(has(body, '"review"') and has(body, '"block"'), true, body)
+	t.equal(has(body, "review 0.60") or has(body, "block 0.90"), false, body)
 	t.equal(view.calls.c2.mark, "flagged")
 	t.equal(state.calls.c2.scores, { { rule = "R2", score = 0.55 } })
 	-- A flagged call's badge names the rule, its score and a way to review

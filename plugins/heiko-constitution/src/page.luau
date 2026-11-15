@@ -208,24 +208,18 @@ local function tick(value)
 	return math.clamp(math.floor(value * TICKS + 0.5), 0, TICKS - 1)
 end
 
--- A strip with the flag and block thresholds marked on it, and `score`
--- lit up to where it reached, when there is one.
+-- A strip with the review and block thresholds marked on it, each named
+-- under its tick, and `score` lit up to where it reached, when there is
+-- one.
 local function marks(review, block, score, tone)
-	return ui.ticks(score and math.floor(score * TICKS + 0.5) or 0, TICKS, tone or "neutral", { tick(review), tick(block) })
-end
-
--- The two thresholds in figures over their strip.
-local function thresholds(review, block)
-	return ui.stack({
-		ui.row({
-			ui.toned("flag", "neutral", true),
-			ui.mono(checks.two(review)),
-			ui.spacer(),
-			ui.toned("block", "neutral", true),
-			ui.toned(checks.two(block), "bad", true),
-		}),
-		marks(review, block),
-	})
+	local at_review, at_block = tick(review), tick(block)
+	return ui.ticks(
+		score and math.floor(score * TICKS + 0.5) or 0,
+		TICKS,
+		tone or "neutral",
+		{ at_review, at_block },
+		{ { at = at_review, text = "review" }, { at = at_block, text = "block" } }
+	)
 end
 
 -- What the rules did over the repository's runs, each count in its
@@ -373,7 +367,7 @@ local function rule_row(rule, totals, caught)
 	return {
 		id_square(rule, totals),
 		ui.stack({ ui.rich("**" .. rule.text .. "**"), reads(rule, caught) }),
-		thresholds(rule.review, rule.block),
+		marks(rule.review, rule.block),
 		status(rule, totals),
 		rule_actions(rule),
 	}
@@ -396,29 +390,33 @@ local function rules_list(constitution, totals, caught)
 end
 
 -- How the checks behave beyond each rule: what happens when Jev cannot
--- answer, the one in force the primary; and how many times an answer
--- may go back, a square each.
+-- answer, the one in force picked; and how many times an answer may go
+-- back, a square each, which sets it to that many.
 local function settings(constitution)
-	local blocks, holds = constitution.on_error == "block", constitution.max_holds
-	local function set(blocks_unchecked, max_holds)
-		return { blocks_unchecked = blocks_unchecked, max_holds = max_holds }
+	local holds = constitution.max_holds
+	local function set(max_holds)
+		return { max_holds = max_holds }
 	end
-	local sent_back = { ui.text("Answers sent back per run"), ui.spacer(), button("−", "settings", set(blocks, page.next_holds(holds, -1))) }
+	local sent_back = { ui.text("Answers sent back per run"), ui.spacer(), button("−", "settings", set(page.next_holds(holds, -1))) }
 	if holds == 0 then
 		table.insert(sent_back, ui.square("0"))
 	end
 	for n = 1, holds do
-		table.insert(sent_back, ui.square(tostring(n), "outlined", "warn"))
+		table.insert(sent_back, ui.square(tostring(n), "outlined", "warn", "settings", set(n)))
 	end
-	table.insert(sent_back, button("+", "settings", set(blocks, page.next_holds(holds, 1))))
+	table.insert(sent_back, button("+", "settings", set(page.next_holds(holds, 1))))
 	return ui.stack({
 		ui.heading("Settings"),
 		ui.rule(),
 		ui.row({
 			ui.text("When Jev can't answer"),
 			ui.spacer(),
-			button("let through", "settings", set(false, holds), blocks and "secondary" or "primary"),
-			button("refuse", "settings", set(true, holds), blocks and "primary" or "secondary"),
+			ui.segments(
+				{ { label = "let through", value = "allow" }, { label = "refuse", value = "block" } },
+				constitution.on_error == "block" and "block" or "allow",
+				"settings",
+				{}
+			),
 		}),
 		ui.rule(),
 		ui.row(sent_back),

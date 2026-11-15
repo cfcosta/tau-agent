@@ -207,20 +207,7 @@
         {
           "children": [
             {
-              "children": [
-                {
-                  "piece": "heading",
-                  "text": "heiko asks"
-                },
-                {
-                  "mono": false,
-                  "piece": "toned",
-                  "text": "review",
-                  "tone": "neutral"
-                },
-                {
-                  "piece": "spacer"
-                },
+              "actions": [
                 {
                   "mono": true,
                   "piece": "toned",
@@ -228,7 +215,9 @@
                   "tone": "neutral"
                 }
               ],
-              "piece": "row"
+              "meta": "review",
+              "piece": "header",
+              "title": "heiko asks"
             },
             {
               "children": [
@@ -242,6 +231,12 @@
                   "piece": "button"
                 },
                 {
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "·",
+                  "tone": "neutral"
+                },
+                {
                   "action": "go",
                   "args": {
                     "to": 1
@@ -249,6 +244,12 @@
                   "kind": "secondary",
                   "label": "✓ Surfaces ✎",
                   "piece": "button"
+                },
+                {
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "·",
+                  "tone": "neutral"
                 },
                 {
                   "action": "go",
@@ -260,17 +261,14 @@
                   "piece": "button"
                 },
                 {
-                  "piece": "mono",
-                  "text": "›"
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "›",
+                  "tone": "neutral"
                 },
                 {
-                  "action": "go",
-                  "args": {
-                    "to": 3
-                  },
-                  "kind": "secondary",
-                  "label": "submit",
-                  "piece": "button"
+                  "piece": "rich",
+                  "text": "**submit**"
                 },
                 {
                   "piece": "spacer"

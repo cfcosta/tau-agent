@@ -635,8 +635,10 @@ local SIZES = { small = true, medium = true, large = true }
 -- `kind` is primary, secondary (the default), danger or hot: one that
 -- needs the person. `icon`, one of heiko's icons by name, goes before the
 -- label, or alone with an empty one. `size` is a primary button's:
--- small (the default), medium or large.
-function ui.button(label, action, args, kind, icon, size)
+-- small (the default), medium or large. A `wide` one takes the whole
+-- width, its label at the left; a wide primary one may have `detail`,
+-- a second line in smaller text inside the block.
+function ui.button(label, action, args, kind, icon, size, wide, detail)
 	kind = kind or "secondary"
 	if not KINDS[kind] then
 		error("a button's kind is primary, secondary, danger or hot, not " .. tostring(kind), 2)
@@ -652,6 +654,59 @@ function ui.button(label, action, args, kind, icon, size)
 		kind = kind,
 		icon = icon and tostring(icon) or nil,
 		size = size,
+		wide = wide == true or nil,
+		detail = detail ~= nil and tostring(detail) or nil,
+	}
+end
+
+local GAPS = { small = true, medium = true, large = true }
+
+-- Room between two pieces one under the other: small, medium (the
+-- default) or large. A header after other pieces has room over it
+-- already.
+function ui.gap(size)
+	size = size or "medium"
+	if not GAPS[size] then
+		error("a gap is small, medium or large, not " .. tostring(size), 2)
+	end
+	return { piece = "gap", size = size }
+end
+
+-- A labelled choice: `choices` side by side, each a string or
+-- `{ label, value }`, the one whose value is `picked` outlined. A click
+-- carries out the plugin's `actions[action]` with `args` and the
+-- choice's `value`; a string's value is the string.
+function ui.segments(choices, picked, action, args)
+	local out = array({})
+	for _, choice in ipairs(choices or {}) do
+		if type(choice) == "table" then
+			if choice.label == nil then
+				error("a choice is a string or { label, value }", 2)
+			end
+			local value = choice.value
+			if value == nil then
+				value = tostring(choice.label)
+			end
+			table.insert(out, { label = tostring(choice.label), value = value })
+		else
+			table.insert(out, { label = tostring(choice), value = tostring(choice) })
+		end
+	end
+	if picked == nil then
+		picked = json.null
+	end
+	return { piece = "segments", choices = out, picked = picked, action = tostring(action), args = args or {} }
+end
+
+-- `text` as a QR code for a phone's camera, `opts.size` pixels wide
+-- (200 when not given); with `opts.offset`, printed over the offset.
+function ui.qr(text, opts)
+	opts = opts or {}
+	return {
+		piece = "qr",
+		text = tostring(text),
+		size = math.max(40, tonumber(opts.size) or 200),
+		offset = opts.offset == true or nil,
 	}
 end
 
@@ -767,11 +822,18 @@ end
 
 -- A quantity as `total` square ticks, the first `lit` in the color
 -- `of`; `marked` are the places, from 0, of ticks drawn white, as
--- thresholds on the strip.
-function ui.ticks(lit, total, of, marked)
+-- thresholds on the strip. `labels` are `{ at = place, text = text }`:
+-- small print under the strip, each centred under the tick at its
+-- place, from 0.
+function ui.ticks(lit, total, of, marked, labels)
 	local out = array({})
 	for _, at in ipairs(marked or {}) do
 		table.insert(out, math.max(0, math.floor(tonumber(at) or 0)))
+	end
+	local under = nil
+	for _, label in ipairs(labels or {}) do
+		under = under or array({})
+		table.insert(under, { at = math.max(0, math.floor(tonumber(label.at) or 0)), text = tostring(label.text) })
 	end
 	total = math.max(1, math.floor(tonumber(total) or 1))
 	return {
@@ -780,6 +842,7 @@ function ui.ticks(lit, total, of, marked)
 		total = total,
 		tone = ink(of),
 		marked = out,
+		labels = under,
 	}
 end
 

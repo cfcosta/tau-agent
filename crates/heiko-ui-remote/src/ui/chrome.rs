@@ -7,6 +7,8 @@
 //! agents. A row says where it stands with marks alone, packed at its
 //! right edge in one order ([`Marks::shown`]).
 
+use std::collections::{HashMap, HashSet};
+
 use gpui::{
     Anchor,
     AnyElement,
@@ -289,6 +291,27 @@ fn rail(ws: &Workspace, t: &Theme, cx: &mut Context<Workspace>) -> Div {
             .bg(t.border)
     };
 
+    // The repositories of the kinds plugins make: the agents.
+    let kinds: Vec<(&'static str, RepoKind)> = ws
+        .repo_kinds()
+        .into_iter()
+        .filter(|(_, kind)| kind.place == KindPlace::Section)
+        .collect();
+    // Every tile's letters are told apart from the others'.
+    let letters = tile_letters(
+        ws.catalog
+            .listed()
+            .chain(
+                kinds
+                    .iter()
+                    .flat_map(|(_, kind)| ws.catalog.of_kind(&kind.kind)),
+            )
+            .map(|repo| repo.name.as_str()),
+    );
+    let letters_of = |name: &str| {
+        letters.get(name).cloned().unwrap_or_else(|| "?".to_owned())
+    };
+
     let repos: Vec<AnyElement> = ws
         .catalog
         .listed()
@@ -299,7 +322,7 @@ fn rail(ws: &Workspace, t: &Theme, cx: &mut Context<Workspace>) -> Div {
             let (choose, more) = (name.clone(), name.clone());
             let square = tile(
                 format!("tile-{name}"),
-                repo.letter(),
+                letters_of(&name),
                 t.mark(&name),
                 current,
                 ws.need_you(&name) > 0,
@@ -340,12 +363,6 @@ fn rail(ws: &Workspace, t: &Theme, cx: &mut Context<Workspace>) -> Div {
         .child("+")
         .on_click(cx.listener(|ws, _, _, cx| ws.pick_repos(cx)));
 
-    // The repositories of the kinds plugins make: the agents.
-    let kinds: Vec<(&'static str, RepoKind)> = ws
-        .repo_kinds()
-        .into_iter()
-        .filter(|(_, kind)| kind.place == KindPlace::Section)
-        .collect();
     let mut agents: Vec<AnyElement> = Vec::new();
     for (plugin, kind) in &kinds {
         for repo in ws.catalog.of_kind(&kind.kind) {
@@ -356,7 +373,7 @@ fn rail(ws: &Workspace, t: &Theme, cx: &mut Context<Workspace>) -> Div {
             agents.push(
                 tile(
                     format!("tile-{name}"),
-                    repo.letter(),
+                    letters_of(&name),
                     t.roles.agent,
                     current,
                     pip,
@@ -418,9 +435,56 @@ fn rail(ws: &Workspace, t: &Theme, cx: &mut Context<Workspace>) -> Div {
         .child(div().flex_1())
 }
 
-/// A square tile of the rail: a letter on a flat block of `color`. The
-/// one whose tree shows is printed over the offset, and a pip on its
-/// corner says something inside needs the person.
+/// The letters on each tile of the rail, by its repository's name: its
+/// first letter, and a second one where two names start alike, the first
+/// of its letters that tells it from the others.
+pub fn tile_letters<'a>(
+    names: impl Iterator<Item = &'a str>,
+) -> HashMap<String, String> {
+    let names: Vec<(&str, Vec<char>)> = names
+        .map(|name| {
+            let letters = name
+                .chars()
+                .filter(|c| c.is_alphanumeric())
+                .flat_map(char::to_lowercase)
+                .collect();
+            (name, letters)
+        })
+        .collect();
+    let mut taken: HashSet<String> = HashSet::new();
+    let mut shown = HashMap::new();
+    for (name, letters) in &names {
+        let Some(first) = letters.first() else {
+            shown.insert((*name).to_owned(), "?".to_owned());
+            continue;
+        };
+        let alike = names
+            .iter()
+            .filter(|(_, other)| other.first() == Some(first))
+            .count();
+        let label = if alike < 2 {
+            first.to_string()
+        } else {
+            // The first pair no tile before it took; with none left,
+            // its first two letters.
+            letters[1..]
+                .iter()
+                .map(|second| format!("{first}{second}"))
+                .find(|pair| !taken.contains(pair))
+                .or_else(|| {
+                    letters.get(1).map(|second| format!("{first}{second}"))
+                })
+                .unwrap_or_else(|| first.to_string())
+        };
+        taken.insert(label.clone());
+        shown.insert((*name).to_owned(), label);
+    }
+    shown
+}
+
+/// A square tile of the rail: its letters on a flat block of `color`.
+/// The one whose tree shows is printed over the offset, and a pip on
+/// its corner says something inside needs the person.
 fn tile(
     id: String,
     letter: String,
@@ -442,7 +506,11 @@ fn tile(
         .map(|tile| if current { tile.printed(3., t) } else { tile })
         .bg(color)
         .text_color(t.roles.on_primary)
-        .typeset(Type::LEAD.mono())
+        .typeset(if letter.chars().count() > 1 {
+            Type::SMALL.mono()
+        } else {
+            Type::LEAD.mono()
+        })
         .font_weight(weight::STRONG)
         .child(letter)
         .when(pip, |tile| {
@@ -867,9 +935,12 @@ fn agent_tree(
     cx: &mut Context<Workspace>,
 ) -> Vec<AnyElement> {
     let repo = ws.repo_named(name);
+    let main = repo.main.as_ref().and_then(|id| ws.run(id));
+    // Its head says where its conversation stands; what it left for the
+    // person has a row of its own.
     let mut rows = vec![
         head(format!("agent-{name}"), name, t)
-            .children(marks(agent_marks(ws, repo), t))
+            .children(main.and_then(|main| marks(ws.run_marks(main, true), t)))
             .into_any_element(),
     ];
     // Its kind's page lists them all.
@@ -894,7 +965,6 @@ fn agent_tree(
         );
     }
     rows.push(gap().into_any_element());
-    let main = repo.main.as_ref().and_then(|id| ws.run(id));
     let current = ws.shown_run().map(|run| ws.listed_as(run).clone());
     let active = matches!(ws.route, Route::Run(_))
         && main.is_some_and(|main| current.as_ref() == Some(&main.id));
@@ -920,6 +990,20 @@ fn agent_tree(
     }
     let pages = repo_pages(ws, name, t, cx);
     rows.push(gap().into_any_element());
+    // What it left for the person (`points::WAITING`): its conversation
+    // shows them beside it.
+    let waits = ws.agent_waits(name);
+    if waits > 0 {
+        let open = name.to_owned();
+        rows.push(
+            row("agent-for-you", "for you", t.text_soft, false, t)
+                .child(counted_mark(waits, State::Asks, t))
+                .on_click(
+                    cx.listener(move |ws, _, _, cx| ws.open_agent(&open, cx)),
+                )
+                .into_any_element(),
+        );
+    }
     rows.extend(pages);
     let page = Route::Repo(name.to_owned());
     rows.push(

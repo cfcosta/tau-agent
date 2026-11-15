@@ -521,9 +521,11 @@ Plain tables, drawn by heiko on the computer and on the phone:
 - `ui.header(title, { meta = "3 files", actions = { ... } })`: a
   section's head, which does not fold: its title over a rule, `meta` in
   small print at its right, then the `actions`, such as buttons
-- `ui.ticks(lit, total, ink, { 6, 16 })`: a quantity as `total` square
-  ticks, the first `lit` in the ink; the last argument lists the
-  places, from 0, of ticks drawn white, as thresholds
+- `ui.ticks(lit, total, ink, { 6, 16 }, { { at = 16, text = "compacts" } })`:
+  a quantity as `total` square ticks, the first `lit` in the ink; the
+  fourth argument lists the places, from 0, of ticks drawn white, as
+  thresholds. The fifth is labels, small print under the strip: each
+  `text` is centred under the tick at the place `at`, from 0
 - `ui.mark(state, count)`: the small mark of a state: `"working"`,
   `"asks"`, `"failing"`, `"met"`, `"limit"`, `"cap"` or `"idle"`; a
   `count` goes before it
@@ -538,7 +540,9 @@ Plain tables, drawn by heiko on the computer and on the phone:
   a note or an id on a label outlined in the ink; `dashed` for one
   proposed, not kept yet. With `page`, a click opens that page
 - `ui.figure(text)`: a big number or time
-- `ui.kanji(text, ink)`: one large glyph, the mark beside a note
+- `ui.kanji(text, ink)`: one large glyph, the mark beside a note. A
+  row that starts with one does not wrap under it: the glyph keeps its
+  width, and the rest of the row takes what is left
 - `ui.icon(name, tone)`: one of heiko's icons by name, such as
   `"memory"`, `"check"` or `"sub-agent"`
 - `ui.table({ "head", ... }, { { piece, ... }, ... }, { widths = { 1, 4 } })`:
@@ -548,6 +552,9 @@ Plain tables, drawn by heiko on the computer and on the phone:
 - `ui.rule()`, `ui.empty(text)`, `ui.spacer()` (room that pushes what
   follows in a row to its end), `ui.card({ ... })` (pieces in a group
   of their own, under a thin line, with no frame)
+- `ui.gap(size)`: room between two pieces one under another; `size` is
+  `"small"`, `"medium"` (when not given) or `"large"`. A `ui.header`
+  after other pieces has room over it already, so sections need none
 - `ui.band({ ... })`: pieces one under another on a darker plane: a
   result
 - `ui.rail({ ... })`: pieces one under another, a line down the left
@@ -595,6 +602,18 @@ Plain tables, drawn by heiko on the computer and on the phone:
   view), `"secondary"`, `"danger"` or `"hot"` (one that needs the
   person), and `icon` one of heiko's icons, alone when `label` is empty.
   `size` is a primary button's: `"small"`, `"medium"` or `"large"`
+- `ui.button(label, action, args, kind, icon, size, wide, detail)`:
+  with `wide` true, the button takes the whole width, its label at the
+  left. A wide primary button may have `detail`, a second line in
+  smaller text inside the block
+- `ui.segments(choices, picked, action, args)`: a labelled choice, its
+  `choices` side by side, the one whose value is `picked` outlined. A
+  choice is a string, or `{ label = "refuse", value = "block" }`; a
+  string's value is the string. A click carries out `actions[action]`
+  with `args` and the choice's `value`
+- `ui.qr(text, { size = 200, offset = true })`: `text` as a QR code for
+  a phone's camera, `size` pixels wide; with `offset`, printed over the
+  offset
 - `ui.input(id, { placeholder = "...", multiline = true, submit = "action" })`:
   a text input; Enter carries out `submit` with `{ text = ... }` and
   empties it, or keeps what it holds with `keep = true`

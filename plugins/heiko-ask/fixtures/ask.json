@@ -200,20 +200,7 @@
         {
           "children": [
             {
-              "children": [
-                {
-                  "piece": "heading",
-                  "text": "heiko asks"
-                },
-                {
-                  "mono": false,
-                  "piece": "toned",
-                  "text": "1 of 3",
-                  "tone": "neutral"
-                },
-                {
-                  "piece": "spacer"
-                },
+              "actions": [
                 {
                   "mono": true,
                   "piece": "toned",
@@ -221,18 +208,21 @@
                   "tone": "neutral"
                 }
               ],
-              "piece": "row"
+              "meta": "1 of 3",
+              "piece": "header",
+              "title": "heiko asks"
             },
             {
               "children": [
                 {
-                  "action": "go",
-                  "args": {
-                    "to": 0
-                  },
-                  "kind": "secondary",
-                  "label": "Waiting",
-                  "piece": "button"
+                  "piece": "rich",
+                  "text": "**Waiting**"
+                },
+                {
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "·",
+                  "tone": "neutral"
                 },
                 {
                   "action": "go",
@@ -244,6 +234,12 @@
                   "piece": "button"
                 },
                 {
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "·",
+                  "tone": "neutral"
+                },
+                {
                   "action": "go",
                   "args": {
                     "to": 2
@@ -253,8 +249,10 @@
                   "piece": "button"
                 },
                 {
-                  "piece": "mono",
-                  "text": "›"
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "›",
+                  "tone": "neutral"
                 },
                 {
                   "action": "go",
@@ -285,102 +283,56 @@
                   "text": "How should the ask tool wait for your answer?"
                 },
                 {
-                  "head": [],
-                  "piece": "table",
-                  "rows": [
-                    [
-                      {
-                        "piece": "mono",
-                        "text": "› 1"
-                      },
-                      {
-                        "children": [
-                          {
-                            "action": "choose",
-                            "args": {
-                              "row": 0
-                            },
-                            "kind": "primary",
-                            "label": "Hold the call open (Recommended)",
-                            "piece": "button"
-                          }
-                        ],
-                        "piece": "stack"
-                      }
-                    ],
-                    [
-                      {
-                        "piece": "mono",
-                        "text": "  2"
-                      },
-                      {
-                        "children": [
-                          {
-                            "action": "choose",
-                            "args": {
-                              "row": 1
-                            },
-                            "kind": "secondary",
-                            "label": "End the turn",
-                            "piece": "button"
-                          }
-                        ],
-                        "piece": "stack"
-                      }
-                    ],
-                    [
-                      {
-                        "piece": "mono",
-                        "text": "  3"
-                      },
-                      {
-                        "children": [
-                          {
-                            "action": "choose",
-                            "args": {
-                              "row": 2
-                            },
-                            "kind": "secondary",
-                            "label": "Hold, then time out",
-                            "piece": "button"
-                          }
-                        ],
-                        "piece": "stack"
-                      }
-                    ],
-                    [
-                      {
-                        "piece": "mono",
-                        "text": "  4"
-                      },
-                      {
-                        "children": [
-                          {
-                            "id": "ask-other-retry-after-call_ask-0",
-                            "keep": true,
-                            "multiline": false,
-                            "piece": "input",
-                            "placeholder": "Your own answer…",
-                            "submit": "other-done"
-                          }
-                        ],
-                        "piece": "row"
-                      }
-                    ]
-                  ],
-                  "widths": [
-                    0.5,
-                    12
-                  ]
+                  "action": "choose",
+                  "args": {
+                    "row": 0
+                  },
+                  "detail": "The tool blocks on a channel; your answer comes back as its result and the turn goes on.",
+                  "kind": "primary",
+                  "label": "› 1  Hold the call open (Recommended)",
+                  "piece": "button",
+                  "size": "large",
+                  "wide": true
+                },
+                {
+                  "action": "choose",
+                  "args": {
+                    "row": 1
+                  },
+                  "kind": "secondary",
+                  "label": "2  End the turn",
+                  "piece": "button",
+                  "wide": true
+                },
+                {
+                  "action": "choose",
+                  "args": {
+                    "row": 2
+                  },
+                  "kind": "secondary",
+                  "label": "3  Hold, then time out",
+                  "piece": "button",
+                  "wide": true
                 },
                 {
                   "children": [
                     {
-                      "mono": false,
-                      "piece": "toned",
-                      "text": "The tool blocks on a channel; your answer comes back as its result and the turn goes on.",
-                      "tone": "neutral"
+                      "piece": "mono",
+                      "text": "4"
                     },
+                    {
+                      "id": "ask-other-retry-after-call_ask-0",
+                      "keep": true,
+                      "multiline": false,
+                      "piece": "input",
+                      "placeholder": "Your own answer…",
+                      "submit": "other-done"
+                    }
+                  ],
+                  "piece": "row"
+                },
+                {
+                  "children": [
                     {
                       "first_line": null,
                       "lang": null,
@@ -424,7 +376,8 @@
                   "args": {},
                   "kind": "primary",
                   "label": "Next",
-                  "piece": "button"
+                  "piece": "button",
+                  "size": "medium"
                 }
               ],
               "piece": "row"

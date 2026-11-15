@@ -41,6 +41,9 @@ use heiko_ui_plugin::{
         AtRun,
         AtSetup,
         CardView,
+        HomeAction,
+        HomeList,
+        HomeRow,
         SetupAt,
         SetupRepo,
         SetupView,
@@ -182,6 +185,7 @@ impl Fold for State {
                                 .as_str()
                                 .unwrap_or_default()
                                 .to_owned(),
+                            by: Some(plugin.clone()),
                         },
                         Some("flagged") => CardMark::Flagged,
                         _ => continue,
@@ -648,6 +652,8 @@ fn embed_as(piece: &Value, plugin: &str, mark: &str) -> Node {
             kind,
             icon,
             size,
+            wide,
+            detail,
         } => Node::Button {
             label,
             action: act(action),
@@ -655,6 +661,8 @@ fn embed_as(piece: &Value, plugin: &str, mark: &str) -> Node {
             kind,
             icon,
             size,
+            wide,
+            detail,
         },
         Node::Square {
             label,
@@ -667,6 +675,17 @@ fn embed_as(piece: &Value, plugin: &str, mark: &str) -> Node {
             style,
             tone,
             action: action.map(act),
+            args,
+        },
+        Node::Segments {
+            choices,
+            picked,
+            action,
+            args,
+        } => Node::Segments {
+            choices,
+            picked,
+            action: act(action),
             args,
         },
         Node::Switch {
@@ -823,6 +842,8 @@ fn allow_card(ask: &crate::Ask, at: &AtCard) -> Node {
                     kind: Kind::Primary,
                     icon: None,
                     size: Default::default(),
+                    wide: false,
+                    detail: None,
                 },
                 Node::Button {
                     label: "Deny".into(),
@@ -831,6 +852,8 @@ fn allow_card(ask: &crate::Ask, at: &AtCard) -> Node {
                     kind: Kind::Secondary,
                     icon: None,
                     size: Default::default(),
+                    wide: false,
+                    detail: None,
                 },
             ]));
             None
@@ -1227,10 +1250,7 @@ impl UiPlugin for LuauPluginsUi {
             .contribute(points::TRANSCRIPT, |at: &AtAnchor, view| {
                 let (plugin, note) = view.state?.notes.get(&at.key)?.clone();
                 Some(Node::Card {
-                    children: vec![
-                        small(plugin.clone()),
-                        embed(&note, &plugin),
-                    ],
+                    children: vec![embed(&note, &plugin)],
                 })
             })
             .contribute(points::USER_MESSAGE, |at: &AtMessage, view| {
@@ -1298,6 +1318,12 @@ impl UiPlugin for LuauPluginsUi {
                 if let Some(link) = bound {
                     view.handle.navigate(link);
                 }
+            })
+        });
+        // On Home, what each plugin lists of the selected repository.
+        let manifest = (0..NAV_ENTRIES).fold(manifest, |manifest, nth| {
+            manifest.contribute(points::HOME, move |at: &AtRepo, view| {
+                home_lists(view.data, view.repo(&at.repo)).nth(nth)
             })
         });
         // Under each repository, the plugins' entries for it.
@@ -1631,6 +1657,57 @@ fn repo_nav_entries<'a>(
         })
 }
 
+/// What the active plugins list on Home of a repository, of what each
+/// keeps of it: its `repo_data`'s `home`, `{ title, meta, rows }`, each
+/// row `{ id, title, detail }` with what clicking it does: `write`, the
+/// words it puts in the new run's composer, or `action` and `args`, one
+/// of the plugin's actions carried out in the repository. A list with
+/// no rows is left out.
+fn home_lists<'a>(
+    overview: &'a Overview,
+    kept: Option<&'a crate::RepoValues>,
+) -> impl Iterator<Item = HomeList> + 'a {
+    overview
+        .plugins
+        .iter()
+        .filter(|entry| matches!(entry.standing, Standing::Active))
+        .filter_map(move |entry| {
+            let home = &kept?.0.get(&entry.name)?["home"];
+            let text =
+                |value: &Value| value.as_str().unwrap_or_default().to_owned();
+            let rows: Vec<HomeRow> = home["rows"]
+                .as_array()?
+                .iter()
+                .filter_map(|row| {
+                    let action = match (&row["write"], &row["action"]) {
+                        (Value::String(write), _) => {
+                            HomeAction::Write(write.clone())
+                        }
+                        (_, Value::String(action)) => HomeAction::Act {
+                            action: format!(
+                                "{LUAU_REPO}{}/{action}",
+                                entry.name
+                            ),
+                            args: row["args"].clone(),
+                        },
+                        _ => return None,
+                    };
+                    Some(HomeRow {
+                        id: text(&row["id"]),
+                        title: text(&row["title"]),
+                        detail: text(&row["detail"]),
+                        action,
+                    })
+                })
+                .collect();
+            (!rows.is_empty()).then(|| HomeList {
+                title: text(&home["title"]),
+                meta: home["meta"].as_str().map(str::to_owned),
+                rows,
+            })
+        })
+}
+
 /// The active plugins' entries in `repo`'s menu: a link to the page its
 /// `repo_menu` names, then what its `app` keeps as `menu`, a tree of the
 /// app's (ADR 0050, gap L).
@@ -1905,20 +1982,39 @@ fn ruled(rows: impl IntoIterator<Item = Node>) -> Vec<Node> {
 /// each way, the way to write one, and the chats there.
 fn overview(view: &ViewCx<'_, LuauPluginsUi>) -> Node {
     let overview = view.data;
-    let mut head = vec![small(crate::REPO)];
-    if !overview.plugins.is_empty() {
-        head.extend(counts(overview));
-    }
-    head.push(Node::Spacer);
-    head.push(Node::Button {
+    let write = Node::Button {
         label: "Write a plugin".into(),
         action: WRITE.into(),
         args: Value::Null,
         kind: Kind::Primary,
         icon: None,
         size: Default::default(),
-    });
-    let mut plugins = vec![Node::Row { children: head }];
+        wide: false,
+        detail: None,
+    };
+    let counts = if overview.plugins.is_empty() {
+        Vec::new()
+    } else {
+        counts(overview)
+    };
+    // On a computer the counts are on the head; a phone's is too narrow
+    // for them, so they go under it.
+    let head = |actions| Node::Header {
+        title: "Your plugins".into(),
+        meta: Some(crate::REPO.into()),
+        actions,
+    };
+    let mut plugins = Vec::new();
+    if view.compact {
+        plugins.push(head(vec![write]));
+        if !counts.is_empty() {
+            plugins.push(Node::Row { children: counts });
+        }
+    } else {
+        let mut actions = counts;
+        actions.push(write);
+        plugins.push(head(actions));
+    }
     if let Some(error) = &overview.error {
         plugins.push(Node::Status {
             text: error.clone(),
@@ -1949,15 +2045,14 @@ fn overview(view: &ViewCx<'_, LuauPluginsUi>) -> Node {
             widths: vec![1., 1.5, 1.5],
         });
     }
-    Node::stack([
-        Node::Section {
-            id: "plugins-yours".into(),
-            title: "Your plugins".into(),
-            open: true,
-            children: plugins,
-        },
-        chats(view),
-    ])
+    plugins.push(gap());
+    plugins.extend(chats(view));
+    Node::stack(plugins)
+}
+
+/// An empty line: the room between two sections.
+fn gap() -> Node {
+    Node::text("\u{a0}")
 }
 
 /// How many plugins there are, and how many stand each way, each count
@@ -2269,6 +2364,8 @@ fn allow(plugin: &str, grown: &[String]) -> Node {
         kind: Kind::Primary,
         icon: None,
         size: Default::default(),
+        wide: false,
+        detail: None,
     }
 }
 
@@ -2431,7 +2528,6 @@ fn plugin_page(entry: &str, view: &mut ViewCx<'_, LuauPluginsUi>) -> Node {
     if let Some(declaration) = &found.declaration {
         let seams = steps_in(declaration);
         page.push(section(
-            entry,
             "Where it steps in",
             vec![if seams.is_empty() {
                 small("only in the interface")
@@ -2441,7 +2537,6 @@ fn plugin_page(entry: &str, view: &mut ViewCx<'_, LuauPluginsUi>) -> Node {
         ));
         let reach = reaches(&declaration.uses);
         page.push(section(
-            entry,
             "What it may reach",
             vec![if reach.is_empty() {
                 small("nothing beyond the run it is in")
@@ -2459,13 +2554,11 @@ fn plugin_page(entry: &str, view: &mut ViewCx<'_, LuauPluginsUi>) -> Node {
             format!("In {}", run.title)
         };
         page.push(section(
-            entry,
             &title,
             vec![embed_as(&drawn, entry, LUAU_PAGE)],
         ));
     }
     page.push(section(
-        entry,
         "Tests",
         if found.tests.is_empty() {
             vec![Node::Empty {
@@ -2490,7 +2583,6 @@ fn plugin_page(entry: &str, view: &mut ViewCx<'_, LuauPluginsUi>) -> Node {
         .is_some_and(|declaration| declaration.settings.is_some());
     if has_settings {
         page.push(section(
-            entry,
             "Settings",
             vec![scopes(entry, view), Node::Rule, crate::pane::render(view)],
         ));
@@ -2498,14 +2590,16 @@ fn plugin_page(entry: &str, view: &mut ViewCx<'_, LuauPluginsUi>) -> Node {
     Node::stack(page)
 }
 
-/// A section of `entry`'s page: its title over `children`.
-fn section(entry: &str, title: &str, children: Vec<Node>) -> Node {
-    Node::Section {
-        id: format!("plugin-{entry}-{title}"),
+/// A section of a plugin's page: its head, which does not fold, over
+/// `children`.
+fn section(title: &str, children: Vec<Node>) -> Node {
+    let mut section = vec![Node::Header {
         title: title.to_owned(),
-        open: true,
-        children,
-    }
+        meta: None,
+        actions: vec![],
+    }];
+    section.extend(children);
+    Node::stack(section)
 }
 
 /// "Applies to", then everywhere and each of the person's repositories,
@@ -2536,20 +2630,27 @@ fn scopes(entry: &str, view: &ViewCx<'_, LuauPluginsUi>) -> Node {
     Node::Row { children: row }
 }
 
-/// The chats writing plugins, newest first, a ruled row each, opening
-/// its run.
-fn chats(view: &ViewCx<'_, LuauPluginsUi>) -> Node {
+/// The chats writing plugins under their head, newest first, a ruled
+/// row each, opening its run.
+fn chats(view: &ViewCx<'_, LuauPluginsUi>) -> Vec<Node> {
     let runs: Vec<RunInfo> = view
         .runs()
         .into_iter()
         .map(|(run, _)| run)
         .filter(|run| run.repo == crate::REPO && !run.title.is_empty())
         .collect();
-    let title = match runs.len() {
-        0 => "Chats".to_owned(),
-        count => format!("Chats · {count}"),
-    };
-    let mut list = ruled(runs.into_iter().map(|run| {
+    let mut list = vec![Node::Header {
+        title: "Chats".into(),
+        meta: (!runs.is_empty()).then(|| runs.len().to_string()),
+        actions: vec![],
+    }];
+    if runs.is_empty() {
+        list.push(Node::Empty {
+            text: "None yet.".into(),
+        });
+        return list;
+    }
+    list.extend(ruled(runs.into_iter().map(|run| {
         Node::row([
             mark(if run.live {
                 MarkState::Working
@@ -2567,20 +2668,13 @@ fn chats(view: &ViewCx<'_, LuauPluginsUi>) -> Node {
                 kind: Kind::Secondary,
                 icon: None,
                 size: Default::default(),
+                wide: false,
+                detail: None,
             },
         ])
-    }));
-    if list.is_empty() {
-        list.push(Node::Empty {
-            text: "None yet.".into(),
-        });
-    }
-    Node::Section {
-        id: "plugins-chats".into(),
-        title,
-        open: true,
-        children: list,
-    }
+    })));
+    list.push(Node::Rule);
+    list
 }
 
 /// `/plugin <what>`: a chat in the plugins repository, with the skill
@@ -2988,6 +3082,80 @@ mod tests {
         assert_eq!(entries[0].to, entry_link("deploys"));
     }
 
+    /// An active plugin's `home`, of what it keeps of a repository, is
+    /// its list on Home: each row writes in the composer or carries out
+    /// the plugin's action in the repository. A list with no rows, and a
+    /// plugin that is not active, give none.
+    #[test]
+    fn what_a_plugin_keeps_as_home_is_its_list_there() {
+        let entry = |name: &str, standing: Standing| Entry {
+            name: name.into(),
+            description: String::new(),
+            version: String::new(),
+            standing,
+            declaration: Some(Declaration::named(name)),
+            tests: Vec::new(),
+            keeps_earlier: false,
+            built_in: false,
+            app: None,
+        };
+        let overview = Overview {
+            plugins: vec![
+                entry("todo", Standing::Active),
+                entry("empty", Standing::Active),
+                entry("new", Standing::Failing),
+            ],
+            ..Overview::default()
+        };
+        let home = json!({
+            "title": "Ready to pick up",
+            "meta": "this repository's issues",
+            "rows": [
+                { "id": "td-1", "title": "Log once", "detail": "P3",
+                  "write": "Work on td-1: Log once." },
+                { "id": "td-2", "title": "Jitter", "detail": "P2",
+                  "action": "start", "args": { "issue": "td-2" } },
+                { "id": "td-3", "title": "Does nothing", "detail": "P2" },
+            ],
+        });
+        let kept = crate::RepoValues(
+            [
+                ("todo".to_owned(), json!({ "home": home })),
+                ("empty".to_owned(), json!({ "home": { "rows": [] } })),
+                ("new".to_owned(), json!({ "home": home })),
+            ]
+            .into(),
+        );
+        let lists: Vec<HomeList> = home_lists(&overview, Some(&kept)).collect();
+        assert_eq!(
+            lists,
+            [HomeList {
+                title: "Ready to pick up".into(),
+                meta: Some("this repository's issues".into()),
+                rows: vec![
+                    HomeRow {
+                        id: "td-1".into(),
+                        title: "Log once".into(),
+                        detail: "P3".into(),
+                        action: HomeAction::Write(
+                            "Work on td-1: Log once.".into()
+                        ),
+                    },
+                    HomeRow {
+                        id: "td-2".into(),
+                        title: "Jitter".into(),
+                        detail: "P2".into(),
+                        action: HomeAction::Act {
+                            action: "luau-repo/todo/start".into(),
+                            args: json!({ "issue": "td-2" }),
+                        },
+                    },
+                ],
+            }]
+        );
+        assert_eq!(home_lists(&overview, None).count(), 0);
+    }
+
     /// A view's `plan` is a field of the run's plan, set by the plugin
     /// whose view it is; a view without one sets none.
     #[test]
@@ -3133,7 +3301,8 @@ mod tests {
         assert_eq!(
             run.marks["c1"],
             CardMark::Blocked {
-                reason: "rule R1".into()
+                reason: "rule R1".into(),
+                by: Some("rules".into()),
             }
         );
         assert!(!run.marks.contains_key("c3"));

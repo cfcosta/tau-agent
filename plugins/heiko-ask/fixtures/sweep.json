@@ -111,20 +111,7 @@
         {
           "children": [
             {
-              "children": [
-                {
-                  "piece": "heading",
-                  "text": "heiko asks"
-                },
-                {
-                  "mono": false,
-                  "piece": "toned",
-                  "text": "1 of 1",
-                  "tone": "neutral"
-                },
-                {
-                  "piece": "spacer"
-                },
+              "actions": [
                 {
                   "mono": true,
                   "piece": "toned",
@@ -132,22 +119,21 @@
                   "tone": "neutral"
                 }
               ],
-              "piece": "row"
+              "meta": "1 of 1",
+              "piece": "header",
+              "title": "heiko asks"
             },
             {
               "children": [
                 {
-                  "action": "go",
-                  "args": {
-                    "to": 0
-                  },
-                  "kind": "secondary",
-                  "label": "Workspaces",
-                  "piece": "button"
+                  "piece": "rich",
+                  "text": "**Workspaces**"
                 },
                 {
-                  "piece": "mono",
-                  "text": "›"
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "›",
+                  "tone": "neutral"
                 },
                 {
                   "action": "go",
@@ -178,85 +164,43 @@
                   "text": "Delete the 3 workspaces with no run, or keep them?"
                 },
                 {
-                  "head": [],
-                  "piece": "table",
-                  "rows": [
-                    [
-                      {
-                        "piece": "mono",
-                        "text": "› 1"
-                      },
-                      {
-                        "children": [
-                          {
-                            "action": "choose",
-                            "args": {
-                              "row": 0
-                            },
-                            "kind": "primary",
-                            "label": "Delete them",
-                            "piece": "button"
-                          },
-                          {
-                            "mono": false,
-                            "piece": "toned",
-                            "text": "No run uses them.",
-                            "tone": "neutral"
-                          }
-                        ],
-                        "piece": "stack"
-                      }
-                    ],
-                    [
-                      {
-                        "piece": "mono",
-                        "text": "  2"
-                      },
-                      {
-                        "children": [
-                          {
-                            "action": "choose",
-                            "args": {
-                              "row": 1
-                            },
-                            "kind": "secondary",
-                            "label": "Keep them",
-                            "piece": "button"
-                          },
-                          {
-                            "mono": false,
-                            "piece": "toned",
-                            "text": "Look at them first.",
-                            "tone": "neutral"
-                          }
-                        ],
-                        "piece": "stack"
-                      }
-                    ],
-                    [
-                      {
-                        "piece": "mono",
-                        "text": "  3"
-                      },
-                      {
-                        "children": [
-                          {
-                            "id": "ask-other-sweep-workspaces-call_sweep-0",
-                            "keep": true,
-                            "multiline": false,
-                            "piece": "input",
-                            "placeholder": "Your own answer…",
-                            "submit": "other-done"
-                          }
-                        ],
-                        "piece": "row"
-                      }
-                    ]
+                  "action": "choose",
+                  "args": {
+                    "row": 0
+                  },
+                  "detail": "No run uses them.",
+                  "kind": "primary",
+                  "label": "› 1  Delete them",
+                  "piece": "button",
+                  "size": "large",
+                  "wide": true
+                },
+                {
+                  "action": "choose",
+                  "args": {
+                    "row": 1
+                  },
+                  "kind": "secondary",
+                  "label": "2  Keep them",
+                  "piece": "button",
+                  "wide": true
+                },
+                {
+                  "children": [
+                    {
+                      "piece": "mono",
+                      "text": "3"
+                    },
+                    {
+                      "id": "ask-other-sweep-workspaces-call_sweep-0",
+                      "keep": true,
+                      "multiline": false,
+                      "piece": "input",
+                      "placeholder": "Your own answer…",
+                      "submit": "other-done"
+                    }
                   ],
-                  "widths": [
-                    0.5,
-                    12
-                  ]
+                  "piece": "row"
                 }
               ],
               "piece": "stack"
@@ -292,7 +236,8 @@
                   "args": {},
                   "kind": "primary",
                   "label": "Next",
-                  "piece": "button"
+                  "piece": "button",
+                  "size": "medium"
                 }
               ],
               "piece": "row"

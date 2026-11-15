@@ -38,7 +38,8 @@
                 "children": [
                   {
                     "piece": "heading",
-                    "text": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
+                    "text": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision.",
+                    "tone": "bright"
                   },
                   {
                     "piece": "spacer"

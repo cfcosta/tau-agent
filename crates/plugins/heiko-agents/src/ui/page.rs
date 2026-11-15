@@ -3,7 +3,7 @@
 
 use heiko_ui_plugin::{
     ViewCx,
-    tree::{Ink, Kind, MarkState, Node, Tone},
+    tree::{Ink, Kind, MarkState, Node, SquareLook, Tone},
 };
 use serde_json::{Value, json};
 
@@ -27,12 +27,13 @@ use super::{
     allowance,
     button,
     events,
+    gap,
     open,
     state_mark,
 };
 use crate::{Act, Agent, Overview, Status};
 
-/// What a click on "Allow more today" lets an agent spend, on top of its
+/// What a click on "allow more today" lets an agent spend, on top of its
 /// cap.
 pub(super) const MORE: f64 = 1.0;
 
@@ -72,53 +73,66 @@ pub fn overview_tree(
     compact: bool,
     draft: &dyn Fn(&str) -> Option<String>,
 ) -> Node {
-    let mut page = vec![Node::row([
-        Node::Spacer,
-        button("New agent", Kind::Primary, GO, json!({ "page": NEW })),
-    ])];
+    // The page's one block, on its first section's head.
+    let mut new = Some(button(
+        "New agent",
+        Kind::Primary,
+        GO,
+        json!({ "page": NEW }),
+    ));
+    let mut page = Vec::new();
     let waiting: Vec<&Agent> = overview
         .agents
         .iter()
         .filter(|agent| agent.needs_you())
         .collect();
     if !waiting.is_empty() {
-        page.push(needs_you(&waiting, draft));
+        page.extend(needs_you(&waiting, new.take(), compact, draft));
+        page.push(gap());
     }
+    page.push(Node::Header {
+        title: "Agents".into(),
+        meta: (!overview.agents.is_empty())
+            .then(|| overview.agents.len().to_string()),
+        actions: new.into_iter().collect(),
+    });
     if overview.agents.is_empty() {
         page.push(Node::Empty {
             text: "No agents yet.".into(),
         });
         return Node::Stack { children: page };
     }
-    let columns: Vec<Node> = overview
+    let columns: Vec<[Node; 2]> = overview
         .agents
         .iter()
         .enumerate()
         .map(|(at, agent)| agent_column(agent, runs.get(at).cloned().flatten()))
         .collect();
-    let agents = if compact {
-        ruled(columns)
+    if compact {
+        page.extend(ruled(
+            columns
+                .into_iter()
+                .map(|[top, foot]| Node::stack([top, foot]))
+                .collect(),
+        ));
     } else {
-        // Rows of columns; the last row keeps its columns' widths.
-        columns
-            .chunks(COLUMNS)
-            .map(|row| {
-                let mut row = row.to_vec();
-                row.resize(COLUMNS, Node::Stack { children: vec![] });
-                Node::Table {
-                    head: vec![],
-                    rows: vec![row],
-                    widths: vec![],
-                }
-            })
-            .collect()
-    };
-    page.push(Node::Section {
-        id: "agents-all".into(),
-        title: format!("Agents · {}", overview.agents.len()),
-        open: true,
-        children: agents,
-    });
+        // Rows of columns, each a row of what the agents are over a row
+        // of what they did, so the allowances stand in one line; the
+        // last row keeps its columns' widths.
+        page.extend(columns.chunks(COLUMNS).map(|row| {
+            let half = |at: usize| {
+                let mut cells: Vec<Node> =
+                    row.iter().map(|column| column[at].clone()).collect();
+                cells.resize(COLUMNS, Node::Stack { children: vec![] });
+                cells
+            };
+            Node::Table {
+                head: vec![],
+                rows: vec![half(0), half(1)],
+                widths: vec![],
+            }
+        }));
+    }
     Node::Stack { children: page }
 }
 
@@ -134,64 +148,102 @@ pub(super) fn ruled(rows: Vec<Node>) -> Vec<Node> {
     ruled
 }
 
-/// The agents that wait on the person, a ruled row for each thing, each
-/// answerable in place.
+/// The shares of the width a "Needs you" row gives the agent, when, what
+/// it says, and what the person can do.
+const NEEDS_YOU: [f32; 4] = [1.6, 1., 6., 2.4];
+
+/// The agents that wait on the person under their section's head, which
+/// holds `new`: a ruled row for each thing, each answerable in place,
+/// with one hot action and the rest links. On a phone (`compact`) a row
+/// is its parts one under the other.
 fn needs_you(
     agents: &[&Agent],
+    new: Option<Node>,
+    compact: bool,
     draft: &dyn Fn(&str) -> Option<String>,
-) -> Node {
+) -> Vec<Node> {
     let name = |agent: &Agent| Node::Rich {
         text: format!("**{}**", agent.name),
     };
+    // An agent's own state, when that is what waits: its mark, what to
+    // say of it, and what the person can do.
+    let own = |agent: &Agent| match &agent.status {
+        Status::AtCap => Some((
+            MarkState::Limit,
+            format!(
+                "Reached today's allowance; {} waiting.",
+                events(agent.queued),
+            ),
+            Some(act_button(
+                "allow more today",
+                Kind::Hot,
+                &Act::AllowMore {
+                    agent: agent.name.clone(),
+                    amount: MORE,
+                },
+            )),
+        )),
+        Status::Broken { error } => Some((
+            MarkState::Failing,
+            format!("Nothing wakes it: {error}"),
+            None,
+        )),
+        _ => None,
+    };
+    let count: usize = agents.iter().map(|agent| agent.waits_on_you()).sum();
+    let head = Node::Header {
+        title: "Needs you".into(),
+        meta: Some(count.to_string()),
+        actions: new.into_iter().collect(),
+    };
+    if compact {
+        let mut rows = Vec::new();
+        for agent in agents {
+            if let Some((state, text, action)) = own(agent) {
+                let mut row = vec![
+                    Node::Mark { state, count: None },
+                    name(agent),
+                    Node::text(text),
+                    Node::Spacer,
+                ];
+                row.extend(action);
+                rows.push(Node::Row { children: row });
+            }
+            // What it left for the person: its notes and questions.
+            rows.extend(super::notices::rows(agent, true, draft));
+        }
+        let mut section = vec![head];
+        section.extend(ruled(rows));
+        return section;
+    }
     let mut rows = Vec::new();
     for agent in agents {
-        match &agent.status {
-            Status::AtCap => rows.push(Node::row([
-                Node::Mark {
-                    state: MarkState::Limit,
-                    count: None,
-                },
-                name(agent),
-                Node::text(format!(
-                    "Reached today's allowance; {} waiting.",
-                    events(agent.queued),
-                )),
-                Node::Spacer,
-                act_button(
-                    "Allow more today",
-                    Kind::Primary,
-                    &Act::AllowMore {
-                        agent: agent.name.clone(),
-                        amount: MORE,
-                    },
-                ),
-            ])),
-            Status::Broken { error } => rows.push(Node::row([
-                Node::Mark {
-                    state: MarkState::Failing,
-                    count: None,
-                },
-                name(agent),
-                Node::text(format!("Nothing wakes it: {error}")),
-            ])),
-            _ => {}
+        if let Some((state, text, action)) = own(agent) {
+            let mut end = vec![Node::Spacer];
+            end.extend(action);
+            rows.push(vec![
+                Node::row([Node::Mark { state, count: None }, name(agent)]),
+                Node::Stack { children: vec![] },
+                Node::text(text),
+                Node::Row { children: end },
+            ]);
         }
-        // What it left for the person: its notes and questions.
-        rows.extend(super::notices::rows(agent, true, draft));
+        rows.extend(super::notices::lines(agent, draft));
     }
-    let count: usize = agents.iter().map(|agent| agent.waits_on_you()).sum();
-    Node::Section {
-        id: "agents-needs-you".into(),
-        title: format!("Needs you · {count}"),
-        open: true,
-        children: ruled(rows),
-    }
+    vec![
+        head,
+        Node::Table {
+            head: vec![],
+            rows,
+            widths: NEEDS_YOU.to_vec(),
+        },
+    ]
 }
 
-/// One agent: its name, where it stands, what it is for, what wakes it,
-/// what it did last, and how much of the day's allowance it used; `run`,
-/// the conversation it opens.
-fn agent_column(agent: &Agent, run: Option<String>) -> Node {
+/// One agent, in two parts: its name, where it stands, what it is for
+/// and what wakes it; then what it did last and how much of the day's
+/// allowance it used. `run` is the conversation it opens.
+fn agent_column(agent: &Agent, run: Option<String>) -> [Node; 2] {
     let caption = match (&agent.status, agent.next()) {
         (Status::Working, _) => {
             vec![Node::text(format!("in a turn · {}", events(agent.queued)))]
@@ -265,24 +317,29 @@ fn agent_column(agent: &Agent, run: Option<String>) -> Node {
         }
         column.push(Node::Row { children: row });
     }
-    column.push(Node::Rule);
-    column.push(match &agent.last {
+    let mut foot = vec![match &agent.last {
         Some(last) => Node::row([
             Node::Toned {
                 text: format!("{} ·", last.line),
                 tone: Tone::Neutral,
                 mono: false,
             },
-            super::run::ago(format!("agent-{}-last", agent.name), last.at),
+            Node::Ago {
+                id: format!("agent-{}-last", agent.name),
+                at: last.at * 1000,
+            },
         ]),
         None => Node::Toned {
             text: "nothing yet".into(),
             tone: Tone::Neutral,
             mono: false,
         },
-    });
-    column.extend(allowance(agent));
-    Node::Stack { children: column }
+    }];
+    foot.extend(allowance(agent));
+    [
+        Node::Stack { children: column },
+        Node::Stack { children: foot },
+    ]
 }
 
 /// The New agent form: a name, what it should do, its model, cap and
@@ -447,13 +504,27 @@ pub fn new_agent_tree(form: &Form, servers: &[String], taken: bool) -> Node {
             } else {
                 json!(next)
             };
-            Node::Switch {
-                label: server.clone(),
-                detail: None,
-                on,
-                action: SET.into(),
+            // On or off: the one that holds outlined, the other a
+            // click away.
+            let segment = |label: &str, chosen: bool| Node::Square {
+                label: label.into(),
+                style: if chosen {
+                    SquareLook::Outlined
+                } else {
+                    SquareLook::Quiet
+                },
+                tone: if chosen { Ink::Info } else { Ink::Neutral },
+                action: (!chosen).then(|| SET.to_owned()),
                 args: json!({ "key": SERVERS, "value": next }),
-            }
+            };
+            Node::row([
+                Node::Mono {
+                    text: server.clone(),
+                },
+                Node::Spacer,
+                segment("on", on),
+                segment("off", !on),
+            ])
         }));
     }
     if let Some(error) = &form.error {

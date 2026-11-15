@@ -877,12 +877,8 @@ impl Element for TextElement {
             style.size.height = line_height.into();
             return (window.request_layout(style, [], cx), ());
         }
-        // One row for the placeholder; else as tall as the wrapped text,
-        // up to MAX_LINES rows.
-        if input.content.is_empty() {
-            style.size.height = line_height.into();
-            return (window.request_layout(style, [], cx), ());
-        }
+        // As tall as the wrapped text, or the wrapped placeholder, up to
+        // MAX_LINES rows.
         let (text, runs) = display(input, window, theme(cx).dim);
         let font_size =
             window.text_style().font_size.to_pixels(window.rem_size());
@@ -926,9 +922,7 @@ impl Element for TextElement {
         let line_height = window.line_height();
         let font_size =
             window.text_style().font_size.to_pixels(window.rem_size());
-        // The placeholder stays on one line, clipped if it must be.
-        let width = (input.multiline && !input.content.is_empty())
-            .then_some(bounds.size.width);
+        let width = input.multiline.then_some(bounds.size.width);
         let lines = lay_out(text, &runs, font_size, width, line_height, window);
         let selected = input.display_offset(input.selected_range.start)
             ..input.display_offset(input.selected_range.end);

@@ -24,6 +24,7 @@ use heiko_ui_plugin::{
     Link,
     ListedCommand,
     Manifest,
+    NavEntry,
     Page,
     PluginStatus,
     RepoKind,
@@ -123,6 +124,8 @@ pub(crate) fn act_button(
         kind,
         icon: None,
         size: Default::default(),
+        wide: false,
+        detail: None,
     }
 }
 
@@ -140,6 +143,8 @@ pub(crate) fn button(
         kind,
         icon: None,
         size: Default::default(),
+        wide: false,
+        detail: None,
     }
 }
 
@@ -503,6 +508,14 @@ impl UiPlugin for AgentsUi {
                     },
                 ]))
             })
+            // In an agent's tree, and wherever its repository's entries
+            // are listed: what wakes it, and the keys it needs.
+            .contribute(points::SIDEBAR_REPO, |at: &AtRepo, view| {
+                Some(wakes_entry(view.data.agent(&at.repo)?))
+            })
+            .contribute(points::SIDEBAR_REPO, |at: &AtRepo, view| {
+                keys_entry(view.data.agent(&at.repo)?)
+            })
             .contribute(points::WAITING, |_: &AtApp, view| {
                 Some(crate::alert::waiting(view.data))
             })
@@ -510,6 +523,41 @@ impl UiPlugin for AgentsUi {
             .contribute_at(points::INSPECTOR, -200, run::panel)
             .contribute(points::USER_MESSAGE, run::event_card)
     }
+}
+
+/// The page parameter naming which part of an agent the Agents page is
+/// opened for: [`WAKES`] or [`KEYS`], of the agent its `repo` names.
+pub const SECTION: &str = "section";
+pub const WAKES: &str = "wakes";
+pub const KEYS: &str = "keys";
+
+/// The Agents page, opened for `section` of `agent`.
+fn section_link(agent: &Agent, section: &str) -> Link {
+    Link::page(OVERVIEW)
+        .param("repo", agent.name.clone())
+        .param(SECTION, section)
+}
+
+/// An agent's entry for what wakes it: how many triggers its live
+/// version declares and schedules it made itself.
+pub fn wakes_entry(agent: &Agent) -> NavEntry {
+    NavEntry::new("What wakes it", Icon::Clock, section_link(agent, WAKES))
+        .detail((agent.triggers.len() + agent.scheduled.len()).to_string())
+}
+
+/// An agent's entry for the keys its triggers name, with how many the
+/// store lacks as what waits on the person; none for an agent that
+/// names no key.
+pub fn keys_entry(agent: &Agent) -> Option<NavEntry> {
+    if agent.secrets.is_empty() {
+        return None;
+    }
+    let missing = agent.secrets.iter().filter(|key| !key.set).count();
+    Some(
+        NavEntry::new("Keys", Icon::Key, section_link(agent, KEYS))
+            .detail(agent.secrets.len().to_string())
+            .badge((missing > 0).then(|| (missing.to_string(), Tone::Warn))),
+    )
 }
 
 /// Where an agent stands, on its row's end: what it left the person
@@ -651,15 +699,36 @@ pub(crate) fn events(count: usize) -> String {
 /// How many ticks a day's allowance is drawn with.
 const ALLOWANCE_TICKS: u32 = 25;
 
-/// How much of the day's allowance `agent` used: the share as a
-/// percentage, over a strip of ticks, red once it is all used.
-pub(crate) fn allowance(agent: &Agent) -> [tree::Node; 2] {
+/// How much of the day's allowance `agent` used, as a percentage: `41%`.
+pub(crate) fn allowance_share(agent: &Agent) -> String {
+    format!("{:.0}%", agent.spent_share() * 100.)
+}
+
+/// The day's allowance as a strip of ticks, those `agent` used lit, red
+/// once it is all used.
+pub(crate) fn allowance_ticks(agent: &Agent) -> tree::Node {
     let share = agent.spent_share();
     let lit = (share * ALLOWANCE_TICKS as f32).round() as u32;
+    tree::Node::Ticks {
+        lit: if share > 0. { lit.max(1) } else { 0 },
+        total: ALLOWANCE_TICKS,
+        tone: if agent.status == Status::AtCap {
+            tree::Ink::Bad
+        } else {
+            tree::Ink::Info
+        },
+        marked: vec![],
+        labels: Vec::new(),
+    }
+}
+
+/// How much of the day's allowance `agent` used: the share as a
+/// percentage, over its strip of ticks.
+pub(crate) fn allowance(agent: &Agent) -> [tree::Node; 2] {
     [
         tree::Node::row([
-            tree::Node::Mono {
-                text: format!("{:.0}%", share * 100.),
+            tree::Node::Rich {
+                text: format!("**{}**", allowance_share(agent)),
             },
             tree::Node::Toned {
                 text: "of today's allowance".into(),
@@ -667,15 +736,11 @@ pub(crate) fn allowance(agent: &Agent) -> [tree::Node; 2] {
                 mono: false,
             },
         ]),
-        tree::Node::Ticks {
-            lit: if share > 0. { lit.max(1) } else { 0 },
-            total: ALLOWANCE_TICKS,
-            tone: if agent.status == Status::AtCap {
-                tree::Ink::Bad
-            } else {
-                tree::Ink::Info
-            },
-            marked: vec![],
-        },
+        allowance_ticks(agent),
     ]
+}
+
+/// An empty line: the room between two sections of a tree.
+pub(crate) fn gap() -> tree::Node {
+    tree::Node::text("\u{a0}")
 }

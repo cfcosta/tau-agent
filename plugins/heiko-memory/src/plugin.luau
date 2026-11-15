@@ -591,7 +591,7 @@ local plugin = heiko.plugin({
 		local status = ui_notes.status(state.notes)
 		return {
 			status = status and ui.status(status) or nil,
-			notes = ui_notes.marks(state.log),
+			notes = ui_notes.marks(state.log, env.run and env.run.repo),
 		}
 	end,
 

@@ -1243,8 +1243,7 @@ impl Workspace {
     /// The repository the composer is in: the open run's, else the one
     /// new runs start in.
     pub(crate) fn command_repo(&self) -> Option<String> {
-        self.current()
-            .filter(|_| self.route != Route::NewRun)
+        self.shown_run()
             .map(|run| run.repo.clone())
             .filter(|repo| !repo.is_empty())
             .or_else(|| self.selected_repo().map(str::to_owned))
@@ -1308,10 +1307,7 @@ impl Workspace {
         else {
             return false;
         };
-        let run = self
-            .current()
-            .filter(|_| self.route != Route::NewRun)
-            .cloned();
+        let run = self.shown_run().cloned();
         let repo = self.command_repo();
         if self.draws_remote_views() {
             let origin = Origin {
@@ -1387,7 +1383,7 @@ impl Workspace {
         cx: &mut App,
     ) -> Option<AnyElement> {
         let name = self.plugin_named(plugin)?;
-        let run = self.current().filter(|_| self.route != Route::NewRun);
+        let run = self.shown_run();
         let remote = self.remote_view(View::Popover {
             plugin: name.to_owned(),
             command: command.to_owned(),

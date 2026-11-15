@@ -240,6 +240,7 @@ impl Workspace {
                 .border_b_1()
                 .border_color(t.slate)
                 .text_color(color)
+                .hover(|style| style.text_color(t.bright))
                 .child(text)
         };
         div()
@@ -250,7 +251,6 @@ impl Workspace {
             .flex_shrink_0()
             .min_h(control::SMALL)
             .cursor_pointer()
-            .hover(|style| style.opacity(0.85))
             .child(word(choice.model.clone(), t.blue))
             .child(word(choice.effort.label().to_owned(), t.text))
             .on_click(cx.listener(move |ws, _, window, cx| {

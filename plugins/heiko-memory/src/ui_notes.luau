@@ -13,6 +13,9 @@ local ui = heiko.ui
 
 local M = {}
 
+-- What an id of the person's notes starts with.
+local USER = "user:"
+
 -- How long before `now` the time `then` was, both in milliseconds, in
 -- the largest whole unit: `just now`, `5 minutes ago`, `2 days ago`.
 function M.ago(now, then_)
@@ -236,7 +239,16 @@ end
 -- a ruled row for each note that matches both `query` and `kind`.
 function M.list_tree(book, top, query, kind, button)
 	query = string.lower(query or "")
+	-- The page's head, unless `top` brings one: its title, and how many
+	-- notes there are.
+	local headed = false
+	for _, piece in ipairs(top) do
+		headed = headed or piece.piece == "header"
+	end
 	local children = {}
+	if not headed then
+		table.insert(children, ui.header("Memory", { meta = #book == 1 and "1 note" or (#book .. " notes") }))
+	end
 	for _, piece in ipairs(top) do
 		table.insert(children, piece)
 	end
@@ -282,9 +294,9 @@ function M.list_tree(book, top, query, kind, button)
 	return ui.stack(children)
 end
 
--- What the person's notes are, over their list.
+-- What the person's notes are, over their list: the page's head.
 function M.yours()
-	return ui.title("Your notes")
+	return ui.header("Your notes")
 end
 
 -- A row for each of `links`: the note, opening it, and why.
@@ -396,31 +408,51 @@ local function notes_of(n)
 	return n == 1 and "1 note" or (n .. " notes")
 end
 
--- One of memory's marks in a transcript, of a log entry: the notes a run
--- started with, each on a slip; what it saved, on dashed ones; what
--- failed. Nil for what shows none (a stale mark).
-function M.mark(entry)
+-- The plugin's name, small and muted, at the end of a mark's first line.
+local function name()
+	return ui.toned("heiko-memory", "neutral", true)
+end
+
+-- A note's title on a slip that opens its page: the page of `repo`'s
+-- notes, or for an id of the person's (`user:<id>`), of theirs, as the
+-- page with no repository is. Without an id, or a repository for one of
+-- its notes, the slip opens nothing.
+local function note_slip(title, id, dashed, repo)
+	local to
+	if id ~= nil and string.sub(id, 1, #USER) == USER then
+		to = { page = "notes", params = { note = string.sub(id, #USER + 1) } }
+	elseif id ~= nil and repo ~= nil and repo ~= "" then
+		to = { page = "notes", params = { note = id, repo = repo } }
+	end
+	return ui.slip(title, "teal", dashed, to)
+end
+
+-- One of memory's marks in a transcript, of a log entry of a run in the
+-- repository `repo`: the notes it started with, each on a slip; what it
+-- saved, on dashed ones, each opening its note; what failed. Nil for
+-- what shows none (a stale mark).
+function M.mark(entry, repo)
 	local title
 	local slips = {}
 	if entry.kind == "recalled" then
 		title = "Recalled " .. notes_of(#entry.notes)
 		for _, recalled in ipairs(entry.notes) do
-			table.insert(slips, ui.slip(recalled.title, "teal"))
+			table.insert(slips, note_slip(recalled.title, recalled.id, false, repo))
 		end
 	elseif entry.kind == "saved" then
 		title = "Saved " .. notes_of(#entry.calls)
 		for _, call in ipairs(entry.calls) do
 			local saved = call.details
 			if saved and (saved.title or saved.id) then
-				table.insert(slips, ui.slip(saved.title or saved.id, "teal", true))
+				table.insert(slips, note_slip(saved.title or saved.id, saved.id, true, repo))
 			end
 		end
 	elseif entry.kind == "error" then
-		return ui.row({ ui.mark("failing"), ui.text(entry.message), ui.spacer(), ui.mono("heiko-memory") })
+		return ui.row({ ui.mark("failing"), ui.text(entry.message), ui.spacer(), name() })
 	else
 		return nil
 	end
-	local body = { ui.row({ ui.heading(title), ui.spacer(), ui.mono("heiko-memory") }) }
+	local body = { ui.row({ ui.heading(title), ui.spacer(), name() }) }
 	if #slips > 0 then
 		table.insert(body, ui.stack(slips))
 	end
@@ -428,11 +460,11 @@ function M.mark(entry)
 end
 
 -- The marks of a run's `log`, by key: `m0`, `m1`, … for those that show.
-function M.marks(log)
+function M.marks(log, repo)
 	local out = {}
 	local n = 0
 	for _, entry in ipairs(log or {}) do
-		local piece = M.mark(entry)
+		local piece = M.mark(entry, repo)
 		if piece then
 			out["m" .. n] = piece
 			n += 1

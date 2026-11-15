@@ -1,16 +1,20 @@
 //! The `vcs_diff` and `vcs_show` cards, as view trees (ADR 0045). A
 //! diff's header names its change and counts its files, and its body
-//! lists them, each a section that opens to its hunks as bands. A
-//! show's header is the change's id and first line; its body leads with
-//! the ids and state, then the message, author and parents, then its
-//! files, each on a row with the lines it adds and removes.
+//! lists them, each a row whose path opens its hunks under it. A
+//! show's header is the change's id and first line; its body, on a
+//! band, leads with the ids and state, then the message, author and
+//! parents, then its files, each on a row with the lines it adds and
+//! removes.
 
-use heiko_ui_plugin::tree::{KeyValue, Node};
+use heiko_ui_plugin::tree::{KeyValue, Kind, Node};
+use serde_json::json;
 
 use super::{
     Card,
+    SET,
     change_diff::{ChangeDiff, FileDiff},
     change_log::Change,
+    file_row,
     file_rows,
     first_line,
     quiet,
@@ -31,9 +35,13 @@ pub fn commit_summary(diff: &ChangeDiff) -> Node {
     }
 }
 
-/// An open diff: its files.
-pub fn files_body(card: &Card, diff: &ChangeDiff) -> Node {
-    file_list(card, &diff.files, diff.truncated, &|_| false)
+/// An open diff: its files, those `open` names with their hunks.
+pub fn files_body(
+    card: &Card,
+    diff: &ChangeDiff,
+    open: &dyn Fn(&str) -> bool,
+) -> Node {
+    file_list(card, &diff.files, diff.truncated, &|_| false, open)
 }
 
 /// The paragraphs of a description after its first line, if any.
@@ -53,8 +61,8 @@ pub(super) fn message(change: &Change) -> Vec<Node> {
         .unwrap_or_default()
 }
 
-/// A show: the ids and state on a line, the message, the author and
-/// parents, then the files.
+/// A show, on a band: the ids and state on a line, the message, the
+/// author and parents, then the files.
 pub fn commit_body(diff: &ChangeDiff) -> Node {
     let change = &diff.change;
     let info = &change.info;
@@ -90,7 +98,7 @@ pub fn commit_body(diff: &ChangeDiff) -> Node {
         column.push(Node::Rows { rows });
     }
     column.extend(file_rows(&diff.files, diff.truncated, &|_| false));
-    Node::stack(column)
+    Node::Band { children: column }
 }
 
 /// A parent as the log names a change: its short id, bookmarks and
@@ -99,22 +107,6 @@ fn parent_line(parent: &Change) -> String {
     let mut words = vec![parent.short_id().to_owned()];
     words.extend(parent.info.bookmarks.iter().cloned());
     words.push(first_line(parent));
-    words.join(" · ")
-}
-
-/// A file's section title: its kind (`jj status`'s letter), path, what it changes and what to
-/// know of it.
-fn file_title(file: &FileDiff, conflicted: bool) -> String {
-    let mut words = vec![format!("{} {}", file.kind.letter(), file.path)];
-    if file.added > 0 || file.removed > 0 {
-        words.push(format!("+{} −{}", file.added, file.removed));
-    }
-    if conflicted {
-        words.push("conflict".into());
-    }
-    if file.binary {
-        words.push("binary".into());
-    }
     words.join(" · ")
 }
 
@@ -132,23 +124,37 @@ fn hunks(file: &FileDiff) -> Node {
     }
 }
 
-/// Each file as a section that opens to its hunks, then a note when
-/// the diff was cut.
+/// Each file on a row, its path a button that shows its hunks under it
+/// or hides them (`open` says which show), then a note when the diff
+/// was cut.
 pub fn file_list(
     card: &Card,
     files: &[FileDiff],
     truncated: bool,
     conflicted: &dyn Fn(&str) -> bool,
+    open: &dyn Fn(&str) -> bool,
 ) -> Node {
-    let mut list: Vec<Node> = files
-        .iter()
-        .map(|file| Node::Section {
-            id: card.file_id(&file.path),
-            title: file_title(file, conflicted(&file.path)),
-            open: false,
-            children: vec![hunks(file)],
-        })
-        .collect();
+    let mut list = Vec::new();
+    for file in files {
+        let open = open(&file.path);
+        let path = Node::Button {
+            label: file.path.clone(),
+            action: SET.into(),
+            args: json!({
+                "key": card.file_key(&file.path),
+                "value": (!open).then_some(true),
+            }),
+            kind: Kind::Secondary,
+            icon: None,
+            size: Default::default(),
+            wide: false,
+            detail: None,
+        };
+        list.push(file_row(file, path, conflicted(&file.path)));
+        if open {
+            list.push(hunks(file));
+        }
+    }
     if files.is_empty() {
         list.push(Node::Empty {
             text: "No changes.".into(),

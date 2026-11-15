@@ -57,40 +57,28 @@
           "body": {
             "children": [
               {
-                "piece": "kanji",
-                "text": "止",
-                "tone": "bad"
-              },
-              {
                 "children": [
                   {
-                    "children": [
-                      {
-                        "piece": "heading",
-                        "text": "Blocked by rule R2"
+                    "label": "Rule R2",
+                    "piece": "link",
+                    "to": {
+                      "page": "rules",
+                      "params": {
+                        "repo": "heiko-agent",
+                        "rule": "R2"
                       },
-                      {
-                        "piece": "spacer"
-                      },
-                      {
-                        "label": "rule",
-                        "piece": "link",
-                        "to": {
-                          "page": "rules",
-                          "params": {
-                            "repo": "heiko-agent",
-                            "rule": "R2"
-                          },
-                          "plugin": null
-                        }
-                      }
-                    ],
-                    "piece": "row"
+                      "plugin": null
+                    }
                   },
                   {
                     "piece": "text",
                     "text": "Library code returns errors. No unwrap or expect outside tests."
-                  },
+                  }
+                ],
+                "piece": "stack"
+              },
+              {
+                "children": [
                   {
                     "children": [
                       {
@@ -112,6 +100,16 @@
                     "piece": "row"
                   },
                   {
+                    "labels": [
+                      {
+                        "at": 6,
+                        "text": "review"
+                      },
+                      {
+                        "at": 16,
+                        "text": "block"
+                      }
+                    ],
                     "lit": 19,
                     "marked": [
                       6,
@@ -255,40 +253,28 @@
           "body": {
             "children": [
               {
-                "piece": "kanji",
-                "text": "止",
-                "tone": "bad"
-              },
-              {
                 "children": [
                   {
-                    "children": [
-                      {
-                        "piece": "heading",
-                        "text": "Blocked by rule R2"
+                    "label": "Rule R2",
+                    "piece": "link",
+                    "to": {
+                      "page": "rules",
+                      "params": {
+                        "repo": "heiko-agent",
+                        "rule": "R2"
                       },
-                      {
-                        "piece": "spacer"
-                      },
-                      {
-                        "label": "rule",
-                        "piece": "link",
-                        "to": {
-                          "page": "rules",
-                          "params": {
-                            "repo": "heiko-agent",
-                            "rule": "R2"
-                          },
-                          "plugin": null
-                        }
-                      }
-                    ],
-                    "piece": "row"
+                      "plugin": null
+                    }
                   },
                   {
                     "piece": "text",
                     "text": "Library code returns errors. No unwrap or expect outside tests."
-                  },
+                  }
+                ],
+                "piece": "stack"
+              },
+              {
+                "children": [
                   {
                     "children": [
                       {
@@ -310,6 +296,16 @@
                     "piece": "row"
                   },
                   {
+                    "labels": [
+                      {
+                        "at": 6,
+                        "text": "review"
+                      },
+                      {
+                        "at": 16,
+                        "text": "block"
+                      }
+                    ],
                     "lit": 19,
                     "marked": [
                       6,
@@ -480,40 +476,28 @@
           "body": {
             "children": [
               {
-                "piece": "kanji",
-                "text": "止",
-                "tone": "bad"
-              },
-              {
                 "children": [
                   {
-                    "children": [
-                      {
-                        "piece": "heading",
-                        "text": "Blocked by rule R2"
+                    "label": "Rule R2",
+                    "piece": "link",
+                    "to": {
+                      "page": "rules",
+                      "params": {
+                        "repo": "heiko-agent",
+                        "rule": "R2"
                       },
-                      {
-                        "piece": "spacer"
-                      },
-                      {
-                        "label": "rule",
-                        "piece": "link",
-                        "to": {
-                          "page": "rules",
-                          "params": {
-                            "repo": "heiko-agent",
-                            "rule": "R2"
-                          },
-                          "plugin": null
-                        }
-                      }
-                    ],
-                    "piece": "row"
+                      "plugin": null
+                    }
                   },
                   {
                     "piece": "text",
                     "text": "Library code returns errors. No unwrap or expect outside tests."
-                  },
+                  }
+                ],
+                "piece": "stack"
+              },
+              {
+                "children": [
                   {
                     "children": [
                       {
@@ -535,6 +519,16 @@
                     "piece": "row"
                   },
                   {
+                    "labels": [
+                      {
+                        "at": 6,
+                        "text": "review"
+                      },
+                      {
+                        "at": 16,
+                        "text": "block"
+                      }
+                    ],
                     "lit": 19,
                     "marked": [
                       6,
@@ -747,40 +741,28 @@
           "body": {
             "children": [
               {
-                "piece": "kanji",
-                "text": "止",
-                "tone": "bad"
-              },
-              {
                 "children": [
                   {
-                    "children": [
-                      {
-                        "piece": "heading",
-                        "text": "Blocked by rule R2"
+                    "label": "Rule R2",
+                    "piece": "link",
+                    "to": {
+                      "page": "rules",
+                      "params": {
+                        "repo": "heiko-agent",
+                        "rule": "R2"
                       },
-                      {
-                        "piece": "spacer"
-                      },
-                      {
-                        "label": "rule",
-                        "piece": "link",
-                        "to": {
-                          "page": "rules",
-                          "params": {
-                            "repo": "heiko-agent",
-                            "rule": "R2"
-                          },
-                          "plugin": null
-                        }
-                      }
-                    ],
-                    "piece": "row"
+                      "plugin": null
+                    }
                   },
                   {
                     "piece": "text",
                     "text": "Library code returns errors. No unwrap or expect outside tests."
-                  },
+                  }
+                ],
+                "piece": "stack"
+              },
+              {
+                "children": [
                   {
                     "children": [
                       {
@@ -802,6 +784,16 @@
                     "piece": "row"
                   },
                   {
+                    "labels": [
+                      {
+                        "at": 6,
+                        "text": "review"
+                      },
+                      {
+                        "at": 16,
+                        "text": "block"
+                      }
+                    ],
                     "lit": 19,
                     "marked": [
                       6,
@@ -909,14 +901,17 @@
                   "children": [
                     {
                       "piece": "heading",
-                      "text": "Held, sent back"
+                      "text": "Held, sent back",
+                      "tone": "yellow"
                     },
                     {
                       "piece": "spacer"
                     },
                     {
-                      "piece": "mono",
-                      "text": "heiko-constitution"
+                      "mono": true,
+                      "piece": "toned",
+                      "text": "heiko-constitution",
+                      "tone": "neutral"
                     }
                   ],
                   "piece": "row"
@@ -1078,40 +1073,28 @@
           "body": {
             "children": [
               {
-                "piece": "kanji",
-                "text": "止",
-                "tone": "bad"
-              },
-              {
                 "children": [
                   {
-                    "children": [
-                      {
-                        "piece": "heading",
-                        "text": "Blocked by rule R2"
+                    "label": "Rule R2",
+                    "piece": "link",
+                    "to": {
+                      "page": "rules",
+                      "params": {
+                        "repo": "heiko-agent",
+                        "rule": "R2"
                       },
-                      {
-                        "piece": "spacer"
-                      },
-                      {
-                        "label": "rule",
-                        "piece": "link",
-                        "to": {
-                          "page": "rules",
-                          "params": {
-                            "repo": "heiko-agent",
-                            "rule": "R2"
-                          },
-                          "plugin": null
-                        }
-                      }
-                    ],
-                    "piece": "row"
+                      "plugin": null
+                    }
                   },
                   {
                     "piece": "text",
                     "text": "Library code returns errors. No unwrap or expect outside tests."
-                  },
+                  }
+                ],
+                "piece": "stack"
+              },
+              {
+                "children": [
                   {
                     "children": [
                       {
@@ -1133,6 +1116,16 @@
                     "piece": "row"
                   },
                   {
+                    "labels": [
+                      {
+                        "at": 6,
+                        "text": "review"
+                      },
+                      {
+                        "at": 16,
+                        "text": "block"
+                      }
+                    ],
                     "lit": 19,
                     "marked": [
                       6,
@@ -1240,14 +1233,17 @@
                   "children": [
                     {
                       "piece": "heading",
-                      "text": "Held, sent back"
+                      "text": "Held, sent back",
+                      "tone": "yellow"
                     },
                     {
                       "piece": "spacer"
                     },
                     {
-                      "piece": "mono",
-                      "text": "heiko-constitution"
+                      "mono": true,
+                      "piece": "toned",
+                      "text": "heiko-constitution",
+                      "tone": "neutral"
                     }
                   ],
                   "piece": "row"

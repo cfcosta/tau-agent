@@ -1,0 +1,36 @@
+{
+  "repo_data": {
+    "heiko-agent": {
+      "home": {
+        "meta": "this repository's issues",
+        "rows": [
+          {
+            "detail": "P2",
+            "id": "td-14cd",
+            "title": "Jitter on top of the hint",
+            "write": "Work on td-14cd: Jitter on top of the hint."
+          },
+          {
+            "detail": "P2",
+            "id": "td-6414",
+            "title": "Retry budget per request",
+            "write": "Work on td-6414: Retry budget per request."
+          },
+          {
+            "detail": "P3",
+            "id": "td-ced7",
+            "title": "Log malformed headers once per run",
+            "write": "Work on td-ced7: Log malformed headers once per run."
+          }
+        ],
+        "title": "Ready to pick up"
+      },
+      "nav": {
+        "badge": "3",
+        "detail": "3 ready"
+      },
+      "ready": 3,
+      "rev": 5
+    }
+  }
+}

@@ -215,18 +215,23 @@ local function shown_of(about)
 	return checks.cut(checks.shown(fields, names), checks.SHOWN_CHARS)
 end
 
+-- Its name, small and muted: what ends the first line of a note.
+local function by()
+	return ui.toned(NAME, "neutral", true)
+end
+
 -- One of its notes: a check Jev could not answer, or an answer held,
 -- sent back with a square for each time it may go, or flagged.
 local function note_tree(note)
 	local held = note.held
 	if held == nil then
-		return ui.row({ ui.mark("failing"), ui.text(note.text), ui.spacer(), ui.mono(note.detail) })
+		return ui.row({ ui.mark("failing"), ui.text(note.text), ui.spacer(), ui.mono(note.detail), by() })
 	end
 	local body = {
 		ui.row({
-			ui.heading(held.kind == "held" and "Held, sent back" or "Flagged for review"),
+			ui.heading(held.kind == "held" and "Held, sent back" or "Flagged for review", "yellow"),
 			ui.spacer(),
-			ui.mono(NAME),
+			by(),
 		}),
 		ui.text(held.rule .. ": " .. held.text),
 	}
@@ -250,8 +255,8 @@ end
 
 -- What the checks draw on a call's card: beside its title, the rule
 -- that flagged it and its score with a way to review it, or quietly the
--- scores that passed; under a blocked one, the rule and Jev's score
--- against its marks.
+-- scores that passed; under a blocked one, a row: the rule, then Jev's
+-- score against the rule's marks, which the card puts beside it.
 local function call_tree(call, repo)
 	local verdict = call.verdict
 	if verdict and verdict.kind == "flagged" then
@@ -263,20 +268,25 @@ local function call_tree(call, repo)
 			mark = "flagged",
 		}
 	elseif verdict then
-		local marked = {}
-		for _, at in ipairs({ verdict.review or false, verdict.block or false }) do
-			if at then
-				table.insert(marked, math.clamp(math.floor(at * TICKS + 0.5), 0, TICKS - 1))
+		-- The strip's two white ticks, each named under it.
+		local marked, labels = {}, {}
+		for _, mark in ipairs({ { "review", verdict.review }, { "block", verdict.block } }) do
+			if mark[2] then
+				local at = math.clamp(math.floor(mark[2] * TICKS + 0.5), 0, TICKS - 1)
+				table.insert(marked, at)
+				table.insert(labels, { at = at, text = mark[1] })
 			end
 		end
-		local body = { ui.row({ ui.heading("Blocked by rule " .. verdict.rule), ui.spacer(), rule_link("rule", repo, verdict.rule) }) }
+		local rule = { rule_link("Rule " .. verdict.rule, repo, verdict.rule) }
 		if verdict.text then
-			table.insert(body, ui.text(verdict.text))
+			table.insert(rule, ui.text(verdict.text))
 		end
-		table.insert(body, ui.row({ ui.toned("p(violation)", "neutral"), ui.spacer(), ui.toned(checks.two(verdict.score), "bad", true) }))
-		table.insert(body, ui.ticks(math.floor(verdict.score * TICKS + 0.5), TICKS, "bad", marked))
+		local score = {
+			ui.row({ ui.toned("p(violation)", "neutral"), ui.spacer(), ui.toned(checks.two(verdict.score), "bad", true) }),
+			ui.ticks(math.floor(verdict.score * TICKS + 0.5), TICKS, "bad", marked, labels),
+		}
 		return {
-			body = ui.row({ ui.kanji("止", "bad"), ui.stack(body) }),
+			body = ui.row({ ui.stack(rule), ui.stack(score) }),
 			mark = "blocked",
 			reason = verdict.reason,
 		}
@@ -496,11 +506,16 @@ local actions = {
 			return true
 		end)
 	end,
-	-- What Jev cannot answer, and how many times an answer may go back.
+	-- What happens to what Jev cannot answer (`value`, as the segments
+	-- send it: block or allow), or how many times an answer may go back.
 	settings = function(args, _, env)
 		edit(env, "Could not save the constitution", function(constitution)
-			constitution.on_error = args.blocks_unchecked and "block" or "allow"
-			constitution.max_holds = args.max_holds
+			if args.value ~= nil then
+				constitution.on_error = args.value == "block" and "block" or "allow"
+			end
+			if args.max_holds ~= nil then
+				constitution.max_holds = args.max_holds
+			end
 			return true
 		end)
 	end,

@@ -11,7 +11,16 @@ use std::collections::BTreeSet;
 use heiko_ui_plugin::{
     Handle,
     ViewCx,
-    tree::{Kind, MarkState, Node, Tone, draft_key},
+    tree::{
+        ButtonSize,
+        Ink,
+        Kind,
+        MarkState,
+        Node,
+        SquareLook,
+        Tone,
+        draft_key,
+    },
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -280,7 +289,12 @@ pub fn tree(
     if let Some(editor) = &held.editor {
         page.push(editor_card(editor, held));
     }
-    page.extend(servers.pending.iter().map(|row| pending(repo, row)));
+    page.extend(
+        servers
+            .pending
+            .iter()
+            .map(|row| pending(repo, row, compact)),
+    );
     page.extend(servers.errors.iter().map(|error| {
         Node::row([mark(MarkState::Failing), Node::text(error.clone())])
     }));
@@ -332,6 +346,8 @@ fn button(label: &str, kind: Kind, action: &str, args: Value) -> Node {
         kind,
         icon: None,
         size: Default::default(),
+        wide: false,
+        detail: None,
     }
 }
 
@@ -353,9 +369,10 @@ fn counted(count: usize, one: &str, many: &str) -> String {
     }
 }
 
-/// How many servers are connected and what waits on the user, each
-/// count in its tone, with what can be done: connect them before a run
-/// does, or add one; and, on a computer, where they are read from.
+/// The page's head: how many servers are connected and what waits on
+/// the user, each count in its tone, with what can be done: connect
+/// them before a run does, or add one; and, on a computer, where they
+/// are read from.
 fn intro(repo: Option<&str>, servers: &Servers, compact: bool) -> Node {
     let mut line = Vec::new();
     let mut count = |text: String, tone| line.push(toned(text, tone));
@@ -382,9 +399,9 @@ fn intro(repo: Option<&str>, servers: &Servers, compact: bool) -> Node {
             Tone::Warn,
         );
     }
-    line.push(Node::Spacer);
+    let mut actions = Vec::new();
     if !servers.started && !servers.servers.is_empty() {
-        line.push(act_button(
+        actions.push(act_button(
             "connect now",
             Kind::Secondary,
             &Act::Reconnect {
@@ -393,8 +410,19 @@ fn intro(repo: Option<&str>, servers: &Servers, compact: bool) -> Node {
             },
         ));
     }
-    line.push(button("add a server", Kind::Secondary, ADD, Value::Null));
-    let mut intro = vec![Node::row(line)];
+    actions.push(button("add a server", Kind::Secondary, ADD, Value::Null));
+    // On a computer the counts are on the head; a phone's is too narrow
+    // for them, so they go under it.
+    let mut intro = Vec::new();
+    if compact {
+        intro.push(header(actions));
+        if !line.is_empty() {
+            intro.push(Node::row(line));
+        }
+    } else {
+        line.extend(actions);
+        intro.push(header(line));
+    }
     let files = [servers.user_file.as_deref(), servers.repo_file.as_deref()]
         .into_iter()
         .flatten()
@@ -404,6 +432,16 @@ fn intro(repo: Option<&str>, servers: &Servers, compact: bool) -> Node {
         intro.push(toned(files, Tone::Neutral));
     }
     Node::stack(intro)
+}
+
+/// The page's head, which does not fold: its title, and `actions` at
+/// its end.
+fn header(actions: Vec<Node>) -> Node {
+    Node::Header {
+        title: "MCP servers".into(),
+        meta: None,
+        actions,
+    }
 }
 
 /// The editor of a server the page adds, over the page: its name, and
@@ -473,8 +511,9 @@ fn editor_card(editor: &Editor, held: &Held) -> Node {
 }
 
 /// A repository server waiting for approval, with its whole entry on a
-/// flat band: approving runs what it says.
-fn pending(repo: Option<&str>, row: &PendingRow) -> Node {
+/// flat band, beside it on a computer and under it on a phone
+/// (`compact`): approving runs what it says.
+fn pending(repo: Option<&str>, row: &PendingRow, compact: bool) -> Node {
     let mut block = vec![
         Node::row([
             mark(MarkState::Asks),
@@ -487,24 +526,40 @@ fn pending(repo: Option<&str>, row: &PendingRow) -> Node {
                    again if the entry changes."
                 .into(),
         },
-        Node::Code {
-            lang: Some("json".into()),
-            text: serde_json::to_string_pretty(&row.entry).unwrap_or_default(),
-            first_line: None,
-        },
     ];
+    let entry = Node::Code {
+        lang: Some("json".into()),
+        text: serde_json::to_string_pretty(&row.entry).unwrap_or_default(),
+        first_line: None,
+    };
+    if compact {
+        block.push(entry.clone());
+    }
     if let Some(repo) = repo {
-        block.push(Node::row([act_button(
-            "Approve",
-            Kind::Primary,
-            &Act::Approve {
+        block.push(Node::row([Node::Button {
+            label: "Approve".into(),
+            action: ACT.into(),
+            args: serde_json::to_value(Act::Approve {
                 repo: repo.to_owned(),
                 server: row.name.clone(),
                 hash: row.hash.clone(),
-            },
-        )]));
+            })
+            .unwrap_or(Value::Null),
+            kind: Kind::Primary,
+            icon: None,
+            size: ButtonSize::Medium,
+            wide: false,
+            detail: None,
+        }]));
     }
-    Node::Card { children: block }
+    if compact {
+        return Node::Card { children: block };
+    }
+    Node::Table {
+        head: vec![],
+        rows: vec![vec![Node::stack(block), entry]],
+        widths: vec![1.4, 1.],
+    }
 }
 
 /// A state's mark.
@@ -778,25 +833,48 @@ pub fn reach(server: &ServerRow, repo: Option<&str>) -> &'static str {
     }
 }
 
-/// The switch that turns `server` on or off at the page's level, or why
-/// it cannot.
+/// What turns `server` on or off at the page's level, or why it
+/// cannot: where it reaches, then two segments, the one that holds
+/// outlined and the other a click away.
 fn toggle(repo: Option<&str>, server: &ServerRow) -> Node {
     if let Some(why) = locked(server, repo.is_some()) {
         return mono(why);
     }
-    let act = Act::Enable {
-        repo: repo.map(str::to_owned),
-        name: server.name.clone(),
-        enabled: !server.enabled,
+    let segment = |label: &str, enabled: bool| {
+        let chosen = server.enabled == enabled;
+        let act = Act::Enable {
+            repo: repo.map(str::to_owned),
+            name: server.name.clone(),
+            enabled,
+        };
+        Node::Square {
+            label: label.into(),
+            style: if chosen {
+                SquareLook::Outlined
+            } else {
+                SquareLook::Quiet
+            },
+            tone: if chosen { Ink::Info } else { Ink::Neutral },
+            action: (!chosen).then(|| ACT.to_owned()),
+            args: if chosen {
+                Value::Null
+            } else {
+                serde_json::to_value(act).unwrap_or(Value::Null)
+            },
+        }
     };
-    Node::Switch {
-        label: format!("On in {}", reach(server, repo)),
-        detail: None,
-        on: server.enabled,
-        action: ACT.into(),
-        args: serde_json::to_value(act).unwrap_or(Value::Null),
-    }
+    Node::row([
+        Node::Spacer,
+        Node::Toned {
+            text: reach(server, repo).into(),
+            tone: Tone::Neutral,
+            mono: false,
+        },
+        segment("off", false),
+        segment("on", true),
+    ])
 }
+
 
 /// What a tool's hints say, as badges: read-only, destructive,
 /// idempotent, open world. A hint the tool did not give says nothing.

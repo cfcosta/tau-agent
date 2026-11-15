@@ -498,7 +498,10 @@ fn mark_card(
     };
     let plugin = plugin.to_owned();
     card.state = match mark {
-        CardMark::Blocked { reason } => ToolState::Blocked { plugin, reason },
+        CardMark::Blocked { reason, by } => ToolState::Blocked {
+            plugin: by.unwrap_or(plugin),
+            reason,
+        },
         CardMark::Flagged => ToolState::Flagged { plugin },
     };
     true
@@ -1199,13 +1202,18 @@ impl RunView {
         })
     }
 
-    /// The last edit that changed a file, with its diff.
-    pub fn last_diff(&self) -> Option<(&ToolCard, Vec<DiffLine>)> {
+    /// The last edit that changed a file, with its diff: the lines, and
+    /// each one's number in its version of the file.
+    pub fn last_diff(&self) -> Option<(&ToolCard, Vec<DiffLine>, Vec<u32>)> {
         self.items.iter().rev().find_map(|item| match item {
             Item::Tool(card) => {
                 let result = card.data.result.as_ref()?;
                 let diff = result.details.as_ref()?.get("diff")?.as_str()?;
-                Some((&**card, heiko_ui_kit::diff::parse(diff)))
+                Some((
+                    &**card,
+                    heiko_ui_kit::diff::parse(diff),
+                    heiko_ui_kit::diff::line_numbers(diff),
+                ))
             }
             _ => None,
         })
@@ -2408,7 +2416,7 @@ mod tests {
     }
 
     /// A verdict folded afresh, as a fork inherits it, still names the
-    /// plugin that blocked the call, and places no anchor.
+    /// package that blocked the call, and places no anchor.
     #[test]
     fn a_restated_verdict_names_its_plugin() {
         let mut view = view();
@@ -2430,7 +2438,7 @@ mod tests {
         assert!(matches!(
             &card.state,
             ToolState::Blocked { plugin, reason }
-                if plugin == heiko_luau_plugins::NAME && reason == "rule R1"
+                if plugin == "rules" && reason == "rule R1"
         ));
         assert_eq!(view.items.len(), anchors);
         assert!(card.anchors.is_empty());

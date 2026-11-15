@@ -192,10 +192,14 @@ local function pick_button(label, of, item, revision)
 	return ui.button(label, "pick", { item = item.id, revision = revision, fresh = of.fresh }, "secondary")
 end
 
--- A tab per item: the one shown in bold, the others a click away.
+-- A tab per item, a dot between each two: the one shown in bold, the
+-- others a click away.
 local function tabs(of, shown)
 	local row = {}
-	for _, item in ipairs(of.items) do
+	for at, item in ipairs(of.items) do
+		if at > 1 then
+			table.insert(row, ui.toned("·", "neutral"))
+		end
 		if item.id == shown then
 			table.insert(row, ui.rich("**" .. item.title .. "**"))
 		else
@@ -240,17 +244,19 @@ local function pane(of, pick, env)
 	local bars = {}
 	if #of.items > 1 then
 		table.insert(bars, tabs(of, item.id))
+		table.insert(bars, ui.rule())
 	end
 	if #item.revisions > 1 then
 		table.insert(bars, revisions(of, item, revision))
 	end
 	local content = item.revisions[revision].content
 	if content.type == "image" then
-		local parts = { picture(content.image, env, IMAGE_HEIGHT) }
+		-- The image over a rule, then what it shows and what it is.
+		local parts = { picture(content.image, env, IMAGE_HEIGHT), ui.rule() }
 		if content.caption ~= "" then
-			table.insert(parts, ui.heading(content.caption))
+			table.insert(parts, ui.text(content.caption))
 		end
-		table.insert(parts, ui.mono(canvas.describe(content.image) .. " · " .. content.image.path))
+		table.insert(parts, ui.toned(canvas.describe(content.image) .. " · " .. content.image.path, "neutral", true))
 		table.insert(bars, ui.stack(parts))
 	else
 		table.insert(

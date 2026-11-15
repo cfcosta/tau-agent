@@ -333,8 +333,8 @@ local function before_after(one)
 		return ui.ticks(math.clamp(math.floor(tokens / window * WINDOW_TICKS + 0.5), 0, WINDOW_TICKS), WINDOW_TICKS, tone, { math.floor(COMPACT_AT / 100 * WINDOW_TICKS) })
 	end
 	return ui.table({}, {
-		{ ui.toned("before", "neutral"), strip(one.before, "neutral"), ui.mono(tokens_text(one.before)) },
-		{ ui.toned("after", "neutral"), strip(one.after, "info"), ui.mono(tokens_text(one.after)) },
+		{ ui.toned("Before", "neutral"), strip(one.before, "neutral"), ui.mono(tokens_text(one.before)) },
+		{ ui.toned("After", "neutral"), strip(one.after, "info"), ui.mono(tokens_text(one.after)) },
 	}, { widths = { 1, 8, 1 } })
 end
 
@@ -357,13 +357,13 @@ local function decision(of)
 	return ui.row({ square, ui.toned(LABEL[of], TONE[of], true) })
 end
 
--- What the run's context was before and after the last pass, and what it
--- decided for each tool call.
+-- The ledger page, one piece: what the run's context was before and
+-- after the last pass, and what it decided for each tool call.
 local function ledger_page(state_now)
 	local passes = state_now.passes or {}
 	local last = passes[#passes]
 	if last == nil then
-		return { ui.empty("Nothing pruned in this run yet.") }
+		return ui.empty("Nothing pruned in this run yet.")
 	end
 	local kept, pinned, results, calls = 0, 0, 0, 0
 	for _, entry in ipairs(state_now.ledger or {}) do
@@ -407,36 +407,44 @@ local function ledger_page(state_now)
 			decision(entry.decision),
 		})
 	end
-	return {
-		ui.row({
-			ui.title("Pruned " .. tokens_text(math.max(last.before - last.after, 0)) .. " tokens of this run's tool history"),
-			ui.spacer(),
-			ui.mono(NAME),
-		}),
-		ui.rule(),
+	return ui.stack({
+		ui.header(
+			"Pruned " .. tokens_text(math.max(last.before - last.after, 0)) .. " tokens of this run's tool history",
+			{ meta = NAME }
+		),
 		ui.toned(last.detail, "neutral"),
-		before_after(last),
-		ui.row({
-			counted(pinned, "pinned"),
-			counted(kept, "kept"),
-			counted(results, "result dropped"),
-			counted(calls, "call dropped"),
-		}),
-		ui.rows({
-			{ "next request", "1 full resend" },
+		-- The window before and after, beside what the pass decided.
+		ui.table({}, {
 			{
-				"outputs pruned",
-				pruned_outputs == 0 and "none" or (pruned_outputs .. " · −" .. tokens_text(saved) .. " tokens"),
+				before_after(last),
+				ui.stack({
+					ui.table({}, {
+						{
+							counted(pinned, "pinned"),
+							counted(kept, "kept"),
+							counted(results, "result dropped"),
+							counted(calls, "call dropped"),
+						},
+					}),
+					ui.rows({
+						{ "next request", "1 full resend" },
+						{
+							"outputs pruned",
+							pruned_outputs == 0 and "none" or (pruned_outputs .. " · −" .. tokens_text(saved) .. " tokens"),
+						},
+					}),
+				}),
 			},
-		}),
-		ui.row({ ui.heading("Ledger"), ui.toned(tostring(#rows), "neutral", true) }),
+		}, { widths = { 1.4, 1 } }),
+		ui.text("\u{a0}"),
+		ui.header("Ledger", { meta = tostring(#rows) }),
 		#rows == 0 and ui.empty("No per-call decisions.")
 			or ui.table(
 				{ "tool", "input", "size", "still matters", "verbatim", "decision" },
 				rows,
 				{ widths = { 1.5, 5, 0.8, 2, 2, 1.5 } }
 			),
-	}
+	})
 end
 
 return heiko.plugin({

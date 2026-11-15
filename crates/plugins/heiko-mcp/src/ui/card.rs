@@ -1,6 +1,7 @@
 //! An MCP tool's card: what it sent on the call's line with the tool's
-//! hints, the server as the result's word, and what it returned on a
-//! band, as structured JSON when the server gave some, else as text.
+//! hints as stamps, the server as the result's word, and what it
+//! returned on a band, as structured JSON when the server gave some,
+//! else as text.
 //! Its head and body are view trees (ADR 0045).
 
 use heiko_ui_kit::theme::Tone;
@@ -8,14 +9,11 @@ use heiko_ui_plugin::{
     CallData,
     ViewCx,
     points::{AtCard, CardView},
-    tree::Node,
+    tree::{Ink, Node},
 };
 use serde_json::Value;
 
-use super::{
-    McpUi,
-    page::{hint_badge, hints},
-};
+use super::{McpUi, page::hints};
 use crate::info::Annotations;
 
 /// The most lines of a result a card shows.
@@ -119,8 +117,20 @@ pub fn head(data: &CallData, shown: &Shown, summary: &str) -> Node {
         .filter(|args| args.chars().count() <= ARGS_CHARS)
         .unwrap_or_else(|| summary.to_owned());
     let mut head = vec![Node::Mono { text: args }];
-    head.extend(hints(&shown.annotations).into_iter().map(hint_badge));
+    head.extend(hints(&shown.annotations).into_iter().map(hint_stamp));
     Node::row(head)
+}
+
+/// A hint's stamp: destructive in red, read-only in green.
+fn hint_stamp(hint: &'static str) -> Node {
+    Node::Stamp {
+        label: hint.into(),
+        tone: match hint {
+            "destructive" => Ink::Bad,
+            "read-only" => Ink::Good,
+            _ => Ink::Neutral,
+        },
+    }
 }
 
 /// `text` on a band, down to its first [`TEXT_LINES`] lines, and how

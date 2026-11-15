@@ -113,6 +113,8 @@ impl UiPlugin for Before {
                         kind: Kind::Primary,
                         icon: None,
                         size: Default::default(),
+                        wide: false,
+                        detail: None,
                     },
                     required: false,
                     link: None,
@@ -177,6 +179,8 @@ fn step(at: &AtSetup, view: &mut ViewCx<'_, Stepper>) -> Option<SetupView> {
         kind: Kind::Primary,
         icon: None,
         size: Default::default(),
+        wide: false,
+        detail: None,
     };
     Some(SetupView {
         step: "pick",

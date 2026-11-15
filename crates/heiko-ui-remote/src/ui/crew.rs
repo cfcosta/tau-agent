@@ -62,17 +62,30 @@ pub fn tray(
         .filter(|member| !compact || member.standing.is_working())
         .map(|member| lane(member, compact, t, cx))
         .collect();
-    Some(
-        div()
-            .flex()
-            .flex_col()
-            .child(ui::section_header(
-                "Crew",
-                Some(round.join(" · ").into()),
-                t,
-            ))
-            .children(lanes),
-    )
+    // Its head is smaller than a section's, with heiko's mark and the
+    // round's count beside the title.
+    let head = div()
+        .flex()
+        .items_center()
+        .gap(sp(2.5))
+        .pb(sp(2.))
+        .border_b_2()
+        .border_color(t.rule)
+        .child(ui::logo(t, 20.))
+        .child(
+            div()
+                .typeset(Type::SECTION.sized(17.))
+                .text_color(t.bright)
+                .child("Crew"),
+        )
+        .child(
+            div()
+                .min_w(rems(0.))
+                .truncate()
+                .text_color(t.dim)
+                .child(round.join(" · ")),
+        );
+    Some(div().flex().flex_col().child(head).children(lanes))
 }
 
 /// One sub-agent's lane: the mark of where it stands, its title, its
@@ -86,12 +99,23 @@ fn lane(
 ) -> Div {
     let run = member.run;
     let ended = !member.standing.is_working();
+    // What it does now: its tool's name, in the tool's color, and the
+    // rest of the call's line.
+    let doing = match &member.standing {
+        Standing::Working {
+            doing: Some(doing), ..
+        } => Some(match doing.split_once(' ') {
+            Some((tool, rest)) => (tool.to_owned(), format!(" {rest}")),
+            None => (doing.clone(), String::new()),
+        }),
+        _ => None,
+    };
     let (state, turns, line) = match &member.standing {
         Standing::Working { turn, doing, .. } => (
             State::Working,
             Some(*turn),
             match doing {
-                Some(doing) => format!("turn {turn} · {doing}"),
+                Some(_) => format!("turn {turn} · "),
                 None => format!("turn {turn}"),
             },
         ),
@@ -143,17 +167,38 @@ fn lane(
         .truncate()
         .text_color(if ended { t.text_soft } else { t.text })
         .child(run.title.clone());
-    let said = ui::mono(
-        line,
-        Type::CAPTION,
-        if matches!(member.standing, Standing::Failed) {
-            t.red
-        } else {
-            t.dim
-        },
-    )
-    .min_w(rems(0.))
-    .truncate();
+    let tone = if matches!(member.standing, Standing::Failed) {
+        t.red
+    } else {
+        t.dim
+    };
+    let said = match doing {
+        Some((tool, rest)) => {
+            let color = t.roles.tool(&tool);
+            div()
+                .min_w(rems(0.))
+                .flex()
+                .child(
+                    ui::mono(line, Type::CAPTION, tone)
+                        .flex_shrink_0()
+                        .whitespace_nowrap(),
+                )
+                .child(
+                    ui::mono(tool, Type::CAPTION, color)
+                        .flex_shrink_0()
+                        .whitespace_nowrap(),
+                )
+                .child(
+                    ui::mono(rest, Type::CAPTION, t.dim)
+                        .flex_1()
+                        .min_w(rems(0.))
+                        .truncate(),
+                )
+        }
+        None => ui::mono(line, Type::CAPTION, tone)
+            .min_w(rems(0.))
+            .truncate(),
+    };
     let actions = div()
         .flex()
         .flex_shrink_0()
@@ -185,20 +230,17 @@ fn lane(
             )
             .child(actions);
     }
-    lane.child(title.w(rems(14.)).flex_shrink_0())
-        .child(
-            div()
-                .w(rems(9.5))
-                .flex_shrink_0()
-                .children(turns.map(|turn| {
-                    ui::ticks(
-                        (turn as usize).min(LANE_TICKS),
-                        LANE_TICKS,
-                        t.roles.tool_run,
-                        t,
-                    )
-                })),
-        )
-        .child(div().flex_1().min_w(rems(0.)).child(said))
+    // The title has a column, the line another; the ticks take what is
+    // left between them.
+    lane.child(title.w(rems(13.5)).flex_shrink_0())
+        .child(div().flex_1().min_w(rems(4.)).children(turns.map(|turn| {
+            ui::ticks(
+                (turn as usize).min(LANE_TICKS),
+                LANE_TICKS,
+                t.roles.tool_run,
+                t,
+            )
+        })))
+        .child(div().w(rems(15.5)).flex_shrink_0().child(said))
         .child(actions)
 }

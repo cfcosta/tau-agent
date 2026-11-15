@@ -11,7 +11,7 @@ use heiko_ui_plugin::{
     ViewCx,
     points::{self, AtApp, AtSetup, LinkState, SetupAt, SetupLink, SetupView},
     provider::PROVIDER,
-    tree::{Kind, MarkState, Node, Tone},
+    tree::{ButtonSize, Ink, Kind, MarkState, Node, SquareLook, Tone},
 };
 
 use crate::NAME;
@@ -181,6 +181,8 @@ fn button(label: &str, kind: Kind, what: Do) -> Node {
         kind,
         icon: None,
         size: Default::default(),
+        wide: false,
+        detail: None,
     }
 }
 
@@ -223,33 +225,56 @@ fn link(
 fn step(_: &AtSetup, view: &mut ViewCx<'_, ChatGptUi>) -> Option<SetupView> {
     let (heading, detail, link, body) = match &view.data.sign_in {
         SignIn::None | SignIn::Failed { .. } => {
-            let mut body = vec![
-                Node::List {
-                    items: [
-                        "Sign in to ChatGPT",
-                        "Pick a workspace",
-                        "Keep the name “heiko”",
-                        "Allow plan use",
-                    ]
-                    .into_iter()
-                    .map(Node::text)
-                    .collect(),
-                },
-                sign_in("Continue with ChatGPT", Kind::Primary, false),
-                note(
-                    "Needs ChatGPT Plus or Pro · heiko can't read your conversations",
-                ),
+            // What happens in the browser, a numbered row each, under
+            // their head.
+            let mut body = vec![Node::Header {
+                title: "In the browser".into(),
+                meta: Some("needs ChatGPT Plus or Pro".into()),
+                actions: vec![],
+            }];
+            let steps = [
+                "Sign in to ChatGPT",
+                "Pick a workspace",
+                "Keep the name “heiko”",
+                "Allow plan use",
             ];
-            if let SignIn::Failed { error } = &view.data.sign_in {
-                body.insert(
-                    1,
-                    Node::Toned {
-                        text: error.clone(),
-                        tone: Tone::Bad,
-                        mono: false,
+            for (at, step) in steps.into_iter().enumerate() {
+                body.push(Node::row([
+                    Node::Square {
+                        label: (at + 1).to_string(),
+                        style: SquareLook::Quiet,
+                        tone: Ink::Neutral,
+                        action: None,
+                        args: Value::Null,
                     },
-                );
+                    Node::text(step),
+                ]));
+                body.push(Node::Rule);
             }
+            if let SignIn::Failed { error } = &view.data.sign_in {
+                body.push(Node::Toned {
+                    text: error.clone(),
+                    tone: Tone::Bad,
+                    mono: false,
+                });
+            }
+            body.push(Node::row([Node::Button {
+                label: "Continue with ChatGPT →".into(),
+                action: CLICK.into(),
+                args: serde_json::to_value(Do::Act {
+                    act: Act::SignIn {
+                        account: None,
+                        consent: false,
+                    },
+                })
+                .unwrap_or_default(),
+                kind: Kind::Primary,
+                icon: None,
+                size: ButtonSize::Large,
+                wide: false,
+                detail: None,
+            }]));
+            body.push(note("heiko can't read your conversations"));
             (
                 "Connect heiko to ChatGPT",
                 "Runs use your ChatGPT plan through OpenAI's Responses API. One \

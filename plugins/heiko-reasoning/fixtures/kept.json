@@ -138,14 +138,17 @@
             "children": [
               {
                 "piece": "heading",
-                "text": "Reasoning: medium"
+                "text": "Reasoning: medium",
+                "tone": "warn"
               },
               {
                 "piece": "spacer"
               },
               {
-                "piece": "mono",
-                "text": "heiko-reasoning"
+                "mono": true,
+                "piece": "toned",
+                "text": "heiko-reasoning",
+                "tone": "neutral"
               },
               {
                 "label": "details",
@@ -165,33 +168,28 @@
             "children": [
               {
                 "label": "none",
-                "piece": "square",
-                "style": "quiet",
-                "tone": "warn"
+                "piece": "stamp",
+                "tone": "neutral"
               },
               {
                 "label": "low",
-                "piece": "square",
-                "style": "quiet",
-                "tone": "warn"
+                "piece": "stamp",
+                "tone": "neutral"
               },
               {
                 "label": "medium",
-                "piece": "square",
-                "style": "outlined",
+                "piece": "stamp",
                 "tone": "warn"
               },
               {
                 "label": "high",
-                "piece": "square",
-                "style": "quiet",
-                "tone": "warn"
+                "piece": "stamp",
+                "tone": "neutral"
               },
               {
                 "label": "xhigh",
-                "piece": "square",
-                "style": "quiet",
-                "tone": "warn"
+                "piece": "stamp",
+                "tone": "neutral"
               }
             ],
             "piece": "row"
@@ -205,14 +203,17 @@
             "children": [
               {
                 "piece": "heading",
-                "text": "Reasoning: medium"
+                "text": "Reasoning: medium",
+                "tone": "warn"
               },
               {
                 "piece": "spacer"
               },
               {
-                "piece": "mono",
-                "text": "heiko-reasoning"
+                "mono": true,
+                "piece": "toned",
+                "text": "heiko-reasoning",
+                "tone": "neutral"
               },
               {
                 "label": "details",
@@ -232,33 +233,28 @@
             "children": [
               {
                 "label": "none",
-                "piece": "square",
-                "style": "quiet",
-                "tone": "warn"
+                "piece": "stamp",
+                "tone": "neutral"
               },
               {
                 "label": "low",
-                "piece": "square",
-                "style": "quiet",
-                "tone": "warn"
+                "piece": "stamp",
+                "tone": "neutral"
               },
               {
                 "label": "medium",
-                "piece": "square",
-                "style": "outlined",
+                "piece": "stamp",
                 "tone": "warn"
               },
               {
                 "label": "high",
-                "piece": "square",
-                "style": "quiet",
-                "tone": "warn"
+                "piece": "stamp",
+                "tone": "neutral"
               },
               {
                 "label": "xhigh",
-                "piece": "square",
-                "style": "quiet",
-                "tone": "warn"
+                "piece": "stamp",
+                "tone": "neutral"
               }
             ],
             "piece": "row"
@@ -296,33 +292,28 @@
               "children": [
                 {
                   "label": "none",
-                  "piece": "square",
-                  "style": "quiet",
-                  "tone": "warn"
+                  "piece": "stamp",
+                  "tone": "neutral"
                 },
                 {
                   "label": "low",
-                  "piece": "square",
-                  "style": "quiet",
-                  "tone": "warn"
+                  "piece": "stamp",
+                  "tone": "neutral"
                 },
                 {
                   "label": "medium",
-                  "piece": "square",
-                  "style": "outlined",
+                  "piece": "stamp",
                   "tone": "warn"
                 },
                 {
                   "label": "high",
-                  "piece": "square",
-                  "style": "quiet",
-                  "tone": "warn"
+                  "piece": "stamp",
+                  "tone": "neutral"
                 },
                 {
                   "label": "xhigh",
-                  "piece": "square",
-                  "style": "quiet",
-                  "tone": "warn"
+                  "piece": "stamp",
+                  "tone": "neutral"
                 }
               ],
               "piece": "row"
@@ -503,33 +494,28 @@
               "children": [
                 {
                   "label": "none",
-                  "piece": "square",
-                  "style": "quiet",
-                  "tone": "warn"
+                  "piece": "stamp",
+                  "tone": "neutral"
                 },
                 {
                   "label": "low",
-                  "piece": "square",
-                  "style": "quiet",
-                  "tone": "warn"
+                  "piece": "stamp",
+                  "tone": "neutral"
                 },
                 {
                   "label": "medium",
-                  "piece": "square",
-                  "style": "outlined",
+                  "piece": "stamp",
                   "tone": "warn"
                 },
                 {
                   "label": "high",
-                  "piece": "square",
-                  "style": "quiet",
-                  "tone": "warn"
+                  "piece": "stamp",
+                  "tone": "neutral"
                 },
                 {
                   "label": "xhigh",
-                  "piece": "square",
-                  "style": "quiet",
-                  "tone": "warn"
+                  "piece": "stamp",
+                  "tone": "neutral"
                 }
               ],
               "piece": "row"
@@ -717,33 +703,28 @@
           "children": [
             {
               "label": "none",
-              "piece": "square",
-              "style": "quiet",
-              "tone": "warn"
+              "piece": "stamp",
+              "tone": "neutral"
             },
             {
               "label": "low",
-              "piece": "square",
-              "style": "quiet",
-              "tone": "warn"
+              "piece": "stamp",
+              "tone": "neutral"
             },
             {
               "label": "medium",
-              "piece": "square",
-              "style": "outlined",
+              "piece": "stamp",
               "tone": "warn"
             },
             {
               "label": "high",
-              "piece": "square",
-              "style": "quiet",
-              "tone": "warn"
+              "piece": "stamp",
+              "tone": "neutral"
             },
             {
               "label": "xhigh",
-              "piece": "square",
-              "style": "quiet",
-              "tone": "warn"
+              "piece": "stamp",
+              "tone": "neutral"
             }
           ],
           "piece": "row"

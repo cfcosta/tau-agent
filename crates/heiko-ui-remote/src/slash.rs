@@ -15,7 +15,6 @@ use gpui::{
 };
 
 use crate::{
-    route::Route,
     theme::{Theme, Type, sp},
     ui,
     ui::Material as _,
@@ -76,7 +75,7 @@ impl Workspace {
     /// The commands that work here, plugins' first: the ones about a
     /// conversation only when one is open.
     fn commands(&self) -> Vec<Command> {
-        let run = self.current().filter(|_| self.route != Route::NewRun);
+        let run = self.shown_run();
         let in_run = run.is_some();
         // Only a main chat can be forked.
         let forks = run.is_some_and(|run| self.can_fork(run));
@@ -247,10 +246,7 @@ impl Workspace {
             cx.notify();
             return true;
         }
-        let run = self
-            .current()
-            .filter(|_| self.route != Route::NewRun)
-            .map(|run| run.id.clone());
+        let run = self.shown_run().map(|run| run.id.clone());
         match (command.name.as_str(), run) {
             ("/model", _) => match window {
                 Some(window) => {

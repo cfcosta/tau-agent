@@ -35,15 +35,15 @@ local function plural(n, one, many)
 	return n == 1 and ("1 " .. one) or (tostring(n) .. " " .. many)
 end
 
--- The page's header: its title, how many skills there are, where they
+-- The page's head: its title, how many skills there are, where they
 -- are read from, and the way to open that folder.
 local function header(skills)
-	local title = { ui.title("Skills"), ui.toned(tostring(#skills.found), "neutral", true), ui.spacer() }
+	local actions = {}
 	if skills.dir then
-		table.insert(title, ui.mono(skills.dir))
-		table.insert(title, ui.button("open folder", "heiko.reveal", { path = skills.dir }, "secondary"))
+		table.insert(actions, ui.toned(skills.dir, "neutral", true))
+		table.insert(actions, ui.button("open folder", "heiko.reveal", { path = skills.dir }, "secondary"))
 	end
-	return ui.stack({ ui.row(title), ui.rule() })
+	return ui.header("Skills", { meta = tostring(#skills.found), actions = actions })
 end
 
 -- A skill as a ruled row: its name, what it is for, and its files.
@@ -156,13 +156,17 @@ return heiko.plugin({
 	},
 
 	-- Each loaded skill's card: which, what it is for, and what the model
-	-- read, the file and its instructions.
+	-- read: the file on a stamp, over its instructions on a band.
 	view = function(model)
 		local calls = {}
 		for call, loaded in pairs(model.loaded or {}) do
 			calls[call] = {
 				head = ui.mono(loaded.name),
-				body = ui.stack({ ui.text(loaded.description), ui.mono(loaded.file), ui.code("markdown", loaded.instructions) }),
+				body = ui.stack({
+					ui.text(loaded.description),
+					ui.row({ ui.stamp(loaded.file) }),
+					ui.band({ ui.markdown(loaded.instructions) }),
+				}),
 			}
 		end
 		if next(calls) == nil then

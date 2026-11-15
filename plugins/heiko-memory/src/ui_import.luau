@@ -4,7 +4,7 @@
 -- and the Memories step of first-run setup. Each draws from `imports`,
 -- what `import.imports` says.
 --
--- Their buttons and switches carry out the plugin's actions: `act`, with
+-- Their buttons and ticks carry out the plugin's actions: `act`, with
 -- `{ act }` for the import (`import.act`); `import`, which starts one and
 -- opens the review page; `setup_choose` and `setup_start`, for the setup
 -- step; and heiko's `heiko.open`, which opens a page.
@@ -32,6 +32,16 @@ end
 
 local function act(what)
 	return { act = what }
+end
+
+-- A thing to tick, as a row: a square, filled with a check when `on`,
+-- that carries out `action` with `args`, then `label` over `detail`.
+local function tick(label, detail, on, action, args)
+	local said = { ui.text(label) }
+	if detail ~= nil then
+		table.insert(said, ui.toned(detail, "neutral"))
+	end
+	return ui.row({ ui.square(on and "✓" or "", on and "filled" or "quiet", "info", action, args), ui.stack(said) })
 end
 
 -- Starts an import of every listed repository, and opens the review page
@@ -299,7 +309,7 @@ local function tabs(imports, on)
 	return ui.row(row)
 end
 
--- One proposal: its switch, title, description and where it came from;
+-- One proposal: its tick, title, description and where it came from;
 -- its type and flags.
 local function proposal_row(pending)
 	local flags = { ui.badge(pending.type, ui_notes.kind_tone(pending.type)) }
@@ -327,7 +337,7 @@ local function proposal_row(pending)
 	end
 	local detail = from == "" and pending.description or (pending.description .. " · " .. from)
 	return {
-		ui.switch(pending.title, detail, pending.keep, "act", act({ act = "tick", id = pending.id, keep = not pending.keep })),
+		tick(pending.title, detail, pending.keep, "act", act({ act = "tick", id = pending.id, keep = not pending.keep })),
 		ui.row(flags),
 	}
 end
@@ -524,7 +534,7 @@ local function card(found, picked, choice)
 		local next = with(choice, function(next)
 			next.parts[key] = not on
 		end)
-		return ui.switch(label, detail, on, "setup_choose", { choice = next })
+		return tick(label, detail, on, "setup_choose", { choice = next })
 	end
 	local one, many = "note", "notes"
 	if tool == "codex" then
@@ -592,7 +602,7 @@ function M.setup_tree(found, picked, choice)
 	end
 	table.insert(
 		children,
-		ui.switch(
+		tick(
 			"Also bring folders heiko does not have yet, to use when you add them",
 			nil,
 			choice.others,

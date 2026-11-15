@@ -1,6 +1,6 @@
 //! The `vcs_log` card, as a view tree (ADR 0045): the working copy, the
-//! stack and trunk, newest first, each change a square on the line with
-//! its id, first line, states and bookmarks. A change's id picks it, and
+//! stack and trunk, newest first, each change a square on the line that
+//! joins them, with its id, first line, states and bookmarks. A change's id picks it, and
 //! the one picked shows its whole description and ids; which is picked
 //! is the plugin's UI state, under [`super::pick_key`].
 
@@ -20,17 +20,21 @@ use super::{
     short_id,
 };
 
-/// The log: every change, newest first, with the detail of the change
-/// picked under its row.
+/// The log: every change, newest first, its square on the line that
+/// joins them, with the detail of the change picked on a band under its
+/// row.
 pub fn body(card: &Card, log: &ChangeLog, picked: Option<&str>) -> Node {
-    let mut column: Vec<Node> = log
+    let rows: Vec<Node> = log
         .changes()
-        .flat_map(|change| pickable(card, change, picked))
+        .map(|change| pickable(card, change, picked))
         .collect();
-    if column.is_empty() {
+    let mut column = Vec::new();
+    if rows.is_empty() {
         column.push(Node::Empty {
             text: "No changes yet.".into(),
         });
+    } else {
+        column.push(Node::Rail { children: rows });
     }
     if log.more {
         column.push(quiet("older changes are past the call's limit"));
@@ -49,8 +53,8 @@ fn change_row(change: &Change, on: bool, id: Node) -> Node {
 }
 
 /// A change's row, its id a button that picks it or puts it back, and
-/// the change's detail under it while it is the one picked.
-fn pickable(card: &Card, change: &Change, picked: Option<&str>) -> Vec<Node> {
+/// the change's detail on a band under it while it is the one picked.
+fn pickable(card: &Card, change: &Change, picked: Option<&str>) -> Node {
     let id = change.info.change_id.as_str();
     let button = Node::Button {
         label: change.short_id().to_owned(),
@@ -59,12 +63,20 @@ fn pickable(card: &Card, change: &Change, picked: Option<&str>) -> Vec<Node> {
         kind: Kind::Secondary,
         icon: None,
         size: Default::default(),
+        wide: false,
+        detail: None,
     };
-    let mut nodes = vec![change_row(change, change.info.working_copy, button)];
+    let row = change_row(change, change.info.working_copy, button);
     if picked == Some(id) {
-        nodes.push(detail(change));
+        Node::stack([
+            row,
+            Node::Band {
+                children: vec![detail(change)],
+            },
+        ])
+    } else {
+        row
     }
-    nodes
 }
 
 /// The picked change: its whole description, ids and state.
@@ -95,12 +107,13 @@ pub fn detail(change: &Change) -> Node {
 
 /// Changes as they sit on a stack, newest first, without picking: a
 /// landing's preview and its card in the parent's chat. The newest, the
-/// tip that lands, has the filled square.
+/// tip that lands, has the filled square, and the line joins them.
 pub fn stack(changes: &[Change]) -> Node {
-    Node::stack(
-        changes
+    Node::Rail {
+        children: changes
             .iter()
             .enumerate()
-            .map(|(n, change)| change_row(change, n == 0, short_id(change))),
-    )
+            .map(|(n, change)| change_row(change, n == 0, short_id(change)))
+            .collect(),
+    }
 }

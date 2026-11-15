@@ -66,6 +66,8 @@ fn action(at: &points::AtRepo, _: &mut ViewCx<'_, Tidy>) -> Option<Node> {
         kind: Kind::Secondary,
         icon: None,
         size: Default::default(),
+        wide: false,
+        detail: None,
     })
 }
 

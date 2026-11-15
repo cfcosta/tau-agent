@@ -5,7 +5,7 @@
 
 use heiko_ui_plugin::{
     ViewCx,
-    tree::{Ink, Kind, Node},
+    tree::{Ink, Kind, Node, Tone},
 };
 use serde_json::Value;
 
@@ -27,8 +27,8 @@ pub(super) fn render(view: &mut ViewCx<'_, AgentsUi>) -> Node {
     pane(view.settings)
 }
 
-/// The pane's tree: a row of choices for each setting, the one chosen
-/// outlined.
+/// The pane's tree: a row for each setting, its choices at the end, the
+/// one chosen outlined.
 pub fn pane(settings: &Settings) -> Node {
     let choice = |label: String, on: bool, next: Settings| {
         if on {
@@ -44,12 +44,24 @@ pub fn pane(settings: &Settings) -> Node {
             serde_json::to_value(next).unwrap_or(Value::Null),
         )
     };
+    // A setting: its name over what it means, then its choices at the
+    // row's end.
     let row = |name: &str, caption: &str, choices: Vec<Node>| {
-        Node::stack([
-            Node::Heading { text: name.into(), tone: Default::default() },
-            Node::text(caption),
-            Node::Row { children: choices },
-        ])
+        let mut row = vec![
+            Node::stack([
+                Node::Rich {
+                    text: format!("**{name}**"),
+                },
+                Node::Toned {
+                    text: caption.into(),
+                    tone: Tone::Neutral,
+                    mono: false,
+                },
+            ]),
+            Node::Spacer,
+        ];
+        row.extend(choices);
+        Node::Row { children: row }
     };
     let model = settings.model();
     let models = heiko_ai::model::plan_models()

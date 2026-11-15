@@ -14,6 +14,10 @@ pub(super) fn sidebar_width(wide: bool) -> gpui::Rems {
 /// window's right edge, in spacing steps.
 const INSET: (f32, f32) = (13., 11.);
 
+/// How far a phone's screen stands in from the window's sides, in
+/// spacing steps.
+const PHONE_GUTTER: f32 = 4.;
+
 impl Workspace {
     /// How wide a screen beside the sidebar is drawn: the window less
     /// the sidebar, or the whole window on a phone.
@@ -248,11 +252,11 @@ impl Workspace {
         let theme = t.clone();
         let list = gpui::list(
             self.transcript.clone(),
-            cx.processor(move |ws, index: usize, window, cx| {
+            cx.processor(move |ws, index: usize, _, cx| {
                 let Some(run) = ws.shown_run() else {
                     return div().into_any_element();
                 };
-                transcript::item(ws, run, index, &theme, compact, window, cx)
+                transcript::item(ws, run, index, &theme, compact, cx)
             }),
         )
         .size_full();
@@ -267,11 +271,6 @@ impl Workspace {
                 list,
             ))
             .into_any_element()
-    }
-
-    /// How wide the transcript was last laid out; `None` before it was.
-    pub(crate) fn transcript_width(&self) -> Option<gpui::Pixels> {
-        self.transcript_width
     }
 
     /// Takes the focus back from an overlay's field once the overlay is
@@ -317,8 +316,6 @@ impl Workspace {
     /// laid out again every frame, so one that grows as it streams needs
     /// no telling.
     pub(super) fn sync_transcript(&mut self) {
-        let width = self.transcript.viewport_bounds().size.width;
-        self.transcript_width = (width > px(0.)).then_some(width);
         // One more row, past the items, for an open landing's card, a
         // landed chat's, a queued chat's, or a main chat's queue,
         // conflicts and push cards.
@@ -679,7 +676,15 @@ impl Workspace {
                         .pb(sp(5.))
                         .child(instead)
                         .into_any_element(),
-                    (Some(instead), None) => instead,
+                    // On a phone, in from the window's sides as the
+                    // rest of the screen is.
+                    (Some(instead), None) => div()
+                        .w_full()
+                        .flex_shrink_0()
+                        .px(sp(PHONE_GUTTER))
+                        .pb(sp(4.5))
+                        .child(instead)
+                        .into_any_element(),
                     (None, None) => {
                         self.composer(compact, t, cx).into_any_element()
                     }
@@ -687,9 +692,16 @@ impl Workspace {
             })
     }
 
-    /// Home, on a desktop: a new run's composer, beside what happened
-    /// since the person last looked. A narrow window stacks them.
+    /// Home, on a desktop: a new run's composer over what plugins list
+    /// of its repository, beside what happened since the person last
+    /// looked. A narrow window stacks them.
     pub(super) fn home(&self, t: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let start = div()
+            .flex()
+            .flex_col()
+            .gap(sp(13.))
+            .child(self.new_run(t, cx))
+            .children(self.home_lists(t, cx));
         let page = div()
             .flex()
             .pl(sp(INSET.0))
@@ -699,12 +711,7 @@ impl Workspace {
         let page = if self.width / self.zoom >= NARROW_MAX {
             page.items_start()
                 .gap(sp(14.5))
-                .child(
-                    div()
-                        .w(rems(26.875))
-                        .flex_shrink_0()
-                        .child(self.new_run(t, cx)),
-                )
+                .child(start.w(rems(26.875)).flex_shrink_0())
                 .child(
                     div()
                         .flex_1()
@@ -714,7 +721,7 @@ impl Workspace {
         } else {
             page.flex_col()
                 .gap(sp(13.))
-                .child(self.new_run(t, cx))
+                .child(start)
                 .child(self.since_list(t, cx))
         };
         div()
@@ -762,14 +769,12 @@ impl Workspace {
                 }
             };
         let words = div()
+            .flex_1()
+            .min_w(rems(0.))
             .flex()
             .flex_wrap()
             .items_center()
             .gap(sp(2.))
-            .pt(sp(3.5))
-            .border_t_1()
-            .border_color(t.hairline)
-            .typeset(Type::LEAD)
             // The repository: search lists the others.
             .when_some(repo, |row, repo| {
                 row.child(quiet("in")).child(
@@ -798,12 +803,29 @@ impl Workspace {
                     .on_click(cx.listener(move |ws, _, window, cx| {
                         pick(ws, window, cx)
                     })),
-            )
-            .child(div().flex_1())
+            );
+        // The words wrap among themselves; Start keeps the row's end.
+        let words = div()
+            .flex()
+            .items_center()
+            .gap(sp(4.))
+            .pt(sp(3.5))
+            .border_t_1()
+            .border_color(t.hairline)
+            .typeset(Type::LEAD)
+            .child(words)
             .child(
                 div()
                     .id("send")
-                    .child(ui::primary_block("Start", ui::BlockSize::Large, t))
+                    .flex_shrink_0()
+                    .child(
+                        ui::primary_block("Start", ui::BlockSize::Large, t)
+                            .child(ui::mono(
+                                "\u{21b5}",
+                                Type::CAPTION,
+                                t.roles.on_primary,
+                            )),
+                    )
                     .on_click(
                         cx.listener(|ws, _, _, cx| ws.submit_from_button(cx)),
                     ),
@@ -877,6 +899,98 @@ impl Workspace {
             )
     }
 
+    /// What plugins list on Home of the selected repository
+    /// ([`heiko_ui_plugin::points::HOME`]): each list with rows a titled
+    /// section of ruled rows, a row its id, its title and its small
+    /// print. None while no plugin lists anything.
+    fn home_lists(&self, t: &Theme, cx: &mut Context<Self>) -> Vec<gpui::Div> {
+        let Some(repo) = self.selected_repo().map(str::to_owned) else {
+            return Vec::new();
+        };
+        let at = heiko_ui_plugin::points::AtRepo { repo: repo.clone() };
+        self.contributions_by(heiko_ui_plugin::points::HOME, &at)
+            .into_iter()
+            .filter(|(_, list)| !list.rows.is_empty())
+            .enumerate()
+            .map(|(nth, (plugin, list))| {
+                let rows = list.rows.into_iter().enumerate().map(|(n, row)| {
+                    let (repo, action) = (repo.clone(), row.action);
+                    let selector = format!("home-row:{}", row.id);
+                    div()
+                        .id(gpui::SharedString::from(format!(
+                            "home-row-{nth}-{n}"
+                        )))
+                        .debug_selector(move || selector.clone())
+                        .flex()
+                        .items_baseline()
+                        .gap(sp(3.))
+                        .py(sp(2.75))
+                        .border_b_1()
+                        .border_color(t.hairline)
+                        .typeset(Type::BODY)
+                        .text_color(t.text)
+                        .cursor_pointer()
+                        .hover(|style| style.text_color(t.bright))
+                        .child(
+                            ui::mono(row.id, Type::CAPTION, t.dim)
+                                .min_w(rems(3.75))
+                                .flex_shrink_0(),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(rems(0.))
+                                .truncate()
+                                .child(row.title),
+                        )
+                        .child(
+                            ui::mono(row.detail, Type::CAPTION, t.dim)
+                                .flex_shrink_0(),
+                        )
+                        .on_click(cx.listener(move |ws, _, window, cx| {
+                            ws.home_act(plugin, &repo, &action, window, cx)
+                        }))
+                });
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(ui::section_header(
+                        list.title,
+                        list.meta.map(Into::into),
+                        t,
+                    ))
+                    .children(rows)
+            })
+            .collect()
+    }
+
+    /// What clicking a row of one of Home's lists does: its words go in
+    /// the new run's composer, which takes the keys, or `plugin` carries
+    /// out its action in `repo`.
+    fn home_act(
+        &mut self,
+        plugin: &str,
+        repo: &str,
+        action: &heiko_ui_plugin::points::HomeAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use heiko_ui_plugin::points::HomeAction;
+        match action {
+            HomeAction::Write(text) => {
+                self.set_composer(text, cx);
+                self.composer.read(cx).focus_handle(cx).focus(window, cx);
+            }
+            HomeAction::Act { action, args } => {
+                let origin = crate::plugins::Origin {
+                    run: None,
+                    params: [("repo".to_owned(), repo.to_owned())].into(),
+                };
+                self.plugin_action(plugin, action, args, &origin, cx);
+            }
+        }
+    }
+
     /// What happened across runs and agents, on Home: a ruled list,
     /// each thing with when, its mark, whose it is, one line and the one
     /// thing to do about it.
@@ -932,8 +1046,10 @@ impl Workspace {
             Route::Plan(run) => {
                 screens::plan::render(self, run, compact, t, cx)
             }
-            Route::Setup(_) | Route::Pair(_) | Route::PullRequest(_) => {
-                self.focused(compact, t, cx)
+            Route::Setup(_) | Route::Pair(_) => self.focused(compact, t, cx),
+            // A run's pull request, beside the sidebar on a desktop.
+            Route::PullRequest(run) => {
+                screens::pull_request::render(self, run, compact, t, cx)
             }
             Route::Models => screens::models::render(self, compact, t, cx),
             Route::Repo(repo) => {
@@ -1013,6 +1129,9 @@ impl Workspace {
                     .flex()
                     .flex_col()
                     .overflow_hidden()
+                    // On a phone, in from the window's sides as the
+                    // screen it covers is.
+                    .when(compact, |body| body.px(sp(PHONE_GUTTER)))
                     .child(pane.body),
             )
     }
@@ -1024,7 +1143,9 @@ impl Workspace {
         t: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        if self.route.is_focused() {
+        // Setup and pairing take the whole window; a pull request keeps
+        // the sidebar.
+        if self.route.is_focused(false) {
             return self.focused(false, t, cx);
         }
         // An open pane takes the inspector's place.
@@ -1095,9 +1216,6 @@ impl Workspace {
             Route::Pair(step) => {
                 screens::pairing::render(self, *step, compact, t, cx)
             }
-            Route::PullRequest(run) => {
-                screens::pull_request::render(self, run, compact, t, cx)
-            }
             _ => self.screen(compact, t, cx),
         }
     }
@@ -1108,7 +1226,8 @@ impl Workspace {
         t: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        if self.route.is_focused() {
+        // On a phone a pull request takes it too.
+        if self.route.is_focused(true) {
             return self.focused(true, t, cx);
         }
         let screen = div().size_full().relative().flex().flex_col();
@@ -1342,7 +1461,7 @@ fn happened_row(
         .id(("since", n))
         .flex()
         .items_start()
-        .gap(sp(4.))
+        .gap(sp(3.))
         .py(sp(2.75))
         .border_b_1()
         .border_color(t.hairline)
@@ -1357,7 +1476,7 @@ fn happened_row(
         .child(div().flex_shrink_0().pt(sp(0.75)).child(sign))
         .child(
             div()
-                .w(rems(7.75))
+                .w(rems(6.5))
                 .flex_shrink_0()
                 .truncate()
                 .font_weight(weight::STRONG)

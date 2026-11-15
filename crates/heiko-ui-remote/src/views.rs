@@ -559,6 +559,7 @@ impl Workspace {
                 at!(points::PICKER_AUTO, at_app())
             }
             p if p == points::ACTIVITY.name => at!(points::ACTIVITY, at_app()),
+            p if p == points::HOME.name => at!(points::HOME, at_repo()),
             p if p == points::SIDEBAR_REPO.name => {
                 at!(points::SIDEBAR_REPO, at_repo())
             }

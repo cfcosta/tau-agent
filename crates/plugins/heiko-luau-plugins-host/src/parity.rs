@@ -123,6 +123,7 @@ pub fn point(name: &str) -> Option<Luau> {
         (EVERYWHERE.name, outside),
         (SEARCH.name, outside),
         (SIDEBAR_REPO.name, outside),
+        (HOME.name, outside),
         (REPO_MENU.name, outside),
         (REPO_ACTIONS.name, outside),
         (ACTIVITY.name, outside),

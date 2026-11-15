@@ -221,6 +221,8 @@ fn button(label: &str, action: &str, args: Value) -> Node {
         kind: Kind::Secondary,
         icon: None,
         size: Default::default(),
+        wide: false,
+        detail: None,
     }
 }
 

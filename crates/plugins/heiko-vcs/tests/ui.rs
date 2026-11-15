@@ -4,10 +4,10 @@
 use std::collections::BTreeMap;
 
 use hegel::generators as gs;
-use serde_json::json;
 use heiko_agent::tool::RunId;
 use heiko_ui_plugin::tree::Node;
 use heiko_vcs::ui::{Card, change_diff::ChangeDiff, diff_card, pick, pick_key};
+use serde_json::json;
 
 /// Picking changes over any clicks: a log's pick is the last change
 /// clicked unless clicked again, and each card keeps its own under its
@@ -41,10 +41,11 @@ fn a_log_keeps_the_change_last_clicked(tc: hegel::TestCase) {
     }
 }
 
-/// A diff card's files are sections, closed until opened, each under
-/// its own id and holding its hunks as a diff in its path's language.
+/// A diff card's files are rows, each path a button that opens the
+/// file under its own key; an open file's hunks follow its row, as a
+/// diff in its path's language.
 #[test]
-fn a_diffs_files_are_sections_of_their_hunks() {
+fn a_diffs_files_open_to_their_hunks() {
     let diff = ChangeDiff::parse(&json!({
         "change": {
             "change_id": "onvkmqwo", "commit_id": "abc", "description": "",
@@ -64,27 +65,47 @@ fn a_diffs_files_are_sections_of_their_hunks() {
         call_id: "c".into(),
         compact: false,
     };
-    let Node::Stack { children } = diff_card::files_body(&card, &diff) else {
+    // The key a row's path sets, and what it sets it to.
+    let sets = |row: &Node| match row {
+        Node::Row { children } => children.iter().find_map(|node| match node {
+            Node::Button { label, args, .. } => Some((
+                label.clone(),
+                args["key"].as_str().unwrap_or_default().to_owned(),
+                args["value"].clone(),
+            )),
+            _ => None,
+        }),
+        _ => None,
+    };
+    let Node::Stack { children } =
+        diff_card::files_body(&card, &diff, &|_| false)
+    else {
         panic!("a stack of files");
     };
-    let sections: Vec<_> = children
-        .iter()
-        .map(|node| match node {
-            Node::Section {
-                id, open, children, ..
-            } => (id.clone(), *open, children[0].clone()),
-            other => panic!("a file's section: {other:?}"),
-        })
-        .collect();
-    assert_eq!(sections.len(), 2);
-    assert_eq!(sections[0].0, card.file_id("src/a.rs"));
-    assert_ne!(sections[0].0, sections[1].0);
-    assert!(sections.iter().all(|(_, open, _)| !open));
-    let Node::Diff { text, path } = &sections[0].2 else {
-        panic!("the hunks as a diff: {:?}", sections[0].2);
+    // Closed, a row each.
+    let rows: Vec<_> = children.iter().filter_map(sets).collect();
+    assert_eq!(children.len(), 2);
+    assert_eq!(
+        rows,
+        [
+            ("src/a.rs".into(), card.file_key("src/a.rs"), json!(true)),
+            ("run.sh".into(), card.file_key("run.sh"), json!(true)),
+        ]
+    );
+    assert_ne!(rows[0].1, rows[1].1);
+    let Node::Stack { children } =
+        diff_card::files_body(&card, &diff, &|_| true)
+    else {
+        panic!("a stack of files");
+    };
+    assert_eq!(children.len(), 4);
+    // An open file's path closes it.
+    assert_eq!(sets(&children[0]).map(|row| row.2), Some(json!(null)));
+    let Node::Diff { text, path } = &children[1] else {
+        panic!("the hunks as a diff: {:?}", children[1]);
     };
     assert_eq!(path.as_deref(), Some("src/a.rs"));
     assert_eq!(text, "@@ -1,2 +1,2 @@\n keep\n-old\n+new\n");
     // A file with no hunks says so in place of a diff.
-    assert_eq!(sections[1].2, Node::text("No lines changed."));
+    assert_eq!(children[3], Node::text("No lines changed."));
 }

@@ -224,21 +224,34 @@ t.case("the panel draws the question in view, its preview, and the review", func
 	t.equal(tree.through, { "escape" })
 	local body = tree.children[1]
 	local head, tabs, question, foot = body.children[1], body.children[2], body.children[3], body.children[4]
-	t.equal(head.children[1], { piece = "heading", text = "heiko asks" })
-	t.equal(head.children[2].text, "1 of 2")
-	t.equal(tabs.children[1].label, "Waiting")
+	t.equal(head.piece, "header")
+	t.equal(head.title, "heiko asks")
+	t.equal(head.meta, "1 of 2")
+	-- The word of the question in view is bright, the others links.
+	t.equal(tabs.children[1], { piece = "rich", text = "**Waiting**" })
+	t.equal(tabs.children[3].label, "Surfaces")
 	t.equal(tabs.children[#tabs.children].text, "pick one")
 	-- The question, large; the rows, the person's own field last; and the
 	-- preview of the row in focus, its description over it.
 	t.equal(question.children[1].piece, "title")
 	t.equal(question.children[1].text, "How should the ask tool wait for your answer?")
-	local rows = question.children[2].rows
-	t.equal(rows[1][1].text, "› 1")
-	t.equal(#rows[1][2].children, 1, "previews take the descriptions")
-	t.equal(rows[1][2].children[1].kind, "primary", "the row in focus, while none is picked")
-	t.equal(rows[2][2].children[1].kind, "secondary")
-	t.equal(rows[#rows][2].children[1].id, "ask-other-r1-c1-0")
-	t.equal(question.children[3].children[2].text, "select! { a = rx => a }")
+	local first, second = question.children[2], question.children[3]
+	t.equal(first.piece, "button")
+	t.equal(first.label, "› 1  Hold the call open (Recommended)")
+	t.equal(first.kind, "primary", "the row in focus, while none is picked")
+	t.equal(first.size, "large")
+	t.equal(first.wide, true, "a row the panel's width")
+	t.equal(first.detail, "Block until the answer comes.", "what it means, inside it")
+	t.equal(second.label, "2  End the turn")
+	t.equal(second.kind, "secondary")
+	t.equal(second.wide, true)
+	t.equal(second.detail, nil)
+	-- The person's own answer, after the choices; then the preview.
+	local own, side = question.children[#question.children - 1], question.children[#question.children]
+	t.equal(own.piece, "row")
+	t.equal(own.children[2].id, "ask-other-r1-c1-0")
+	t.equal(#side.children, 1, "its row says what it means already")
+	t.equal(side.children[1].text, "select! { a = rx => a }")
 	t.equal(foot.children[3].action, "heiko.cancel")
 	t.equal(foot.children[#foot.children].label, "Next")
 	t.equal(foot.children[#foot.children].kind, "primary")
@@ -319,8 +332,13 @@ t.machine("the view shows the first call still waiting", {
 		t.equal(view.composer ~= nil, first ~= nil, "a panel while one waits")
 		t.equal(view.asks ~= nil, first ~= nil, "asks while one waits")
 		if first ~= nil then
-			local rows = view.composer.children[1].children[3].children[2].rows
-			local id = rows[#rows][2].children[1].id
+			-- The row of the person's own answer: its key, then its field.
+			local id = nil
+			for _, piece in ipairs(view.composer.children[1].children[3].children) do
+				if piece.piece == "row" and piece.children[2] and piece.children[2].piece == "input" then
+					id = piece.children[2].id
+				end
+			end
 			t.equal(id, "ask-other-r1-" .. first .. "-0")
 		end
 		for _, call in ipairs(m.calls) do

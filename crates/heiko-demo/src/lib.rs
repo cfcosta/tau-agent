@@ -2718,7 +2718,16 @@ pub fn script() -> Vec<Step> {
         "c2",
         "grep",
         json!({ "pattern": "retry_after|RetryPolicy", "path": "crates/heiko-ai/src" }),
-        summarized(lines(5), "5 matches · 9 ms"),
+        summarized(
+            ToolOutput::text(
+                "crates/heiko-ai/src/retry.rs:5: pub struct RetryPolicy {\n\
+                 crates/heiko-ai/src/retry.rs:12: impl RetryPolicy {\n\
+                 crates/heiko-ai/src/client.rs:88:     let hint = retry_after(&response);\n\
+                 crates/heiko-ai/src/client.rs:91:     policy: &RetryPolicy,\n\
+                 crates/heiko-ai/src/client.rs:104:     retry_after: hint,",
+            ),
+            "5 matches · 9 ms",
+        ),
     );
     s.end_turn(9_800, 420, 0.012);
 

@@ -1,5 +1,5 @@
 //! Agents in the sidebar (ADR 0037): a section of their own, each
-//! agent's row opening its conversation and folding over its crew, and
+//! agent's row opening its conversation, its tree listing its crew, and
 //! their commands in every composer, which go to the agent and start
 //! nothing where they were typed.
 
@@ -159,31 +159,19 @@ fn an_agent_s_row_opens_its_conversation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn an_agent_s_row_folds_over_its_crew(cx: &mut TestAppContext) {
+fn an_agent_s_tree_lists_its_crew(cx: &mut TestAppContext) {
     let (workspace, mut cx, _) = open(cx);
-    let crew = |ws: &Workspace| -> Option<Vec<String>> {
-        let rows = ws.kind_rows(AGENT)?;
-        rows.open.then(|| {
-            ws.repo_tree(&rows)
-                .into_iter()
-                .filter_map(|row| match row {
-                    TreeRow::Run { run, .. } => Some(run.title.clone()),
-                    TreeRow::Child { .. } => None,
-                })
-                .collect()
-        })
-    };
-    workspace.update(&mut cx, |ws, cx| {
-        assert_eq!(crew(ws), None);
-        ws.toggle_agent_open(AGENT, cx);
-        assert_eq!(
-            crew(ws),
-            Some(vec!["pr-triage".to_owned(), "Review #409".to_owned()])
-        );
-        ws.toggle_agent_open(AGENT, cx);
-        assert_eq!(crew(ws), None);
-        // The person's repository has no agent's rows.
-        assert!(ws.kind_rows(REPO).is_none());
+    workspace.update(&mut cx, |ws, _| {
+        let rows = ws.rows_named(AGENT).unwrap();
+        let crew: Vec<String> = ws
+            .repo_tree(&rows)
+            .into_iter()
+            .filter_map(|row| match row {
+                TreeRow::Run { run, .. } => Some(run.title.clone()),
+                TreeRow::Child { .. } => None,
+            })
+            .collect();
+        assert_eq!(crew, ["pr-triage", "Review #409"]);
     });
 }
 

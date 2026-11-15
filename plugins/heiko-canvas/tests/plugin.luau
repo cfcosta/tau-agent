@@ -141,7 +141,8 @@ t.case("the pane shows the item revised last, and its buttons pick another", fun
 		table.insert(texts, piece.text)
 	end
 	t.equal(texts, { "Revision 1 of 2" })
-	t.equal(find(view.pane.body, "toned")[1].text, "not the latest")
+	-- After the dot between the two tabs.
+	t.equal(find(view.pane.body, "toned")[2].text, "not the latest")
 	t.equal(find(view.pane.body, "button")[2].label, "newer")
 	-- The image tab: the image, its caption, what it is and where from.
 	r:action("pick", find(view.pane.body, "button")[1].args)
@@ -150,7 +151,9 @@ t.case("the pane shows the item revised last, and its buttons pick another", fun
 	t.equal(image.key, "plot.png")
 	t.equal(image.mime, "image/png")
 	t.equal(image.height, 30)
-	t.equal(find(view.pane.body, "mono")[1].text, "12×8 PNG · plot.png")
+	t.equal(find(view.pane.body, "text")[1].text, "Loss")
+	local toned = find(view.pane.body, "toned")
+	t.equal(toned[#toned].text, "12×8 PNG · plot.png")
 	-- Something newer comes: it is shown again.
 	r:tool("canvas_write", { title = "Plan", text = "c", item = 2 }, "c4")
 	t.equal(find(r:view().pane.body, "markdown")[1].text, "c")
