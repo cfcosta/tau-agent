@@ -38,7 +38,7 @@ fn all_lines(terminal: &mut Terminal) -> Vec<Line> {
 /// Pieces of styled output: an SGR sequence (or none), then text of
 /// characters drawn as text, as shapes, two cells wide, and blank.
 #[hegel::composite]
-fn styled_output(tc: &TestCase) -> Vec<u8> {
+pub(crate) fn styled_output(tc: &TestCase) -> Vec<u8> {
     const SGR: [&str; 9] = [
         "",
         "\x1b[0m",
