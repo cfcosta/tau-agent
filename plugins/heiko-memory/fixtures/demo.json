@@ -1267,129 +1267,160 @@
           "piece": "row"
         },
         {
-          "head": [],
-          "piece": "table",
-          "rows": [
-            [
-              {
-                "label": "d-0131",
-                "piece": "link",
-                "to": {
-                  "page": "notes",
-                  "params": {
-                    "note": "d-0131"
+          "children": [
+            {
+              "children": [
+                {
+                  "dashed": false,
+                  "piece": "slip",
+                  "text": "The BM25 tokenizer keeps identifiers whole",
+                  "to": {
+                    "page": "notes",
+                    "params": {
+                      "note": "d-0131"
+                    },
+                    "plugin": null
                   },
-                  "plugin": null
+                  "tone": "teal"
+                },
+                {
+                  "piece": "spacer"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "fact",
+                  "tone": "info"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "1 link",
+                  "tone": "neutral"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "2 days ago",
+                  "tone": "neutral"
                 }
-              },
-              {
-                "dashed": false,
-                "piece": "slip",
-                "text": "The BM25 tokenizer keeps identifiers whole",
-                "tone": "teal"
-              },
-              {
-                "mono": true,
-                "piece": "toned",
-                "text": "fact",
-                "tone": "info"
-              },
-              {
-                "piece": "text",
-                "text": "snake_case and CamelCase stay one token, and are also split into their parts, so both searches hit."
-              },
-              {
-                "piece": "mono",
-                "text": "1 link"
-              },
-              {
-                "piece": "mono",
-                "text": "2 days ago"
-              }
-            ],
-            [
-              {
-                "label": "d-0102",
-                "piece": "link",
-                "to": {
-                  "page": "notes",
-                  "params": {
-                    "note": "d-0102"
-                  },
-                  "plugin": null
-                }
-              },
-              {
-                "dashed": false,
-                "piece": "slip",
-                "text": "Scanned pages have no text layer",
-                "tone": "teal"
-              },
-              {
-                "mono": true,
-                "piece": "toned",
-                "text": "fact",
-                "tone": "info"
-              },
-              {
-                "piece": "text",
-                "text": "PDFs made from scans come in with empty pages. "
-              },
-              {
-                "piece": "mono",
-                "text": "no links"
-              },
-              {
-                "piece": "mono",
-                "text": "3 days ago"
-              }
-            ],
-            [
-              {
-                "label": "d-0118",
-                "piece": "link",
-                "to": {
-                  "page": "notes",
-                  "params": {
-                    "note": "d-0118"
-                  },
-                  "plugin": null
-                }
-              },
-              {
-                "dashed": false,
-                "piece": "slip",
-                "text": "Rerank only the top 50",
-                "tone": "teal"
-              },
-              {
-                "mono": true,
-                "piece": "toned",
-                "text": "fact",
-                "tone": "info"
-              },
-              {
-                "piece": "text",
-                "text": "ColBERT reranking costs grow with the candidate list. "
-              },
-              {
-                "piece": "mono",
-                "text": "1 link"
-              },
-              {
-                "piece": "mono",
-                "text": "4 days ago"
-              }
-            ]
+              ],
+              "piece": "row"
+            },
+            {
+              "mono": false,
+              "piece": "toned",
+              "text": "snake_case and CamelCase stay one token, and are also split into their parts, so both searches hit.",
+              "tone": "neutral"
+            }
           ],
-          "widths": [
-            1,
-            4,
-            0.8,
-            6,
-            1,
-            1.5
-          ]
+          "piece": "stack"
+        },
+        {
+          "piece": "rule"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "dashed": false,
+                  "piece": "slip",
+                  "text": "Scanned pages have no text layer",
+                  "to": {
+                    "page": "notes",
+                    "params": {
+                      "note": "d-0102"
+                    },
+                    "plugin": null
+                  },
+                  "tone": "teal"
+                },
+                {
+                  "piece": "spacer"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "fact",
+                  "tone": "info"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "no links",
+                  "tone": "neutral"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "3 days ago",
+                  "tone": "neutral"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "mono": false,
+              "piece": "toned",
+              "text": "PDFs made from scans come in with empty pages. ",
+              "tone": "neutral"
+            }
+          ],
+          "piece": "stack"
+        },
+        {
+          "piece": "rule"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "dashed": false,
+                  "piece": "slip",
+                  "text": "Rerank only the top 50",
+                  "to": {
+                    "page": "notes",
+                    "params": {
+                      "note": "d-0118"
+                    },
+                    "plugin": null
+                  },
+                  "tone": "teal"
+                },
+                {
+                  "piece": "spacer"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "fact",
+                  "tone": "info"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "1 link",
+                  "tone": "neutral"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "4 days ago",
+                  "tone": "neutral"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "mono": false,
+              "piece": "toned",
+              "text": "ColBERT reranking costs grow with the candidate list. ",
+              "tone": "neutral"
+            }
+          ],
+          "piece": "stack"
         }
       ],
       "piece": "stack"
@@ -1444,314 +1475,425 @@
           "piece": "row"
         },
         {
-          "head": [],
-          "piece": "table",
-          "rows": [
-            [
-              {
-                "label": "n-0390",
-                "piece": "link",
-                "to": {
-                  "page": "notes",
-                  "params": {
-                    "note": "n-0390"
+          "children": [
+            {
+              "children": [
+                {
+                  "dashed": false,
+                  "piece": "slip",
+                  "text": "429 vs 503 in the Responses API",
+                  "to": {
+                    "page": "notes",
+                    "params": {
+                      "note": "n-0390"
+                    },
+                    "plugin": null
                   },
-                  "plugin": null
+                  "tone": "teal"
+                },
+                {
+                  "piece": "spacer"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "fact",
+                  "tone": "info"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "1 link",
+                  "tone": "neutral"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "2 days ago",
+                  "tone": "neutral"
                 }
-              },
-              {
-                "dashed": false,
-                "piece": "slip",
-                "text": "429 vs 503 in the Responses API",
-                "tone": "teal"
-              },
-              {
-                "mono": true,
-                "piece": "toned",
-                "text": "fact",
-                "tone": "info"
-              },
-              {
-                "piece": "text",
-                "text": "429 means we sent too much; 503 means they are overloaded. "
-              },
-              {
-                "piece": "mono",
-                "text": "1 link"
-              },
-              {
-                "piece": "mono",
-                "text": "2 days ago"
-              }
-            ],
-            [
-              {
-                "label": "n-0433",
-                "piece": "link",
-                "to": {
-                  "page": "notes",
-                  "params": {
-                    "note": "n-0433"
-                  },
-                  "plugin": null
-                }
-              },
-              {
-                "dashed": false,
-                "piece": "slip",
-                "text": "Spread reconnects with jitter",
-                "tone": "teal"
-              },
-              {
-                "mono": true,
-                "piece": "toned",
-                "text": "fact",
-                "tone": "info"
-              },
-              {
-                "piece": "text",
-                "text": "Connections opened together expire together unless the deadline moves. "
-              },
-              {
-                "piece": "mono",
-                "text": "2 links"
-              },
-              {
-                "piece": "mono",
-                "text": "2 days ago"
-              }
-            ],
-            [
-              {
-                "label": "n-0301",
-                "piece": "link",
-                "to": {
-                  "page": "notes",
-                  "params": {
-                    "note": "n-0301"
-                  },
-                  "plugin": null
-                }
-              },
-              {
-                "dashed": false,
-                "piece": "slip",
-                "text": "16 in flight per connection",
-                "tone": "teal"
-              },
-              {
-                "mono": true,
-                "piece": "toned",
-                "text": "fact",
-                "tone": "info"
-              },
-              {
-                "piece": "text",
-                "text": "The pool enforces the limit per socket, not per client. "
-              },
-              {
-                "piece": "mono",
-                "text": "1 link"
-              },
-              {
-                "piece": "mono",
-                "text": "3 days ago"
-              }
-            ],
-            [
-              {
-                "label": "n-0388",
-                "piece": "link",
-                "to": {
-                  "page": "notes",
-                  "params": {
-                    "note": "n-0388"
-                  },
-                  "plugin": null
-                }
-              },
-              {
-                "dashed": false,
-                "piece": "slip",
-                "text": "Retry policy honors server hints",
-                "tone": "teal"
-              },
-              {
-                "mono": true,
-                "piece": "toned",
-                "text": "fact",
-                "tone": "info"
-              },
-              {
-                "piece": "text",
-                "text": "When the server sends retry-after, it wins over our backoff, capped at max_delay. "
-              },
-              {
-                "piece": "mono",
-                "text": "2 links"
-              },
-              {
-                "piece": "mono",
-                "text": "4 days ago"
-              }
-            ],
-            [
-              {
-                "label": "n-0350",
-                "piece": "link",
-                "to": {
-                  "page": "notes",
-                  "params": {
-                    "note": "n-0350"
-                  },
-                  "plugin": null
-                }
-              },
-              {
-                "dashed": false,
-                "piece": "slip",
-                "text": "Rewrites force one full resend",
-                "tone": "teal"
-              },
-              {
-                "mono": true,
-                "piece": "toned",
-                "text": "fact",
-                "tone": "info"
-              },
-              {
-                "piece": "text",
-                "text": "Any edit to the transcript breaks the delta chain once. "
-              },
-              {
-                "piece": "mono",
-                "text": "1 link"
-              },
-              {
-                "piece": "mono",
-                "text": "5 days ago"
-              }
-            ],
-            [
-              {
-                "label": "n-0417",
-                "piece": "link",
-                "to": {
-                  "page": "notes",
-                  "params": {
-                    "note": "n-0417"
-                  },
-                  "plugin": null
-                }
-              },
-              {
-                "dashed": false,
-                "piece": "slip",
-                "text": "Rotation must drain lanes first",
-                "tone": "teal"
-              },
-              {
-                "mono": true,
-                "piece": "toned",
-                "text": "fact",
-                "tone": "info"
-              },
-              {
-                "piece": "text",
-                "text": "A connection that is past its deadline can still carry lanes with a response in flight. "
-              },
-              {
-                "piece": "mono",
-                "text": "5 links"
-              },
-              {
-                "piece": "mono",
-                "text": "7 days ago"
-              }
-            ],
-            [
-              {
-                "label": "n-0212",
-                "piece": "link",
-                "to": {
-                  "page": "notes",
-                  "params": {
-                    "note": "n-0212"
-                  },
-                  "plugin": null
-                }
-              },
-              {
-                "dashed": false,
-                "piece": "slip",
-                "text": "Continuation ids are call_id|item_id",
-                "tone": "teal"
-              },
-              {
-                "mono": true,
-                "piece": "toned",
-                "text": "fact",
-                "tone": "info"
-              },
-              {
-                "piece": "text",
-                "text": "The Responses API needs both halves to resume a tool call. "
-              },
-              {
-                "piece": "mono",
-                "text": "2 links"
-              },
-              {
-                "piece": "mono",
-                "text": "9 days ago"
-              }
-            ],
-            [
-              {
-                "label": "n-0205",
-                "piece": "link",
-                "to": {
-                  "page": "notes",
-                  "params": {
-                    "note": "n-0205"
-                  },
-                  "plugin": null
-                }
-              },
-              {
-                "dashed": false,
-                "piece": "slip",
-                "text": "Tests use the fake OpenAI server",
-                "tone": "teal"
-              },
-              {
-                "mono": true,
-                "piece": "toned",
-                "text": "fact",
-                "tone": "info"
-              },
-              {
-                "piece": "text",
-                "text": "heiko-testing runs a fake Responses server over WebSocket. "
-              },
-              {
-                "piece": "mono",
-                "text": "no links"
-              },
-              {
-                "piece": "mono",
-                "text": "11 days ago"
-              }
-            ]
+              ],
+              "piece": "row"
+            },
+            {
+              "mono": false,
+              "piece": "toned",
+              "text": "429 means we sent too much; 503 means they are overloaded. ",
+              "tone": "neutral"
+            }
           ],
-          "widths": [
-            1,
-            4,
-            0.8,
-            6,
-            1,
-            1.5
-          ]
+          "piece": "stack"
+        },
+        {
+          "piece": "rule"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "dashed": false,
+                  "piece": "slip",
+                  "text": "Spread reconnects with jitter",
+                  "to": {
+                    "page": "notes",
+                    "params": {
+                      "note": "n-0433"
+                    },
+                    "plugin": null
+                  },
+                  "tone": "teal"
+                },
+                {
+                  "piece": "spacer"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "fact",
+                  "tone": "info"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "2 links",
+                  "tone": "neutral"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "2 days ago",
+                  "tone": "neutral"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "mono": false,
+              "piece": "toned",
+              "text": "Connections opened together expire together unless the deadline moves. ",
+              "tone": "neutral"
+            }
+          ],
+          "piece": "stack"
+        },
+        {
+          "piece": "rule"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "dashed": false,
+                  "piece": "slip",
+                  "text": "16 in flight per connection",
+                  "to": {
+                    "page": "notes",
+                    "params": {
+                      "note": "n-0301"
+                    },
+                    "plugin": null
+                  },
+                  "tone": "teal"
+                },
+                {
+                  "piece": "spacer"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "fact",
+                  "tone": "info"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "1 link",
+                  "tone": "neutral"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "3 days ago",
+                  "tone": "neutral"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "mono": false,
+              "piece": "toned",
+              "text": "The pool enforces the limit per socket, not per client. ",
+              "tone": "neutral"
+            }
+          ],
+          "piece": "stack"
+        },
+        {
+          "piece": "rule"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "dashed": false,
+                  "piece": "slip",
+                  "text": "Retry policy honors server hints",
+                  "to": {
+                    "page": "notes",
+                    "params": {
+                      "note": "n-0388"
+                    },
+                    "plugin": null
+                  },
+                  "tone": "teal"
+                },
+                {
+                  "piece": "spacer"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "fact",
+                  "tone": "info"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "2 links",
+                  "tone": "neutral"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "4 days ago",
+                  "tone": "neutral"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "mono": false,
+              "piece": "toned",
+              "text": "When the server sends retry-after, it wins over our backoff, capped at max_delay. ",
+              "tone": "neutral"
+            }
+          ],
+          "piece": "stack"
+        },
+        {
+          "piece": "rule"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "dashed": false,
+                  "piece": "slip",
+                  "text": "Rewrites force one full resend",
+                  "to": {
+                    "page": "notes",
+                    "params": {
+                      "note": "n-0350"
+                    },
+                    "plugin": null
+                  },
+                  "tone": "teal"
+                },
+                {
+                  "piece": "spacer"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "fact",
+                  "tone": "info"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "1 link",
+                  "tone": "neutral"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "5 days ago",
+                  "tone": "neutral"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "mono": false,
+              "piece": "toned",
+              "text": "Any edit to the transcript breaks the delta chain once. ",
+              "tone": "neutral"
+            }
+          ],
+          "piece": "stack"
+        },
+        {
+          "piece": "rule"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "dashed": false,
+                  "piece": "slip",
+                  "text": "Rotation must drain lanes first",
+                  "to": {
+                    "page": "notes",
+                    "params": {
+                      "note": "n-0417"
+                    },
+                    "plugin": null
+                  },
+                  "tone": "teal"
+                },
+                {
+                  "piece": "spacer"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "fact",
+                  "tone": "info"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "5 links",
+                  "tone": "neutral"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "7 days ago",
+                  "tone": "neutral"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "mono": false,
+              "piece": "toned",
+              "text": "A connection that is past its deadline can still carry lanes with a response in flight. ",
+              "tone": "neutral"
+            }
+          ],
+          "piece": "stack"
+        },
+        {
+          "piece": "rule"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "dashed": false,
+                  "piece": "slip",
+                  "text": "Continuation ids are call_id|item_id",
+                  "to": {
+                    "page": "notes",
+                    "params": {
+                      "note": "n-0212"
+                    },
+                    "plugin": null
+                  },
+                  "tone": "teal"
+                },
+                {
+                  "piece": "spacer"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "fact",
+                  "tone": "info"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "2 links",
+                  "tone": "neutral"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "9 days ago",
+                  "tone": "neutral"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "mono": false,
+              "piece": "toned",
+              "text": "The Responses API needs both halves to resume a tool call. ",
+              "tone": "neutral"
+            }
+          ],
+          "piece": "stack"
+        },
+        {
+          "piece": "rule"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "dashed": false,
+                  "piece": "slip",
+                  "text": "Tests use the fake OpenAI server",
+                  "to": {
+                    "page": "notes",
+                    "params": {
+                      "note": "n-0205"
+                    },
+                    "plugin": null
+                  },
+                  "tone": "teal"
+                },
+                {
+                  "piece": "spacer"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "fact",
+                  "tone": "info"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "no links",
+                  "tone": "neutral"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "11 days ago",
+                  "tone": "neutral"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "mono": false,
+              "piece": "toned",
+              "text": "heiko-testing runs a fake Responses server over WebSocket. ",
+              "tone": "neutral"
+            }
+          ],
+          "piece": "stack"
         }
       ],
       "piece": "stack"
@@ -2082,55 +2224,54 @@
           "piece": "row"
         },
         {
-          "head": [],
-          "piece": "table",
-          "rows": [
-            [
-              {
-                "label": "h-0007",
-                "piece": "link",
-                "to": {
-                  "page": "notes",
-                  "params": {
-                    "note": "h-0007"
+          "children": [
+            {
+              "children": [
+                {
+                  "dashed": false,
+                  "piece": "slip",
+                  "text": "Backups run from a systemd timer",
+                  "to": {
+                    "page": "notes",
+                    "params": {
+                      "note": "h-0007"
+                    },
+                    "plugin": null
                   },
-                  "plugin": null
+                  "tone": "teal"
+                },
+                {
+                  "piece": "spacer"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "fact",
+                  "tone": "info"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "no links",
+                  "tone": "neutral"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "1 day ago",
+                  "tone": "neutral"
                 }
-              },
-              {
-                "dashed": false,
-                "piece": "slip",
-                "text": "Backups run from a systemd timer",
-                "tone": "teal"
-              },
-              {
-                "mono": true,
-                "piece": "toned",
-                "text": "fact",
-                "tone": "info"
-              },
-              {
-                "piece": "text",
-                "text": "restic runs from backup.timer at 03:00, never from cron, so a missed run catches up on boot."
-              },
-              {
-                "piece": "mono",
-                "text": "no links"
-              },
-              {
-                "piece": "mono",
-                "text": "1 day ago"
-              }
-            ]
+              ],
+              "piece": "row"
+            },
+            {
+              "mono": false,
+              "piece": "toned",
+              "text": "restic runs from backup.timer at 03:00, never from cron, so a missed run catches up on boot.",
+              "tone": "neutral"
+            }
           ],
-          "widths": [
-            1,
-            4,
-            0.8,
-            6,
-            1,
-            1.5
-          ]
+          "piece": "stack"
         }
       ],
       "piece": "stack"

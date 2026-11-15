@@ -53,6 +53,17 @@ local function pieces(piece, out)
 	return out
 end
 
+-- The slips in `piece`: a list of notes has one for each.
+local function slips(piece)
+	local out = {}
+	for _, each in ipairs(pieces(piece)) do
+		if each.piece == "slip" then
+			table.insert(out, each)
+		end
+	end
+	return out
+end
+
 -- The texts `piece` shows, of every kind.
 local function texts(piece)
 	local out = {}
@@ -411,9 +422,7 @@ t.case("a repository's notes page lists, filters, searches and opens its notes",
 	write(run, fact("lanes drain", { links = { { to = "src/lane.rs", type = "about" } } }))
 	write(run, fact("cache keys", { type = "gotcha", links = { { to = "lanes-drain", type = "refines", why = "it says when" } } }))
 	local page = run:page("notes", { repo = "shop" })
-	local list = find(page, "table")
-	t.equal(list.head, {})
-	t.equal(#list.rows, 2)
+	t.equal(#slips(page), 2)
 	t.equal(find(page, "header").title, "Memory")
 	t.equal(find(page, "header").meta, "2 notes")
 	t.equal(find(page, "link", "Facts 1") ~= nil, true, "a link to the facts")
@@ -423,19 +432,19 @@ t.case("a repository's notes page lists, filters, searches and opens its notes",
 	-- No tool on this computer: no way to import.
 	t.equal(find(page, "button", "import"), nil)
 
-	-- A link out and a backlink both count.
-	for _, r in ipairs(list.rows) do
-		t.equal(r[1].piece, "link")
-		t.equal(r[2].piece, "slip")
-		t.equal(r[5].text, "1 link")
+	-- Each slip opens its note, and a link out and a backlink both count.
+	for _, slip in ipairs(slips(page)) do
+		t.equal(slip.to.page, "notes")
 	end
+	t.equal(shows(page, "1 link"), true)
+	t.equal(shows(page, "no links"), false)
 
 	local gotchas = run:page("notes", { repo = "shop", kind = "gotcha" })
-	t.equal(#find(gotchas, "table").rows, 1)
+	t.equal(#slips(gotchas), 1)
 	t.equal(find(gotchas, "pill").text, "Gotchas 1")
 
 	local searched = run:page("notes", { repo = "shop", drafts = { search = "LANES" } })
-	t.equal(#find(searched, "table").rows, 1)
+	t.equal(#slips(searched), 1)
 	t.equal(shows(searched, "lanes drain"), true, "the note that matches")
 	local none = run:page("notes", { repo = "shop", drafts = { search = "nothing like it" } })
 	t.equal(find(none, "empty").text, "No notes match.")
@@ -459,7 +468,7 @@ t.case("the person's notes are a page of the app, and its sidebar entry counts t
 	write(run, fact("terse answers", { type = "preference", scope = "user" }))
 	local page = run:app_page_of("notes", {})
 	t.equal(find(page, "header").title, "Your notes")
-	t.equal(#find(page, "table").rows, 1)
+	t.equal(#slips(page), 1)
 	t.equal(run:app().nav.detail, "1 notes")
 	t.equal(run:repo_data().nav.detail, "0 notes")
 end)

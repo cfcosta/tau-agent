@@ -220,18 +220,21 @@ local function links_of(n)
 	return n .. " links"
 end
 
--- A note in the list: its id, opening it; its title on a slip; its
--- kind; the start of its text; how linked it is; when it was edited.
+-- A note in the list: its title on a slip that opens it, then its kind,
+-- how linked it is and when it was edited; under them, the start of its
+-- text.
 local function row(book, n)
 	local linked = #n.links + #backlinks(book, n.id)
-	return {
-		note_link(n.id, n.id),
-		ui.slip(n.title, "teal"),
-		ui.toned(n.kind, M.kind_tone(n.kind), true),
-		ui.text((string.gsub(snippet(n), "`", ""))),
-		ui.mono(links_of(linked)),
-		ui.mono(n.edited),
-	}
+	return ui.stack({
+		ui.row({
+			ui.slip(n.title, "teal", false, { page = "notes", params = { note = n.id } }),
+			ui.spacer(),
+			ui.toned(n.kind, M.kind_tone(n.kind), true),
+			ui.toned(links_of(linked), "neutral", true),
+			ui.toned(n.edited, "neutral", true),
+		}),
+		ui.toned((string.gsub(snippet(n), "`", "")), "neutral"),
+	})
 end
 
 -- The list: `top`, the pieces above it (a banner, or what the person's
@@ -280,16 +283,18 @@ function M.list_tree(book, top, query, kind, button)
 		table.insert(bar, button)
 	end
 	table.insert(children, ui.row(bar))
-	local rows = {}
+	local shown = 0
 	for _, n in ipairs(book) do
 		if (kind == nil or n.kind == kind) and matches(n, query) then
-			table.insert(rows, row(book, n))
+			if shown > 0 then
+				table.insert(children, ui.rule())
+			end
+			table.insert(children, row(book, n))
+			shown += 1
 		end
 	end
-	if #rows == 0 then
+	if shown == 0 then
 		table.insert(children, ui.empty(#book == 0 and "No notes yet." or "No notes match."))
-	else
-		table.insert(children, ui.table({}, rows, { widths = { 1, 4, 0.8, 6, 1, 1.5 } }))
 	end
 	return ui.stack(children)
 end
