@@ -522,31 +522,28 @@ pub fn grep_lines(data: &CallData) -> Option<Vec<GrepLine>> {
     Some(lines.lines().filter_map(grep_line).collect())
 }
 
-/// `path:12: text` or `path-13- text`, taken apart at the first number
-/// between two of the same separator.
+/// `path:12: text` or `path-13- text`, taken apart at the first
+/// separator, number, the same separator and a space: the host always
+/// writes that space, so a path like `foo-1-bar.rs` keeps its own
+/// dashes and digits. Only a path that itself holds `-N- ` or `:N: `
+/// reads back wrong.
 fn grep_line(line: &str) -> Option<GrepLine> {
-    [(':', true), ('-', false)]
-        .into_iter()
-        .filter_map(|(sep, matched)| {
-            line.match_indices(sep).find_map(|(at, _)| {
-                let rest = &line[at + 1..];
-                let digits =
-                    rest.chars().take_while(char::is_ascii_digit).count();
-                let text = rest[digits..].strip_prefix(sep)?;
-                Some((
-                    at,
-                    GrepLine {
-                        path: line[..at].to_owned(),
-                        number: rest[..digits].parse().ok()?,
-                        text: text.strip_prefix(' ').unwrap_or(text).to_owned(),
-                        matched,
-                    },
-                ))
-            })
+    line.char_indices().find_map(|(at, sep)| {
+        let matched = match sep {
+            ':' => true,
+            '-' => false,
+            _ => return None,
+        };
+        let rest = &line[at + 1..];
+        let digits = rest.chars().take_while(char::is_ascii_digit).count();
+        let text = rest[digits..].strip_prefix(sep)?.strip_prefix(' ')?;
+        Some(GrepLine {
+            path: line[..at].to_owned(),
+            number: rest[..digits].parse().ok()?,
+            text: text.to_owned(),
+            matched,
         })
-        // The separator that comes first is the line's own.
-        .min_by_key(|(at, _)| *at)
-        .map(|(_, line)| line)
+    })
 }
 
 /// `5 matches in 2 files`.
@@ -1156,31 +1153,89 @@ mod tests {
         );
     }
 
-    /// A grep's text reads back as its lines, matches and context, each
-    /// under its file, and the label counts matches and files.
+    /// A grep line as the host writes it: `path:12: text` for a match,
+    /// `path-13- text` for context.
+    fn rendered(line: &GrepLine) -> String {
+        let sep = if line.matched { ':' } else { '-' };
+        format!("{}{sep}{}{sep} {}", line.path, line.number, line.text)
+    }
+
+    /// Whatever lines the host wrote, under paths made of digits, dashes,
+    /// dots, slashes and colons, and with or without its notice after
+    /// them, read back as those lines.
+    #[hegel::test(test_cases = 500)]
+    fn a_grep_reads_back_the_lines_the_host_wrote(tc: hegel::TestCase) {
+        use hegel::generators as gs;
+        let lines: Vec<GrepLine> = tc
+            .draw(
+                gs::vecs(gs::tuples!(
+                    gs::text().min_size(1).max_size(12).alphabet("ab19-./:_"),
+                    gs::integers::<usize>().min_value(1).max_value(100_000),
+                    gs::text().max_size(12).alphabet("x1 -:[]\t"),
+                    gs::booleans(),
+                ))
+                .min_size(1)
+                .max_size(6),
+            )
+            .into_iter()
+            .map(|(path, number, text, matched)| GrepLine {
+                path,
+                number,
+                text,
+                matched,
+            })
+            .collect();
+        let mut text =
+            lines.iter().map(rendered).collect::<Vec<_>>().join("\n");
+        if tc.draw(gs::booleans()) {
+            text.push_str(
+                "\n\n[100 matches limit reached. Use limit=200 for more, or refine pattern]",
+            );
+        }
+        assert_eq!(grep_lines(&ended(&text, None, false)), Some(lines));
+    }
+
+    /// A path with a dash, a number and a dash in it is still the path:
+    /// the line's own separators are the ones before its space.
     #[test]
-    fn a_grep_reads_back_as_lines_under_their_files() {
-        let data = ended(
-            "src/a.rs:5: pub struct RetryPolicy {\nsrc/a.rs-6-     max: u32,\nsrc/b-2.rs:88: let hint = a::b(&x);\n\n[100 matches limit reached. Use limit=200 for more, or refine pattern]",
-            None,
-            false,
+    fn a_path_with_dashed_digits_is_not_a_context_line() {
+        let data = ended("foo-1-bar.rs:3: x\nsrc/a.rs:7: ", None, false);
+        assert_eq!(
+            grep_lines(&data),
+            Some(vec![
+                GrepLine {
+                    path: "foo-1-bar.rs".into(),
+                    number: 3,
+                    text: "x".into(),
+                    matched: true,
+                },
+                GrepLine {
+                    path: "src/a.rs".into(),
+                    number: 7,
+                    text: String::new(),
+                    matched: true,
+                },
+            ])
         );
-        let lines = grep_lines(&data).expect("lines");
-        let line = |path: &str, number, text: &str, matched| GrepLine {
+    }
+
+    /// The label counts matches and files; no matches and a failed grep
+    /// read back as nothing and as no lines.
+    #[test]
+    fn a_grep_label_counts_matches_and_files() {
+        let line = |path: &str, matched| GrepLine {
             path: path.into(),
-            number,
-            text: text.into(),
+            number: 1,
+            text: String::new(),
             matched,
         };
-        assert_eq!(
-            lines,
-            [
-                line("src/a.rs", 5, "pub struct RetryPolicy {", true),
-                line("src/a.rs", 6, "    max: u32,", false),
-                line("src/b-2.rs", 88, "let hint = a::b(&x);", true),
-            ]
-        );
+        let lines = [
+            line("src/a.rs", true),
+            line("src/a.rs", false),
+            line("src/b.rs", true),
+        ];
         assert_eq!(grep_label(&lines), "2 matches in 2 files");
+        assert_eq!(grep_label(&lines[..1]), "1 match in 1 file");
         assert_eq!(
             grep_lines(&ended("No matches found", None, false)),
             Some(Vec::new())
