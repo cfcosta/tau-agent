@@ -3,6 +3,7 @@
 //! itself, for every place the demo's runs and screens have.
 
 use gpui::{Entity, TestAppContext, VisualTestContext};
+use hegel::{TestCase, generators as gs};
 use heiko_demo as demo;
 use heiko_ui_plugin::{
     Point,
@@ -282,40 +283,106 @@ fn what_the_computer_builds_is_what_it_draws(cx: &mut TestAppContext) {
     });
 }
 
-/// A phone's layout is the one its views are built in: pages that lay
-/// themselves out for the phone come back for each layout as that layout
-/// draws them.
+/// The demo run's page parameters: of its repository and its run.
+fn page_params() -> std::collections::BTreeMap<String, String> {
+    [
+        ("repo".to_owned(), "heiko-agent".to_owned()),
+        ("run".to_owned(), demo::run_id().0.to_string()),
+    ]
+    .into()
+}
+
+/// Every plugin's page, by plugin and page name.
+fn pages() -> Vec<(&'static str, &'static str)> {
+    registry()
+        .plugins()
+        .flat_map(|plugin| {
+            let name = plugin.name();
+            plugin
+                .pages()
+                .iter()
+                .map(|page| (name, page.name))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// `plugin`'s page `page` of the demo run, built in `layout`.
+fn page_in(
+    ws: &Workspace,
+    (plugin, page): (&str, &str),
+    layout: Layout,
+) -> Built {
+    ws.build_view(&ViewKey {
+        view: View::Page {
+            plugin: plugin.to_owned(),
+            page: page.to_owned(),
+            params: page_params(),
+        },
+        layout,
+    })
+}
+
+/// A phone's layout is the one its views are built in, whatever this
+/// window's own is: any page, built for any phone's layout, is the same
+/// built from a window of any width, phone preview or not.
 #[gpui::test]
 fn a_view_is_built_in_the_phone_s_layout(cx: &mut TestAppContext) {
+    let (workspace, cx, _host) = open(cx);
+    let cx = std::cell::RefCell::new(cx);
+    let pages = pages();
+    hegel::Hegel::new(|tc| {
+        let page = tc.draw(gs::sampled_from(pages.clone()));
+        let layout = Layout::of(
+            tc.draw(gs::booleans()),
+            tc.draw(gs::floats::<f32>().min_value(0.).max_value(2400.)),
+        );
+        let window = |tc: &TestCase| {
+            let preview = tc.draw(gs::booleans());
+            let width =
+                tc.draw(gs::floats::<f32>().min_value(320.).max_value(2400.));
+            let cx = &mut *cx.borrow_mut();
+            cx.simulate_resize(gpui::size(gpui::px(width), gpui::px(900.)));
+            workspace.update(cx, |ws, cx| ws.set_phone_preview(preview, cx));
+            cx.run_until_parked();
+            workspace.read_with(cx, |ws, _| page_in(ws, page, layout))
+        };
+        let first = window(&tc);
+        let second = window(&tc);
+        assert_eq!(first, second, "{page:?} in {layout:?}");
+    })
+    .settings(hegel::Settings::new().test_cases(60))
+    .run();
+}
+
+/// The pages that lay themselves out for a phone: each comes back one
+/// way in a phone's layout and another in a computer's.
+#[gpui::test]
+fn some_pages_are_laid_out_for_the_phone(cx: &mut TestAppContext) {
     let (workspace, mut cx, _host) = open(cx);
     workspace.update(&mut cx, |ws, _| {
-        let params: std::collections::BTreeMap<String, String> = [
-            ("repo".to_owned(), "heiko-agent".to_owned()),
-            ("run".to_owned(), demo::run_id().0.to_string()),
-        ]
-        .into();
-        let mut differ = Vec::new();
-        for plugin in registry().plugins() {
-            for page in plugin.pages() {
-                let built = |compact: bool| {
-                    ws.build_view(&ViewKey {
-                        view: View::Page {
-                            plugin: plugin.name().to_owned(),
-                            page: page.name.to_owned(),
-                            params: params.clone(),
-                        },
-                        layout: Layout::of(
-                            compact,
-                            if compact { 400. } else { 1440. },
-                        ),
-                    })
-                };
-                if built(true) != built(false) {
-                    differ.push(format!("{}/{}", plugin.name(), page.name));
-                }
-            }
-        }
-        assert!(!differ.is_empty(), "some page is laid out for the phone");
+        let differ: Vec<_> = pages()
+            .into_iter()
+            .filter(|&page| {
+                page_in(ws, page, Layout::of(true, 400.))
+                    != page_in(ws, page, Layout::of(false, 1440.))
+            })
+            .collect();
+        assert_eq!(
+            differ,
+            [
+                ("heiko-luau-plugins", "luau-plugins"),
+                ("heiko-mcp", "servers")
+            ]
+        );
+    });
+}
+
+/// A phone's commands are the computer's, `goal` among them.
+#[gpui::test]
+fn a_phone_gets_the_repository_s_commands(cx: &mut TestAppContext) {
+    let (workspace, mut cx, _host) = open(cx);
+    workspace.update(&mut cx, |ws, _| {
         let Built::Commands { commands } = ws.build_view(&ViewKey {
             view: View::Commands {
                 repo: Some("heiko-agent".into()),
@@ -644,7 +711,9 @@ fn a_reply_goes_to_the_window_that_asked(cx: &mut TestAppContext) {
         [HostUpdate::Called {
             id: 7,
             plugin: heiko_mcp::NAME.into(),
-            requests: vec![heiko_ui_plugin::Request::Composer("Fix it.".into())],
+            requests: vec![heiko_ui_plugin::Request::Composer(
+                "Fix it.".into()
+            )],
         }]
     );
     assert_eq!(

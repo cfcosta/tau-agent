@@ -992,14 +992,18 @@ impl Workspace {
                             ws.home_act(plugin, &repo, &action, window, cx)
                         }))
                 });
+                let section = format!("home-list:{plugin}");
                 div()
                     .flex()
                     .flex_col()
-                    .child(ui::section_header(
-                        list.title,
-                        list.meta.map(Into::into),
-                        t,
-                    ))
+                    .child(
+                        ui::section_header(
+                            list.title,
+                            list.meta.map(Into::into),
+                            t,
+                        )
+                        .debug_selector(move || section.clone()),
+                    )
                     .children(rows)
             })
             .collect()
