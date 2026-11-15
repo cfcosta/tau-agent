@@ -177,7 +177,7 @@ impl Roles {
             live: c(rgb(0xff9e64)),
             waiting: c(rgb(0x7aa2f7)),
             cost: c(rgb(0xe0af68)),
-            agent: c(rgb(0x7dcfff)),
+            agent: c(rgb(0xbb9af7)),
             model: c(rgb(0x7aa2f7)),
             memory: c(rgb(0x73daca)),
             rules: c(rgb(0xe0af68)),
