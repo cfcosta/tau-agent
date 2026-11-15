@@ -103,14 +103,19 @@ impl From<&str> for PluginError {
 }
 
 /// `error` and its sources, joined with `: `, outermost first. A source
-/// whose text already ends what came before it is left out: most
-/// messages here carry their source's text already.
+/// whose text is already there is left out: most messages here carry
+/// their source's after a `: `, and some are only their source's. A
+/// message that merely ends with the same words does not carry it.
 pub fn describe(error: &(dyn Error + 'static)) -> String {
     let mut text = error.to_string();
     let mut source = error.source();
     while let Some(next) = source {
         let part = next.to_string();
-        if !text.ends_with(&part) {
+        let carried = text == part
+            || text
+                .strip_suffix(part.as_str())
+                .is_some_and(|before| before.ends_with(": "));
+        if !carried {
             text.push_str(": ");
             text.push_str(&part);
         }
@@ -121,27 +126,128 @@ pub fn describe(error: &(dyn Error + 'static)) -> String {
 
 #[cfg(test)]
 mod tests {
+    use hegel::{TestCase, generators as gs};
+
     use super::*;
 
-    #[derive(Debug, thiserror::Error)]
-    enum Outer {
-        #[error("reading the notes: {0}")]
-        Carried(#[from] io::Error),
+    /// How a layer of a chain writes itself.
+    #[derive(Debug, Clone, Copy)]
+    enum Shows {
+        /// Its own message only.
+        Own,
+        /// Its own message, then its source's: `"{own}: {source}"`.
+        Carries,
+        /// Its source's message only, as `"{0}"` over a source does.
+        Source,
+    }
+
+    /// One layer of an error chain.
+    #[derive(Debug)]
+    struct Layer {
+        own: String,
+        shows: Shows,
+        source: Option<Box<Layer>>,
+    }
+
+    impl std::fmt::Display for Layer {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match (self.shows, &self.source) {
+                (Shows::Carries, Some(source)) => {
+                    write!(f, "{}: {source}", self.own)
+                }
+                (Shows::Source, Some(source)) => write!(f, "{source}"),
+                _ => f.write_str(&self.own),
+            }
+        }
+    }
+
+    impl Error for Layer {
+        fn source(&self) -> Option<&(dyn Error + 'static)> {
+            self.source.as_deref().map(|layer| layer as _)
+        }
+    }
+
+    /// A chain of `layers`, outermost first; the last has no source.
+    fn chain(layers: &[(String, Shows)]) -> Layer {
+        let mut source = None;
+        for (own, shows) in layers.iter().rev() {
+            source = Some(Box::new(Layer {
+                own: own.clone(),
+                shows: *shows,
+                source,
+            }));
+        }
+        *source.expect("a layer at least")
+    }
+
+    /// What a chain says: each layer's own message once, outermost
+    /// first, but for the ones that only show their source's.
+    fn said(layers: &[(String, Shows)]) -> String {
+        let last = layers.len() - 1;
+        layers
+            .iter()
+            .enumerate()
+            .filter(|(i, (_, shows))| {
+                *i == last || !matches!(shows, Shows::Source)
+            })
+            .map(|(_, (own, _))| own.as_str())
+            .collect::<Vec<_>>()
+            .join(": ")
+    }
+
+    /// Any chain, up to six deep, each layer carrying its source's
+    /// message or not, reads as each layer's message once. Messages are
+    /// distinct and without `": "`, and often end as another one does
+    /// (`"the disk is full"` over `"full"`), which must not hide it.
+    #[hegel::test(test_cases = 500)]
+    fn a_chain_names_each_layer_once(tc: TestCase) {
+        let owns: Vec<String> = tc.draw(
+            gs::vecs(hegel::one_of!(
+                gs::sampled_from(
+                    [
+                        "full",
+                        "is full",
+                        "disk is full",
+                        "the disk is full",
+                        "disk full",
+                        "notes",
+                        "the notes",
+                        "reading the notes",
+                    ]
+                    .map(String::from)
+                    .to_vec()
+                ),
+                gs::text().alphabet("ab :").min_size(1).max_size(6),
+            ))
+            .min_size(1)
+            .max_size(6)
+            .unique(true),
+        );
+        tc.assume(owns.iter().all(|own| !own.contains(": ")));
+        let layers: Vec<(String, Shows)> = owns
+            .into_iter()
+            .map(|own| {
+                let shows = [Shows::Own, Shows::Carries, Shows::Source]
+                    [tc.draw(gs::integers::<usize>().max_value(2))];
+                (own, shows)
+            })
+            .collect();
+        let error = chain(&layers);
+        assert_eq!(describe(&error), said(&layers), "{layers:?}");
+        // At a seam, a boxed error reads the same.
+        let seam = PluginError::other(chain(&layers));
+        assert_eq!(describe(&seam), said(&layers));
     }
 
     #[derive(Debug, thiserror::Error)]
-    #[error("reading the notes")]
-    struct Bare(#[source] io::Error);
+    #[error("the disk is full")]
+    struct Full(#[source] io::Error);
 
+    /// Found by [`a_chain_names_each_layer_once`]: a message that only
+    /// ends as its source's does, without carrying it, still names it.
     #[test]
-    fn a_chain_names_each_source_once() {
-        let io = || io::Error::other("disk full");
-        assert_eq!(
-            describe(&Outer::from(io())),
-            "reading the notes: disk full"
-        );
-        assert_eq!(describe(&Bare(io())), "reading the notes: disk full");
-        let seam = PluginError::other(Outer::from(io()));
-        assert_eq!(describe(&seam), "reading the notes: disk full");
+    fn a_message_ending_as_its_source_still_names_it() {
+        let error = Full(io::Error::other("full"));
+        assert_eq!(describe(&error), "the disk is full: full");
     }
 }
