@@ -393,24 +393,109 @@ t.case("an output kept whole or gated changes nothing", function()
 	t.equal(never.count, 0)
 end)
 
--- Between turns a pass runs past the share of the window, and then only
--- once the context has grown by the cooldown since the last one.
-t.case("the cooldown and the share of the window gate a pass", function()
+-- Between turns a pass runs once the context reaches the share of the
+-- window, and then only once it has grown by the cooldown's share since
+-- the last pass that asked Jev; an overflow always asks. A pass with no
+-- call to judge asks nothing and starts no cooldown. The model counts
+-- in whole numbers: `tokens * 100 >= window * share`.
+t.machine("the cooldown and the share of the window gate a pass", {
+	init = function(draw)
+		-- A window of whole hundreds puts both edges on whole tokens.
+		local window = draw(g.one_of({ g.integers({ min = 1, max = 50 }):map(function(n)
+			return n * 100
+		end), g.integers({ min = 1, max = 5000 }) }))
+		local share = draw(g.integers({ min = 0, max = 100 }))
+		local cooldown = draw(g.integers({ min = 0, max = 50 }))
+		-- The window from the settings, or from the model.
+		local from_settings = draw(g.booleans())
+		local settings = {
+			preserve_recent = 1,
+			compact_at_percent = share,
+			cooldown_percent = cooldown,
+			window = from_settings and window or 0,
+		}
+		local run, asked = running({ a = "drop_result" }, { settings = settings })
+		return {
+			run = run,
+			asked = asked,
+			window = window,
+			from_settings = from_settings,
+			share = share,
+			cooldown = cooldown,
+			tokens = 0,
+			last = nil,
+			passes = 0,
+		}
+	end,
+	rules = {
+		turn_end = function(m, draw)
+			-- Grow to an edge exactly, a token short of one, or by any amount.
+			local share_edge = math.ceil(m.window * m.share / 100)
+			local cool_edge = m.last and m.last + math.ceil(m.window * m.cooldown / 100) or 0
+			local target = draw(g.sampled_from({
+				share_edge,
+				share_edge - 1,
+				cool_edge,
+				cool_edge - 1,
+				m.tokens + draw(g.integers({ min = 0, max = m.window })),
+			}))
+			m.tokens = math.max(m.tokens, target)
+			local calls = draw(g.booleans({ p = 0.8 }))
+			local view = view_of(messages_of(calls and { "a", "b" } or {}), {
+				trigger = "turn_end",
+				tokens = m.tokens,
+				window = not m.from_settings and m.window or nil,
+			})
+			m.run:rewrite_context(view)
+			local shared = m.tokens * 100 >= m.window * m.share
+			local cooled = m.last == nil or (m.tokens - m.last) * 100 >= m.window * m.cooldown
+			if shared and cooled and calls then
+				m.passes += 1
+				m.last = m.tokens
+			end
+		end,
+		overflow = function(m, draw)
+			local calls = draw(g.booleans({ p = 0.8 }))
+			m.run:rewrite_context(view_of(messages_of(calls and { "a" } or {}), {
+				tokens = m.tokens,
+				window = not m.from_settings and m.window or nil,
+			}))
+			if calls then
+				m.passes += 1
+				m.last = m.tokens
+			end
+		end,
+	},
+	invariant = function(m)
+		t.equal(m.asked.count, m.passes)
+	end,
+})
+
+t.case("a pass runs at exactly the share, and again at exactly the cooldown", function()
 	local run, asked = running({ a = "drop_result" })
 	local function at(tokens)
 		return run:rewrite_context(view_of(messages_of({ "a", "b" }), { trigger = "turn_end", tokens = tokens }))
 	end
-	-- 60% of the window of 1000 by default.
-	t.equal(at(500), nil)
+	-- 60% of the window of 1000, and a cooldown of 10%, by default.
+	at(599)
 	t.equal(asked.count, 0)
-	t.equal(at(700) ~= nil, true)
+	at(600)
 	t.equal(asked.count, 1)
-	-- Within the cooldown of 10%.
-	t.equal(at(750), nil)
+	at(699)
 	t.equal(asked.count, 1)
-	t.equal(at(800) ~= nil, true)
+	at(700)
 	t.equal(asked.count, 2)
-	-- No window, no pass.
+end)
+
+t.case("a pass with no call to judge starts no cooldown", function()
+	local run, asked = running({ a = "drop_result" })
+	run:rewrite_context(view_of(messages_of({}), { trigger = "turn_end", tokens = 600 }))
+	t.equal(asked.count, 0)
+	run:rewrite_context(view_of(messages_of({ "a" }), { trigger = "turn_end", tokens = 650 }))
+	t.equal(asked.count, 1)
+end)
+
+t.case("no window, no pass between turns", function()
 	local open, never = running({}, { settings = { preserve_recent = 1 } })
 	t.equal(open:rewrite_context(view_of(messages_of({ "a" }), { trigger = "turn_end", tokens = 10 ^ 9 })), nil)
 	t.equal(never.count, 0)

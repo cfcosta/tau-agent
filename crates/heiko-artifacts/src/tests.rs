@@ -477,26 +477,179 @@ fn published_files_are_private_and_read_only() {
     );
 }
 
+/// The rule metadata is read by: an ID in a UUID's canonical form,
+/// lowercase and hyphenated, of version 7; a digest of 64 lowercase hex
+/// digits.
+fn readable(id: &str, digest: &str) -> bool {
+    let hex = |byte: u8| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte);
+    let id_ok = id.len() == 36
+        && id.bytes().enumerate().all(|(at, byte)| match at {
+            8 | 13 | 18 | 23 => byte == b'-',
+            14 => byte == b'7',
+            _ => hex(byte),
+        });
+    id_ok && digest.len() == 64 && digest.bytes().all(hex)
+}
+
+/// An ID as a caller might hand one: any UUID version and variant, in
+/// every form `Uuid::parse_str` takes, one character changed, or a path.
+fn drawn_id(tc: &TestCase) -> String {
+    let mut raw: [u8; 16] = tc.draw(gs::arrays(gs::integers::<u8>()));
+    let version: u8 = tc.draw(hegel::one_of!(
+        gs::just(7_u8),
+        gs::integers::<u8>().max_value(15)
+    ));
+    raw[6] = (raw[6] & 0x0f) | (version << 4);
+    let uuid = uuid::Uuid::from_bytes(raw);
+    let hyphenated = uuid.hyphenated().to_string();
+    match tc.draw(gs::integers::<u8>().max_value(7)) {
+        0 | 1 => hyphenated,
+        2 => uuid.simple().to_string(),
+        3 => uuid.urn().to_string(),
+        4 => uuid.braced().to_string(),
+        5 => hyphenated.to_uppercase(),
+        6 => {
+            let at = tc.draw(gs::integers::<usize>().max_value(35));
+            let with: char = tc.draw(gs::sampled_from(vec![
+                '0', '7', 'a', 'f', 'g', 'A', 'F', '-', '/', '.', ' ',
+            ]));
+            let mut chars: Vec<char> = hyphenated.chars().collect();
+            chars[at] = with;
+            chars.into_iter().collect()
+        }
+        _ => tc.draw(hegel::one_of!(
+            gs::sampled_from(vec![
+                "../victim".to_owned(),
+                "/etc/passwd".to_owned(),
+                format!("../{hyphenated}"),
+                format!("{hyphenated}/.."),
+                format!("{hyphenated}.blob"),
+                String::new(),
+            ]),
+            gs::text().max_size(40)
+        )),
+    }
+}
+
+/// A digest: lowercase hex digits, 63 to 65 of them or any count; 64
+/// with one changed to an upper-case digit, `g`, or a path's character;
+/// or a path.
+fn drawn_digest(tc: &TestCase) -> String {
+    let lower = "0123456789abcdef".chars().collect::<Vec<_>>();
+    let hex = |length: usize| -> Vec<char> {
+        (0..length)
+            .map(|_| tc.draw(gs::sampled_from(lower.clone())))
+            .collect()
+    };
+    match tc.draw(gs::integers::<u8>().max_value(3)) {
+        0 => tc.draw(gs::sampled_from(vec![
+            "../bad".to_owned(),
+            format!("../{}", "a".repeat(61)),
+            format!("/{}", "a".repeat(63)),
+            String::new(),
+        ])),
+        1 => hex(tc.draw(gs::sampled_from(vec![63_usize, 64, 65])))
+            .into_iter()
+            .collect(),
+        2 => hex(tc.draw(gs::integers::<usize>().max_value(80)))
+            .into_iter()
+            .collect(),
+        _ => {
+            let mut digest = hex(64);
+            let at = tc.draw(gs::integers::<usize>().max_value(63));
+            digest[at] = tc.draw(gs::sampled_from(vec![
+                'A', 'F', 'g', 'G', '/', '.', ' ', '-',
+            ]));
+            digest.into_iter().collect()
+        }
+    }
+}
+
+/// Metadata reads back exactly when its ID and digest keep the rule, the
+/// same through JSON both ways; any other is refused as invalid metadata,
+/// not for some other field.
+#[hegel::test]
+fn metadata_reads_back_only_with_a_canonical_v7_id_and_a_lowercase_digest(
+    tc: TestCase,
+) {
+    // Half the time each field is one a publication makes, so the other
+    // alone decides.
+    let id = if tc.draw(gs::booleans()) {
+        let raw: [u8; 10] = tc.draw(gs::arrays(gs::integers::<u8>()));
+        let millis = tc.draw(gs::integers::<u64>().max_value((1 << 48) - 1));
+        uuid::Builder::from_unix_timestamp_millis(millis, &raw)
+            .into_uuid()
+            .hyphenated()
+            .to_string()
+    } else {
+        drawn_id(&tc)
+    };
+    let digest = if tc.draw(gs::booleans()) {
+        let bytes: Vec<u8> =
+            tc.draw(gs::vecs(gs::integers::<u8>()).max_size(8));
+        Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    } else {
+        drawn_digest(&tc)
+    };
+    let size_bytes: u64 = tc.draw(gs::integers());
+    let value = serde_json::json!({
+        "id": id,
+        "digest": digest,
+        "size_bytes": size_bytes,
+    });
+    match serde_json::from_value::<Artifact>(value.clone()) {
+        Ok(artifact) => {
+            assert!(readable(&id, &digest), "read {id:?} {digest:?}");
+            assert_eq!(artifact.id(), id);
+            assert_eq!(artifact.digest(), digest);
+            assert_eq!(artifact.size_bytes(), size_bytes);
+            assert_eq!(serde_json::to_value(&artifact).unwrap(), value);
+        }
+        Err(why) => {
+            assert!(!readable(&id, &digest), "refused {id:?} {digest:?}");
+            assert_eq!(why.to_string(), Error::InvalidArtifact.to_string());
+        }
+    }
+}
+
+/// Published metadata reads back; a path, another form of the same UUID,
+/// an upper-case or a short digest is refused, and the stored bytes stay.
 #[test]
-fn deserialization_rejects_paths_and_invalid_digests() {
+fn published_metadata_reads_back_and_a_path_in_it_does_not() {
     let (directory, bytes) = storage(Quotas::default());
     let artifact = bytes
         .publish_reader(Cursor::new(b"a"), &CancellationToken::new())
         .unwrap();
-    let mut value = serde_json::to_value(&artifact).unwrap();
+    let value = serde_json::to_value(&artifact).unwrap();
     assert_eq!(
         serde_json::from_value::<Artifact>(value.clone()).unwrap(),
         artifact
     );
-    value["id"] = serde_json::json!("../victim");
-    assert!(serde_json::from_value::<Artifact>(value.clone()).is_err());
-    value["id"] = serde_json::json!(artifact.id().to_uppercase());
-    assert!(serde_json::from_value::<Artifact>(value.clone()).is_err());
-    value["id"] = serde_json::json!(artifact.id());
-    value["digest"] = serde_json::json!(artifact.digest().to_uppercase());
-    assert!(serde_json::from_value::<Artifact>(value.clone()).is_err());
-    value["digest"] = serde_json::json!("../bad");
-    assert!(serde_json::from_value::<Artifact>(value).is_err());
+    let uuid = uuid::Uuid::parse_str(artifact.id()).unwrap();
+    let mut refused = vec![
+        ("id", "../victim".to_owned()),
+        ("id", artifact.id().to_uppercase()),
+        ("id", uuid.simple().to_string()),
+        ("id", uuid.urn().to_string()),
+        ("id", uuid.braced().to_string()),
+        ("digest", artifact.digest().to_uppercase()),
+        ("digest", "../bad".to_owned()),
+    ];
+    refused.push(("digest", artifact.digest()[1..].to_owned()));
+    for (field, text) in refused {
+        let mut changed = value.clone();
+        changed[field] = serde_json::json!(text);
+        assert!(
+            matches!(
+                serde_json::from_value::<Artifact>(changed),
+                Err(why) if why.to_string() == Error::InvalidArtifact.to_string()
+            ),
+            "{field} {text:?}"
+        );
+    }
     assert_eq!(objects(&directory).len(), 1);
 }
 

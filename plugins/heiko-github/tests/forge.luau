@@ -140,16 +140,72 @@ t.case("a pull request opens and asks its reviewers", function()
 	)
 end)
 
-t.case("checks are none, running, failed or passed", function()
-	local function checks(runs)
-		local http = route({ ["GET /repos/o/r/commits/abc/check-runs"] = { json = { check_runs = runs } } })
-		return t.run({ http = http, secrets = { github = true } }):forge("checks", { repo = "o/r", head = "abc" })
+-- GitHub's check run states, and the conclusions a completed run has
+-- (a run not completed has none).
+local STATUSES = { "queued", "in_progress", "waiting", "requested", "pending", "completed" }
+local CONCLUSIONS = { "success", "failure", "neutral", "cancelled", "skipped", "timed_out", "action_required", "stale" }
+local FAILING = { failure = true, cancelled = true, timed_out = true, action_required = true }
+
+local function checks(runs)
+	local http = route({ ["GET /repos/o/r/commits/abc/check-runs"] = { json = { check_runs = runs } } })
+	return t.run({ http = http, secrets = { github = true } }):forge("checks", { repo = "o/r", head = "abc" })
+end
+
+-- What the runs come to: any failing run fails them, else any run not
+-- completed keeps them running, else none at all is none, else they
+-- passed.
+local function stand(runs)
+	local running = false
+	for _, run in ipairs(runs) do
+		if FAILING[run.conclusion] then
+			return "failed"
+		end
+		running = running or run.status ~= "completed"
 	end
-	t.equal(checks({}), "none")
-	t.equal(checks({ { status = "in_progress" } }), "running")
-	t.equal(checks({ { status = "completed", conclusion = "success" }, { status = "in_progress" } }), "running")
+	if running then
+		return "running"
+	elseif #runs == 0 then
+		return "none"
+	end
+	return "passed"
+end
+
+local check_run = t.gen.composite(function(draw)
+	local status = draw(t.gen.sampled_from(STATUSES))
+	if status == "completed" then
+		return { status = status, conclusion = draw(t.gen.sampled_from(CONCLUSIONS)) }
+	end
+	return { status = status }
+end)
+
+t.property("checks stand as their runs do, in any order", function(draw)
+	local runs = draw(t.gen.lists(check_run, { max = 6 }))
+	local want = stand(runs)
+	t.equal(checks(runs), want)
+	local shuffled = {}
+	for at, run in ipairs(runs) do
+		shuffled[at] = run
+	end
+	for i = #shuffled, 2, -1 do
+		local j = draw(t.gen.integers({ min = 1, max = i }))
+		shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+	end
+	t.equal(checks(shuffled), want)
+end)
+
+t.case("a failed run fails the checks while another still runs", function()
 	t.equal(checks({ { status = "completed", conclusion = "timed_out" }, { status = "in_progress" } }), "failed")
-	t.equal(checks({ { status = "completed", conclusion = "success" } }), "passed")
+end)
+
+t.case("neutral, skipped and stale runs pass", function()
+	t.equal(
+		checks({
+			{ status = "completed", conclusion = "neutral" },
+			{ status = "completed", conclusion = "skipped" },
+			{ status = "completed", conclusion = "stale" },
+		}),
+		"passed"
+	)
 end)
 
 t.property("a form value encodes to unreserved characters and escapes, and back", function(draw)
