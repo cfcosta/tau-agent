@@ -44,28 +44,65 @@ impl<'a> Frame<'a> {
 /// none, and while the only codes in view are some other QR codes.
 ///
 /// rqrr's own thresholding misses some turned codes whose edges the
-/// lens blurred; the frame cut to black and white at its mean
-/// brightness reads them, so a frame that reads nothing is tried again
-/// that way.
+/// lens blurred; the frame cut to black and white reads them, so a
+/// frame that reads nothing is tried again that way: cut at its mean
+/// brightness, then at the level that best parts its dark pixels from
+/// its bright ones ([`parting`]). A code on a screen is brighter than
+/// what is around it, so the mean falls among the code's blurred edges
+/// where the parting level falls above them.
 pub fn pairing_code(frame: Frame<'_>) -> Option<String> {
     let step = frame.width.max(frame.height).div_ceil(LONG_SIDE);
     let (width, height) = (frame.width / step, frame.height / step);
     let pixel =
         |x: usize, y: usize| frame.luma[y * step * frame.stride + x * step];
     read(width, height, pixel).or_else(|| {
-        let total: u64 = (0..height)
-            .flat_map(|y| (0..width).map(move |x| (x, y)))
-            .map(|(x, y)| u64::from(pixel(x, y)))
-            .sum();
-        let mean = total / (width * height).max(1) as u64;
-        read(width, height, |x, y| {
-            if u64::from(pixel(x, y)) < mean {
-                0
-            } else {
-                255
+        let mut counts = [0u64; 256];
+        for y in 0..height {
+            for x in 0..width {
+                counts[usize::from(pixel(x, y))] += 1;
             }
-        })
+        }
+        let cut = |level: u8| {
+            read(width, height, |x, y| {
+                if pixel(x, y) < level { 0 } else { 255 }
+            })
+        };
+        let (mean, parting) = (mean(&counts), parting(&counts));
+        cut(mean).or_else(|| (parting != mean).then(|| cut(parting))?)
     })
+}
+
+/// The mean level of the pixels counted in `counts`, by level.
+fn mean(counts: &[u64; 256]) -> u8 {
+    let pixels: u64 = counts.iter().sum();
+    let total: u64 = (0u64..).zip(counts).map(|(level, n)| level * n).sum();
+    (total / pixels.max(1)) as u8
+}
+
+/// The level that best parts the pixels counted in `counts` in two:
+/// those under it and those at or over it are each as alike, and the
+/// two as unlike, as a cut can make them (Otsu's method).
+fn parting(counts: &[u64; 256]) -> u8 {
+    let pixels: u64 = counts.iter().sum();
+    let total: u64 = (0u64..).zip(counts).map(|(level, n)| level * n).sum();
+    let (mut under, mut under_total) = (0u64, 0u64);
+    let (mut best, mut best_spread) = (0u8, 0f64);
+    for level in 1..=255u8 {
+        let n = counts[usize::from(level) - 1];
+        under += n;
+        under_total += (u64::from(level) - 1) * n;
+        let over = pixels - under;
+        if under == 0 || over == 0 {
+            continue;
+        }
+        let apart = under_total as f64 / under as f64
+            - (total - under_total) as f64 / over as f64;
+        let spread = under as f64 * over as f64 * apart * apart;
+        if spread > best_spread {
+            (best, best_spread) = (level, spread);
+        }
+    }
+    best
 }
 
 /// The pairing code among the QR codes rqrr finds in a `width` by
@@ -187,6 +224,35 @@ mod tests {
             height,
             padding: 0,
         }
+    }
+
+    /// A code the mean's cut missed at every turn the viewfinder gives
+    /// it (the property below found it): six pixels a module, turned 350
+    /// degrees, in a frame wider than tall. The parting level reads it.
+    #[test]
+    fn a_small_code_turned_back_reads_at_the_parting_level() {
+        let reads = [0., 0.75, -0.75, 1.5].into_iter().any(|turn| {
+            let pose = Pose {
+                degrees: 350. + turn,
+                ..upright(710, 641, 6.)
+            };
+            pairing_code(shoot(CODE, &pose).frame()) == Some(CODE.to_owned())
+        });
+        assert!(reads);
+    }
+
+    /// The parting level of two groups of pixels is between them, and of
+    /// three it parts the one furthest from the others.
+    #[test]
+    fn the_parting_level_is_between_the_groups() {
+        let mut counts = [0u64; 256];
+        counts[0x10] = 500;
+        counts[0xf0] = 700;
+        assert!((0x11..=0xf0).contains(&parting(&counts)));
+        // A grey ground around a code: dark and grey on one side.
+        counts[0x5a] = 5_000;
+        assert!((0x5b..=0xf0).contains(&parting(&counts)));
+        assert_eq!(mean(&counts), 0x64);
     }
 
     /// A code rqrr alone missed: seven pixels a module, turned twelve
