@@ -292,8 +292,9 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     let drawn = page(&host);
     assert!(
         drawn.contains("No unwrap, ever.")
+            // The strip marks block one tick up, 0.85 of its twenty.
             && drawn.contains(
-                r#"{"piece":"toned","text":"block","tone":"neutral","mono":true},{"piece":"toned","text":"0.85","tone":"bad","mono":true}"#
+                r#"{"piece":"ticks","lit":0,"total":20,"tone":"neutral","marked":[6,17],"labels":[{"at":6,"text":"review"},{"at":17,"text":"block"}]}"#
             ),
         "{drawn}"
     );
@@ -388,16 +389,18 @@ fn a_broken_constitution_can_be_removed_and_settings_are_saved() {
     page_act(
         &host,
         "settings",
-        json!({ "blocks_unchecked": true, "max_holds": 5 }),
+        json!({ "value": "block", "max_holds": 5 }),
     );
     let drawn = page(&host);
     assert!(
         // What it could not check is refused: the choice in force is
-        // the primary; and five answers may go back, a square each.
+        // the one picked; and five answers may go back, a square each,
+        // which sets it to that many.
         drawn.contains(
-            r#""label":"refuse","action":"luau-repo/heiko-constitution/settings","args":{"blocks_unchecked":true,"max_holds":5},"kind":"primary""#
-        ) && drawn.contains(r#"{"piece":"square","label":"5","style":"outlined","tone":"warn"}"#)
-            && !drawn.contains(r#"{"piece":"square","label":"6","#),
+            r#"{"piece":"segments","choices":[{"label":"let through","value":"allow"},{"label":"refuse","value":"block"}],"picked":"block","action":"luau-repo/heiko-constitution/settings","args":{}}"#
+        ) && drawn.contains(
+            r#"{"piece":"square","label":"5","style":"outlined","tone":"warn","action":"luau-repo/heiko-constitution/settings","args":{"max_holds":5}}"#
+        ) && !drawn.contains(r#"{"piece":"square","label":"6","#),
         "{drawn}"
     );
 }
