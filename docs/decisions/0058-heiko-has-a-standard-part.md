@@ -71,6 +71,11 @@ each function, and `heiko.text.is_space` against Rust's
 - `heiko.contains` is `heiko.values.contains`. `cmd.jev.noul`, `choice`
   and `score` are gone: no plugin used them, and `cmd.jev.ask` takes
   questions of each kind.
+- `heiko.flag`, `heiko.change` and `uses.change_args` are gone with
+  them: no plugin flagged a call or changed its arguments from
+  `before_tool`, which now allows a call or blocks it. A result a
+  plugin changed is still marked for review, and a view still marks a
+  call (`calls[id].mark`).
 - heiko does not start agents without the standard's files, as it
   does not without a built-in plugin.
 - What stays copied is what was left out on purpose: batched Jev and

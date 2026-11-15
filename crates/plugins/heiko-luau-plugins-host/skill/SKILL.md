@@ -133,7 +133,7 @@ and none of them may await.
 | tool `call`         | the arguments, as `parameters` describes                                  | a JSON value, or `error(message)`                                             | 60 s   |
 | tool `card`         | `{ call, result }`: the call's arguments and the result                   | a view piece, drawn on the call's card                                        | 200 ms |
 | `start`             | `{ input, context, instructions, model, efforts, effort, prefix_tokens }` | `nil`, `heiko.start{ context, instructions, effort, input }` or `heiko.fail(why)` | 2 s    |
-| `before_tool`       | `{ id, name, args }`                                                      | `nil`, `heiko.block(why)`, `heiko.flag(why)` or `heiko.change(args)`                | 2 s    |
+| `before_tool`       | `{ id, name, args }`                                                      | `nil`, or `heiko.block(why)`                                                        | 2 s    |
 | `before_request`    | `{ model, effort, turn, messages, replies }`                              | `nil`, or `heiko.effort(level)`                                                 | 200 ms |
 | `after_tool_result` | `{ id, name, args, ok, text, truncated, images, nested }`                 | `nil`, or `heiko.result(text)`                                                  | 2 s    |
 | `rewrite_context`   | `{ trigger, turn, tokens, window, messages }`                             | `nil`, or `heiko.rewrite{ keep, insert, drop_calls, texts, ... }`               | 10 s   |
@@ -152,11 +152,6 @@ await to its end or its next await. What it awaits is carried out by
 heiko outside that time, with a limit of its own.
 
 - `heiko.block(why)` keeps the call from running; the model reads why.
-  `heiko.flag(why)` lets it run and marks it for the person's review.
-  `heiko.change(args)` lets it run with `args` in place of its own, marked
-  for review too; it needs `uses.change_args = true`, which the person
-  allows as they allow new tools. The tool checks the new arguments as
-  it would the model's, and the plugins after it see them.
 - `heiko.start{ context = { ... }, instructions = "..." }` adds to what
   the run starts with: `context`'s texts open its first message, after
   the ones already there, and `instructions` follow the run's own. The
@@ -485,8 +480,8 @@ so far, to count steps without reading it.
 
 ### `heiko`
 
-- `heiko.plugin(table)`, `heiko.block(why)`, `heiko.flag(why)`,
-  `heiko.start(plan)`, `heiko.change(args)`, `heiko.result(text, options)`,
+- `heiko.plugin(table)`, `heiko.block(why)`, `heiko.start(plan)`,
+  `heiko.result(text, options)`,
   `heiko.rewrite(rewrite)`, `heiko.effort(level)`,
   `heiko.continue(message)`.
 - `heiko.start_chat`, `heiko.steer_chat` and `heiko.allow`: what an action

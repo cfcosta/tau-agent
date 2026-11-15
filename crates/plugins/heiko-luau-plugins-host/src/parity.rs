@@ -78,7 +78,7 @@ pub fn point(name: &str) -> Option<Luau> {
         (STATUS.name, "status"),
         (TRANSCRIPT.name, "note"),
         (CARD.name, "card"),
-        (CARD_BADGE.name, "heiko.flag(why)"),
+        (CARD_BADGE.name, "badge"),
         (RUN_BANNER.name, "banner"),
         (INSPECTOR.name, "inspector"),
         (COMPOSER_BAND.name, "band"),

@@ -71,9 +71,6 @@ pub struct Uses {
     pub jev: bool,
     #[serde(default)]
     pub infer: bool,
-    /// `before_tool` may change a call's arguments (`heiko.change`).
-    #[serde(default)]
-    pub change_args: bool,
     /// The hosts its HTTP requests may reach, by name: `ntfy.sh`.
     #[serde(default)]
     pub network: Vec<String>,
@@ -224,9 +221,6 @@ impl Uses {
         );
         if self.chats && !before.chats {
             grown.push("waking chats".into());
-        }
-        if self.change_args && !before.change_args {
-            grown.push("changing a tool call's arguments".into());
         }
         grown.extend(
             self.network
@@ -1123,7 +1117,6 @@ mod tests {
                 tools: tools.iter().map(|t| t.to_string()).collect(),
                 jev,
                 infer: false,
-                change_args: false,
                 network: Vec::new(),
                 secrets: Vec::new(),
                 model: None,

@@ -133,7 +133,6 @@ async fn a_plugin_declares_what_it_is() {
             tools: vec!["exec_command".into()],
             jev: false,
             infer: false,
-            change_args: false,
             network: Vec::new(),
             secrets: Vec::new(),
             model: None,

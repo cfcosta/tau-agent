@@ -5,7 +5,6 @@
     "tools": [],
     "jev": false,
     "infer": false,
-    "change_args": false,
     "network": [],
     "secrets": [],
     "model": null,

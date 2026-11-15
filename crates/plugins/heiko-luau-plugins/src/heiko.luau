@@ -267,17 +267,6 @@ function heiko.block(reason)
 	return { decision = "block", reason = tostring(reason) }
 end
 
-function heiko.flag(reason)
-	return { decision = "flag", reason = tostring(reason) }
-end
-
--- Lets the call run with `args` in place of its own, when the plugin
--- declares `uses.change_args`; the tool checks them as it would the
--- model's.
-function heiko.change(args)
-	return { decision = "change", args = args }
-end
-
 -- What `start` answers: `context`, texts the run's first message
 -- starts with, `instructions`, added to the run's own, and `effort`, the
 -- reasoning effort the run starts at when it is on auto.
@@ -1297,7 +1286,6 @@ function heiko._describe(plugin)
 			tools = uses.tools or array({}),
 			jev = uses.jev == true,
 			infer = uses.infer == true,
-			change_args = uses.change_args == true,
 			network = uses.network or array({}),
 			secrets = uses.secrets or array({}),
 			model = uses.model or json.null,
