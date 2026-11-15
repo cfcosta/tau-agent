@@ -395,7 +395,7 @@ end)
 
 -- Between turns a pass runs once the context reaches the share of the
 -- window, and then only once it has grown by the cooldown's share since
--- the last pass that asked Jev; an overflow always asks. A pass with no
+-- the last pass that asked the decider; an overflow always asks. A pass with no
 -- call to judge asks nothing and starts no cooldown. The model counts
 -- in whole numbers: `tokens * 100 >= window * share`.
 t.machine("the cooldown and the share of the window gate a pass", {
