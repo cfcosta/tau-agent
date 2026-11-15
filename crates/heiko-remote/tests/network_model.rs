@@ -54,7 +54,6 @@ use std::{
 
 use futures_util::{SinkExt as _, StreamExt as _};
 use hegel::{TestCase, generators as gs};
-use serde_json::{Value, json};
 use heiko_remote::{
     Address,
     ClientError,
@@ -76,6 +75,7 @@ use heiko_remote::{
     outbox::Outbox,
     wire::{Answer, Hello, VERSION},
 };
+use serde_json::{Value, json};
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
     net::{
@@ -1697,4 +1697,31 @@ fn a_request_made_while_away_survives_the_apps_restart() {
     machine.cut(0);
     machine.request(0, false);
     machine.restart_phone(0);
+}
+
+/// A request that reaches the computer only after it revoked the phone
+/// is neither taken nor answered: the phone keeps it rather than lose
+/// it. Held in the proxy until the revoking is saved, so it comes
+/// after, every time. One that comes while the computer revokes is the
+/// model's (`computer_revokes` with `asking`): each answer is checked
+/// against what was taken (`on_down`).
+#[test]
+fn a_request_after_its_phone_is_revoked_is_kept_untaken() {
+    let mut machine = Machine::new(1, true);
+    machine.open_code();
+    machine.pair(0, Some(0));
+    machine.settle();
+    machine.hold(0);
+    let request = machine.next_request;
+    machine.request(0, false);
+    machine.revoke(0, false);
+    machine.release(0);
+    machine.settle();
+    assert!(!machine.taken.contains_key(&request), "taken once revoked");
+    let kept: Vec<Value> = machine.phones[0]
+        .outbox
+        .pending()
+        .map(|heiko_remote::Up::Up { body, .. }| body)
+        .collect();
+    assert_eq!(kept, [json!(request)], "the phone keeps the request");
 }
