@@ -150,7 +150,10 @@ local TRIES = 8
 -- when it fails: one commit, while `rev` is what it read first (ADR
 -- 0056). Every change bumps `rev`, so a commit that finds it moved finds
 -- another run's change since this one read, and writes nothing: the hook
--- runs again, on the model as it was and the store as it is now.
+-- runs again, on the model as it was and the store as it is now. One
+-- that fails with `rev` moved may have read half before that change and
+-- half after, and failed on what no order of the two gives: it runs
+-- again too, and fails only on the store as one change left it.
 local function atomic(f)
 	return function(input, model, env)
 		local thread = coroutine.running()
@@ -165,23 +168,26 @@ local function atomic(f)
 			local w = pending[thread]
 			pending[thread] = nil
 			if not results[1] then
-				error(results[2], 0)
-			end
-			if #w.order == 0 then
-				return table.unpack(results, 2, results.n)
-			end
-			local put, delete = {}, array({})
-			for _, key in ipairs(w.order) do
-				local value = w.values[key]
-				if value == DELETED then
-					table.insert(delete, key)
-				else
-					put[key] = value
+				if heiko.await(cmd.store.get("rev")) == rev then
+					error(results[2], 0)
 				end
-			end
-			local expect = { rev = if rev == nil then json.null else rev }
-			if heiko.await(cmd.store.commit({ expect = expect, put = put, delete = delete })) then
-				return table.unpack(results, 2, results.n)
+			else
+				if #w.order == 0 then
+					return table.unpack(results, 2, results.n)
+				end
+				local put, delete = {}, array({})
+				for _, key in ipairs(w.order) do
+					local value = w.values[key]
+					if value == DELETED then
+						table.insert(delete, key)
+					else
+						put[key] = value
+					end
+				end
+				local expect = { rev = if rev == nil then json.null else rev }
+				if heiko.await(cmd.store.commit({ expect = expect, put = put, delete = delete })) then
+					return table.unpack(results, 2, results.n)
+				end
 			end
 			-- Another run's change came first: the model as it was, in
 			-- place, and again.
