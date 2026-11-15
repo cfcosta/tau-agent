@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO plugin_usage (plugin, at, input_tokens, output_tokens, cost_usd)\n             VALUES (?1, strftime('%Y-%m-%dT%H:%M:%fZ', ?5), ?2, ?3, ?4)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "c7e05ed1a5e02d953e6375771509a480516af60d93a02fb1d4a4effd949fc597"
+}

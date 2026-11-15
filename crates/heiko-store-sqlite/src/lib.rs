@@ -19,22 +19,6 @@ use std::{
 };
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-use serde_json::value::RawValue;
-use sqlx::{
-    Column as _,
-    Connection,
-    Row as _,
-    Sqlite,
-    SqlitePool,
-    pool::PoolConnection,
-    sqlite::{
-        SqliteConnectOptions,
-        SqliteJournalMode,
-        SqlitePoolOptions,
-        SqliteSynchronous,
-    },
-};
 use heiko_store::{
     AgentCost,
     Backend,
@@ -50,6 +34,22 @@ use heiko_store::{
     StoreError,
     Table,
     TurnUsage,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
+use sqlx::{
+    Column as _,
+    Connection,
+    Row as _,
+    Sqlite,
+    SqlitePool,
+    pool::PoolConnection,
+    sqlite::{
+        SqliteConnectOptions,
+        SqliteJournalMode,
+        SqlitePoolOptions,
+        SqliteSynchronous,
+    },
 };
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
@@ -135,11 +135,29 @@ pub struct WriterStats {
     pub longest: Duration,
 }
 
+/// What writes are stamped with: an SQLite time value, `now` unless a
+/// test sets a clock ([`SqliteStore::with_clock`]).
+#[derive(Clone)]
+struct Clock(Arc<dyn Fn() -> String + Send + Sync>);
+
+impl Default for Clock {
+    fn default() -> Self {
+        Self(Arc::new(|| "now".to_owned()))
+    }
+}
+
+impl std::fmt::Debug for Clock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Clock")
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SqliteStore {
     writer: SqlitePool,
     reader: SqlitePool,
     stats: Arc<Mutex<WriterStats>>,
+    clock: Clock,
 }
 
 impl SqliteStore {
@@ -156,6 +174,7 @@ impl SqliteStore {
         // The wait covers the connection and the write lock, which
         // another process can hold.
         let started = Instant::now();
+        let now = (self.clock.0)();
         let mut connection = self.writer.acquire().await.map_err(database)?;
         let mut tx = connection
             .begin_with("BEGIN IMMEDIATE")
@@ -184,13 +203,14 @@ impl SqliteStore {
                              output_tokens = output_tokens + ?3,
                              cost_usd = cost_usd + ?4,
                              turns = turns + ?5,
-                             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', ?6)
              WHERE id = ?1",
             run,
             input_tokens,
             output_tokens,
             usage.cost_usd,
             turns,
+            now,
         )
         .execute(&mut *tx)
         .await
@@ -238,13 +258,14 @@ impl SqliteStore {
             let body: &str = &body;
             sqlx::query!(
                 "INSERT INTO messages (run_id, seq, kind, role, plugin, body, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, strftime('%Y-%m-%dT%H:%M:%fZ', ?7))",
                 run,
                 seq,
                 kind,
                 role,
                 plugin,
                 body,
+                now,
             )
             .execute(&mut *tx)
             .await.map_err(database)?;
@@ -255,10 +276,11 @@ impl SqliteStore {
         if tokens != 0 || usage.cost_usd != 0.0 {
             sqlx::query!(
                 "INSERT INTO spend (run_id, at, tokens, cost_usd)
-                 VALUES (?1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?2, ?3)",
+                 VALUES (?1, strftime('%Y-%m-%dT%H:%M:%fZ', ?4), ?2, ?3)",
                 run,
                 tokens,
                 usage.cost_usd,
+                now,
             )
             .execute(&mut *tx)
             .await
@@ -314,6 +336,7 @@ impl SqliteStore {
             writer,
             reader,
             stats: Arc::default(),
+            clock: Clock::default(),
         })
     }
 
@@ -343,7 +366,20 @@ impl SqliteStore {
             writer: pool.clone(),
             reader: pool,
             stats: Arc::default(),
+            clock: Clock::default(),
         })
+    }
+
+    /// This store, stamping its writes with the time `now` gives, as an
+    /// SQLite time value (`2026-01-01T00:00:00.000Z`), where the default
+    /// is SQLite's own `now`. Tests set it to order writes exactly.
+    #[must_use]
+    pub fn with_clock(
+        mut self,
+        now: impl Fn() -> String + Send + Sync + 'static,
+    ) -> Self {
+        self.clock = Clock(Arc::new(now));
+        self
     }
 
     /// Totals of the time writes spent waiting for the writer, shared by
@@ -471,12 +507,13 @@ impl Backend for SqliteStore {
                 ("subagent", Some(parent.as_str()), *fork_seq)
             }
         };
+        let now = (self.clock.0)();
         sqlx::query!(
             "INSERT INTO runs (id, workflow_id, agent, kind, parent_run_id, fork_seq,
                                model, status, turns, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', ?8,
-                     strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-                     strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                     strftime('%Y-%m-%dT%H:%M:%fZ', ?9),
+                     strftime('%Y-%m-%dT%H:%M:%fZ', ?9))",
             run.id,
             run.workflow_id,
             run.agent,
@@ -485,6 +522,7 @@ impl Backend for SqliteStore {
             fork_seq,
             run.model,
             run.turns,
+            now,
         )
         .execute(&mut *self.writer().await?)
         .await.map_err(database)?;
@@ -533,13 +571,15 @@ impl Backend for SqliteStore {
     ) -> Result<()> {
         let input_tokens = i64::from(usage.input_tokens);
         let output_tokens = i64::from(usage.output_tokens);
+        let now = (self.clock.0)();
         sqlx::query!(
             "INSERT INTO plugin_usage (plugin, at, input_tokens, output_tokens, cost_usd)
-             VALUES (?1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?2, ?3, ?4)",
+             VALUES (?1, strftime('%Y-%m-%dT%H:%M:%fZ', ?5), ?2, ?3, ?4)",
             plugin,
             input_tokens,
             output_tokens,
             usage.cost_usd,
+            now,
         )
         .execute(&mut *self.writer().await?)
         .await
@@ -618,14 +658,16 @@ impl Backend for SqliteStore {
         error: Option<&str>,
     ) -> Result<()> {
         let status = status_name(status);
+        let now = (self.clock.0)();
         let updated = sqlx::query!(
             "UPDATE runs SET status = ?2, result = ?3, error = ?4,
-                             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', ?5)
              WHERE id = ?1",
             run,
             status,
             result,
             error,
+            now,
         )
         .execute(&mut *self.writer().await?)
         .await
@@ -665,13 +707,15 @@ impl Backend for SqliteStore {
     }
 
     async fn reopen_run(&self, run: &str, model: &str) -> Result<RunRecord> {
+        let now = (self.clock.0)();
         let updated = sqlx::query!(
             "UPDATE runs SET status = 'running', result = NULL, error = NULL,
                              model = ?2,
-                             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', ?3)
              WHERE id = ?1 AND status != 'running'",
             run,
             model,
+            now,
         )
         .execute(&mut *self.writer().await?)
         .await

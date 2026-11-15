@@ -11,14 +11,19 @@
     reason = "a test is a synchronous entry point (ADR 0028)"
 )]
 
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use hegel::{
     TestCase,
     generators as gs,
     generators::{Generator as _, PrintableGenerator},
 };
-use serde_json::json;
 use heiko_store::{
     AgentCost,
     Backend as _,
@@ -34,6 +39,7 @@ use heiko_store::{
 };
 use heiko_store_sqlite::{SqliteStore, WriterStats};
 use heiko_testing::block_on_io;
+use serde_json::json;
 
 #[derive(Debug, Clone)]
 struct ModelRun {
@@ -52,14 +58,72 @@ struct ModelRun {
     title: Option<String>,
     /// What each plugin charged: input, output and cost.
     plugins: BTreeMap<&'static str, (i64, i64, f64)>,
+    /// When it was made, and last written to, in the machine's clock.
+    created: u64,
+    updated: u64,
 }
 
 #[derive(Default)]
 struct Model {
     runs: BTreeMap<String, ModelRun>,
+    /// Every write's tokens: the run, when, and how many.
+    spend: Vec<(String, u64, i64)>,
 }
 
 impl Model {
+    /// History: the runs other than sub-agents, last written to first,
+    /// and by id, highest first, among those written to at once.
+    fn recent_runs(&self) -> Vec<String> {
+        let mut runs: Vec<(&String, &ModelRun)> = self
+            .runs
+            .iter()
+            .filter(|(_, m)| !matches!(m.kind, RunKind::Subagent { .. }))
+            .collect();
+        runs.sort_by(|(a, ma), (b, mb)| {
+            (mb.updated, b.as_str()).cmp(&(ma.updated, a.as_str()))
+        });
+        runs.into_iter().map(|(id, _)| id.clone()).collect()
+    }
+
+    /// `parent`'s sub-agents, oldest first, then by id.
+    fn subagents(&self, parent: &str) -> Vec<String> {
+        let mut runs: Vec<(u64, &String)> = self
+            .runs
+            .iter()
+            .filter(|(_, m)| {
+                matches!(&m.kind, RunKind::Subagent { parent: p, .. } if p == parent)
+            })
+            .map(|(id, m)| (m.created, id))
+            .collect();
+        runs.sort();
+        runs.into_iter().map(|(_, id)| id.clone()).collect()
+    }
+
+    /// The tokens `runs` used at `since` or later.
+    fn tokens_since(&self, runs: &[String], since: u64) -> u64 {
+        let tokens: i64 = self
+            .spend
+            .iter()
+            .filter(|(run, at, _)| runs.contains(run) && *at >= since)
+            .map(|(_, _, tokens)| tokens)
+            .sum();
+        u64::try_from(tokens).unwrap()
+    }
+
+    /// What each plugin charged the runs made at `since` or later.
+    fn plugin_spend(&self, since: u64) -> Vec<(String, f64)> {
+        let mut spend: BTreeMap<&str, f64> = BTreeMap::new();
+        for m in self.runs.values().filter(|m| m.created >= since) {
+            for (plugin, (_, _, usd)) in &m.plugins {
+                *spend.entry(plugin).or_default() += usd;
+            }
+        }
+        spend
+            .into_iter()
+            .map(|(plugin, usd)| (plugin.into(), usd))
+            .collect()
+    }
+
     /// The full chain of `run`: inherited entries, then its own.
     fn chain(&self, run: &str) -> Vec<Entry> {
         let this = &self.runs[run];
@@ -248,9 +312,36 @@ fn usage_unprinted(tc: &TestCase) -> TurnUsage {
     }
 }
 
+/// A time `ms` milliseconds into 2026, as the store stamps it.
+fn stamp(ms: u64) -> String {
+    let (day, ms) = (ms / 86_400_000, ms % 86_400_000);
+    let (hour, ms) = (ms / 3_600_000, ms % 3_600_000);
+    let (minute, ms) = (ms / 60_000, ms % 60_000);
+    let (second, ms) = (ms / 1000, ms % 1000);
+    assert!(day < 31, "the clock stays in January");
+    format!(
+        "2026-01-{:02}T{hour:02}:{minute:02}:{second:02}.{ms:03}Z",
+        day + 1
+    )
+}
+
+/// A store whose writes are stamped with `clock`'s time, in
+/// milliseconds: see [`stamp`].
+async fn clocked(clock: &Arc<AtomicU64>) -> Store {
+    let clock = Arc::clone(clock);
+    Arc::new(
+        SqliteStore::memory()
+            .await
+            .unwrap()
+            .with_clock(move || stamp(clock.load(Ordering::SeqCst))),
+    )
+}
+
 /// The store and the model it must match, driven one operation at a
 /// time: create a run (a root, a fork or a sub-agent), append a turn to
-/// it or to a run that does not exist, finish it, or reopen it.
+/// it or to a run that does not exist, finish it, or reopen it. Its
+/// clock moves only before a write, and not always, so writes can share
+/// a time.
 struct StoreMachine {
     /// sqlx needs a real runtime, not a paused one; see the module docs.
     runtime: tokio::runtime::Runtime,
@@ -258,6 +349,8 @@ struct StoreMachine {
     model: Model,
     /// Runs created so far, for fresh ids.
     created: usize,
+    /// The store's clock, in milliseconds into 2026.
+    clock: Arc<AtomicU64>,
 }
 
 impl StoreMachine {
@@ -266,12 +359,30 @@ impl StoreMachine {
             .enable_all()
             .build()
             .unwrap();
-        let store = runtime.block_on(heiko_store_sqlite::memory()).unwrap();
+        let clock = Arc::new(AtomicU64::new(0));
+        let store = runtime.block_on(clocked(&clock));
         Self {
             runtime,
             store,
             model: Model::default(),
             created: 0,
+            clock,
+        }
+    }
+
+    fn now(&self) -> u64 {
+        self.clock.load(Ordering::SeqCst)
+    }
+
+    /// Before a write, time passes or it does not: a millisecond, a
+    /// second either side of one, a minute, or up to a few hours.
+    fn later(&self, tc: &TestCase) {
+        if tc.draw(gs::booleans()) {
+            let by = tc.draw(hegel::one_of!(
+                gs::sampled_from(vec![1, 999, 1000, 60_000]),
+                gs::integers::<u64>().min_value(1).max_value(10_000_000),
+            ));
+            self.clock.fetch_add(by, Ordering::SeqCst);
         }
     }
 
@@ -283,7 +394,11 @@ impl StoreMachine {
     }
 
     fn create(&mut self, tc: &TestCase, kind: RunKind) {
-        let id = format!("run_{}", self.created);
+        self.later(tc);
+        // A drawn letter first, so the ids' order is not the order the
+        // runs were made in.
+        let letter = tc.draw(gs::sampled_from(vec!['a', 'b', 'c']));
+        let id = format!("run_{letter}{}", self.created);
         self.created += 1;
         let agent = tc.draw(gs::sampled_from(vec!["lead", "coder"]));
         let workflow =
@@ -315,6 +430,8 @@ impl StoreMachine {
                 error: None,
                 title: None,
                 plugins: BTreeMap::new(),
+                created: self.now(),
+                updated: self.now(),
             },
         );
     }
@@ -338,10 +455,20 @@ impl StoreMachine {
     }
 
     /// A sub-agent that starts blank, or forks its parent as a
-    /// delegate does, anywhere in it.
+    /// delegate does, anywhere in it. Often it is the first run's, so
+    /// one parent has several.
     #[rule]
     fn create_subagent(&mut self, tc: TestCase) {
-        let parent = self.pick(&tc);
+        let first = self
+            .model
+            .runs
+            .iter()
+            .min_by_key(|(_, m)| m.created)
+            .map(|(id, _)| id.clone());
+        let parent = match first {
+            Some(first) if tc.draw(gs::booleans()) => first,
+            _ => self.pick(&tc),
+        };
         let len = self.model.runs[&parent].own.len() as i64;
         let fork_seq = tc.draw(gs::optional(
             gs::integers::<i64>().min_value(-1).max_value(len + 1),
@@ -355,11 +482,19 @@ impl StoreMachine {
         let run = self.pick(&tc);
         let entries: Vec<Entry> = tc.draw(gs::vecs(entry()).max_size(3));
         let usage = tc.draw(usage());
+        self.later(&tc);
         let last = self
             .runtime
             .block_on(self.store.append_turn(&run, &entries, usage))
             .unwrap();
+        let now = self.now();
+        self.model.spend.push((
+            run.clone(),
+            now,
+            i64::from(usage.input_tokens) + i64::from(usage.output_tokens),
+        ));
         let m = self.model.runs.get_mut(&run).unwrap();
+        m.updated = now;
         m.own.extend(entries);
         assert_eq!(last, m.own.len() as i64 - 1, "last seq of {run}");
         m.input += i64::from(usage.input_tokens);
@@ -382,12 +517,20 @@ impl StoreMachine {
             ))
             .max_size(3),
         );
+        self.later(&tc);
         self.runtime
             .block_on(
                 self.store.append_charged(&run, &entries, total, &plugins),
             )
             .unwrap();
+        let now = self.now();
+        self.model.spend.push((
+            run.clone(),
+            now,
+            i64::from(total.input_tokens) + i64::from(total.output_tokens),
+        ));
         let m = self.model.runs.get_mut(&run).unwrap();
+        m.updated = now;
         m.own.extend(entries);
         m.input += i64::from(total.input_tokens);
         m.output += i64::from(total.output_tokens);
@@ -450,6 +593,7 @@ impl StoreMachine {
         );
         let result = tc.draw(gs::optional(gs::text().max_size(8)));
         let error = tc.draw(gs::optional(gs::text().max_size(8)));
+        self.later(&tc);
         self.runtime
             .block_on(self.store.finish_run(
                 &run,
@@ -458,7 +602,9 @@ impl StoreMachine {
                 error.as_deref(),
             ))
             .unwrap();
+        let now = self.now();
         let m = self.model.runs.get_mut(&run).unwrap();
+        m.updated = now;
         m.status = status;
         m.result = result;
         m.error = error;
@@ -470,7 +616,9 @@ impl StoreMachine {
     fn reopen(&mut self, tc: TestCase) {
         let run = self.pick(&tc);
         let on = tc.draw(gs::sampled_from(vec!["gpt-5.5", "gpt-6-sol"]));
+        self.later(&tc);
         let result = self.runtime.block_on(self.store.reopen_run(&run, on));
+        let now = self.now();
         let m = self.model.runs.get_mut(&run).unwrap();
         if m.status == Status::Running {
             assert!(
@@ -484,6 +632,7 @@ impl StoreMachine {
             assert_eq!(record.error, None);
             assert_eq!(record.model, on, "it goes on on the new model");
             m.status = Status::Running;
+            m.updated = now;
             m.model = on;
             m.result = None;
             m.error = None;
@@ -530,6 +679,59 @@ impl StoreMachine {
             .block_on(self.store.set_title(&run, &title))
             .unwrap();
         self.model.runs.get_mut(&run).unwrap().title = Some(title);
+    }
+
+    /// History holds as many runs as asked, the newest first.
+    #[rule]
+    fn recent_runs_up_to(&mut self, tc: TestCase) {
+        let all = self.model.recent_runs();
+        let limit =
+            tc.draw(gs::integers::<u32>().max_value(all.len() as u32 + 1));
+        let runs = self
+            .runtime
+            .block_on(self.store.recent_runs(limit))
+            .unwrap();
+        let ids: Vec<String> = runs.into_iter().map(|run| run.id).collect();
+        assert_eq!(ids, all[..all.len().min(limit as usize)], "limit {limit}");
+    }
+
+    /// What some runs used, and what plugins charged, from a time on:
+    /// one a write was stamped with, or a millisecond either side, so
+    /// writes at the time itself count and the ones just before do not.
+    #[rule]
+    fn spend_since(&mut self, tc: TestCase) {
+        let mut runs: Vec<String> = Vec::new();
+        for id in self.model.runs.keys() {
+            if tc.draw(gs::booleans()) {
+                runs.push(id.clone());
+            }
+        }
+        if tc.draw(gs::booleans()) {
+            runs.push("run_missing".into());
+        }
+        let mut stamps: Vec<u64> = self
+            .model
+            .spend
+            .iter()
+            .map(|(_, at, _)| *at)
+            .chain(self.model.runs.values().map(|m| m.created))
+            .collect();
+        stamps.push(self.now());
+        let at = tc.draw(gs::sampled_from(stamps));
+        let since =
+            match tc.draw(gs::integers::<i8>().min_value(-1).max_value(1)) {
+                -1 => at.saturating_sub(1),
+                0 => at,
+                _ => at + 1,
+            };
+        let (used, spend) = self.runtime.block_on(async {
+            (
+                self.store.tokens_since(&runs, &stamp(since)).await.unwrap(),
+                self.store.plugin_spend(&stamp(since)).await.unwrap(),
+            )
+        });
+        assert_eq!(used, self.model.tokens_since(&runs, since), "{runs:?}");
+        assert_eq!(spend, self.model.plugin_spend(since));
     }
 
     /// Every read matches the model, after every operation.
@@ -602,6 +804,15 @@ impl StoreMachine {
             assert_eq!(record.result, m.result, "result of {id}");
             assert_eq!(record.error, m.error, "error of {id}");
             assert_eq!(record.title, m.title, "title of {id}");
+            assert_eq!(record.created_at, stamp(m.created), "made {id}");
+            let subagents: Vec<String> = store
+                .subagents(id)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|run| run.id)
+                .collect();
+            assert_eq!(subagents, model.subagents(id), "sub-agents of {id}");
             let costs: Vec<PluginCost> = m
                 .plugins
                 .iter()
@@ -629,6 +840,39 @@ impl StoreMachine {
                 "first prompt of {id}"
             );
         }
+        assert!(store.subagents("run_missing").await.unwrap().is_empty());
+        let recent: Vec<String> = store
+            .recent_runs(u32::MAX)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|run| run.id)
+            .collect();
+        assert_eq!(recent, model.recent_runs(), "history");
+        // From each time a write or a run was stamped with on, and a
+        // millisecond after it, so each boundary is crossed exactly.
+        let mut stamps: Vec<u64> = model
+            .spend
+            .iter()
+            .map(|(_, at, _)| *at)
+            .chain(model.runs.values().map(|m| m.created))
+            .flat_map(|at| [at, at + 1])
+            .collect();
+        stamps.sort_unstable();
+        stamps.dedup();
+        let every: Vec<String> = model.runs.keys().cloned().collect();
+        for since in stamps {
+            assert_eq!(
+                store.tokens_since(&every, &stamp(since)).await.unwrap(),
+                model.tokens_since(&every, since),
+                "tokens from {since}"
+            );
+            assert_eq!(
+                store.plugin_spend(&stamp(since)).await.unwrap(),
+                model.plugin_spend(since),
+                "plugin spend from {since}"
+            );
+        }
         // Every run started after the epoch, so all of them count.
         let mut spend: BTreeMap<&str, f64> = BTreeMap::new();
         for m in model.runs.values() {
@@ -650,8 +894,7 @@ impl StoreMachine {
         // since the epoch; none of them later.
         let ids: Vec<String> =
             model.runs.keys().map(|id| (*id).to_owned()).collect();
-        let total: i64 =
-            model.runs.values().map(|m| m.input + m.output).sum();
+        let total: i64 = model.runs.values().map(|m| m.input + m.output).sum();
         let used = store.tokens_since(&ids, "1970").await.unwrap();
         assert_eq!(used, u64::try_from(total).unwrap());
         assert_eq!(store.tokens_since(&ids, "9999").await.unwrap(), 0);
@@ -780,12 +1023,13 @@ fn large_token_counts_add_exactly() {
     });
 }
 
-/// What runs used since a time: each write's tokens from then on, its
-/// plugins' charges among them, and only the runs asked about.
+/// What runs used from a time on counts a write stamped at that very
+/// time, its plugins' charges among it, and only the runs asked about.
 #[test]
-fn spend_counts_the_runs_asked_from_a_time_on() {
+fn a_write_stamped_at_the_time_asked_from_counts() {
     block_on_io(async {
-        let store = heiko_store_sqlite::memory().await.unwrap();
+        let clock = Arc::new(AtomicU64::new(0));
+        let store = clocked(&clock).await;
         for id in ["main", "chat", "other"] {
             store.create_run(&new_run(id)).await.unwrap();
         }
@@ -794,25 +1038,21 @@ fn spend_counts_the_runs_asked_from_a_time_on() {
             ..TurnUsage::default()
         };
         store.append_turn("main", &[], cost(1000)).await.unwrap();
-        // Writes are stamped to the millisecond.
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        let since = store
-            .query("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', 'now')", 1)
-            .await
-            .unwrap()
-            .rows[0][0]
-            .clone();
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        clock.store(5, Ordering::SeqCst);
         store.append_turn("main", &[], cost(250)).await.unwrap();
-        // A plugin's charge (a compaction, a check) is part of the use.
         store
             .append_charged("chat", &[], cost(500), &[("jev", cost(500))])
             .await
             .unwrap();
         store.append_turn("other", &[], cost(8000)).await.unwrap();
         let ours = ["main".to_owned(), "chat".to_owned()];
-        assert_eq!(store.tokens_since(&ours, &since).await.unwrap(), 750);
-        assert_eq!(store.tokens_since(&ours, "1970").await.unwrap(), 1750);
+        for (ms, used) in [(0, 1750), (4, 750), (5, 750), (6, 0)] {
+            assert_eq!(
+                store.tokens_since(&ours, &stamp(ms)).await.unwrap(),
+                used,
+                "from {ms}"
+            );
+        }
         assert_eq!(store.tokens_since(&[], "1970").await.unwrap(), 0);
     });
 }
@@ -937,117 +1177,58 @@ fn waiting_for_the_write_lock_is_measured() {
     });
 }
 
-/// A run's sub-agents come back by their parent, oldest first, whatever
-/// became of them; a fork is not one, nor a sub-agent's own. Their ids
-/// sort against the order they were made in, so oldest first is not the
-/// ids' order.
+/// Runs made or written to in the same millisecond list by id: history
+/// highest first, a parent's sub-agents lowest first. Otherwise time
+/// decides, whatever the ids say.
 #[test]
-fn subagents_are_found_by_their_parent() {
+fn runs_stamped_at_once_list_by_id() {
     block_on_io(async {
-        let store = heiko_store_sqlite::memory().await.unwrap();
-        for (id, kind) in [
-            ("a", RunKind::Root),
-            (
-                "z",
-                RunKind::Subagent {
-                    parent: "a".into(),
-                    fork_seq: None,
-                },
-            ),
-            (
-                "y",
-                RunKind::Subagent {
-                    parent: "a".into(),
-                    fork_seq: None,
-                },
-            ),
-            (
-                "x",
-                RunKind::Subagent {
-                    parent: "y".into(),
-                    fork_seq: None,
-                },
-            ),
-            (
-                "w",
-                RunKind::Fork {
-                    parent: "a".into(),
-                    fork_seq: 0,
-                },
-            ),
-        ] {
-            store
-                .create_run(&NewRun {
-                    id,
-                    workflow_id: None,
-                    agent: "coder",
-                    kind,
-                    model: "m",
-                    turns: 0,
-                })
-                .await
-                .unwrap();
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
-        store
-            .finish_run("z", Status::Failed, None, Some("broke"))
-            .await
-            .unwrap();
-        let found = store.subagents("a").await.unwrap();
-        let ids: Vec<&str> = found.iter().map(|run| run.id.as_str()).collect();
-        assert_eq!(ids, ["z", "y"]);
-        assert_eq!(found[0].status, Status::Failed);
-        assert!(store.subagents("nobody").await.unwrap().is_empty());
-    });
-}
-
-/// History lists root runs and forks, newest first, without sub-agents.
-#[test]
-fn recent_runs_skip_subagents() {
-    block_on_io(async {
-        let store = heiko_store_sqlite::memory().await.unwrap();
-        for (id, kind) in [
-            ("a", RunKind::Root),
-            (
-                "b",
-                RunKind::Subagent {
-                    parent: "a".into(),
-                    fork_seq: None,
-                },
-            ),
-            (
-                "c",
-                RunKind::Fork {
-                    parent: "a".into(),
-                    fork_seq: 0,
-                },
-            ),
-        ] {
-            store
-                .create_run(&NewRun {
-                    id,
-                    workflow_id: None,
-                    agent: "coder",
-                    kind,
-                    model: "m",
-                    turns: 0,
-                })
-                .await
-                .unwrap();
-        }
-        let runs = store.recent_runs(10).await.unwrap();
-        let ids: Vec<&str> = runs.iter().map(|run| run.id.as_str()).collect();
-        assert_eq!(ids, ["c", "a"]);
-        assert!(!runs[0].created_at.is_empty());
-        assert_eq!(store.recent_runs(1).await.unwrap().len(), 1);
-        // Activity in a run brings it back to the top.
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        let clock = Arc::new(AtomicU64::new(0));
+        let store = clocked(&clock).await;
+        let subagent = |parent: &str| RunKind::Subagent {
+            parent: parent.into(),
+            fork_seq: None,
+        };
+        let make = |id, kind| {
+            let store = &store;
+            async move {
+                store
+                    .create_run(&NewRun {
+                        id,
+                        workflow_id: None,
+                        agent: "coder",
+                        kind,
+                        model: "m",
+                        turns: 0,
+                    })
+                    .await
+                    .unwrap();
+            }
+        };
+        make("a", RunKind::Root).await;
+        make("z", subagent("a")).await;
+        make("y", subagent("a")).await;
+        make(
+            "c",
+            RunKind::Fork {
+                parent: "a".into(),
+                fork_seq: 0,
+            },
+        )
+        .await;
+        let ids = |runs: Vec<heiko_store::RunRecord>| -> Vec<String> {
+            runs.into_iter().map(|run| run.id).collect()
+        };
+        assert_eq!(ids(store.subagents("a").await.unwrap()), ["y", "z"]);
+        assert_eq!(ids(store.recent_runs(10).await.unwrap()), ["c", "a"]);
+        clock.store(1, Ordering::SeqCst);
+        make("x", subagent("a")).await;
         store
             .append_turn("a", &[], TurnUsage::default())
             .await
             .unwrap();
-        let runs = store.recent_runs(10).await.unwrap();
-        assert_eq!(runs[0].id, "a");
+        assert_eq!(ids(store.subagents("a").await.unwrap()), ["y", "z", "x"]);
+        assert_eq!(ids(store.recent_runs(10).await.unwrap()), ["a", "c"]);
     });
 }
 
