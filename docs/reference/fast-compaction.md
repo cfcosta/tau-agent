@@ -116,11 +116,11 @@ the lines dropped, the segments, the requests, the estimated tokens
 before and after, whether the result was replaced, the archive, and
 what Jev cost (`cost`, also charged to the run). The state is stored
 with the run, so an interface shows it again when it reloads the run
-from history. The plugin's view puts a pruned output on its call's card
+from history. The plugin's view puts a pruned output on its call
 (`calls[id].cut`): heiko-ui shows it as two tabs, the terminal and the
 text the model saw ([terminal.md](terminal.md)), with the lines kept and
 the tokens before and after. The ledger page adds up what pruned
-outputs saved.
+outputs saved, in tokens. The interface shows no cost (ADR 0057).
 
 ### Safeguards
 
@@ -370,12 +370,18 @@ its parent's ledger. Its view draws from that state, live or reloaded
 from history:
 
 - the status line, such as `3 pruned · −53%`;
-- a note at each pass (`pass-N`), with what it saved and what Jev read;
-- each call it pruned, marked on its card: `result dropped` or `call
-dropped`, and the cut output's tabs;
+- a note at each pass (`pass-N`): the tokens it pruned, the context
+  before and after as two strips of ticks of the window, with where
+  pruning starts marked on them, and a link to the ledger;
+- each call it pruned, with a stamp at its line's end: `result dropped`
+  or `call dropped`, and the cut output's tabs;
 - the inspector's count of kept calls, with a link to the ledger page;
-- the ledger page: the context before and after the last pass, against
-  the window, and each call's decision with Jev's two answers.
+- the ledger page: what the last pass judged in a line, the context
+  before and after it as the same two strips, how many calls are
+  pinned, kept, result dropped and call dropped as figures, and each
+  call's row: tool, input, size, Jev's two answers (still matters,
+  verbatim) as ticks with the probability, and the decision as a
+  square and its name. No cost is shown.
 
 ### Where it differs from pi
 

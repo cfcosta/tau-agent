@@ -75,26 +75,30 @@ run, so history shows it again:
 
 ## In heiko-ui
 
-- The repository's page (`pages.rules`, its entry under each repository
-  in the sidebar with how many rules and what waits for review):
-  - **Rules:** each rule's places, strictness, what it last caught and
-    what it did over the repository's runs, from the runs' counts in the
-    store.
+- The repository's page (`pages.rules`, its row in the repository's
+  tree in the sidebar, with how many rules and what waits for review):
+  - **Rules:** each rule under its id in a square, with its places,
+    its flag and block marks, what it last caught and what it did over
+    the repository's runs, from the runs' counts in the store; edit and
+    remove beside it, and add a rule above them (New rule when there
+    are none).
   - **Editor:** writes and edits a rule. Enter in the rule's field keeps
     the rule; places are picked from a list, or any `tool.field` typed
     and entered. Lenient / Balanced / Strict thresholds (flag/block at
-    0.5/0.9, 0.3/0.8, 0.2/0.6) or steps of 0.05, and **Try it**: Jev
-    is asked about the repository's latest calls and answers the rule
-    reads, with the same question and state a check uses, one request
-    each, and nothing runs again. The page's actions await the host's Jev
+    0.5/0.9, 0.3/0.8, 0.2/0.6) or steps of 0.05, and **Try it** (try
+    on recent calls): Jev is asked about the repository's latest calls
+    and answers the rule reads, with the same question and state a
+    check uses, one request each, and nothing runs again; each trial's
+    score is a stamp. The page's actions await the host's Jev
     (`cmd.jev`).
   - **Review:** flagged calls and answers, with the rule and the score
-    against its thresholds; Looks fine takes one off the queue, and Open
-    in run opens its run (`heiko.open_run`). Next to it, what the rules
-    handled on their own.
-  - **Settings:** what happens when Jev cannot answer (`on_error`), and
-    how many times one run's answer may be sent back (`max_holds`, 0 to
-    10).
+    as ticks against its thresholds; looks fine takes one off the queue,
+    adjust rule opens the rule in the editor, and open in run opens its
+    run (`heiko.open_run`). Next to it, what the rules handled on their
+    own, each with a stamp of what was done.
+  - **Settings:** what happens when Jev cannot answer (`on_error`: let
+    through or refuse), and how many times one run's answer may be sent
+    back (`max_holds`, 0 to 10, as numbered squares).
   - **Rules that cannot be read:** why, and that runs in the repository
     fail at start until they can (once there is a TypeSafe key). No edit
     can fix them, so the banner offers to remove them, once confirmed, to
@@ -105,13 +109,18 @@ run, so history shows it again:
   screen and kept by heiko-jev in heiko's config directory (`typesafe-key`),
   readable only by the user. Without one, runs are not checked and the
   status line says so.
-- On a call's card (the view's `calls`): a flagged call shows its rule,
-  score and a Review link beside its title, and is marked flagged; a
-  blocked one shows the rule and Jev's score against its marks under it,
-  and is marked blocked with the reason the model got; a call that
-  passed shows each rule's score. Live and in history.
-- A held answer shows as a note with its count (`continuation 1 / 3`).
+- On a call's line in the transcript (the view's `calls`): a flagged
+  call shows its rule, score and a review link at the line's end, and
+  is marked flagged; a blocked one stands under the plugin's mark for a
+  block (止) with the rule, its text, and Jev's score as a strip of
+  ticks with the rule's flag and block marks on it, and is marked
+  blocked with the reason the model got; a call that passed shows each
+  rule's score. Live and in history.
+- A held answer shows as a note under its mark (返): "Held, sent back",
+  the rule, and a numbered square for each time the answer may be sent
+  back, outlined up to this one. An answer that stands flagged says
+  "Flagged for review".
 - The inspector says what the checks did in the run (calls and answers
-  checked, questions asked, blocks, flags and holds with their rules,
-  Jev's cost), and a finished run's links to its first flagged call's
-  rule.
+  checked, questions asked, blocks, flags and holds with their rules),
+  and a finished run's links to its first flagged call's rule. Jev's
+  cost is kept in the state and not shown.

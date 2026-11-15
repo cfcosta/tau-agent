@@ -10,7 +10,7 @@ writes its own sizes or colors. Changing the look is a change to this crate.
 | Module       | What it holds                                                                                  |
 | ------------ | ---------------------------------------------------------------------------------------------- |
 | `theme`      | `Theme` (every color: `Theme::tokyo_night`), `Type` sizes and faces, `sp` spacing, `Tone`      |
-| `components` | Rules, section heads, actions, marks, stamps, ticks, slips, fields, dialogs, tables and more   |
+| `components` | Rules, section heads, actions, marks, stamps, ticks, slips, fields, dialogs, tables: see below |
 | `assets`     | `Icon`, `State` marks, the `Assets` source GPUI loads SVGs from, `Brand` marks, `load_fonts`   |
 | `input`      | `TextInput`, a text field that works with input methods; one line, or `multiline`              |
 | `select`     | Text the person can select and copy: `selection_scope`, `selectable`                           |
@@ -21,12 +21,42 @@ writes its own sizes or colors. Changing the look is a change to this crate.
 | `format`     | Numbers as the interface writes them: `grouped`, `tokens`, `usd`, `clock`                      |
 | `design`     | `check`, which finds raw design values in a crate's sources                                    |
 
-The look is flat and printed: no gradients, soft shadows or rounded
-boxes. A section is a title in the display face over a heavy rule
-(`section_header`), rows are split by hairlines (`rule`), the primary action
-is a blue block over a hard pink offset (`primary_block`), other actions are
-underlined words (`link_action`), quantities are square ticks (`ticks`), and
-state is a small mark (`mark`), a stamp, a square or a slip.
+The look is flat and printed
+([ADR 0057](../../docs/decisions/0057-the-interface-is-flat-and-printed.md)):
+no gradients, soft shadows, rounded boxes or pills, and no warm color
+as a fill. Structure comes from rules, the one decoration is the hard
+offset print, and state is shown with marks, stamps, squares, slips
+and ticks.
+
+## Components
+
+| What                | Components                                                                                         |
+| ------------------- | -------------------------------------------------------------------------------------------------- |
+| Rules and sections  | `rule` (a hairline), `heavy_rule`, `section_header` (a title in the display face over the rule)    |
+| Text                | `text`, `mono`, `title`, `screen_title`, `lead`, `heading`, `label`, `big_figure`, `stat`, `empty` |
+| The primary action  | `primary_block` with `BlockSize::{Small, Medium, Large}`: a blue block over a pink offset          |
+| Other actions       | `link_action` (an underlined word), `text_link`, `link`, `hot_action` (one that needs the person)  |
+| Buttons             | `button` and `big_button` with `ButtonKind`, `square_button`, `icon_button`                        |
+| State               | `mark` and `counted_mark` with `State` (working, asks, failing, met, limit, cap, idle)             |
+| Stamps              | `stamp`, `stamp_in`: a word or two in mono, outlined: `exit 0`, `queued`                           |
+| Squares             | `square` with `SquareStyle::{Quiet, Outlined, Filled}`: a step, a check, a place in a queue        |
+| Slips               | `slip`, `dashed_slip`, `slip_in`: a note or an id on an outlined label over an offset              |
+| Quantities          | `ticks`, `marked_ticks` (thresholds in white), `colored_ticks`, `bar` (a share as ticks)           |
+| Names and values    | `chip` (a word the person can change), `tag`, `key_values`, `repo_mark`, `unread_count`            |
+| Blocks              | `card` and `panel` (under a hairline, no fill or outline), `band` (a result's flat plane), `rail`  |
+| The brand           | `wordmark` (並行 and heiko, overprinted), `logo` (並 alone)                                        |
+| News and dialogs    | `notice`, `note` with `NoteHead` (a plugin's note), `dialog`, `modal`, `tile`                      |
+| Inputs              | `field`, `switch`, `checkbox`, `hints`, `key_hint`                                                 |
+| A reply's blocks    | `table`, `weighted_table`, `code_block`, `numbered_code_block`, `marked_line`, `quote`, `list_item`, `md_heading` |
+| Screens             | `screen`, `phone_body`, `qr_code`, `icon`, `dot`, `live_dot`, `status_mark`                        |
+| Surfaces            | The `Material` trait on any element: `printed` (the offset), `pressed`, `chrome`, `lifted`, `sunk` |
+
+- Use `primary_block` once or twice a screen, for its main action, and
+  `link_action` for the rest.
+- A quantity is ticks, never a smooth bar.
+- `card`, `panel`, `link` and `bar` keep their names from the earlier
+  look and draw in this one. New code uses `section_header`, `rule`,
+  `link_action` and `ticks`.
 
 `init` sets up what the kit needs once per app: it loads the fonts, sets
 `Theme::tokyo_night` as the global theme, binds the text field's keys, and
@@ -55,23 +85,23 @@ Call `init` once, then draw with the theme and the components:
 ```rust
 use gpui::{App, Div, ParentElement as _};
 use heiko_ui_kit::{
-    assets::Icon,
-    components::{ButtonKind, button, card, notice, text},
+    assets::State,
+    components::{
+        BlockSize, link_action, mark, primary_block, section_header, text,
+        ticks,
+    },
     theme::{Type, theme},
 };
 
-fn waiting(cx: &App) -> Div {
+fn cloning(cx: &App) -> Div {
     let t = theme(cx);
-    card(t)
-        .child(text("Cloning heiko-agent", Type::BODY, t.text))
-        .child(notice(
-            Icon::Spinner,
-            "Waiting for GitHub",
-            t.blue,
-            Type::SMALL,
-            t,
-        ))
-        .child(button("Cancel", ButtonKind::Secondary, t))
+    gpui::div()
+        .child(section_header("Cloning", Some("3 of 8".into()), t))
+        .child(mark(State::Working, t))
+        .child(text("heiko-agent", Type::BODY, t.text))
+        .child(ticks(3, 8, t.blue, t))
+        .child(primary_block("Open", BlockSize::Small, t))
+        .child(link_action("cancel", t))
 }
 ```
 

@@ -136,13 +136,16 @@ These are testable without a window:
 
 ## In heiko-ui: the command card
 
+"Card" is the code's name for a tool call's entry in the transcript
+(ADR 0057): it is drawn as a line, with its body under it.
+
 An `exec_command` or `write_stdin` result with `term` details (see [tools.md](tools.md)) is a
 `ToolBody::Terminal(TermOutput)` in the view model (`view.rs`):
 
 - While the command runs, each progress update's chunk is appended in
   `seq` order. Repeated or early chunks are dropped.
 - The result replaces the chunks with its replay bytes and records how
-  the call ended (`exit N`, shown in red on the card; a command left
+  the call ended (`exit N`, a stamp at the call's end, red when not 0; a command left
   running is not a failure).
 - A call returns while its command may go on, so a card shows what that
   call read, not the whole terminal: the next `write_stdin` card shows
@@ -161,18 +164,16 @@ An `exec_command` or `write_stdin` result with `term` details (see [tools.md](to
 - A card first seen finished, such as one from history, is built
   frozen from its replay.
 
-The card is option B of the design:
+The call is a line of the transcript like any other: the tool, the
+command, and how it stands as a stamp at the line's end (`running`,
+`exit 0`, `exit 100`). Its body, under the line (`term_card::body`):
 
-- an inset screen in its own ground and a Ghostty-like palette
-  (`Theme::term`), 12 rows when closed, scrolled to the end, with a
-  scrollbar;
-- a strip on top:
-  - while running: `120×40 · xterm-256color` and a live dot;
-  - when finished: `120×40 · N lines · a–b` (the rows in view), with
-    `copy` and `expand`. `expand` shows every row.
-- When fast compaction pruned the output, the strip holds two tabs:
+- the screen, flat, in a Ghostty-like palette (`Theme::term`). A long
+  output folds to its last rows, and the person opens it;
+- `copy`, which copies the command's text without the terminal's
+  colors and moves;
+- when fast compaction pruned the output, two tabs:
   - `terminal · N lines`;
-  - `model saw · K lines`: the text the model got, with each
-    `[N lines omitted]` drawn as a small blue chip and the header and
-    footer dimmed;
+  - `model saw · K lines`: the text the model got, with each run of
+    omitted lines and the header and footer as quiet lines;
   - an `open full output` link, which opens the archive.

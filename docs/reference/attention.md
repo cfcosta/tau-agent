@@ -1,7 +1,7 @@
 # What needs the person
 
-With several chats going, the sidebar says which need the person, and
-heiko notifies the desktop while its window is not focused. Code:
+With several chats going, the sidebar and Home say which need the
+person, and heiko notifies the desktop while its window is not focused. Code:
 `heiko_ui_remote::attention`, `heiko-ui`'s `host/forecast.rs` and
 `notify.rs`.
 
@@ -16,38 +16,56 @@ landed or dropped), its place in its main chat's landing queue
 (`Workspace::queued`, from the parent's `RunView::landing_queue`), and,
 for a main chat, the files a turn left in conflict on it
 (`RunView::main_conflicts`, while marked; `dismissed` only hides the
-card). Each state has its icon and a line under the title:
+notice in the chat). Each state has a mark (`Attention::marks`, one of
+the kit's seven), a word for lists (`Attention::word`) and a line
+(`Attention::line`):
 
-| State             | Line                                                             | Color | When                                      |
-| ----------------- | ---------------------------------------------------------------- | ----- | ----------------------------------------- |
-| `Landed`          | `landed` at the row's end                                        | dim   | it landed on its parent and closed        |
-| `Dropped`         | `dropped` at the row's end                                       | dim   | it was dropped and closed                 |
-| `Asks`            | Asks you a question                                              | blue  | live, and a plugin waits on an answer     |
-| `Working`         | Working · turn N                                                 | muted | live                                      |
-| `ConflictsOnMain` | Conflicts on main · N files                                      | red   | a main chat a turn left conflicts on      |
-| `Interrupted`     | Interrupted · heiko closed                                         | muted | it was going when heiko closed              |
-| `Failed`          | (none; the red warning)                                          | red   | it stopped with an error                  |
-| `Queued`          | Queued · lands after main's turn, or Queued · needs confirmation | amber | it waits in its main chat's landing queue |
-| `WouldConflict`   | Would conflict in N files                                        | red   | a stopped fork whose landing conflicts    |
-| `ReadyToLand`     | Ready to land · N changes                                        | green | a stopped fork with changes to land       |
-| `Idle`            | (none)                                                           |       | anything else                             |
+| State             | Mark                 | Word        | Line                                                             | When                                      |
+| ----------------- | -------------------- | ----------- | ---------------------------------------------------------------- | ----------------------------------------- |
+| `Landed`          | (none)               | landed      | (none)                                                           | it landed on its parent and closed        |
+| `Dropped`         | (none)               | dropped     | (none)                                                           | it was dropped and closed                 |
+| `Asks`            | asks                 | asks you    | Asks you a question                                              | live, and a plugin waits on an answer     |
+| `Working`         | working              | running     | Working · turn N                                                 | live                                      |
+| `ConflictsOnMain` | failing, by N files  | conflicts   | Conflicts on main · N files                                      | a main chat a turn left conflicts on      |
+| `Interrupted`     | (none)               | interrupted | Interrupted · heiko closed                                       | it was going when heiko closed            |
+| `Failed`          | failing              | failed      | (none)                                                           | it stopped with an error                  |
+| `Queued`          | asks, to confirm     | queued      | Queued · lands after main's turn, or Queued · needs confirmation | it waits in its main chat's landing queue |
+| `WouldConflict`   | failing, by N files  | conflicts   | Would conflict in N files                                        | a stopped fork whose landing conflicts    |
+| `ReadyToLand`     | met                  | to land     | Ready to land · N changes                                        | a stopped fork with changes to land       |
+| `Idle`            | (none)               |             | (none)                                                           | anything else                             |
 
-The first that holds, top to bottom, wins. A working chat keeps a
-plugin's line (a goal's) when it has one. Asking and ready-to-land
-rows are tinted. A queued chat needs confirmation when it would
-conflict in a file the person did not confirm
-(`Waiting::needs_confirmation`).
+The first that holds, top to bottom, wins. A queued chat needs
+confirmation when it would conflict in a file the person did not
+confirm (`Waiting::needs_confirmation`); only then has it a mark.
 
+- **The sidebar** is a rail of tiles (Home, each repository, each
+  agent) and, beside it, the tree of the one chosen. A chat's row in
+  the tree is its title and, at its right edge, its marks
+  (`Marks::shown`), in one order: met, working, limit, failing, asks,
+  each with a count above one. A row with replies not read yet is in
+  bold. A row over others (a chat with its forks and sub-agents folded
+  under it, an agent) shows their marks added to its own.
 - **Order:** a state never moves a row. Main stays first; the rest
   keep newest first.
 - **Ended chats stay listed:** a chat that landed or was dropped is
-  closed, but its row stays, dim, with no line and no close button. A
+  closed, but its row stays, dim, with no marks and no close button. A
   chat closed by hand leaves the sidebar.
-- **The pill:** a repository's row says "N need you": its open chats
-  that ask, would conflict, are ready to land, or wait in the queue
-  for a confirmation, and a main chat with conflicts on it.
+- **What needs the person** (`Attention::needs_you`): open chats that
+  ask, would conflict, are ready to land, or wait in the queue for a
+  confirmation, and a main chat with conflicts on it. A repository's
+  or an agent's tile on the rail has a pip while it holds one, and
+  Home's tile counts them all, with what plugins hold for the person.
+- **Home** lists what happened across runs and agents
+  (`Workspace::since`, at most 14): the runs at work, then those that
+  ask, are ready to land or would conflict, failed, met a goal or
+  stopped at a limit, or have replies not read; what agents left for
+  the person; and each repository's changes the forge lacks. Each is
+  when, its mark, whose it is, one line and one action (answer, read,
+  push). The action of one that waits on the person stands out.
 - **Phones** fold the same facts from the snapshot and the updates
-  they get, so their list says the same.
+  they get. A phone's row leads with the mark and has the line under
+  its name; a working chat keeps a plugin's line (a goal's) when it
+  has one.
 
 ## Landing forecasts
 

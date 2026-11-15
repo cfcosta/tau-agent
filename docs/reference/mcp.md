@@ -681,7 +681,7 @@ or, without a repository, the user's and the settings' alone.
   and a line with who signed in where, the scopes, whether it
   refreshes, and the scope it asks for;
   and its tools, each with its exposure, its name as tools
-  call it, and badges for its hints (read-only, destructive,
+  call it, and its hints (read-only, destructive,
   idempotent, open world); then how many resources, resource templates
   and prompts it offers, and the first 20 of each: a resource's URI,
   title and type, a template's URI template, a prompt's command and
@@ -719,8 +719,8 @@ or, without a repository, the user's and the settings' alone.
     and says why it will not; removing asks twice.
 - **Commands:** each prompt of a server that is on, as
   `Manifest::listed_commands` gives the composer ("Prompts").
-- **The sidebar:** under each repository, "MCP", with its servers
-  counted and a badge for the approvals waiting.
+- **The sidebar:** in each repository's tree, "MCP", with its servers
+  counted, or how many approvals wait as a mark.
 - **The settings pane** (ADR 0029): the page's servers, inside the
   plugin's pane on the Plugins screen and in the inspector, everywhere
   or for the repository the pane is scoped to.
@@ -735,9 +735,10 @@ or, without a repository, the user's and the settings' alone.
   in amber while an approval or a sign-in waits, in red when a server
   failed;
   nothing for a repository without servers.
-- **Tool cards:** a card for every `mcp__` tool: the server and the
+- **Tool calls:** a line for every `mcp__` tool (its card, in the
+  code): the server and the
   tool (from the call's details once it ended, else from the
-  repository's servers), its hints as badges, the arguments, and the
+  repository's servers), its hints, the arguments, and the
   result: `structuredContent` as pretty JSON when the details carry it,
   else the text, at most 40 lines. A failed call is red with the
   result's first line. Calls a codemode script made are rows of its

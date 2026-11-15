@@ -4,11 +4,37 @@ heiko is a coding agent that runs on your Linux desktop and that you can
 also steer from an Android phone. It works in your GitHub repositories:
 each chat gets its own jj workspace, the model commits its own work, and
 that work lands as stacked changes you can push to GitHub. It runs on
-your ChatGPT plan through Sign in with ChatGPT, so there are no API keys.
+your ChatGPT plan through Sign in with ChatGPT, so there are no API keys
+and the interface shows no dollar amounts.
 
-![A chat in heiko: the transcript with its tool cards, beside the repositories and their chats](docs/screenshots/run.png)
+The name is 並行 (heikō), "in parallel": several agents work side by
+side.
+
+![A chat in heiko: the transcript with its tool calls, beside the sidebar's rail and the repository's chats](docs/screenshots/run.png)
+
+The screenshots here were taken before the interface was redrawn
+([ADR 0057](docs/decisions/0057-the-interface-is-flat-and-printed.md))
+and show the earlier look.
 
 ## A tour
+
+### Home and the sidebar
+
+Home is where a run starts: what to do, where it starts and on which
+model, and Start. Beside it is a list of what happened since you last
+looked, across every repository and agent: a chat that asks you
+something, one ready to land, one that failed, changes not pushed yet.
+Each has the one thing to do about it.
+
+The sidebar is a rail of tiles, one per repository and one per agent,
+and beside it the tree of the one you chose: its chats, with their
+forks and sub-agents under them, and what plugins keep for it. A small
+mark at a row's end says what state it is in, and a tile shows when
+something inside needs you.
+
+In a chat, what you wrote and what the model answered lead. A tool call
+is one line, with its name, its arguments and what came back, and it
+opens to show the rest.
 
 ### The main chat leads
 
@@ -32,12 +58,12 @@ turn to resolve. While the parent is working, landings wait in a queue.
 </p>
 
 Forks of the same checkpoint can be compared side by side: turns, tokens,
-cost, tests and code. The model reaches version control only through
-its own tools, which leave cards you can open.
+tests and code. The model reaches version control only through
+its own tools, whose calls you can open in the chat.
 
 <p>
   <img src="docs/screenshots/compare.png" alt="Two forks compared side by side" width="49%">
-  <img src="docs/screenshots/vcs.png" alt="A finished run with its version-control cards" width="49%">
+  <img src="docs/screenshots/vcs.png" alt="A finished run with its version-control calls" width="49%">
 </p>
 
 ### GitHub
@@ -47,7 +73,7 @@ description written from the run.
 
 <p>
   <img src="docs/screenshots/pull-request.png" alt="Opening a pull request from a chat" width="49%">
-  <img src="docs/screenshots/pushed.png" alt="The card of a push to origin/main" width="49%">
+  <img src="docs/screenshots/pushed.png" alt="A push to origin/main, in its chat" width="49%">
 </p>
 
 ### Talking with the agent
@@ -108,6 +134,8 @@ links it) and a half on the computer that does the work, and each has
 its settings in a pane on the Plugins page. You can write your own in
 Luau: `/plugin` and what it should do, in any chat. heiko keeps them in a
 repository of its own, tests them, and loads each change once it lands.
+A plugin's notes in a chat can draw small graphics from the
+interface's own pieces: ticks, marks, stamps, squares and slips.
 
 <p>
   <img src="docs/screenshots/plugins.png" alt="The built-in plugins and their settings" width="49%">
@@ -178,7 +206,7 @@ cheap decisions.
 
 ### Finding your way
 
-History lists every run in every repository, with what it cost, and
+History lists every run in every repository, by day, and
 search reaches any run, chat or action.
 
 <p>

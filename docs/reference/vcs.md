@@ -1181,8 +1181,8 @@ A child run (a fork, or a sub-agent) lands on its parent by restacking
   (`Host::land_dry`, the same `LandingPlan` and `Vcs::land` with
   `confirm` off), but with `Reading::Forecast`: it writes nothing,
   neither catching the parent up nor making workspaces, so it can run
-  in the background, and it keeps nothing for Land to confirm. The
-  sidebar's "Ready to land" and "Would conflict" come from it
+  in the background, and it keeps nothing for Land to confirm. A
+  chat's ready-to-land and would-conflict marks come from it
   ([attention.md](attention.md)).
 
 ## Sweeping at start
@@ -1450,8 +1450,9 @@ GitHub and moves the main chat onto trunk (`Vcs::move_onto`), which
 puts the main chat's commits on top of GitHub's new ones; the main chat
 must not be running then. The catalog's `Repo::unpushed` counts
 `unpushed()` for each repository from GitHub; the main chat's header
-and sidebar row show it with a Push button, and its chat ends with a
-card for the last push, or for GitHub's moved branch with Fetch and
+shows it with Push, the repository's tree in the sidebar says how far
+ahead it is, Home lists it with push as its action, and its chat ends
+with a notice of the last push, or for GitHub's moved branch with Fetch and
 push (`WorkspaceEvent::Push`, `HostUpdate::Pushed`).
 
 ## Pull requests

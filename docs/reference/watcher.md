@@ -88,14 +88,17 @@ nothing but `checked`.
 ## What the person sees
 
 - **Annotation** under the step that asked, a keyed note of the view
-  (`notes.n0`), drawn again in place as it changes: the tag in amber
-  and the line, and the buttons
-  **Learn more** (the stored explanation inline, no second request),
-  **Knew this already**, **Chat about it** and **Dismiss**.
+  (`notes.n0`), drawn again in place as it changes: under the plugin's
+  mark (報), the line with its tag as a stamp, and the actions
+  **knew this already** (the primary one), **learn more** (the stored
+  explanation inline, no second request), **chat about it** and
+  **dismiss**. With the explanation open, only knew this already and
+  chat about it are left. An answered note has no actions and is grey
+  once known or dismissed; a known one says "You knew this.".
 - **Band** (`points::COMPOSER_BAND`) between the transcript and the
   composer, same line and actions, while the note is new. Any answer, or
   the second message written past it, takes it away.
-- **Chat about it** puts `Here is a note offered by a side agent:` and
+- **chat about it** puts `Here is a note offered by a side agent:` and
   the quoted line in the composer. Control characters go, and `@` and
   words starting `ultra` get a zero-width space so the composer does not
   read them as mentions or keywords (`watch.chat_text`); the action

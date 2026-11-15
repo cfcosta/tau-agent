@@ -577,7 +577,17 @@ heiko-luau-plugins the plugins repository.
   every contribution, page, settings pane, popover and part of a card
   is a `tree::Node`, plain data the interface draws with its own
   pieces and widgets, on the computer and the phone alike. A view
-  reads its `ViewCx` and returns the tree; it asks for nothing. A
+  reads its `ViewCx` and returns the tree; it asks for nothing. The
+  tree has the pieces the interface's own screens show state with
+  (ADR 0057): `Ticks` (a quantity as square ticks, with thresholds
+  marked), `Mark` (a state's small mark, with a count), `Stamp`,
+  `Square`, `Slip`, `Figure` and `Kanji` (a note's large mark); in
+  Luau, `ui.ticks`, `ui.mark`, `ui.stamp`, `ui.square`, `ui.slip`,
+  `ui.figure` and `ui.kanji`. A button's kind says whether it is the
+  primary action, drawn as the offset block, or an underlined word.
+  A tool call's part of the tree is still called its card (`AtCard`,
+  `CardView`, a Luau tool's `card`): it draws as a line of the
+  transcript, with its body under it when open. A
   button, a switch, an input's Enter or a key in one of its trees
   names one of the plugin's actions, which the interface hands to
   `UiPlugin::on_action` with its arguments and a `ViewCx` made again
@@ -645,8 +655,9 @@ settings)` gives what commands in a repository start through: a
   drawn, in order. Core names no plugin in either place
   ([0006](../decisions/0006-plugin-crates.md)).
 - **Kinds of repository.** `points::REPO_KIND`
-  (`Point<AtApp, RepoKind>`) gives a section of the sidebar and of the phone's list to
-  the repositories of one kind: its `kind` as the catalog's `Repo::own`
+  (`Point<AtApp, RepoKind>`) gives the repositories of one kind their
+  own tiles on the sidebar's rail, a tree of the kind's pages, and a
+  section of the phone's list: its `kind` as the catalog's `Repo::own`
   names it (`agent`), its `title`, the `page` its heading opens, the
   `new` page its `+` opens, and the line it shows while there are none.
   `points::KIND_ROW_END` (`Point<AtRepo>`) is drawn at a row's end
@@ -712,7 +723,8 @@ settings)` gives what commands in a repository start through: a
   Signed out since, it fails with `AskError::Unavailable`. Every
   attempt's usage is booked to the plugin alone with
   `Backend::charge_plugin` (the `plugin_usage` table): no run's totals
-  count it, and `plugin_spend`, the Plugins screen's spend, does.
+  count it, and `plugin_spend` does. The interface shows no spend
+  (ADR 0057).
   Memory's notes requests run on either: `write_notes` takes an `Asker`,
   a run's `PluginCtx` or `Outside { model, cancel }`.
 
@@ -756,8 +768,8 @@ settings)` gives what commands in a repository start through: a
   before (a repository importing, updating or failing to, then an
   update's result), the jobs going on, and what plugins add at
   `points::ACTIVITY` (`Point<AtApp>`, every contribution drawn, in
-  order). Each job is a line: its plugin's name, its label, a small meter
-  for its fraction and its line. Up to `JOBS_SHOWN` (2) show side by
+  order). Each job is a line: its plugin's name, its label, its
+  fraction as ticks and its line. Up to `JOBS_SHOWN` (2) show side by
   side; more collapse to "N jobs ·" and the first. Clicking a job opens
   its page (`JobInfo::page`), else its plugin's own (`PluginInfo::page`);
   with neither it is not a link. The bar shows while any of these has
@@ -1299,7 +1311,7 @@ Built: `plugins/heiko-constitution`, a Luau plugin heiko comes with
   from looping.
 - **State:** the rules, what waits for review and what the checks did
   are in the plugin's store in each repository; each run's checks are
-  in its model, drawn on the calls' cards, as notes and in the
+  in its model, drawn on the calls' lines, as notes and in the
   inspector.
 - **Risk:** the state is untrusted. File content and tool output can
   try to steer Jev, which its docs warn about. Rules for destructive
@@ -1339,8 +1351,8 @@ with (ADR 0050). Its reference is [fast-compaction.md](fast-compaction.md).
   is one full resend and then deltas again. The cooldown keeps full
   resends rare.
 - **State:** the ledger, each pass and each pruned output, in the run's
-  model, which forks inherit. Its view marks the pruned calls'
-  cards, writes a note at each pass, and draws the ledger page.
+  model, which forks inherit. Its view stamps the pruned calls,
+  writes a note at each pass, and draws the ledger page.
 
 ### `heiko-compaction`: summarize what the window cannot hold
 
@@ -1481,9 +1493,9 @@ Its decision is [0039](../decisions/0039-chats-wake-themselves-later.md).
    usage, and is also stored per plugin (`plugin_costs`). The run emits
    each charge as `RunEvent::PluginCharged { plugin, usage }`, after
    `RunStart` for a charge made in `start`. A charge made in `finish`
-   comes after `RunEnd`, so it is only stored. Interfaces show what
+   comes after `RunEnd`, so it is only stored. Interfaces fold what
    plugins cost from these, not from the costs plugins put in their
-   reports.
+   reports, and show no amounts (ADR 0057).
 8. Tools call tools: `ToolCtx::call` and `catalog`, `Exposure`,
    `ToolOutput::structured`, `ToolSource`, `RunPlan::add_tool` and
    `ToolCtx::plugin` (see "Nested calls"). Tool events and the plugins'

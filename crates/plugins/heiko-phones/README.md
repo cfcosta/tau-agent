@@ -12,7 +12,7 @@ phone may not have.
 
 | Module   | What it holds                                                                    |
 | -------- | -------------------------------------------------------------------------------- |
-| `lib`    | The UI half: `PhonesData`, `Act`, the Phones page and its Everywhere entry       |
+| `lib`    | The UI half: `PhonesData`, `Act`, the Phones page and its entry under every tree  |
 | `bridge` | `Phones`: the server, the pairing code, the settings in `~/.config/heiko/phones`   |
 | `half`   | The host half: makes `Phones` from the host's window and starts it as heiko starts |
 

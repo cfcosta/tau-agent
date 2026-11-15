@@ -105,14 +105,19 @@ the computer started.
 - **The person's own answer** is the last row: picking it puts the keys
   in its field, and Enter there takes what it holds as the answer
   (alongside the choices, in a checklist); Esc goes back to the rows.
+- **The panel's parts:** "heiko asks" with which question is in view;
+  a tab per question (✓ once answered) and `submit` for the review;
+  the question, large, over its choices as ruled rows; then add a note,
+  decline and cancel run as words, and Next as the primary action. The
+  choice picked is drawn as the primary one.
 - **Notes** belong to a question's answer. Enter in the note keeps it,
   and Esc closes it. A tab with a note shows a pencil, and a kept note
   shows under the rows.
 - **Previews:** when a one-answer question's choices have previews,
   the rows sit beside the preview of the row in focus.
-- **Review:** each header and its answer; Edit goes back to that
-  question. Send answers waits until all are answered; Decline to
-  answer and Cancel run are always there.
+- **Review:** each header and its answer; edit goes back to that
+  question. Send answers waits until all are answered, and says how
+  many are left; decline and cancel run are always there.
 - **A panel takes the keys** whenever it comes back to the composer's place,
   as on returning to a chat that waits, unless a message is being written.
 - **A key that crosses the answers** is dropped: an action counts only on the
@@ -125,11 +130,13 @@ the computer started.
 - **Several runs:** each waiting call keeps its own draft, in its run.
   A panel takes the keys once, as it first appears; once answered, the
   composer has them again.
-- **The card** of an `ask` call shows the headers, and each answer with
-  its note; while it waits, "Answer in the panel below."
+- **The call** of an `ask` in the transcript shows the headers, and
+  each answer with its note; while it waits, the asks mark and "waiting
+  for you"; once declined, "declined".
 - **Elsewhere:** while a call waits, the view's `asks` is its first
   question, and its status says how many questions wait. The run's row
-  in the sidebar and on a phone says "Asks you a question", and a
+  in the sidebar has the asks mark, on a phone it says "Asks you a
+  question", Home lists it with answer as its action, and a
   desktop notification shows the question while heiko's window is not
   focused ([attention.md](attention.md)).
 
@@ -139,7 +146,7 @@ the computer started.
   the text the model reads, and the draft and its keys.
 - `src/escaped.luau`: the characters a quoted header writes as
   `\u{...}`.
-- `src/panel.luau`: the panel and the card.
+- `src/panel.luau`: the panel and the call's body (`panel.card`).
 - `src/plugin.luau`: the tool, the actions, `start`, `run_end` and the
   view.
 - `tests/`: the cases and properties, and `fixtures.luau`, which makes

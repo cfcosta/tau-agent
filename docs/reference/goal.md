@@ -26,7 +26,9 @@ A run's input sets it:
   Quotes that do not wrap the whole condition are plain characters.
 - `--continuations` (default 10) is how many times the goal may send
   the model back. `--budget` (default $2.00) caps what the goal costs:
-  the run's turns and the checks, from when it was set.
+  the run's turns and the checks, from when it was set. It is in US
+  dollars, though the interface shows no amounts: what it should be set
+  in is open (ADR 0057).
 - The model does not see the command. Its input is `/goal <condition>`
   and a paragraph on how goals work (`goal.INSTRUCTIONS`), which
   `start` gives it in place of the message (`heiko.start{ input }`). The
@@ -61,8 +63,9 @@ by it; the goal's own continuations are what limit it.
 The goal is in the run's model (`model.goal`), which a resumed run and
 a fork inherit: `goal` (`condition`, `max_continuations`, `budget`,
 `status`, `continuations`, `spent`, `checks`, `error`), the notes in the
-transcript, and how the messages it knows draw. The banner's buttons
-are its `act` action (`pause`, `edit`, `clear`, `keep_going`), and the
+transcript, and how the messages it knows draw. The banner's actions
+are its `act` action (`pause`, `edit`, `clear`, and `keep_going` for
+both resume and raise the limit), and the
 `/goal` command its command: each changes the model. A check that waits
 on Jev reads the model again once Jev answers: a Pause, an edit or a
 Clear pressed meanwhile stands, and the answer, which was for a goal no
@@ -72,9 +75,26 @@ longer active, is dropped.
 
 - heiko-goal checks a run only with a TypeSafe key, and never a
   sub-agent; the state says whether the run did (`checks`).
-- Without a key, `/goal` and Keep going say a goal needs Jev and do
-  nothing, and the banner of a goal still to be met says it is not
-  checked. On a run going on that started without a key, `/goal` keeps
+- **The banner**, above the transcript while the conversation has a
+  goal, under the plugin's mark (的): the condition and where it stands
+  (`not met`, `paused`, `met`, `stopped · not met`), each check as a
+  square (a cross for one not met, a tick for the one that met it, then
+  the next check's number, or a filled square where it stopped), and
+  the continuations as ticks with `N of M`. Its actions are words:
+  pause, edit and clear on an active goal; resume on a paused one; new
+  goal once met; raise the limit on one that stopped. What the goal
+  spent is not shown.
+- **The inspector's section:** the condition, the continuations as
+  ticks, and every check, newest first: its square, what followed
+  (sent back, the run stopped, stopped here), its turn and Jev's
+  probability.
+- **Notes:** a goal met or stopped is a note under the mark with its
+  checks as squares; a stopped one offers raise the limit and clear
+  while the goal still stands stopped. A `/goal` message draws as the
+  command and its condition, with a stamp of its continuations.
+- Without a key, `/goal`, resume and raise the limit say a goal needs
+  Jev and do nothing, and the banner of a goal still to be met says it
+  is not checked. On a run going on that started without a key, `/goal` keeps
   the goal for the next message, says so, and does not tell the model
   it is checked now.
 - `/goal` in a chat going on sets the goal and tells the model; in a
