@@ -144,7 +144,7 @@ end)
 -- (a run not completed has none).
 local STATUSES = { "queued", "in_progress", "waiting", "requested", "pending", "completed" }
 local CONCLUSIONS = { "success", "failure", "neutral", "cancelled", "skipped", "timed_out", "action_required", "stale" }
-local FAILING = { failure = true, cancelled = true, timed_out = true, action_required = true }
+local FAILING = { failure = true, cancelled = true, timed_out = true, action_required = true, stale = true }
 
 local function checks(runs)
 	local http = route({ ["GET /repos/o/r/commits/abc/check-runs"] = { json = { check_runs = runs } } })
@@ -197,14 +197,23 @@ t.case("a failed run fails the checks while another still runs", function()
 	t.equal(checks({ { status = "completed", conclusion = "timed_out" }, { status = "in_progress" } }), "failed")
 end)
 
-t.case("neutral, skipped and stale runs pass", function()
+t.case("neutral and skipped runs pass", function()
 	t.equal(
 		checks({
 			{ status = "completed", conclusion = "neutral" },
 			{ status = "completed", conclusion = "skipped" },
-			{ status = "completed", conclusion = "stale" },
 		}),
 		"passed"
+	)
+end)
+
+t.case("a stale run fails the checks", function()
+	t.equal(
+		checks({
+			{ status = "completed", conclusion = "success" },
+			{ status = "completed", conclusion = "stale" },
+		}),
+		"failed"
 	)
 end)
 

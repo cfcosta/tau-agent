@@ -380,6 +380,8 @@ function github.checks(repo, commit)
 			or conclusion == "timed_out"
 			or conclusion == "cancelled"
 			or conclusion == "action_required"
+			-- A stale run never finished in time: it did not pass.
+			or conclusion == "stale"
 		then
 			failed = true
 		end
