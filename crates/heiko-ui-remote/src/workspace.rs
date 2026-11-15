@@ -1677,6 +1677,18 @@ impl Workspace {
 
     /// Opens or closes the folding card (a log, diff or show) of
     /// `call_id` in `run`.
+    /// Scrolls the chat by `distance`, down when positive, as the wheel
+    /// does: it stops following the run's end.
+    pub fn scroll_chat(
+        &mut self,
+        distance: gpui::Pixels,
+        cx: &mut Context<Self>,
+    ) {
+        self.follow = false;
+        self.transcript.scroll_by(distance);
+        cx.notify();
+    }
+
     pub fn toggle_card(
         &mut self,
         run: &RunId,

@@ -315,6 +315,16 @@ fn demo_workspace(
 ) -> Workspace {
     let mut runs = vec![demo::retry_after()];
     runs.extend(demo::history());
+    // Under stress: a second run that plays beside the first, and one
+    // that already holds ten times as much, to open cold.
+    if let Some(rounds) = args.stress {
+        runs.push(demo::stress_run(STRESS_BESIDE));
+        let mut long = demo::stress_run(STRESS_LONG);
+        for (_, update) in demo::stress_for(long.id.clone(), rounds * 10) {
+            long.update(update);
+        }
+        runs.push(long);
+    }
     let mut workspace =
         Workspace::new("heiko-agent", runs, demo::catalog(), window, cx);
     workspace.set_phone_preview(args.phone, cx);
@@ -326,34 +336,7 @@ fn demo_workspace(
         workspace.navigate(Route::Run(demo::run_id()), cx);
     }
     if let Some(rounds) = args.stress {
-        workspace.replay(demo::run_id(), demo::stress(rounds), cx);
-        // The person leaves the run and comes back while it plays: a
-        // long chat is laid out anew each time.
-        cx.spawn(async move |this, cx| {
-            let mut away = false;
-            loop {
-                cx.background_executor()
-                    .timer(std::time::Duration::from_secs(3))
-                    .await;
-                away = !away;
-                let route = if away {
-                    Route::Home
-                } else {
-                    Route::Run(demo::run_id())
-                };
-                let went = this.update(cx, |ws, cx| {
-                    let _span = heiko_perf::span(
-                        "navigate",
-                        if away { "home" } else { "run" },
-                    );
-                    ws.navigate(route, cx)
-                });
-                if went.is_err() {
-                    return;
-                }
-            }
-        })
-        .detach();
+        stress(&mut workspace, rounds, cx);
     } else if let Some(steps) = args.steps {
         for (_, update) in demo::script().into_iter().take(steps) {
             workspace.update_run(&demo::run_id(), update, cx);
@@ -366,6 +349,73 @@ fn demo_workspace(
         workspace.replay(demo::run_id(), demo::script(), cx);
     }
     workspace
+}
+
+/// The stress run that plays beside the demo's own, and the long one
+/// that is there from the start.
+const STRESS_BESIDE: &str = "stress-beside";
+const STRESS_LONG: &str = "stress-long";
+
+/// Plays the stress run in two runs at once, with the big calls of the
+/// long run open, and goes from one place to the next every three
+/// seconds as a person would: Home, the first run, the long one, where
+/// it scrolls back through the chat, then the second.
+fn stress(
+    workspace: &mut Workspace,
+    rounds: usize,
+    cx: &mut gpui::Context<Workspace>,
+) {
+    let beside = demo::stress_run(STRESS_BESIDE).id;
+    let long = demo::stress_run(STRESS_LONG).id;
+    workspace.replay(demo::run_id(), demo::stress(rounds), cx);
+    workspace.replay(
+        beside.clone(),
+        demo::stress_for(beside.clone(), rounds),
+        cx,
+    );
+    for round in (0..rounds * 10).filter(|round| demo::stress_is_big(*round)) {
+        for call in demo::stress_calls(round) {
+            workspace.toggle_card(&long, &call, cx);
+        }
+    }
+    cx.spawn(async move |this, cx| {
+        let places = [
+            ("home", Route::Home),
+            ("run", Route::Run(demo::run_id())),
+            ("long run", Route::Run(long)),
+            ("run beside", Route::Run(beside)),
+        ];
+        for (name, route) in places.into_iter().cycle() {
+            cx.background_executor()
+                .timer(std::time::Duration::from_secs(3))
+                .await;
+            let went = this.update(cx, |ws, cx| {
+                let _span = heiko_perf::span("navigate", name);
+                ws.navigate(route, cx)
+            });
+            if went.is_err() {
+                return;
+            }
+            // In the long run, back through what was said: each part is
+            // laid out as it comes into view, the open calls too.
+            if name != "long run" {
+                continue;
+            }
+            for _ in 0..40 {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(60))
+                    .await;
+                let scrolled = this.update(cx, |ws, cx| {
+                    let _span = heiko_perf::span("scroll", "long run");
+                    ws.scroll_chat(px(-900.), cx)
+                });
+                if scrolled.is_err() {
+                    return;
+                }
+            }
+        }
+    })
+    .detach();
 }
 
 /// Whether the desktop animates, from GNOME's `enable-animations`

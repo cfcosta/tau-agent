@@ -2618,9 +2618,35 @@ fn edit(path: &str, new_text: &str, lines: &str) -> (Value, ToolOutput) {
 /// (`heiko --demo --stress <rounds>`, with `HEIKO_PERF`): each round is a
 /// turn that thinks, says a few paragraphs with code in them, reads a
 /// file, edits one and runs a command, an update every few
-/// milliseconds; then one long answer.
+/// milliseconds; then one long answer. Every tenth round is a big one
+/// ([`stress_is_big`]): a file of 1 500 lines, a diff of 300 and 600
+/// lines from the command.
 pub fn stress(rounds: usize) -> Vec<Step> {
-    let mut s = Script::new();
+    stress_for(run_id(), rounds)
+}
+
+/// Whether `round` of a stress run is one of its big ones.
+pub fn stress_is_big(round: usize) -> bool {
+    round % 10 == 9
+}
+
+/// The calls of `round` of a stress run: its read, its edit and its
+/// command.
+pub fn stress_calls(round: usize) -> [String; 3] {
+    ["read", "edit", "test"].map(|call| format!("s{round}-{call}"))
+}
+
+/// A run for [`stress_for`] to play in, or to have played: `id` in the
+/// demo's repository.
+pub fn stress_run(id: &str) -> RunView {
+    RunView::new(RunId(id.into()), id, "coder", "gpt-5.5")
+        .in_repo("heiko-agent")
+        .started("today 04:31")
+}
+
+/// [`stress`], in `run`.
+pub fn stress_for(run: RunId, rounds: usize) -> Vec<Step> {
+    let mut s = Script::for_run(run);
     let run = s.run.clone();
     s.at(0, RunUpdate::User("Go through every module and tidy it.".into()));
     s.event(
@@ -2649,24 +2675,35 @@ pub fn stress(rounds: usize) -> Vec<Step> {
              cover the header's two forms, seconds and a date."
         ));
         let path = format!("crates/heiko-ai/src/module_{round}.rs");
+        let big = stress_is_big(round);
+        let [read, edited, test] = stress_calls(round);
         s.tool(
             20,
-            &format!("s{round}-read"),
+            &read,
             "read",
             json!({ "path": path }),
-            lines(160),
+            lines(if big { 1_500 } else { 160 }),
         );
-        let (args, output) = edit(
-            &path,
-            "base.min(policy.max)",
+        let changed: String = if big {
+            (0..150)
+                .map(|n| {
+                    format!(
+                        "-    let delay_{n} = self.base * 2u32.pow({n});\n\
+                         +    let delay_{n} = policy.delay({n});\n"
+                    )
+                })
+                .collect()
+        } else {
             "-    let base = self.base * 2u32.pow(attempt);\n\
              +    let base = policy.base.mul_f64(2f64.powi(attempt as i32));\n\
              \x20   ...\n\
              -    base\n\
-             +    base.min(policy.max)\n",
-        );
-        s.tool(20, &format!("s{round}-edit"), "edit", args, output);
-        let passed: String = (0..24)
+             +    base.min(policy.max)\n"
+                .into()
+        };
+        let (args, output) = edit(&path, "base.min(policy.max)", &changed);
+        s.tool(20, &edited, "edit", args, output);
+        let passed: String = (0..if big { 600 } else { 24 })
             .map(|n| {
                 let test = format!("heiko-ai module_{round}::tests::case_{n}");
                 pass(0.012, &test)
@@ -2674,7 +2711,7 @@ pub fn stress(rounds: usize) -> Vec<Step> {
             .collect();
         s.tool(
             40,
-            &format!("s{round}-test"),
+            &test,
             "exec_command",
             json!({
                 "cmd": format!("cargo nextest run -p heiko-ai module_{round}"),
