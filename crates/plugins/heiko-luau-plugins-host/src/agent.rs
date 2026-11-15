@@ -749,8 +749,18 @@ impl Inner {
             }
             None => (None, model),
         };
-        let actor = Actor::new(&active.loaded.modules, "plugin", &model)?
-            .named(&active.loaded.declaration.name);
+        // Making a VM loads the plugin's modules, and a replay takes its
+        // steps again: both on a thread that may block (ADR 0028).
+        let actor = {
+            let modules = active.loaded.modules.clone();
+            let (model, name) = (model.clone(), name.clone());
+            tokio::task::spawn_blocking(move || {
+                Actor::new(&modules, "plugin", &model)
+                    .map(|actor| actor.named(&name))
+            })
+            .await
+            .map_err(|error| format!("the plugin's VM stopped: {error}"))??
+        };
         let keep = Arc::new(RunKeep {
             ctx: ctx.clone(),
             plugin: name.clone(),
@@ -771,7 +781,11 @@ impl Inner {
                         serde_json::from_value(message.clone()).ok()
                     })
                     .collect();
-                Mailbox::replayed(actor, &messages, keep, RESUME_LIMIT)?
+                tokio::task::spawn_blocking(move || {
+                    Mailbox::replayed(actor, &messages, keep, RESUME_LIMIT)
+                })
+                .await
+                .map_err(|error| format!("the plugin's VM stopped: {error}"))??
             }
             None => Mailbox::new(actor, keep),
         };

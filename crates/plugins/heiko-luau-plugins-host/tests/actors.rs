@@ -339,6 +339,14 @@ return heiko.plugin({
   end,
   actions = {
     pause = function(_, model) model.paused = true end,
+    -- Keeps the CPU for a while, as a plugin written badly would.
+    spin = function(_, model)
+      local n = 0
+      for i = 1, 20000000 do
+        n = n + i % 7
+      end
+      model.spun = n
+    end,
   },
 })
 "#;
@@ -609,6 +617,61 @@ return heiko.plugin({
                 }
             );
             assert!(again.waiting().await.unwrap().is_empty());
+        });
+    }
+
+    /// A step that keeps the CPU does not keep the runtime (ADR 0028):
+    /// on a runtime of one thread, a task that asks to be woken every
+    /// two milliseconds still is while the VM spins.
+    #[test]
+    fn a_step_that_spins_leaves_the_runtime_free() {
+        use std::{
+            sync::atomic::{AtomicBool, Ordering},
+            time::Instant,
+        };
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (mailbox, executor, _, _) = set_up(false).await;
+            let done = Arc::new(AtomicBool::new(false));
+            let ticker = {
+                let done = done.clone();
+                tokio::spawn(async move {
+                    let mut worst = Duration::ZERO;
+                    while !done.load(Ordering::SeqCst) {
+                        let asked = Instant::now();
+                        tokio::time::sleep(Duration::from_millis(2)).await;
+                        worst = worst.max(asked.elapsed());
+                    }
+                    worst
+                })
+            };
+            let started = Instant::now();
+            let spun = mailbox
+                .call(
+                    path(&["actions", "spin"]),
+                    json!({}),
+                    json!({}),
+                    &executor,
+                    LIMIT,
+                    &CancellationToken::new(),
+                    None,
+                )
+                .await;
+            let took = started.elapsed();
+            done.store(true, Ordering::SeqCst);
+            let worst = ticker.await.unwrap();
+            assert!(matches!(spun, Ended::Value { .. }), "{spun:?}");
+            assert!(
+                took > Duration::from_millis(40),
+                "the step was too short to tell: {took:?}"
+            );
+            assert!(
+                worst < took / 2,
+                "a wake came {worst:?} late while the step took {took:?}"
+            );
         });
     }
 }

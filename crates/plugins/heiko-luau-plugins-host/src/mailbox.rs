@@ -8,6 +8,10 @@
 //! out before the next message is taken, so a step and its writes are
 //! one. A call cancelled while its hook awaits delivers the cancel, which
 //! the hook's await raises.
+//!
+//! The VM's part of a step runs on a thread that may block, with the
+//! actor's lock held (ADR 0028): a plugin that keeps the CPU keeps that
+//! thread and its own next steps, and nothing else of the host.
 
 use std::{
     sync::{
@@ -88,18 +92,37 @@ impl Keep for KeepLogs {
 
 /// A model's actor, and the hooks it drives.
 pub struct Mailbox {
-    actor: tokio::sync::Mutex<Actor>,
+    /// Owned by the lock: a step takes its guard to a thread that may
+    /// block, as ADR 0028 has a blocking resource with state.
+    actor: Arc<tokio::sync::Mutex<Actor>>,
     keep: Arc<dyn Keep>,
     next: AtomicU64,
     /// What it draws after a step that changed the model, and the `env`
     /// the drawing gets.
-    drawing: Option<(Vec<String>, Value)>,
+    drawing: Option<Arc<(Vec<String>, Value)>>,
     /// Where each call under way places what it keeps, by hook id.
     places: std::sync::Mutex<std::collections::HashMap<String, String>>,
 }
 
 /// How long a drawing may take.
 const DRAW_LIMIT: Duration = Duration::from_millis(200);
+
+/// Runs `work` on the actor on a thread that may block, and gives the
+/// actor back with what it made: a VM is busy with the CPU while it
+/// runs, for as long as its deadline lets it, and the runtime's threads
+/// are for what waits (ADR 0028). The lock stays held meanwhile, so
+/// steps still go one at a time, in the order they asked.
+async fn on_vm<T: Send + 'static>(
+    actor: tokio::sync::OwnedMutexGuard<Actor>,
+    work: impl FnOnce(&Actor) -> T + Send + 'static,
+) -> Result<(tokio::sync::OwnedMutexGuard<Actor>, T), String> {
+    tokio::task::spawn_blocking(move || {
+        let made = work(&actor);
+        (actor, made)
+    })
+    .await
+    .map_err(|error| format!("the plugin's VM stopped: {error}"))
+}
 
 impl std::fmt::Debug for Mailbox {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -110,7 +133,7 @@ impl std::fmt::Debug for Mailbox {
 impl Mailbox {
     pub fn new(actor: Actor, keep: Arc<dyn Keep>) -> Self {
         Self {
-            actor: tokio::sync::Mutex::new(actor),
+            actor: Arc::new(tokio::sync::Mutex::new(actor)),
             keep,
             next: AtomicU64::new(1),
             drawing: None,
@@ -120,7 +143,7 @@ impl Mailbox {
 
     /// Draws `path` with `env` after each step that changes the model.
     pub fn drawing(mut self, path: Vec<String>, env: Value) -> Self {
-        self.drawing = Some((path, env));
+        self.drawing = Some(Arc::new((path, env)));
         self
     }
 
@@ -138,6 +161,25 @@ impl Mailbox {
         cancel: &CancellationToken,
         place: Option<&str>,
     ) -> Ended {
+        self.call_kept(path, input, env, executor, limit, cancel, place)
+            .await
+            .0
+    }
+
+    /// [`Self::call`], with the model as the step that ended the hook
+    /// left it, when a step did: what this hook kept, whatever another
+    /// message changes right after.
+    #[allow(clippy::too_many_arguments, reason = "one hook of one model")]
+    pub async fn call_kept(
+        &self,
+        path: Vec<String>,
+        input: Value,
+        env: Value,
+        executor: &Executor,
+        limit: Duration,
+        cancel: &CancellationToken,
+        place: Option<&str>,
+    ) -> (Ended, Option<Value>) {
         let id = format!("h{}", self.next.fetch_add(1, Ordering::SeqCst));
         if let Some(place) = place {
             self.places
@@ -164,13 +206,13 @@ impl Mailbox {
         executor: &Executor,
         limit: Duration,
         cancel: &CancellationToken,
-    ) -> Ended {
+    ) -> (Ended, Option<Value>) {
         let id = id.to_owned();
         loop {
             let waits = match self.step(&message, executor, limit).await {
-                Ok(step) => {
-                    if let Some(ended) = step.ended.get(&id) {
-                        return ended.clone();
+                Ok(mut step) => {
+                    if let Some(ended) = step.ended.remove(&id) {
+                        return (ended, Some(step.model));
                     }
                     // What it gave did not go in: its await raises why,
                     // rather than going on as if it had.
@@ -182,12 +224,11 @@ impl Mailbox {
                     }
                     step.waits.get(&id).cloned()
                 }
-                Err(error) => return Ended::Error { error },
+                Err(error) => return (Ended::Error { error }, None),
             };
             let Some(command) = waits else {
-                return Ended::Error {
-                    error: "the hook neither ended nor awaits".into(),
-                };
+                let error = "the hook neither ended nor awaits".into();
+                return (Ended::Error { error }, None);
             };
             message = tokio::select! {
                 biased;
@@ -207,9 +248,24 @@ impl Mailbox {
         executor: &Executor,
         limit: Duration,
     ) -> Result<Step, String> {
-        let actor = self.actor.lock().await;
+        let actor = self.actor.clone().lock_owned().await;
         self.keep.taken(message).await;
-        let mut step = actor.deliver(message, limit)?;
+        // The VM's part of the step, whole, off the runtime's threads:
+        // the message taken, the model drawn if it changed, and whether
+        // a hook is still under way.
+        let drawing = self.drawing.clone().filter(|_| self.keep.draws());
+        let taken = message.clone();
+        let (_actor, ran) = on_vm(actor, move |actor| {
+            let step = actor.deliver(&taken, limit)?;
+            let drawn = drawing.filter(|_| step.changed).map(|drawing| {
+                let (path, env) = &*drawing;
+                actor.draw(path, None, env, DRAW_LIMIT)
+            });
+            let quiet = actor.waiting()?.is_empty();
+            Ok::<_, String>((step, drawn, quiet))
+        })
+        .await?;
+        let (mut step, drawn, quiet) = ran?;
         if let Err(why) = executor.give(&step.given).await {
             self.keep.not_given(&why).await;
             // A step is one with its writes (ADR 0056): a hook it ended
@@ -220,12 +276,6 @@ impl Mailbox {
             }
             step.not_given = Some(why);
         }
-        let drawn = match &self.drawing {
-            Some((path, env)) if step.changed && self.keep.draws() => {
-                Some(actor.draw(path, None, env, DRAW_LIMIT))
-            }
-            _ => None,
-        };
         let place = self
             .places
             .lock()
@@ -233,7 +283,7 @@ impl Mailbox {
             .get(message.id())
             .cloned();
         self.keep.stepped(&step, drawn, place.as_deref()).await;
-        if actor.waiting()?.is_empty() {
+        if quiet {
             self.keep.quiet(&step.model).await;
         } else {
             self.keep.busy().await;
@@ -249,12 +299,19 @@ impl Mailbox {
         env: &Value,
         limit: Duration,
     ) -> Result<Value, String> {
-        self.actor.lock().await.draw(path, input, env, limit)
+        let actor = self.actor.clone().lock_owned().await;
+        let (path, input, env) = (path.to_vec(), input.cloned(), env.clone());
+        let (_actor, drawn) = on_vm(actor, move |actor| {
+            actor.draw(&path, input.as_ref(), &env, limit)
+        })
+        .await?;
+        drawn
     }
 
     /// The model as it is.
     pub async fn model(&self) -> Result<Value, String> {
-        self.actor.lock().await.model()
+        let actor = self.actor.clone().lock_owned().await;
+        on_vm(actor, |actor| actor.model()).await?.1
     }
 
     /// The mailbox of `actor`, made from the model it kept when no hook
@@ -290,7 +347,8 @@ impl Mailbox {
         &self,
     ) -> Result<std::collections::BTreeMap<String, crate::actor::Command>, String>
     {
-        self.actor.lock().await.waiting()
+        let actor = self.actor.clone().lock_owned().await;
+        on_vm(actor, |actor| actor.waiting()).await?.1
     }
 
     /// Goes on with the hook `id`, under way with no call to drive it (as
@@ -314,7 +372,9 @@ impl Mailbox {
             };
         };
         let answer = executor.run(&command).await;
-        self.drive(id, answer.to(id), executor, limit, cancel).await
+        self.drive(id, answer.to(id), executor, limit, cancel)
+            .await
+            .0
     }
 
     /// The answer `answer` to what `id` awaits, from outside a call: a

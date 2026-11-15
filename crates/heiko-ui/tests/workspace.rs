@@ -3461,8 +3461,10 @@ fn a_host_half_wakes_a_chat_that_is_idle(cx: &mut TestAppContext) {
     let store = runtime.block_on(heiko_store_sqlite::memory()).unwrap();
     let model = ScriptedModel::new()
         .turn(|turn| {
+            // Long enough that the turn is still going when the next
+            // wake asks, however busy the machine: nothing waits for it.
             turn.text("Checked.")
-                .delay(std::time::Duration::from_millis(300))
+                .delay(std::time::Duration::from_secs(60))
         })
         .turn(|turn| turn.text("Again."));
     let agent = heiko_agent::agent::Agent::new(model).name("coder");

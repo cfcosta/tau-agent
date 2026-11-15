@@ -1517,8 +1517,8 @@ impl Registry {
             "settings": context.settings,
             "models": crate::runtime::plan_models(),
         });
-        let ended = mailbox
-            .call(
+        let (ended, kept) = mailbox
+            .call_kept(
                 hook.path(),
                 args.clone(),
                 env,
@@ -1528,7 +1528,11 @@ impl Registry {
                 None,
             )
             .await;
-        let model = mailbox.model().await.unwrap_or_else(|_| state.clone());
+        // What this action kept: another may be taken right after it.
+        let model = match kept {
+            Some(model) => model,
+            None => mailbox.model().await.unwrap_or_else(|_| state.clone()),
+        };
         let (value, error) = match ended {
             crate::actor::Ended::Value { value } => (value, None),
             crate::actor::Ended::Error { error } => {

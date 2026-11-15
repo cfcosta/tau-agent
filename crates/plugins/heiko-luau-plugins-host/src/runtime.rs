@@ -1046,16 +1046,19 @@ impl Loaded {
             };
         }
         let executor = Executor::new(self, context, reach);
-        let ended = mailbox
-            .call(hook.path(), input, env, &executor, limit, &cancel, None)
+        let (ended, kept) = mailbox
+            .call_kept(hook.path(), input, env, &executor, limit, &cancel, None)
             .await;
         let logs = logs.take();
         match ended {
             crate::actor::Ended::Value { value } => Outcome {
                 value,
-                state: match mailbox.model().await {
-                    Ok(state) => state,
-                    Err(error) => return failed(error),
+                state: match kept {
+                    Some(state) => state,
+                    None => match mailbox.model().await {
+                        Ok(state) => state,
+                        Err(error) => return failed(error),
+                    },
                 },
                 logs,
                 error: None,

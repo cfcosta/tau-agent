@@ -38,9 +38,13 @@ prints the tables:
 - **The interface.** `heiko --demo --stress <rounds>` plays a long run
   ten times as fast as the demo's script: each round a turn that
   thinks, answers with code in it, reads, edits and runs a command, then
-  one answer of some 3 600 words; every three seconds it leaves the run
-  for Home or comes back. It runs in a headless sway of its own, as
-  the screenshots do.
+  one answer of some 3 600 words. Every tenth round is big: a file of
+  1 500 lines, a diff of 300, 600 lines from the command. A second run
+  plays beside it, and a third holds ten times as many rounds from the
+  start, its big calls open. Every three seconds the window goes on to
+  the next of Home, the run, the long run and the run beside; in the
+  long run it scrolls back through the chat, 900 pixels every 60 ms. It
+  runs in a headless sway of its own, as the screenshots do.
 - **The host.** A test of heiko-ui, ignored unless asked for, runs sixty
   turns of three tool calls on a real host with every built-in plugin
   and a real repository, the model answering at once, so the time left
@@ -51,22 +55,33 @@ prints the tables:
 One machine, release build, headless sway. Read them as orders of
 magnitude.
 
-**The interface, 75 s of the stress run** (60 rounds and the long
-answer, 2 381 text deltas, 24 route changes): one stall, 72 ms, as the
-window opened. After it no beat was 16 ms late; the mean lag was
-0.11 ms. Applying an update took under 0.03 ms whatever its kind, and
-building a frame's tree 0.46 ms on average, 0.9 ms at most.
+**The interface, 70 s of the stress run** (two runs of 40 rounds
+playing, a third of 400 rounds opened and scrolled back through five
+times, 3 800 text deltas): one stall, 69 ms, as the window opened.
+After it no beat was 16 ms late; the mean lag was 0.16 ms. Applying an
+update took under 0.03 ms whatever its kind, and building a frame's
+tree 0.49 ms on average, 1.8 ms at most.
 
-**The host, 60 turns of three tool calls**: 29 ms a turn in all. Luau
-hooks were about 1 000 ms of the run's 1 770 ms, yet the VMs ran for
+**The host, 60 turns of three tool calls**: 30 ms a turn in all. Luau
+hooks were about 1 000 ms of the run's 1 870 ms, yet the VMs ran for
 only some 370 ms of it: the rest is what hooks await, mostly the store.
 No hook took 16 ms but heiko-skills' `start`, once, at 38 ms (it reads
 the skills' folders). The costliest, each time they ran: heiko-memory's
-`turn_end` (2.8 ms), heiko-fast-compaction's `rewrite_context` (1.4 ms),
-heiko-memory's `after_tool_result` (1.0 ms), heiko-constitution's
+`turn_end` (3.0 ms), heiko-fast-compaction's `rewrite_context` (1.4 ms),
+heiko-memory's `after_tool_result` (1.1 ms), heiko-constitution's
 `before_tool` (0.7 ms). The runtime never woke a task more than 2 ms
-late.
+late. Running each VM step on a thread that may block, rather than on
+the runtime's, took a turn from 29 ms to 30.
 
-What this does not cover: a plugin of the person's own that is slow, a
-history of thousands of items opened cold, large diffs and terminal
-output drawn open, a phone attached, several runs at once.
+What this does not cover: the real application end to end (the
+interface is measured on the demo, which has no host; the host with no
+window), a phone attached, and a machine slower than this one.
+
+## What holds when a plugin is slow
+
+A Luau plugin's VM runs on a thread that may block, never on the
+host's runtime (ADR 0028): a step that keeps the CPU keeps that thread
+and the plugin's own next steps. Its deadline ends it (ADR 0027), and
+three failed hooks in a run turn the plugin off for the rest of it. The
+run that called the hook still waits for it, up to the hook's limit;
+other runs, the store, phones and the window do not.
