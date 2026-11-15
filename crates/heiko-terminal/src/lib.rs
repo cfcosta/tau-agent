@@ -28,6 +28,7 @@ mod error;
 pub mod glyph;
 pub mod layout;
 mod palette;
+mod rebuild;
 mod run;
 mod screen;
 mod scroll;

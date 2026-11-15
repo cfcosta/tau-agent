@@ -264,26 +264,18 @@ fn moving_output(tc: &TestCase) -> Vec<u8> {
 }
 
 /// What each cell of `line` draws: the character that starts there and
-/// its style. A space reads as an empty cell, whatever its style: the
-/// VT rendering writes empty cells as spaces in the style before them,
-/// and loses a background on blank cells. The ignored tests below pin
-/// each case.
+/// its style, styled blanks included.
 fn drawn(
     line: &heiko_terminal::Line,
     cols: u16,
 ) -> Vec<Option<(String, Style)>> {
     (0..cols)
-        .map(|col| {
-            heiko_terminal::layout::char_at(line, col)
-                .filter(|(text, _)| text != " ")
-        })
+        .map(|col| heiko_terminal::layout::char_at(line, col))
         .collect()
 }
 
 /// What `terminal` shows: every row with the scrollback, cell by cell
-/// and whether it wraps, the cursor, the default colors, and the text
-/// less each line's trailing spaces (the VT rendering writes a cell with
-/// only a background as a space).
+/// and whether it wraps, the cursor, the default colors, and the text.
 fn shown(terminal: &mut Terminal) -> impl PartialEq + std::fmt::Debug {
     let cols = terminal.size().cols;
     let total = terminal.total_rows().unwrap();
@@ -299,40 +291,18 @@ fn shown(terminal: &mut Terminal) -> impl PartialEq + std::fmt::Debug {
         screen.cursor,
         screen.foreground,
         screen.background,
-        terminal
-            .text()
-            .unwrap()
-            .split('\n')
-            .map(|line| line.trim_end().to_owned())
-            .collect::<Vec<_>>(),
+        terminal.text().unwrap(),
     )
 }
 
-/// Whether a row of `terminal` wraps with its last cell empty: a wide
-/// character that did not fit went on the next row, and the VT
-/// rendering joins the two without the gap
-/// ([`a_wide_character_that_wrapped_keeps_its_gap`]).
-fn wraps_short(terminal: &mut Terminal) -> bool {
-    let cols = terminal.size().cols;
-    let total = terminal.total_rows().unwrap();
-    terminal.lines(0..total).unwrap().iter().any(|line| {
-        line.wrapped
-            && heiko_terminal::layout::char_at(line, cols - 1).is_none()
-    })
-}
-
 /// The VT rendering of any styled output, written to a new terminal of
-/// the same size, shows the same rows, scrollback, cursor and text.
-/// Cells are compared as drawn ([`drawn`]); output that leaves a wrapped
-/// row short is left out ([`wraps_short`]).
+/// the same size, shows the same rows, scrollback, cursor and text,
+/// cell by cell ([`drawn`]).
 #[hegel::test(test_cases = 200)]
 fn the_vt_rendering_rebuilds_the_screen(tc: TestCase) {
     let output = tc.draw(moving_output());
     let mut terminal = small(false);
     terminal.write(&output).unwrap();
-    if wraps_short(&mut terminal) {
-        tc.reject();
-    }
     let vt = terminal.vt().unwrap();
     let mut copy = small(false);
     copy.write(&vt).unwrap();
@@ -341,11 +311,9 @@ fn the_vt_rendering_rebuilds_the_screen(tc: TestCase) {
 
 /// A row erased with a background and nothing written on it comes back
 /// with that background. The property found it: libghostty-vt's VT
-/// formatter leaves out rows that hold no text, so the copy's row is
-/// empty.
+/// formatter, which the rendering used, leaves out rows that hold no
+/// text.
 #[test]
-#[ignore = "libghostty-vt's VT formatter drops rows that hold only a \
-            background; Terminal::vt would have to write them itself"]
 fn a_row_of_only_a_background_is_rebuilt() {
     let mut terminal = small(false);
     terminal.write(b"\x1b[44m\x1b[2K\x1b[0m\r\nx").unwrap();
@@ -359,13 +327,10 @@ fn a_row_of_only_a_background_is_rebuilt() {
 }
 
 /// A background on a row that came from a wrap stays on the cells
-/// written in it. The property found it: the VT rendering sets the next
+/// written in it. The property found it: the formatter set the next
 /// line's style before the character that wraps onto it, so the copy
-/// scrolls with that background and fills the whole new row.
+/// scrolled with that background and filled the whole new row.
 #[test]
-#[ignore = "libghostty-vt's VT formatter writes a style before the \
-            character that wraps, and the scroll fills the new row with \
-            its background"]
 fn a_background_set_before_a_wrap_stays_on_its_cells() {
     let mut terminal = small(false);
     terminal
@@ -379,11 +344,9 @@ fn a_background_set_before_a_wrap_stays_on_its_cells() {
 
 /// A wide character that did not fit at the end of a row, then written
 /// over by a narrow one, leaves its row's last cell empty. The property
-/// found it: the VT rendering joins the wrapped rows without the gap,
-/// so the narrow character fits on the first row and a row is lost.
+/// found it: the formatter joined the wrapped rows without the gap, so
+/// the narrow character fit on the first row and a row was lost.
 #[test]
-#[ignore = "libghostty-vt's VT formatter drops the gap a wide character \
-            leaves when it wraps"]
 fn a_wide_character_that_wrapped_keeps_its_gap() {
     let mut terminal = small(false);
     terminal.write("aaaaaaaaaaa日\ra".as_bytes()).unwrap();
@@ -394,11 +357,9 @@ fn a_wide_character_that_wrapped_keeps_its_gap() {
 }
 
 /// Cells skipped over between two inverse characters stay empty. The
-/// property found it: the VT rendering writes the gap as spaces in the
-/// style before it, so the copy draws an inverse block there.
+/// property found it: the formatter wrote the gap as spaces in the
+/// style before it, so the copy drew an inverse block there.
 #[test]
-#[ignore = "libghostty-vt's VT formatter writes empty cells as spaces in \
-            the style before them"]
 fn a_gap_after_inverse_text_stays_empty() {
     let mut terminal = small(false);
     terminal.write(b"\x1b[7ma\x1b[2Ca").unwrap();
@@ -408,6 +369,53 @@ fn a_gap_after_inverse_text_stays_empty() {
     assert_eq!(
         copy.snapshot().unwrap().lines[0],
         terminal.snapshot().unwrap().lines[0]
+    );
+}
+
+/// Writes `output` to a terminal, its VT rendering to a new one, and
+/// checks the two show the same ([`shown`]).
+fn assert_rebuilt(output: &str) {
+    let mut terminal = small(false);
+    terminal.write(output.as_bytes()).unwrap();
+    let mut copy = small(false);
+    copy.write(&terminal.vt().unwrap()).unwrap();
+    assert_eq!(shown(&mut copy), shown(&mut terminal), "{output:?}");
+}
+
+/// A wide character that did not fit leaves a spacer on the row it
+/// wraps from, and the row still joins the next with no gap. The
+/// property found it: erasing the blank that rebuilds the spacer turns
+/// the spacer into a gap.
+#[test]
+fn a_wide_character_that_wrapped_leaves_no_gap() {
+    assert_rebuilt("aaaaaaa日日日日");
+}
+
+/// A spacer written over once its row has scrolled off stays a spacer,
+/// though the next row now starts with a narrow character. The property
+/// found it: written over while both rows are on the screen, the spacer
+/// becomes a gap.
+#[test]
+fn a_spacer_written_over_in_the_scrollback_stays() {
+    assert_rebuilt("aaaaa日日日日\r\n\r\n\r\n\r\n\x1b[Ha");
+}
+
+/// A spacer written over while on the screen becomes a gap in the
+/// style the spacer had. The property found it: the copy's gap had no
+/// background.
+#[test]
+fn a_spacer_written_over_keeps_its_style() {
+    assert_rebuilt("aaaaa日日\x1b[44m日日\ra");
+}
+
+/// A wide character written over by a narrow one in the scrollback's
+/// first screen row empties its other half in the writer's background,
+/// and the row above still wraps. The property found it: erasing that
+/// half on a wrapped row undoes its wrap.
+#[test]
+fn a_wide_character_written_over_under_a_spacer_keeps_the_wrap() {
+    assert_rebuilt(
+        "\x1b[9;30H日aaaaaaaaa日\r\n\r\n\r\n\x1b[H\x1b[48;2;10;20;30ma",
     );
 }
 

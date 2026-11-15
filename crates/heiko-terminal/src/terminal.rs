@@ -5,7 +5,7 @@ use std::{marker::PhantomData, ops::Range};
 
 use libghostty_vt::{
     self as vt,
-    fmt::{Format, Formatter, FormatterOptions},
+    fmt::Format,
     render::{CellIterator, CursorVisualStyle, RenderState, RowIterator},
     screen::{
         CellContentTag,
@@ -244,42 +244,15 @@ impl Terminal {
         self.rows_text(start, end)
     }
 
-    /// The terminal's content as VT sequences: the palette, the
-    /// scrollback and the screen with their styles, then the cursor's
-    /// position. Written to a new terminal of the same size, it rebuilds
-    /// what this one shows. Modes (a hidden cursor, a scrolling region)
-    /// are left out: the result is for showing a finished run, not for
-    /// going on with one.
+    /// The terminal's content as VT sequences: the scrollback and the
+    /// screen cell by cell with their styles and soft wraps, then the
+    /// palette entries and default colors the program changed, and the
+    /// cursor's position. Written to a new terminal of the same size, it
+    /// rebuilds what this one shows. Modes (a hidden cursor, a scrolling
+    /// region) are left out: the result is for showing a finished run,
+    /// not for going on with one.
     pub fn vt(&self) -> Result<Vec<u8>, Error> {
-        let mut formatter = Formatter::new(
-            &self.inner,
-            FormatterOptions::new()
-                .with_format(Format::Vt)
-                .with_unwrap(true)
-                .with_trim(false)
-                .with_palette(true),
-        )?;
-        let mut out = formatter.format_alloc(None)?.to_vec();
-
-        // The formatter stops at the last row with something on it; the
-        // blank rows after it put the content back at the same height.
-        let history = self.history_rows()?;
-        let total = history + usize::from(self.inner.rows()?);
-        let mut last = total - 1;
-        while last > 0 && self.row_is_blank(last)? {
-            last -= 1;
-        }
-        out.extend_from_slice(b"\x1b[0m");
-        out.extend_from_slice(&b"\r\n".repeat(total - 1 - last));
-        out.extend_from_slice(
-            format!(
-                "\x1b[{};{}H",
-                self.inner.cursor_y()? + 1,
-                self.inner.cursor_x()? + 1
-            )
-            .as_bytes(),
-        );
-        Ok(out)
+        crate::rebuild::render(&self.inner, self.history_rows()?)
     }
 
     /// Rows of the active screen: the scrollback, then the screen.
