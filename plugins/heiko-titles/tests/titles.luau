@@ -47,7 +47,7 @@ t.property("requests fit the budget", function(draw)
 	local prefix = titles.request("")
 	t.equal(string.sub(request, 1, #prefix), prefix)
 	local kept = string.sub(request, #prefix + 1)
-	local trimmed = titles.trim(task)
+	local trimmed = heiko.text.trim(task)
 	t.equal(string.sub(trimmed, 1, #kept), kept, "a prefix of the task")
 	if #kept < #trimmed then
 		local next = utf8.char(utf8.codepoint(trimmed, #kept + 1))
@@ -62,7 +62,7 @@ t.property("a clean title is short and single spaced", function(draw)
 	local clean = titles.clean(raw)
 	if clean ~= nil then
 		t.equal(utf8.len(clean) <= titles.MAX_CHARS, true, clean)
-		t.equal(titles.trim(clean) == clean or string.match(clean, "%s$") ~= nil, true, "no white space before it")
+		t.equal(heiko.text.trim(clean) == clean or string.match(clean, "%s$") ~= nil, true, "no white space before it")
 		t.equal(string.find(clean, "  ", 1, true), nil, "no runs of spaces")
 	end
 end, { cases = 300 })

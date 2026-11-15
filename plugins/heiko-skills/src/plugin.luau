@@ -31,10 +31,6 @@ local function skills_of()
 	return scan.all(roots[PERSONS], shipped)
 end
 
-local function plural(n, one, many)
-	return n == 1 and ("1 " .. one) or (tostring(n) .. " " .. many)
-end
-
 -- The page's head: its title, how many skills there are, where they
 -- are read from, and the way to open that folder.
 local function header(skills)
@@ -48,7 +44,7 @@ end
 
 -- A skill as a ruled row: its name, what it is for, and its files.
 local function row(skill)
-	local files = plural(skill.files, "file", "files")
+	local files = heiko.count.plural(skill.files, "file")
 	if skill.builtin then
 		files ..= " · built in"
 	end
@@ -136,7 +132,7 @@ return heiko.plugin({
 				local text = heiko.await(cmd.files.read(file))
 				local front = heiko.await(cmd.files.frontmatter(file))
 				local body = front.body or text
-				local instructions = scan.trim(body)
+				local instructions = heiko.text.trim(body)
 				-- Read after the awaits: another call may have loaded one meanwhile.
 				model.loaded = model.loaded or {}
 				model.loaded[env.run.call] = {
@@ -182,7 +178,7 @@ return heiko.plugin({
 		return {
 			skills = skills,
 			nav = {
-				detail = plural(#skills.found, "skill", "skills"),
+				detail = heiko.count.plural(#skills.found, "skill"),
 				badge = problems > 0 and tostring(problems) or nil,
 				tone = problems > 0 and "bad" or nil,
 			},

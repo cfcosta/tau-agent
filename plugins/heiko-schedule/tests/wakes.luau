@@ -43,17 +43,6 @@ local function iso(unix)
 	)
 end
 
-local function copy(value)
-	if type(value) ~= "table" then
-		return value
-	end
-	local out = {}
-	for key, item in pairs(value) do
-		out[key] = copy(item)
-	end
-	return out
-end
-
 -- Each chat's run, and the host's, which runs the job: one store.
 local function open()
 	local m = {
@@ -180,7 +169,7 @@ t.machine("a wake-up wakes its chat at least once, and once more at most per clo
 				m.answer = function(run, text)
 					calls += 1
 					if calls == k then
-						kept = copy(m.store)
+						kept = heiko.values.copy(m.store)
 					elseif calls > k then
 						return "busy"
 					end

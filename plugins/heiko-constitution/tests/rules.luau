@@ -52,7 +52,7 @@ local TARGETS = { "edit.newText", "write.content", " exec_command.cmd ", "a.b.c"
 
 -- The label a target reads back as, when it names one.
 local function label(target)
-	target = rules.trim(target)
+	target = heiko.text.trim(target)
 	if string.lower(target) == "final answer" then
 		return "final answer"
 	end
@@ -107,10 +107,10 @@ local function model_rule(e, id)
 	local function p(x)
 		return x >= 0 and x <= 1
 	end
-	if #labels == 0 or rules.trim(e.text) == "" or not p(e.review) or not p(e.block) or e.review > e.block then
+	if #labels == 0 or heiko.text.trim(e.text) == "" or not p(e.review) or not p(e.block) or e.review > e.block then
 		return nil
 	end
-	return { id = id, text = rules.trim(e.text), on = labels, review = e.review, block = e.block }
+	return { id = id, text = heiko.text.trim(e.text), on = labels, review = e.review, block = e.block }
 end
 
 local function some_id(model, draw)

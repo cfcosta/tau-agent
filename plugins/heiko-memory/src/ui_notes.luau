@@ -34,12 +34,7 @@ function M.ago(now, then_)
 	else
 		count, unit = seconds // 31536000, "year"
 	end
-	return string.format("%d %s%s ago", count, unit, count == 1 and "" or "s")
-end
-
--- `text` without white space at either end, as Rust's `trim`.
-local function trim(text)
-	return require("text").trim(text)
+	return heiko.count.plural(count, unit) .. " ago"
 end
 
 -- Who wrote a note, in words.
@@ -70,7 +65,7 @@ function M.entry(n, now)
 	while true do
 		local from, to = string.find(rest, "\n\n", at, true)
 		local paragraph = string.sub(rest, at, (from or #rest + 1) - 1)
-		paragraph = string.gsub(trim(paragraph), "\n", " ")
+		paragraph = string.gsub(heiko.text.trim(paragraph), "\n", " ")
 		if paragraph ~= "" then
 			table.insert(body, paragraph)
 		end
@@ -214,10 +209,8 @@ end
 local function links_of(n)
 	if n == 0 then
 		return "no links"
-	elseif n == 1 then
-		return "1 link"
 	end
-	return n .. " links"
+	return heiko.count.plural(n, "link")
 end
 
 -- A note in the list: its title on a slip that opens it, then its kind,
@@ -250,7 +243,7 @@ function M.list_tree(book, top, query, kind, button)
 	end
 	local children = {}
 	if not headed then
-		table.insert(children, ui.header("Memory", { meta = #book == 1 and "1 note" or (#book .. " notes") }))
+		table.insert(children, ui.header("Memory", { meta = heiko.count.plural(#book, "note") }))
 	end
 	for _, piece in ipairs(top) do
 		table.insert(children, piece)
@@ -408,11 +401,6 @@ end
 -- The notes page's search input.
 M.SEARCH = "search"
 
--- How many notes, in words.
-local function notes_of(n)
-	return n == 1 and "1 note" or (n .. " notes")
-end
-
 -- The plugin's name, small and muted, at the end of a mark's first line.
 local function name()
 	return ui.toned("heiko-memory", "neutral", true)
@@ -440,12 +428,12 @@ function M.mark(entry, repo)
 	local title
 	local slips = {}
 	if entry.kind == "recalled" then
-		title = "Recalled " .. notes_of(#entry.notes)
+		title = "Recalled " .. heiko.count.plural(#entry.notes, "note")
 		for _, recalled in ipairs(entry.notes) do
 			table.insert(slips, note_slip(recalled.title, recalled.id, false, repo))
 		end
 	elseif entry.kind == "saved" then
-		title = "Saved " .. notes_of(#entry.calls)
+		title = "Saved " .. heiko.count.plural(#entry.calls, "note")
 		for _, call in ipairs(entry.calls) do
 			local saved = call.details
 			if saved and (saved.title or saved.id) then
@@ -486,10 +474,8 @@ function M.status(notes)
 	end
 	if notes == 0 then
 		return "no notes yet"
-	elseif notes == 1 then
-		return "1 note"
 	end
-	return notes .. " notes"
+	return heiko.count.plural(notes, "note")
 end
 
 return M

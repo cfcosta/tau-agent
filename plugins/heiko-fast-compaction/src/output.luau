@@ -8,6 +8,7 @@
 -- stay, a chunk not asked about against every segment of the history
 -- keeps, and a failure leaves the output as it was. Lines and chunks
 -- are by place, from 1.
+local heiko = require("heiko")
 local estimate = require("estimate")
 local state = require("state")
 local history = require("history")
@@ -258,11 +259,7 @@ function output.plan(lines, records, task, command, settings)
 		end
 	end
 	local function everywhere(chunk)
-		local count = 0
-		for _ in pairs(covered[chunk] or {}) do
-			count += 1
-		end
-		return count == #segments
+		return heiko.values.count(covered[chunk] or {}) == #segments
 	end
 	local requests = {}
 	for _, one in ipairs(planned) do

@@ -35,50 +35,21 @@ goal.KEEP_GOING = "Keep going toward the goal."
 -- What the model reads when a message clears the goal.
 goal.CLEARED = "The goal is cleared."
 
--- White space as Unicode has it, by code point.
-local SPACE = {}
-for _, c in ipairs({ 0x20, 0x85, 0xA0, 0x1680, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000 }) do
-	SPACE[c] = true
-end
-for c = 0x09, 0x0D do
-	SPACE[c] = true
-end
-for c = 0x2000, 0x200A do
-	SPACE[c] = true
-end
-
-local function is_space(c)
-	return SPACE[c] == true
-end
-
 -- `text` from its first character that is not white space.
 local function trim_start(text)
 	for at, c in utf8.codes(text) do
-		if not is_space(c) then
+		if not heiko.text.is_space(c) then
 			return string.sub(text, at)
 		end
 	end
 	return ""
 end
 
--- `text` without white space at either end.
-local function trim(text)
-	text = trim_start(text)
-	local last = 0
-	for at, c in utf8.codes(text) do
-		if not is_space(c) then
-			last = utf8.offset(text, 2, at) - 1
-		end
-	end
-	return string.sub(text, 1, last)
-end
-goal.trim = trim
-
 -- The first word of `text`, up to white space, and what follows it, its
 -- leading white space gone.
 local function next_word(text)
 	for at, c in utf8.codes(text) do
-		if is_space(c) then
+		if heiko.text.is_space(c) then
 			return string.sub(text, 1, at - 1), trim_start(string.sub(text, at))
 		end
 	end
@@ -100,7 +71,7 @@ end
 -- Whether `text` starts with white space.
 local function starts_with_space(text)
 	for _, c in utf8.codes(text) do
-		return is_space(c)
+		return heiko.text.is_space(c)
 	end
 	return false
 end
@@ -194,7 +165,7 @@ end
 -- `\\`, `\n` and `\r` for a quote, a backslash, a line feed and a
 -- carriage return. `/goal "clear"` sets the goal `clear`.
 function goal.parse(input)
-	local rest = trim(input)
+	local rest = heiko.text.trim(input)
 	if string.sub(rest, 1, 5) ~= "/goal" then
 		return nil
 	end
@@ -227,7 +198,7 @@ function goal.parse(input)
 	end
 	local quoted = unquote(rest)
 	if quoted ~= nil then
-		if trim(quoted) == "" then
+		if heiko.text.trim(quoted) == "" then
 			return nil
 		end
 		return { kind = "set", condition = quoted, continuations = continuations, budget = budget }
@@ -294,14 +265,6 @@ function goal.state(state)
 	return state
 end
 
-local function count(map)
-	local n = 0
-	for _ in pairs(map) do
-		n += 1
-	end
-	return n
-end
-
 -- Puts a note in the transcript: what happened (`kind`: "met",
 -- "not_met", "stopped" or "failed"), and whether each check so far was
 -- met, oldest first.
@@ -310,7 +273,7 @@ local function note(state, text, detail, tone, kind)
 	for _, check in ipairs(state.goal and state.goal.checks or {}) do
 		table.insert(checks, check.met == true)
 	end
-	state.notes["g" .. count(state.notes)] = { text = text, detail = detail, tone = tone, kind = kind, checks = checks }
+	state.notes["g" .. heiko.values.count(state.notes)] = { text = text, detail = detail, tone = tone, kind = kind, checks = checks }
 end
 
 -- The fields every goal carries, whatever its status.
@@ -561,8 +524,8 @@ end
 -- The limits the `/goal` popover's drafts say, or the defaults where one
 -- does not read as a number.
 function goal.limits(continuations, budget)
-	local n = continuations_of(trim(continuations or ""))
-	local tokens = budget_of(trim(budget or ""))
+	local n = continuations_of(heiko.text.trim(continuations or ""))
+	local tokens = budget_of(heiko.text.trim(budget or ""))
 	return n or goal.DEFAULT_CONTINUATIONS, tokens or goal.DEFAULT_BUDGET
 end
 

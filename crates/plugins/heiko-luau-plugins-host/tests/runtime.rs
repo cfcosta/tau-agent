@@ -89,7 +89,7 @@ const DAYS: &str = r#"
 local heiko = require("heiko")
 return {
   blocked = function(env)
-    return heiko.contains(env.settings.days, env.now.weekday)
+    return heiko.values.contains(env.settings.days, env.now.weekday)
   end,
 }
 "#;
@@ -854,9 +854,9 @@ local heiko = require("heiko")
 return heiko.plugin { uses = { jev = USES },
   actions = {
     try = function(args, model, env)
-      local ok, answer = pcall(heiko.await, heiko.cmd.jev.noul({ state = { x = 1 }, question = "Is it?" }))
-      if not ok then return "no jev" end
-      return answer.probability
+      local answers, why = heiko.jev.ask({ state = { x = 1 }, questions = { it = { kind = "noul", question = "Is it?" } } })
+      if answers == nil then return "no jev" end
+      return answers.it.probability
     end,
   },
 }

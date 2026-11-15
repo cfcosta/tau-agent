@@ -7,6 +7,8 @@
 -- A rule applies to tool arguments (`edit.newText` is every `newText`
 -- in an `edit` call's arguments, however deep) or to the run's final
 -- answer (`final answer`).
+local heiko = require("heiko")
+
 local rules = {}
 
 rules.DEFAULT_MAX_HOLDS = 3
@@ -15,36 +17,6 @@ rules.DEFAULT_BLOCK = 0.8
 
 -- What a target that is the final answer reads back as.
 rules.FINAL_ANSWER = "final answer"
-
--- White space as Unicode has it, by code point: what Rust's `trim`
--- takes off.
-local SPACE = {}
-for _, c in ipairs({ 0x20, 0x85, 0xA0, 0x1680, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000 }) do
-	SPACE[c] = true
-end
-for c = 0x09, 0x0D do
-	SPACE[c] = true
-end
-for c = 0x2000, 0x200A do
-	SPACE[c] = true
-end
-
--- `text` without the white space it starts and ends with.
-function rules.trim(text)
-	local first, last
-	for at, c in utf8.codes(text) do
-		if not SPACE[c] then
-			first = first or at
-			last = at
-		end
-	end
-	if first == nil then
-		return ""
-	end
-	-- `last` starts the last character kept: the cut is after it.
-	local after = utf8.offset(text, 2, last) or (#text + 1)
-	return string.sub(text, first, after - 1)
-end
 
 -- A number as Rust's `{}` writes it: the fewest digits that read back,
 -- never with an exponent.
@@ -135,7 +107,7 @@ end
 -- field }`; else nil and why. `edit.newText` is every `newText` in an
 -- `edit` call's arguments.
 function rules.target(text)
-	text = rules.trim(text)
+	text = heiko.text.trim(text)
 	-- Any case, as ASCII has it.
 	if string.lower(text) == rules.FINAL_ANSWER then
 		return { final = true }
@@ -163,11 +135,11 @@ end
 -- are probabilities with review at most block. `{ id, text, on, review,
 -- block }`, `on` its targets as labels; else nil and why.
 function rules.checked(id, text, on, review, block)
-	id = rules.trim(id)
+	id = heiko.text.trim(id)
 	if id == "" then
 		return nil, errors.NO_ID
 	end
-	if rules.trim(text) == "" then
+	if heiko.text.trim(text) == "" then
 		return nil, errors.no_text(id)
 	end
 	if #on == 0 then
@@ -187,7 +159,7 @@ function rules.checked(id, text, on, review, block)
 	if review > block then
 		return nil, errors.review_above_block(id, review, block)
 	end
-	return { id = id, text = rules.trim(text), on = labels, review = review, block = block }
+	return { id = id, text = heiko.text.trim(text), on = labels, review = review, block = block }
 end
 
 -- An empty constitution: no rules, Jev's failures let through, three
@@ -278,20 +250,13 @@ function rules.find(constitution, id)
 	return at and constitution.rules[at]
 end
 
--- Whether `value` is a JSON array, as Luau holds one.
-local ARRAY = getmetatable(array({}))
-
-local function is_array(value)
-	return getmetatable(value) == ARRAY or value[1] ~= nil
-end
-
 -- Every value under `key` in `value`, however deep, into `found`. A
 -- table keeps no order, so an object's keys are taken in sorted order.
 local function collect(value, key, found)
 	if type(value) ~= "table" then
 		return
 	end
-	if is_array(value) then
+	if heiko.values.is_array(value) then
 		for _, item in ipairs(value) do
 			collect(item, key, found)
 		end

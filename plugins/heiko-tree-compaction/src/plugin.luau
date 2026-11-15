@@ -46,11 +46,6 @@ local function kept(history)
 	return { entries = array(history.entries), nodes = history.nodes, view = array(history.view) }
 end
 
-local SPACE = {}
-for _, c in ipairs({ 0x20, 0x85, 0xA0, 0x1680, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000 }) do
-	SPACE[c] = true
-end
-
 -- The first message to keep so that at least `keep` tokens of the newest
 -- stay, as heiko-compaction cuts: back from the newest, then on to the
 -- next message that is not a tool result, else the last one there is.

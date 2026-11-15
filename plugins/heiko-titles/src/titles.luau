@@ -1,4 +1,5 @@
 -- What a title is asked with, and what is kept of the answer.
+local heiko = require("heiko")
 
 local titles = {}
 
@@ -18,49 +19,6 @@ titles.SCHEMA = {
 	additionalProperties = false,
 }
 
--- Unicode's white space: what Rust trims and splits on.
-local SPACE = {}
-for _, code in
-	ipairs({
-		0x09,
-		0x0A,
-		0x0B,
-		0x0C,
-		0x0D,
-		0x20,
-		0x85,
-		0xA0,
-		0x1680,
-		0x2000,
-		0x2001,
-		0x2002,
-		0x2003,
-		0x2004,
-		0x2005,
-		0x2006,
-		0x2007,
-		0x2008,
-		0x2009,
-		0x200A,
-		0x2028,
-		0x2029,
-		0x202F,
-		0x205F,
-		0x3000,
-	})
-do
-	SPACE[code] = true
-end
-
--- `text`'s characters, as code points.
-local function codes(text)
-	local out = {}
-	for _, code in utf8.codes(text) do
-		table.insert(out, code)
-	end
-	return out
-end
-
 local function text_of(list, from, to)
 	local out = {}
 	for at = from, to do
@@ -72,7 +30,7 @@ end
 -- `text` without the characters `drop` keeps at either end (`ends`
 -- "both", "start" or "end").
 local function strip(text, drop, ends)
-	local list = codes(text)
+	local list = heiko.text.codes(text)
 	local from, to = 1, #list
 	if ends ~= "end" then
 		while from <= to and drop[list[from]] do
@@ -85,10 +43,6 @@ local function strip(text, drop, ends)
 		end
 	end
 	return text_of(list, from, to)
-end
-
-function titles.trim(text)
-	return strip(text, SPACE, "both")
 end
 
 local function instructions()
@@ -109,7 +63,7 @@ function titles.request(task)
 	local room = math.max(titles.PROMPT_MAX_BYTES - #prefix, 0)
 	local kept = {}
 	local used = 0
-	for _, code in utf8.codes(titles.trim(task)) do
+	for _, code in utf8.codes(heiko.text.trim(task)) do
 		local char = utf8.char(code)
 		if used + #char > room then
 			break
@@ -130,29 +84,13 @@ local CLOSERS = { [0x2E] = true, [0x3F] = true, [0x21] = true }
 -- white space, or a final `.`, `?` or `!`, and at most MAX_CHARS. nil
 -- when it comes out empty.
 function titles.clean(title)
-	local quoted = strip(titles.trim(title), QUOTES, "both")
-	local words = {}
-	local word = {}
-	for _, code in utf8.codes(quoted) do
-		if SPACE[code] then
-			if #word > 0 then
-				table.insert(words, table.concat(word))
-				word = {}
-			end
-		else
-			table.insert(word, utf8.char(code))
-		end
-	end
-	if #word > 0 then
-		table.insert(words, table.concat(word))
-	end
-	local joined = table.concat(words, " ")
-	local cut = strip(strip(joined, CLOSERS, "end"), SPACE, "end")
+	local quoted = strip(heiko.text.trim(title), QUOTES, "both")
+	local joined = heiko.text.one_line(quoted)
+	local cut = heiko.text.trim(strip(joined, CLOSERS, "end"))
 	if cut == "" then
 		return nil
 	end
-	local list = codes(cut)
-	return text_of(list, 1, math.min(#list, titles.MAX_CHARS))
+	return (heiko.text.prefix(cut, titles.MAX_CHARS))
 end
 
 return titles

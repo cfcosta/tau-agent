@@ -78,7 +78,7 @@ local function tabs(questions, draft)
 		if ask.answered(draft, i - 1) then
 			label = "✓ " .. label
 		end
-		if ask.trim(draft.notes[i]) ~= "" then
+		if heiko.text.trim(draft.notes[i]) ~= "" then
 			label ..= " ✎"
 		end
 		if i > 1 then
@@ -199,7 +199,7 @@ local function question_view(key, questions, draft, focus)
 				focus = focus.note > 0 and focus.note or nil,
 			})
 		)
-	elseif ask.trim(draft.notes[i + 1]) ~= "" then
+	elseif heiko.text.trim(draft.notes[i + 1]) ~= "" then
 		table.insert(pieces, ui.row({ ui.toned("note", "info", true), ui.toned(draft.notes[i + 1], "neutral") }))
 	end
 	return ui.stack(pieces)
@@ -225,7 +225,7 @@ local function foot(questions, draft)
 	local row = {}
 	local reviewing = ask.reviewing(questions, draft)
 	if not reviewing then
-		local noted = ask.trim(draft.notes[draft.tab + 1]) ~= ""
+		local noted = heiko.text.trim(draft.notes[draft.tab + 1]) ~= ""
 		table.insert(row, button(noted and "edit note" or "add a note", "secondary", "note-open"))
 	end
 	table.insert(row, button("decline", "secondary", "decline"))

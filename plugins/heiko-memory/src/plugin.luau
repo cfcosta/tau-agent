@@ -259,7 +259,7 @@ local function distill(model, env, messages, prompt, by)
 	local with = writer(model, env)
 	local request = { saved = {}, by = by }
 	requests[coroutine.running()] = request
-	local answer = host.infer({
+	local answer = heiko.infer({
 		task = "<conversation>\n" .. render.serialize(messages) .. "\n</conversation>",
 		context = json.null,
 		instructions = prompt,
@@ -334,7 +334,7 @@ local function env_of(env)
 		files = files,
 		home = home,
 		dir = roots[memory.DATA] .. "/import",
-		now = env.now.unix,
+		now = heiko.now(env),
 		repos = repos,
 		scope = function(scope)
 			if scope == "you" then
@@ -355,7 +355,7 @@ local function env_of(env)
 			end
 			return opened(dir .. "/" .. memory.FOLDER)
 		end,
-		infer = host.infer,
+		infer = heiko.infer,
 		writer = ui_settings.model(env.settings, env.models),
 		signed_in = #(env.models or {}) > 0,
 	}

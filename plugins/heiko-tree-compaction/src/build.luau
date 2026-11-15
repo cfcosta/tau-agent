@@ -7,6 +7,7 @@
 -- cannot count bytes, so it gets a line of exactly `NODE_BYTES` for
 -- scale, and a reply over the limit is sent back, cut where the limit
 -- falls, up to `TRIES` times; the shortest try is kept.
+local heiko = require("heiko")
 local tree = require("tree")
 
 local build = {}
@@ -73,7 +74,7 @@ local function recent(history, id)
 	local lines = {}
 	local left = build.RECENT_CHARS
 	for at = id, summarized + 1, -1 do
-		local line = first_chars(tree.words(tree.line(history.entries[at])), RECENT_ENTRY_CHARS)
+		local line = first_chars(heiko.text.one_line(tree.line(history.entries[at])), RECENT_ENTRY_CHARS)
 		local chars = utf8.len(line)
 		if chars > left then
 			break
@@ -179,7 +180,7 @@ function build.lines(history, nodes, ask_all, effort)
 			if not answer.ok then
 				one.done, one.why = true, "the compactor failed on " .. one.label .. ": " .. tostring(answer.error)
 			else
-				local line = tree.trim(answer.value)
+				local line = heiko.text.trim(answer.value)
 				if line == "" then
 					one.done, one.why = true, "the compactor gave " .. one.label .. " an empty line"
 				else

@@ -20,3 +20,7 @@ plugins = [
   "heiko-tree-compaction",
   "heiko-compaction",
 ]
+
+# Packages whose files are parts of the `heiko` module every plugin
+# requires (ADR 0058): tested as the plugins are, loaded as none.
+libraries = ["heiko-std"]

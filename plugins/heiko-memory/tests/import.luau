@@ -96,7 +96,7 @@ function World:env()
 			end
 			return import.notes(memory.open(host.files, dir))
 		end,
-		infer = host.infer,
+		infer = heiko.infer,
 		writer = { model = "luna", effort = "low" },
 		signed_in = self.signed_in,
 	}
@@ -289,7 +289,7 @@ local function fake_model(request)
 		local head, title = string.match(line, "^%s*remember (.-): (.*)$")
 		if head ~= nil then
 			local scope, word, against = string.match(head, "^(%S+)%s*(%S*)%s*(%S*)$")
-			table.insert(wanted, { scope = scope, against = word == "against" and against ~= "" and against or nil, title = read.trim(title) })
+			table.insert(wanted, { scope = scope, against = word == "against" and against ~= "" and against or nil, title = heiko.text.trim(title) })
 		end
 	end
 	if #request.turns == 0 then

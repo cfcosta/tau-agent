@@ -9,7 +9,6 @@
 -- is cleared. The banner's buttons and the `/goal` command change it.
 local heiko = require("heiko")
 local ui = heiko.ui
-local cmd = heiko.cmd
 local goal = require("goal")
 
 local NAME = "heiko-goal"
@@ -323,14 +322,14 @@ return heiko.plugin({
 			return nil
 		end
 		local asked, checked = g.condition, #g.checks
-		local ok, answers = pcall(heiko.await, cmd.jev.ask({
+		local answers, why = heiko.jev.ask({
 			state = {
 				goal = asked,
 				final_answer = stop.text,
 				recent_tool_results = state.evidence or {},
 			},
 			questions = { met = QUESTION },
-		}))
+		})
 		-- The model as it is now: a Pause, a Clear or a new goal may have
 		-- come while Jev answered, and then this check is not the goal's.
 		state = goal.state(model)
@@ -338,11 +337,11 @@ return heiko.plugin({
 		if g == nil or g.status ~= "active" or g.condition ~= asked or #g.checks ~= checked then
 			return nil
 		end
-		if not ok then
-			goal.failed(state, "Jev could not check the goal: " .. tostring(answers))
+		if answers == nil then
+			goal.failed(state, "Jev could not check the goal: " .. why)
 			return nil
 		end
-		local verdict = type(answers) == "table" and answers.met or nil
+		local verdict = answers.met
 		if type(verdict) ~= "table" or type(verdict.probability) ~= "number" then
 			goal.failed(state, "Jev gave no verdict on the goal")
 			return nil

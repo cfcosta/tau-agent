@@ -21,6 +21,8 @@
 -- `key` in the checkpoint the path, with `#` and the section for a part
 -- of a file.
 
+local heiko = require("heiko")
+
 local read = {}
 
 read.CLAUDE = "claude_code"
@@ -51,78 +53,14 @@ local HEAD_BYTES = 64 * 1024
 
 -- Text ---------------------------------------------------------------
 
--- White space as Unicode has it, as Rust's `trim` and `split_whitespace`
--- read it.
-local WIDE_SPACES = {}
-for _, c in ipairs({ 0x85, 0xA0, 0x1680, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000 }) do
-	table.insert(WIDE_SPACES, utf8.char(c))
-end
-for c = 0x2000, 0x200A do
-	table.insert(WIDE_SPACES, utf8.char(c))
-end
-local SPACE = {}
-for _, c in ipairs({ 0x20, 0x85, 0xA0, 0x1680, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000 }) do
-	SPACE[c] = true
-end
-for c = 0x09, 0x0D do
-	SPACE[c] = true
-end
-for c = 0x2000, 0x200A do
-	SPACE[c] = true
-end
-
--- `text` with every run of white space one space, none at its ends.
-function read.one_line(text)
-	for _, space in ipairs(WIDE_SPACES) do
-		if string.find(text, space, 1, true) then
-			text = string.gsub(text, space, " ")
-		end
-	end
-	text = string.gsub(text, "%s+", " ")
-	if string.sub(text, 1, 1) == " " then
-		text = string.sub(text, 2)
-	end
-	if string.sub(text, -1) == " " then
-		text = string.sub(text, 1, -2)
-	end
-	return text
-end
-
--- `text` without white space at either end.
-function read.trim(text)
-	local first = 1
-	while first <= #text do
-		local c = utf8.codepoint(text, first)
-		if not SPACE[c] then
-			break
-		end
-		first = utf8.offset(text, 2, first)
-	end
-	local last = #text
-	while last >= first do
-		local start = last
-		while start > first and bit32.band(string.byte(text, start), 0xC0) == 0x80 do
-			start -= 1
-		end
-		if not SPACE[utf8.codepoint(text, start)] then
-			break
-		end
-		last = start - 1
-	end
-	return string.sub(text, first, last)
-end
-
 -- `text` without white space at its start.
 local function trim_start(text)
-	local first = 1
-	while first <= #text do
-		local c = utf8.codepoint(text, first)
-		if not SPACE[c] then
-			break
+	for at, code in utf8.codes(text) do
+		if not heiko.text.is_space(code) then
+			return string.sub(text, at)
 		end
-		first = utf8.offset(text, 2, first)
 	end
-	return string.sub(text, first)
+	return ""
 end
 
 -- Whether `text` starts with `prefix`.
@@ -256,10 +194,11 @@ end
 
 -- `text` cut to `max` characters, marked when it was.
 function read.cut(text, max)
-	if utf8.len(text) <= max then
-		return text
+	local head, more = heiko.text.prefix(text, max)
+	if more then
+		return head .. "… (cut)"
 	end
-	return string.sub(text, 1, utf8.offset(text, max + 1) - 1) .. "… (cut)"
+	return text
 end
 
 -- The day of an ISO 8601 time: `2026-10-04` of `2026-10-04T12:00:00Z`.
@@ -570,26 +509,6 @@ local function field(value, key)
 	return found
 end
 
--- Whether a decoded value is a JSON array.
-local function is_array(value)
-	if type(value) ~= "table" then
-		return false
-	end
-	if getmetatable(value) == getmetatable(array({})) then
-		return true
-	end
-	-- An object has string keys; an array has none of them.
-	if next(value) == nil then
-		return false
-	end
-	for key in pairs(value) do
-		if type(key) ~= "number" then
-			return false
-		end
-	end
-	return true
-end
-
 -- Files ---------------------------------------------------------------
 
 -- What `dir` holds, `{ name, dir, size, modified }` each, by name; none
@@ -822,13 +741,13 @@ local function front_matter(front)
 		local indent = #line - #trim_start(line)
 		local continued = false
 		if block ~= nil then
-			if indent > block.at and read.trim(line) ~= "" then
+			if indent > block.at and heiko.text.trim(line) ~= "" then
 				for _, each in ipairs(fields) do
 					if each[1] == block.key then
 						if each[2] ~= "" then
 							each[2] ..= " "
 						end
-						each[2] ..= read.trim(line)
+						each[2] ..= heiko.text.trim(line)
 						break
 					end
 				end
@@ -838,11 +757,11 @@ local function front_matter(front)
 			end
 		end
 		if not continued then
-			local trimmed = read.trim(line)
+			local trimmed = heiko.text.trim(line)
 			local colon = string.find(trimmed, ":", 1, true)
 			if colon ~= nil then
-				local key = read.trim(string.sub(trimmed, 1, colon - 1))
-				local value = read.trim(string.sub(trimmed, colon + 1))
+				local key = heiko.text.trim(string.sub(trimmed, 1, colon - 1))
+				local value = heiko.text.trim(string.sub(trimmed, colon + 1))
 				if key ~= "" and not starts(key, "#") and not starts(key, "-") then
 					local full = key
 					if parent ~= nil and indent >= 1 then
@@ -896,19 +815,19 @@ function read.parse_note(text, path)
 	end
 	local kind = get("metadata.type") or get("type") or ""
 	local about_you = kind == "user" or kind == "feedback"
-	body = read.trim(body)
+	body = heiko.text.trim(body)
 	local name = stem(file_name(path))
 	name = string.gsub(name, "[-_]", " ")
-	local title = read.one_line(get("name") or name)
+	local title = heiko.text.one_line(get("name") or name)
 	if title == "" then
 		return nil, "no name"
 	end
-	local description = get("description") and read.one_line(get("description")) or ""
+	local description = get("description") and heiko.text.one_line(get("description")) or ""
 	if description == "" then
 		description = nil
 		for _, line in ipairs(read.lines(body)) do
-			if read.trim(line) ~= "" then
-				description = read.one_line(line)
+			if heiko.text.trim(line) ~= "" then
+				description = heiko.text.one_line(line)
 				break
 			end
 		end
@@ -1030,7 +949,7 @@ end
 
 -- What `who` said, without the reminders tools add to it.
 local function said_by(out, who, said)
-	said = read.trim(without_reminders(said))
+	said = heiko.text.trim(without_reminders(said))
 	if said ~= "" then
 		table.insert(out, "[" .. who .. "]\n" .. said .. "\n\n")
 	end
@@ -1063,7 +982,7 @@ local function read_claude_chat(files, item, offset)
 			if not skip and kind == "user" then
 				if type(content) == "string" then
 					said_by(out, "user", content)
-				elseif is_array(content) then
+				elseif heiko.values.is_array(content) then
 					for _, block in ipairs(content) do
 						local what = field(block, "type")
 						if what == "text" then
@@ -1073,7 +992,7 @@ local function read_claude_chat(files, item, offset)
 							local text = ""
 							if type(result) == "string" then
 								text = result
-							elseif is_array(result) then
+							elseif heiko.values.is_array(result) then
 								local parts = {}
 								for _, part in ipairs(result) do
 									local said = str(field(part, "text"))
@@ -1083,11 +1002,11 @@ local function read_claude_chat(files, item, offset)
 								end
 								text = table.concat(parts, "\n")
 							end
-							table.insert(out, "[result]\n" .. read.cut(read.trim(text), RESULT_CHARS) .. "\n\n")
+							table.insert(out, "[result]\n" .. read.cut(heiko.text.trim(text), RESULT_CHARS) .. "\n\n")
 						end
 					end
 				end
-			elseif not skip and kind == "assistant" and is_array(content) then
+			elseif not skip and kind == "assistant" and heiko.values.is_array(content) then
 				for n, block in ipairs(content) do
 					local what = field(block, "type")
 					if what == "text" then
@@ -1100,7 +1019,7 @@ local function read_claude_chat(files, item, offset)
 			end
 		end
 	end
-	if events == 0 and read.trim(lines) ~= "" then
+	if events == 0 and heiko.text.trim(lines) ~= "" then
 		return nil, "not a Claude Code chat"
 	end
 	return { text = table.concat(out), offset = after }
@@ -1114,7 +1033,7 @@ local function sections(text, marker)
 	local out = {}
 	for _, line in ipairs(read.lines(text)) do
 		if starts(line, marker) then
-			table.insert(out, { heading = read.trim(string.sub(line, #marker + 1)), parts = {} })
+			table.insert(out, { heading = heiko.text.trim(string.sub(line, #marker + 1)), parts = {} })
 		end
 		local last = out[#out]
 		if last ~= nil then
@@ -1137,11 +1056,11 @@ local function header(text)
 		if colon == nil then
 			break
 		end
-		local key = read.trim(string.sub(line, 1, colon - 1))
+		local key = heiko.text.trim(string.sub(line, 1, colon - 1))
 		if key == "" or string.match(key, "^[a-z_]+$") == nil then
 			break
 		end
-		found[key] = read.trim(string.sub(line, colon + 1))
+		found[key] = heiko.text.trim(string.sub(line, colon + 1))
 	end
 	return found
 end
@@ -1152,7 +1071,7 @@ local function imported(files, root)
 	local text = text_of(files, join(root, read.IMPORTS))
 	local imports = text and decode(text)
 	local records = field(imports, "records")
-	if is_array(records) then
+	if heiko.values.is_array(records) then
 		for _, record in ipairs(records) do
 			local id = str(field(record, "imported_thread_id"))
 			if id ~= nil then
@@ -1213,7 +1132,7 @@ local function memories(files, dir, place_of, scan)
 	local text = text_of(files, index)
 	if text ~= nil then
 		for n, section in ipairs(sections(text, "# Task Group:")) do
-			for word in string.gmatch(read.one_line(section.text), "%S+") do
+			for word in string.gmatch(heiko.text.one_line(section.text), "%S+") do
 				local at = string.find(word, "rollout_summaries/", 1, true)
 				if at ~= nil then
 					local name = string.sub(word, at + #"rollout_summaries/")
@@ -1223,7 +1142,7 @@ local function memories(files, dir, place_of, scan)
 			end
 			local heading = section.heading
 			local dash = string.find(heading, " — ", 1, true)
-			local cwd = read.trim(dash and string.sub(heading, 1, dash - 1) or heading)
+			local cwd = heiko.text.trim(dash and string.sub(heading, 1, dash - 1) or heading)
 			table.insert(scan.items, {
 				tool = read.CODEX,
 				material = read.SAVED,
@@ -1280,7 +1199,7 @@ local function memories(files, dir, place_of, scan)
 	text = text_of(files, raw)
 	if text ~= nil then
 		for _, section in ipairs(sections(text, "## Thread")) do
-			local thread = string.gsub(read.trim(section.heading), "^`+", "")
+			local thread = string.gsub(heiko.text.trim(section.heading), "^`+", "")
 			thread = string.gsub(thread, "`+$", "")
 			if not threads[thread] then
 				local newline = string.find(section.text, "\n", 1, true)
@@ -1363,7 +1282,7 @@ local function read_codex_chat(files, item, offset)
 					local role = field(payload, "role")
 					local who = (role == "user" or role == "assistant") and role or nil
 					local content = field(payload, "content")
-					if who ~= nil and is_array(content) then
+					if who ~= nil and heiko.values.is_array(content) then
 						for _, part in ipairs(content) do
 							local said = str(field(part, "text")) or ""
 							if not (who == "user" and injected(said)) then
@@ -1382,12 +1301,12 @@ local function read_codex_chat(files, item, offset)
 						local raw = ordered.get(ordered.get(ordered.parse(line), "payload"), "output")
 						text = raw and ordered.text(raw) or "null"
 					end
-					table.insert(out, "[result]\n" .. read.cut(read.trim(text), RESULT_CHARS) .. "\n\n")
+					table.insert(out, "[result]\n" .. read.cut(heiko.text.trim(text), RESULT_CHARS) .. "\n\n")
 				end
 			end
 		end
 	end
-	if events == 0 and read.trim(lines) ~= "" then
+	if events == 0 and heiko.text.trim(lines) ~= "" then
 		return nil, "not a Codex session"
 	end
 	return { text = table.concat(out), offset = after }

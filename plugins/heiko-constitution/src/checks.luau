@@ -20,15 +20,6 @@ function checks.two(x)
 	return string.format("%.2f", x)
 end
 
--- `text` cut at `chars` characters.
-function checks.cut(text, chars)
-	local after = utf8.offset(text, chars + 1)
-	if after == nil or after > #text then
-		return text
-	end
-	return string.sub(text, 1, after - 1)
-end
-
 function checks.question_id(n)
 	return "rule-" .. (n - 1)
 end
@@ -75,23 +66,13 @@ function checks.answer_request(answer, found)
 	return { state = { final_answer = answer }, questions = questions }
 end
 
--- Asks Jev with `request`, of `count` questions: each rule's score in
--- order, and what it cost; else nil and why.
-function checks.ask(request, count)
-	local ok, answers, cost = pcall(heiko.await, heiko.cmd.jev.ask(request))
-	if not ok then
-		return nil, tostring(answers)
-	end
-	answers = if type(answers) == "table" then answers else {}
-	local scores = {}
+-- The ids of `count` questions, in the rules' order.
+function checks.question_ids(count)
+	local ids = {}
 	for n = 1, count do
-		local answer = answers[checks.question_id(n)]
-		if type(answer) ~= "table" or type(answer.probability) ~= "number" then
-			return nil, "Jev gave no answer to " .. checks.question_id(n)
-		end
-		scores[n] = answer.probability
+		ids[n] = checks.question_id(n)
 	end
-	return scores, cost or 0
+	return ids
 end
 
 -- What a check of a call shows of its fields: each value, text as it
@@ -300,7 +281,7 @@ function checks.summary(stats)
 		return table.concat(parts, " · ")
 	end
 	local n = stats.calls + stats.answers
-	return n .. " " .. (n == 1 and "check" or "checks") .. ", all clear"
+	return heiko.count.plural(n, "check") .. ", all clear"
 end
 
 -- What a run's checks say as it starts: off without a key, else how
@@ -312,10 +293,8 @@ function checks.starting(jev, count)
 		return "the rules cannot be read"
 	elseif count == 0 then
 		return "no rules"
-	elseif count == 1 then
-		return "watching 1 rule"
 	end
-	return "watching " .. count .. " rules"
+	return "watching " .. heiko.count.plural(count, "rule")
 end
 
 -- The run's state, as each hook finds it: `starting`, what it says

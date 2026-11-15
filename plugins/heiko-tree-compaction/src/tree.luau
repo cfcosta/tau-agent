@@ -12,6 +12,8 @@
 -- A history is `{ entries, nodes, view }`: `entries` each `{ kind, text }`,
 -- `nodes` each built node's line by its key (`level:index`), and `view`
 -- its nodes in order.
+local heiko = require("heiko")
+
 local tree = {}
 
 -- The target size of one summary line, in UTF-8 bytes. A target, not a
@@ -22,67 +24,6 @@ tree.NODE_BYTES = 512
 -- The most characters an entry keeps of one message; a longer one keeps
 -- its head and its tail.
 tree.ENTRY_CHARS = 30000
-
--- White space as Unicode has it, beyond ASCII's, as UTF-8.
-local WIDE_SPACES = {}
-for _, c in ipairs({ 0x85, 0xA0, 0x1680, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000 }) do
-	table.insert(WIDE_SPACES, utf8.char(c))
-end
-for c = 0x2000, 0x200A do
-	table.insert(WIDE_SPACES, utf8.char(c))
-end
-
-local SPACE = {}
-for _, c in ipairs({ 0x20, 0x85, 0xA0, 0x1680, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000 }) do
-	SPACE[c] = true
-end
-for c = 0x09, 0x0D do
-	SPACE[c] = true
-end
-for c = 0x2000, 0x200A do
-	SPACE[c] = true
-end
-
--- `text` with every run of white space one space, none at its ends.
-function tree.words(text)
-	for _, space in ipairs(WIDE_SPACES) do
-		if string.find(text, space, 1, true) then
-			text = string.gsub(text, space, " ")
-		end
-	end
-	text = string.gsub(text, "%s+", " ")
-	if string.sub(text, 1, 1) == " " then
-		text = string.sub(text, 2)
-	end
-	if string.sub(text, -1) == " " then
-		text = string.sub(text, 1, -2)
-	end
-	return text
-end
-
--- `text` without white space at either end.
-function tree.trim(text)
-	local first = 1
-	while first <= #text do
-		local c = utf8.codepoint(text, first)
-		if not SPACE[c] then
-			break
-		end
-		first = utf8.offset(text, 2, first)
-	end
-	local last = #text
-	while last >= first do
-		local start = last
-		while start > first and bit32.band(string.byte(text, start), 0xC0) == 0x80 do
-			start -= 1
-		end
-		if not SPACE[utf8.codepoint(text, start)] then
-			break
-		end
-		last = start - 1
-	end
-	return string.sub(text, first, last)
-end
 
 -- `text` cut to `ENTRY_CHARS` characters, its head and its tail kept
 -- around a note of what was cut.
@@ -122,11 +63,11 @@ function tree.entries(message)
 	local out = {}
 	if message.role == "user" then
 		local text = with_images(message)
-		if tree.trim(text) ~= "" then
+		if heiko.text.trim(text) ~= "" then
 			table.insert(out, { kind = "user", text = tree.cap(text) })
 		end
 	elseif message.role == "assistant" then
-		if tree.trim(message.text) ~= "" then
+		if heiko.text.trim(message.text) ~= "" then
 			table.insert(out, { kind = "talk", text = tree.cap(message.text) })
 		end
 		for _, call in ipairs(message.calls or {}) do
@@ -412,7 +353,7 @@ function tree.flat(history, node)
 	if text == nil then
 		return "(no summary yet: zoom to read it)"
 	end
-	return tree.words(text)
+	return heiko.text.one_line(text)
 end
 
 -- The view as the model reads it: `id+n|text` a line, oldest first,

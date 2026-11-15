@@ -42,17 +42,6 @@ local function answered()
 	}
 end
 
-local function copy(value)
-	if type(value) ~= "table" then
-		return value
-	end
-	local out = {}
-	for key, item in pairs(value) do
-		out[key] = copy(item)
-	end
-	return out
-end
-
 t.case("the call waits on its form, and the model reads the answers with their notes", function()
 	local run = t.run({ id = "r1" })
 	local asked = run:tool("ask", questions(), "call_1")
@@ -180,7 +169,7 @@ t.case("the panel takes the keys, and Send gives the call what was picked, writt
 	t.equal(run.state.calls[1].focus.panel, 2, "back on the panel")
 	-- Right is the review, and Enter sends, leaving the state as it is.
 	key(run, "right")
-	local before = copy(run.state)
+	local before = heiko.values.copy(run.state)
 	local sent = key(run, "enter")
 	t.equal(run.state, before, "sending changes nothing")
 	t.equal(sent, heiko.answer({

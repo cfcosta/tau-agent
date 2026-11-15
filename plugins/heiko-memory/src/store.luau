@@ -6,6 +6,7 @@
 -- The files are the truth: `open` reads them all, and anything derived
 -- from them (links, backlinks, search) is rebuilt from them. A file
 -- that does not read as a note is reported, not dropped.
+local heiko = require("heiko")
 local note = require("note")
 
 local M = {}
@@ -132,11 +133,7 @@ function Notes:list()
 end
 
 function Notes:len()
-	local n = 0
-	for _ in pairs(self.notes) do
-		n += 1
-	end
-	return n
+	return heiko.values.count(self.notes)
 end
 
 -- Where `n`'s file lives.

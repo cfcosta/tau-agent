@@ -48,6 +48,15 @@ pub const HEIKO_MODULE: &str = include_str!("heiko.luau");
 /// `heiko` installs into itself.
 pub const HEIKO_ACTOR_MODULE: &str = include_str!("heiko_actor.luau");
 
+/// The package whose files are the standard part of `heiko`
+/// (`heiko.text`, `heiko.count`, `heiko.values`, `heiko.store`, `heiko.jev`,
+/// `heiko.infer`, `heiko.now`; ADR 0058), in heiko's packages folder.
+pub const STD: &str = "heiko-std";
+/// Its parts: `src/<part>.luau` there, installed into `heiko` as the
+/// module `heiko_<part>`. No plugin may name a file of its own so.
+pub const STD_PARTS: [&str; 7] =
+    ["text", "count", "values", "store", "jev", "infer", "clock"];
+
 /// The `heiko_test` module the tests run with: `heiko.test`, apart from
 /// `heiko`, which every hook loads.
 pub const HEIKO_TEST_MODULE: &str = include_str!("heiko_test.luau");

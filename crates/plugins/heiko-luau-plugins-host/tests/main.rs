@@ -20,5 +20,6 @@ mod registry;
 mod rewrite;
 mod runtime;
 mod skill;
+mod std;
 mod store;
 mod writes;

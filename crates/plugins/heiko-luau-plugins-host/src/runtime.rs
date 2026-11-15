@@ -343,23 +343,38 @@ impl Files {
             json!({}),
             BTreeMap::new(),
         )?;
+        // The standard part, which `heiko` installs into itself too.
+        let std = std_parts()?
+            .iter()
+            .map(|(name, source)| {
+                Definition::new(
+                    name.clone(),
+                    source.clone(),
+                    json!({}),
+                    BTreeMap::new(),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut heiko_deps = BTreeMap::from([(
+            "heiko_actor".to_owned(),
+            actor.version().to_owned(),
+        )]);
+        for part in &std {
+            heiko_deps
+                .insert(part.name().to_owned(), part.version().to_owned());
+        }
         let heiko = Definition::new(
             "heiko".into(),
             HEIKO_MODULE.into(),
             json!({}),
-            BTreeMap::from([(
-                "heiko_actor".to_owned(),
-                actor.version().to_owned(),
-            )]),
+            heiko_deps,
         )?;
         let mut modules = BTreeMap::new();
         let mut plugin_deps =
             BTreeMap::from([("heiko".to_owned(), heiko.version().to_owned())]);
         for name in self.libs.keys() {
-            if name == "heiko"
-                || name == "heiko_test"
-                || name == "heiko_actor"
-                || name == module
+            // `heiko`, and every part of it, are heiko's own.
+            if name == "heiko" || name.starts_with("heiko_") || name == module
             {
                 return Err(format!("src/{name}.luau: `{name}` is taken"));
             }
@@ -415,8 +430,38 @@ impl Files {
         modules.insert("heiko_test".into(), harness);
         modules.insert("heiko".into(), heiko);
         modules.insert("heiko_actor".into(), actor);
+        for part in std {
+            modules.insert(part.name().to_owned(), part);
+        }
         Ok(modules)
     }
+}
+
+/// The standard part of `heiko` (ADR 0058): each part's module name and
+/// its source, read once from heiko's packages folder, as its plugins
+/// are, so that editing one compiles nothing. The first call blocks;
+/// reading the built-ins makes it.
+pub fn std_parts() -> Result<&'static [(String, String)], String> {
+    static PARTS: std::sync::OnceLock<Result<Vec<(String, String)>, String>> =
+        std::sync::OnceLock::new();
+    PARTS
+        .get_or_init(|| {
+            let dir = heiko_luau_plugins::packages::find()?
+                .join(heiko_luau_plugins::STD)
+                .join("src");
+            heiko_luau_plugins::STD_PARTS
+                .iter()
+                .map(|part| {
+                    let path = dir.join(format!("{part}.luau"));
+                    std::fs::read_to_string(&path)
+                        .map(|source| (format!("heiko_{part}"), source))
+                        .map_err(|error| format!("{}: {error}", path.display()))
+                })
+                .collect()
+        })
+        .as_ref()
+        .map(Vec::as_slice)
+        .map_err(Clone::clone)
 }
 
 /// The `libs` that `source` requires, by name: `require("name")`.

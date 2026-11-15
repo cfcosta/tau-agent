@@ -5,6 +5,8 @@
 --
 -- Rows, tabs and cursors count from 0, as the panel's buttons and keys
 -- send them.
+local heiko = require("heiko")
+
 local ask = {}
 
 -- The most questions one call asks.
@@ -24,35 +26,6 @@ ask.DECLINED = "The person declined to answer. Go on with your best judgment, or
 -- What a sub-agent's `ask` answers: it has no one to ask.
 ask.NO_ONE_TO_ASK =
 	"A sub-agent has no one to ask: decide yourself, and say in your answer what you assumed and why."
-
--- White space as Unicode has it, by code point: what Rust's `trim` takes
--- off.
-local SPACE = {}
-for _, c in ipairs({ 0x20, 0x85, 0xA0, 0x1680, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000 }) do
-	SPACE[c] = true
-end
-for c = 0x09, 0x0D do
-	SPACE[c] = true
-end
-for c = 0x2000, 0x200A do
-	SPACE[c] = true
-end
-
--- `text` without white space at either end.
-local function trim(text)
-	local first, last = nil, 0
-	for at, c in utf8.codes(text) do
-		if not SPACE[c] then
-			first = first or at
-			last = utf8.offset(text, 2, at) - 1
-		end
-	end
-	if first == nil then
-		return ""
-	end
-	return string.sub(text, first, last)
-end
-ask.trim = trim
 
 -- Whether code point `c` is one Rust's `{:?}` escapes as `\u{...}`.
 local ESCAPED = require("escaped")
@@ -120,16 +93,16 @@ function ask.check(questions)
 	end
 	for i, question in ipairs(questions.questions) do
 		local at = "Question " .. i
-		local text = trim(question.question)
+		local text = heiko.text.trim(question.question)
 		if text == "" then
 			return at .. " has no text."
 		end
 		for j = 1, i - 1 do
-			if trim(questions.questions[j].question) == text then
+			if heiko.text.trim(questions.questions[j].question) == text then
 				return at .. " repeats an earlier question."
 			end
 		end
-		local header = trim(question.header)
+		local header = heiko.text.trim(question.header)
 		if header == "" or utf8.len(header) > ask.MAX_HEADER then
 			return at
 				.. "'s header must be 1 to "
@@ -150,7 +123,7 @@ function ask.check(questions)
 				.. "."
 		end
 		for k, choice in ipairs(question.options) do
-			local label = trim(choice.label)
+			local label = heiko.text.trim(choice.label)
 			if label == "" then
 				return at .. "'s choice " .. k .. " has no label."
 			end
@@ -161,7 +134,7 @@ function ask.check(questions)
 					.. '": the person can always write their own answer, so leave it out.'
 			end
 			for j = 1, k - 1 do
-				if trim(question.options[j].label) == label then
+				if heiko.text.trim(question.options[j].label) == label then
 					return at .. ' offers "' .. label .. '" twice.'
 				end
 			end
@@ -235,7 +208,7 @@ local function own(answer)
 	if not present(answer.other) then
 		return nil
 	end
-	local text = trim(answer.other)
+	local text = heiko.text.trim(answer.other)
 	if text == "" then
 		return nil
 	end
@@ -312,8 +285,8 @@ function ask.reply_text(questions, reply)
 		if answer == nil then
 			break
 		end
-		table.insert(lines, '\n"' .. trim(question.question) .. '" = "' .. ask.answer_text(answer) .. '"')
-		local note = present(answer.note) and trim(answer.note) or ""
+		table.insert(lines, '\n"' .. heiko.text.trim(question.question) .. '" = "' .. ask.answer_text(answer) .. '"')
+		local note = present(answer.note) and heiko.text.trim(answer.note) or ""
 		if note ~= "" then
 			table.insert(lines, "\n  note: " .. string.gsub(note, "\n", "\n        "))
 		end
@@ -371,7 +344,7 @@ end
 
 -- Whether question `i` (from 0) has an answer.
 function ask.answered(draft, i)
-	return #draft.picked[i + 1] > 0 or (draft.other_on[i + 1] and trim(draft.other[i + 1]) ~= "")
+	return #draft.picked[i + 1] > 0 or (draft.other_on[i + 1] and heiko.text.trim(draft.other[i + 1]) ~= "")
 end
 
 -- How many questions have an answer.
@@ -404,11 +377,11 @@ function ask.answer(questions, draft, i)
 		table.insert(picked, question.options[row + 1].label)
 	end
 	local answer = { picked = picked }
-	local written = trim(draft.other[i + 1])
+	local written = heiko.text.trim(draft.other[i + 1])
 	if draft.other_on[i + 1] and written ~= "" then
 		answer.other = written
 	end
-	local note = trim(draft.notes[i + 1])
+	local note = heiko.text.trim(draft.notes[i + 1])
 	if note ~= "" then
 		answer.note = note
 	end
@@ -486,7 +459,7 @@ function ask.write_other(questions, draft, text)
 		return
 	end
 	draft.other[i + 1] = text
-	if trim(text) ~= "" then
+	if heiko.text.trim(text) ~= "" then
 		draft.other_on[i + 1] = true
 		if not questions.questions[i + 1].multi_select then
 			draft.picked[i + 1] = array({})

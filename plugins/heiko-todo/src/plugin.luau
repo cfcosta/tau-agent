@@ -37,10 +37,6 @@ local function bump(store)
 	store.put("rev", (store.get("rev") or 0) + 1)
 end
 
-local function now(env)
-	return env.now.unix
-end
-
 -- The plugin's store, as the issues module reads it: each read awaited.
 -- A hook's writes are kept until it ends, then given together, in its
 -- last step (`atomic`): the host commits what one step gives whole, and
@@ -52,26 +48,6 @@ local pending = setmetatable({}, { __mode = "k" })
 
 local function writes()
 	return pending[coroutine.running()]
-end
-
--- A copy of what is written, as it is now: what the hook changes after
--- is not written.
-local function copy(value)
-	if type(value) ~= "table" then
-		return value
-	end
-	local out = {}
-	for key, item in pairs(value) do
-		out[key] = copy(item)
-	end
-	local meta = getmetatable(value)
-	if type(meta) == "table" then
-		return setmetatable(out, meta)
-	elseif meta ~= nil then
-		-- A list read back from JSON: its metatable is the host's, kept.
-		return array(out)
-	end
-	return out
 end
 
 local function give(key, value)
@@ -101,9 +77,9 @@ local STORE = {
 		if mine == DELETED then
 			return nil
 		elseif mine ~= nil then
-			return copy(mine)
+			return heiko.values.copy(mine)
 		elseif w and w.read[key] ~= nil then
-			return copy(w.read[key] or nil)
+			return heiko.values.copy(w.read[key] or nil)
 		end
 		return heiko.await(cmd.store.get(key))
 	end,
@@ -120,13 +96,13 @@ local STORE = {
 			if mine == nil then
 				table.insert(out, kept)
 			elseif mine ~= DELETED then
-				table.insert(out, { key = kept.key, value = copy(mine) })
+				table.insert(out, { key = kept.key, value = heiko.values.copy(mine) })
 			end
 		end
 		for _, key in ipairs(w.order) do
 			local mine = w.values[key]
 			if not seen[key] and mine ~= DELETED and string.sub(key, 1, #prefix) == prefix then
-				table.insert(out, { key = key, value = copy(mine) })
+				table.insert(out, { key = key, value = heiko.values.copy(mine) })
 			end
 		end
 		table.sort(out, function(x, y)
@@ -135,7 +111,7 @@ local STORE = {
 		return out
 	end,
 	put = function(key, value)
-		write(key, copy(value))
+		write(key, heiko.values.copy(value))
 	end,
 	delete = function(key)
 		write(key, DELETED)
@@ -412,7 +388,7 @@ local function finished_line(call, list)
 		local line = step.issue and (step.text .. " → " .. step.issue) or step.text
 		table.insert(lines, ui.row({ ui.square("✓", "filled", "good"), ui.toned(line, "neutral") }))
 	end
-	local count = #list == 1 and "1 step" or (#list .. " steps")
+	local count = heiko.count.plural(#list, "step")
 	return ui.section("steps-" .. call, "", lines, { small = true, lead = { ui.toned(count, "good", true), ui.pips(inks) } })
 end
 
@@ -470,7 +446,7 @@ local tools = {
 			local filter = filter_of(args)
 			if args.blocked then
 				local out = array({})
-				for _, id in ipairs(graph.blocked(all, now(env), filter)) do
+				for _, id in ipairs(graph.blocked(all, heiko.now(env), filter)) do
 					local one = brief(all[id])
 					one.waits_on = array(graph.blockers(all, id))
 					one.blocked = all[id].blocked
@@ -478,7 +454,7 @@ local tools = {
 				end
 				return { blocked = out }
 			end
-			return { ready = briefs(all, graph.ready(all, now(env), filter)) }
+			return { ready = briefs(all, graph.ready(all, heiko.now(env), filter)) }
 		end,
 		card = read_card,
 	},
@@ -528,7 +504,7 @@ local tools = {
 		parameters = object({ id = ID }, { "id" }),
 		call = function(args, model, env)
 			local all = issues.all(store_of())
-			return { issue = whole(all, issues.find(all, args.id), now(env)) }
+			return { issue = whole(all, issues.find(all, args.id), heiko.now(env)) }
 		end,
 		card = read_card,
 	},
@@ -557,7 +533,7 @@ local tools = {
 			local store = store_of()
 			local args2 = table.clone(args)
 			args2.found_while = held(store, env.run.id)
-			local issue = issues.create(store, now(env), args2)
+			local issue = issues.create(store, heiko.now(env), args2)
 			if args.step then
 				promote(model, args.step, issue.id)
 			end
@@ -585,7 +561,7 @@ local tools = {
 		call = function(args, model, env)
 			local store = store_of()
 			local before = snapshot(store, args.id)
-			local issue = issues.update(store, now(env), args)
+			local issue = issues.update(store, heiko.now(env), args)
 			local line = issue.id .. " changed"
 			if before and before.priority ~= issue.priority then
 				line = issue.id .. ": P" .. before.priority .. " to P" .. issue.priority
@@ -605,7 +581,7 @@ local tools = {
 		parameters = object({ id = ID }, { "id" }),
 		call = function(args, model, env)
 			local store = store_of()
-			local issue = issues.claim(store, now(env), args.id, env.run.id)
+			local issue = issues.claim(store, heiko.now(env), args.id, env.run.id)
 			model.issue = issue.id
 			local note = fold(model, env, issue, "claimed by this run")
 			if note then
@@ -622,7 +598,7 @@ local tools = {
 		call = function(args, model, env)
 			local store = store_of()
 			local before = snapshot(store, args.id)
-			local issue = issues.check(store, now(env), args.id, args.criterion, args.done)
+			local issue = issues.check(store, heiko.now(env), args.id, args.criterion, args.done)
 			local verb = args.done == false and "unmet" or "met"
 			return changed(store, issue, issue.id .. ": criterion " .. args.criterion .. " " .. verb, before)
 		end,
@@ -639,7 +615,7 @@ local tools = {
 		call = function(args, model, env)
 			local store = store_of()
 			local before = snapshot(store, args.id)
-			local issue = issues.link(store, now(env), args.id, args.kind, args.on, args.remove)
+			local issue = issues.link(store, heiko.now(env), args.id, args.kind, args.on, args.remove)
 			local line = args.remove and (args.id .. ": no longer " .. args.kind .. " " .. args.on)
 				or (args.kind == "blocks" and (args.on .. " blocks " .. args.id) or (args.id .. " " .. args.kind .. " " .. args.on))
 			return changed(store, issue, line, before)
@@ -651,7 +627,7 @@ local tools = {
 		parameters = object({ id = ID, text = { type = "string" } }, { "id", "text" }),
 		call = function(args, model, env)
 			local store = store_of()
-			local issue = issues.comment(store, now(env), args.id, args.text, env.run.id)
+			local issue = issues.comment(store, heiko.now(env), args.id, args.text, env.run.id)
 			bump(store)
 			return { issue = brief(issue), line = "commented on " .. issue.id }
 		end,
@@ -664,14 +640,14 @@ local tools = {
 			local store = store_of()
 			local before = snapshot(store, args.id)
 			if args.reopen then
-				local result = changed(store, issues.reopen(store, now(env), args.id), "reopened " .. args.id, before)
+				local result = changed(store, issues.reopen(store, heiko.now(env), args.id), "reopened " .. args.id, before)
 				local note = fold(model, env, result.issue, "reopened", result.undo)
 				if note then
 					note.closed = nil
 				end
 				return result
 			end
-			local issue = issues.close(store, now(env), args.id, args.reason)
+			local issue = issues.close(store, heiko.now(env), args.id, args.reason)
 			local done, all = graph.checked(issue)
 			local line = "closed " .. issue.id
 			if done < all then
@@ -692,7 +668,7 @@ local tools = {
 		call = function(args, model, env)
 			local store = store_of()
 			local before = snapshot(store, args.id)
-			local issue = issues.defer(store, now(env), args.id, args["until"])
+			local issue = issues.defer(store, heiko.now(env), args.id, args["until"])
 			local line = "deferred " .. issue.id .. (issue.defer_until and (" until " .. string.sub(time.iso(issue.defer_until), 1, 10)) or "")
 			local result = changed(store, issue, line, before)
 			fold(model, env, issue, "deferred", result.undo)
@@ -1148,7 +1124,7 @@ local function board_page(params, model, env)
 	if not ok then
 		return ui.empty("Issues need the plugin's store.")
 	end
-	local at = now(env)
+	local at = heiko.now(env)
 	local ready = #graph.ready(all, at)
 	local view = params.view or "board"
 	local body
@@ -1185,7 +1161,7 @@ end
 -- What the person's move of a card stands for.
 local function move(args, model, env)
 	local store = store_of()
-	local at = now(env)
+	local at = heiko.now(env)
 	local id, to = args.card, args.to
 	local all = issues.all(store)
 	local issue = issues.find(all, id)
@@ -1221,12 +1197,12 @@ end
 local actions = {
 	move = move,
 	start = function(args, model, env)
-		return start_chat(store_of(), now(env), args.issue)
+		return start_chat(store_of(), heiko.now(env), args.issue)
 	end,
 	-- A chat started on `issue`, or why it did not: it holds the issue.
 	started = function(args, model, env)
 		local store = store_of()
-		local at = now(env)
+		local at = heiko.now(env)
 		if args.error then
 			issues.let_go(store, at, args.issue, "starting", nil)
 			bump(store)
@@ -1248,16 +1224,16 @@ local actions = {
 			return heiko.steer_chat({ run = args.to, text = opening(issue), ["then"] = "sent", args = { issue = issue.id, from = args.from } })
 		end
 		if issue.claim == args.from then
-			issues.let_go(store, now(env), issue.id, args.from, nil)
+			issues.let_go(store, heiko.now(env), issue.id, args.from, nil)
 		end
-		return start_chat(store, now(env), issue.id)
+		return start_chat(store, heiko.now(env), issue.id)
 	end,
 	sent = function(args, model, env)
 		if args.error then
 			return args.issue .. " was not sent: " .. args.error
 		end
 		local store = store_of()
-		local at = now(env)
+		local at = heiko.now(env)
 		local issue = issues.find(issues.all(store), args.issue)
 		if issue.claim and issue.claim ~= args.run then
 			issues.let_go(store, at, issue.id, issue.claim, "Sent to the chat " .. args.run .. ".", "the person")
@@ -1280,7 +1256,7 @@ local actions = {
 		if not ask then
 			return nil
 		end
-		issues.close(store, now(env), ask.issue, args.text ~= "" and args.text or "Closed from the board.")
+		issues.close(store, heiko.now(env), ask.issue, args.text ~= "" and args.text or "Closed from the board.")
 		store.delete("ask")
 		bump(store)
 	end,
@@ -1293,35 +1269,35 @@ local actions = {
 		local on = string.match(args.text or "", "^%s*(td%-[%w%.]+)%s*$")
 		local all = issues.all(store)
 		if on and all[on] then
-			issues.link(store, now(env), ask.issue, "blocks", on)
+			issues.link(store, heiko.now(env), ask.issue, "blocks", on)
 			local issue = issues.all(store)[ask.issue]
 			if issue.claim then
-				issues.let_go(store, now(env), issue.id, issue.claim, "Blocked on " .. on .. ".", "the person")
+				issues.let_go(store, heiko.now(env), issue.id, issue.claim, "Blocked on " .. on .. ".", "the person")
 			end
 		else
-			issues.update(store, now(env), { id = ask.issue, status = "blocked", blocked = args.text })
+			issues.update(store, heiko.now(env), { id = ask.issue, status = "blocked", blocked = args.text })
 		end
 		store.delete("ask")
 		bump(store)
 	end,
 	reopen = function(args, model, env)
-		issues.reopen(store_of(), now(env), args.id)
+		issues.reopen(store_of(), heiko.now(env), args.id)
 		bump(STORE)
 	end,
 	defer = function(args, model, env)
-		issues.defer(store_of(), now(env), args.id, args["until"])
+		issues.defer(store_of(), heiko.now(env), args.id, args["until"])
 		bump(STORE)
 	end,
 	let_go = function(args, model, env)
 		local store = store_of()
 		local issue = issues.find(issues.all(store), args.id)
 		if issue.claim then
-			issues.let_go(store, now(env), issue.id, issue.claim, "The person let it go; the run goes on without it.", "the person")
+			issues.let_go(store, heiko.now(env), issue.id, issue.claim, "The person let it go; the run goes on without it.", "the person")
 		end
 		bump(store)
 	end,
 	check = function(args, model, env)
-		issues.check(store_of(), now(env), args.id, args.at, args.done)
+		issues.check(store_of(), heiko.now(env), args.id, args.at, args.done)
 		bump(STORE)
 	end,
 	-- A comment on the issue the panel shows; the run that holds it is
@@ -1332,7 +1308,7 @@ local actions = {
 		if not id then
 			return nil
 		end
-		local issue = issues.comment(store, now(env), id, args.text, "the person")
+		local issue = issues.comment(store, heiko.now(env), id, args.text, "the person")
 		bump(store)
 		if issue.claim and issue.claim ~= "starting" then
 			return heiko.steer_chat({ run = issue.claim, text = "On " .. issue.id .. ": " .. args.text })
@@ -1353,7 +1329,7 @@ local actions = {
 			end
 		end
 		if args.forget then
-			issues.delete(store, now(env), args.forget)
+			issues.delete(store, heiko.now(env), args.forget)
 		elseif args.restore then
 			local issue = args.restore
 			-- A claim comes back only with its run going on: an ended run's
@@ -1377,7 +1353,7 @@ local actions = {
 		if not step then
 			return nil
 		end
-		local issue = issues.create(store, now(env), { title = step.text, found_while = held(store, env.run.id) })
+		local issue = issues.create(store, heiko.now(env), { title = step.text, found_while = held(store, env.run.id) })
 		-- The steps as they are now: promoted only if it is still that step.
 		local still = (model.steps or {})[tonumber(args.at) or 0]
 		if still and still.text == step.text then
@@ -1388,7 +1364,7 @@ local actions = {
 	-- Beads' JSONL the person pasted, into this repository.
 	import = function(args, model, env)
 		local store = store_of()
-		local n = issues.import(store, now(env), beads.import(args.text or ""))
+		local n = issues.import(store, heiko.now(env), beads.import(args.text or ""))
 		bump(store)
 		return "Imported " .. n .. " issues."
 	end,
@@ -1441,7 +1417,7 @@ local function refresh(model, env)
 		end
 	end
 	table.sort(found)
-	local ready = graph.ready(all, now(env))
+	local ready = graph.ready(all, heiko.now(env))
 	local next = {}
 	for n = 1, math.min(3, #ready) do
 		table.insert(next, ready[n])
@@ -1562,7 +1538,7 @@ return heiko.plugin({
 		if not ok then
 			return {}
 		end
-		local ready = graph.ready(all, now(env))
+		local ready = graph.ready(all, heiko.now(env))
 		return {
 			rev = STORE.get("rev") or 0,
 			ready = #ready,
@@ -1599,7 +1575,7 @@ return heiko.plugin({
 			note = note .. "\n\nSteps it left:\n" .. table.concat(left, "\n")
 		end
 		for _, id in ipairs(held) do
-			issues.let_go(STORE, now(env), id, env.run.id, note)
+			issues.let_go(STORE, heiko.now(env), id, env.run.id, note)
 		end
 		if #held > 0 then
 			bump(STORE)
@@ -1612,12 +1588,12 @@ return heiko.plugin({
 		local any = false
 		for _, run in ipairs(input.runs or {}) do
 			for _, id in ipairs(issues.held_by(STORE, run)) do
-				issues.let_go(STORE, now(env), id, run, "heiko closed while the run " .. run .. " was going.", "heiko")
+				issues.let_go(STORE, heiko.now(env), id, run, "heiko closed while the run " .. run .. " was going.", "heiko")
 				any = true
 			end
 		end
 		for _, id in ipairs(issues.held_by(STORE, "starting")) do
-			issues.let_go(STORE, now(env), id, "starting", nil)
+			issues.let_go(STORE, heiko.now(env), id, "starting", nil)
 			any = true
 		end
 		if any then

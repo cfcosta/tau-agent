@@ -22,22 +22,42 @@ pub const LIST: &str = "built-in.toml";
 #[serde(deny_unknown_fields)]
 struct List {
     plugins: Vec<String>,
+    /// Packages whose files are parts of the `heiko` module, such as
+    /// heiko-std: tested as packages are, never loaded as plugins.
+    #[serde(default)]
+    libraries: Vec<String>,
 }
 
-/// The names `dir` lists, in order, checked against what it holds: it
-/// holds each, and no package it does not list, the skills' examples
-/// aside. It blocks.
-pub fn listed(dir: &Path) -> Result<Vec<String>, String> {
+/// The file's lists, read.
+fn list(dir: &Path) -> Result<List, String> {
     let path = dir.join(LIST);
     let text = std::fs::read_to_string(&path)
         .map_err(|error| format!("{}: {error}", path.display()))?;
-    let List { plugins } = toml::from_str(&text)
-        .map_err(|error| format!("{}: {}", path.display(), error.message()))?;
-    let names: BTreeSet<&str> = plugins.iter().map(String::as_str).collect();
-    if names.len() != plugins.len() {
+    toml::from_str(&text)
+        .map_err(|error| format!("{}: {}", path.display(), error.message()))
+}
+
+/// The libraries `dir` lists: packages built into `heiko`, which are
+/// tested with the plugins and loaded with none. It blocks.
+pub fn libraries(dir: &Path) -> Result<Vec<String>, String> {
+    Ok(list(dir)?.libraries)
+}
+
+/// The plugins `dir` lists, in order, checked against what it holds: it
+/// holds each and each library, and no package it does not list, the
+/// skills' examples aside. It blocks.
+pub fn listed(dir: &Path) -> Result<Vec<String>, String> {
+    let path = dir.join(LIST);
+    let List { plugins, libraries } = list(dir)?;
+    let names: BTreeSet<&str> = plugins
+        .iter()
+        .chain(&libraries)
+        .map(String::as_str)
+        .collect();
+    if names.len() != plugins.len() + libraries.len() {
         return Err(format!("{}: it lists a plugin twice", path.display()));
     }
-    for name in &plugins {
+    for name in plugins.iter().chain(&libraries) {
         if !dir.join(name).join(MANIFEST).is_file() {
             return Err(format!(
                 "{} lists {name}, which {} does not hold",
@@ -68,6 +88,9 @@ pub fn listed(dir: &Path) -> Result<Vec<String>, String> {
 
 /// Each plugin `dir` lists, as files, in order. It blocks.
 pub fn read(dir: &Path) -> Result<Vec<Files>, String> {
+    // What every plugin's `heiko` is made of, read here, where reading
+    // may block.
+    crate::runtime::std_parts()?;
     listed(dir)?
         .iter()
         .map(|name| {

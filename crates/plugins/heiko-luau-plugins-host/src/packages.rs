@@ -18,8 +18,8 @@ pub struct Package {
 }
 
 /// The packages `folders` name, read. With none, the folder `here` when
-/// it holds a `heiko.toml`, else every plugin heiko comes with, in order. It
-/// blocks.
+/// it holds a `heiko.toml`, else every plugin heiko comes with, in order,
+/// then its libraries. It blocks.
 pub fn chosen(
     folders: &[PathBuf],
     here: &Path,
@@ -31,8 +31,10 @@ pub fn chosen(
             // Read as starting reads them, so a package missing from the
             // list, or one it does not list, is the error it is there.
             crate::built_in::read(&dir)?;
+            // The libraries built into `heiko` are tested with them.
             crate::built_in::listed(&dir)?
                 .iter()
+                .chain(&crate::built_in::libraries(&dir)?)
                 .map(|name| dir.join(name))
                 .collect()
         }

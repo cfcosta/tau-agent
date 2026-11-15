@@ -329,7 +329,8 @@ local cmd = heiko.cmd
 return heiko.plugin({
   uses = { jev = true, store = true },
   before_stop = function(_, model)
-    local p = heiko.await(cmd.jev.noul({ question = "Is it done?" }))
+    local answers = heiko.await(cmd.jev.ask({ questions = { done = { kind = "noul", question = "Is it done?" } } }))
+    local p = answers.done
     if model.paused then
       return "paused"
     end
@@ -655,7 +656,8 @@ return heiko.plugin({
                     json!({}),
                     json!({}),
                     &executor,
-                    LIMIT,
+                    // Time enough on a machine busy with other tests.
+                    Duration::from_secs(60),
                     &CancellationToken::new(),
                     None,
                 )

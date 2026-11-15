@@ -948,6 +948,25 @@ before_stop = function(stop, model)
 end,
 ```
 
+### The standard part of `heiko`
+
+`require("heiko")` also gives what most plugins would else write again
+(ADR 0058): `heiko.text` (white space as Unicode has it, `trim`,
+`one_line`, `prefix`, `cut`, `codes`), `heiko.count` (`plural`,
+`tokens`), `heiko.values` (`count`, `copy`, `same`, `is_array`,
+`contains`), `heiko.store` (`get`, `list`, `put`, `delete`, `bump`,
+`of(repo)`: the store's commands awaited and given), `heiko.jev` (`ask`
+and `scores`, a failure as `nil` and why), `heiko.infer` (the model's
+answer as `{ ok, value, error, reason }`) and `heiko.now(env)`.
+
+Its source is the package `plugins/heiko-std`, read from heiko's
+packages folder and installed in the `heiko` of every plugin's VM. `built-in.toml` lists it
+under `libraries`: it is tested as the plugins are and loaded as none.
+It is the one thing plugins share. A package requires only `heiko` and
+its own `src/`; it cannot require another package, and cannot name a
+file `heiko_*`. The standard is a contract: a function there keeps its
+name and its meaning.
+
 ### Lifecycles as machines
 
 A Luau plugin keeps anything that goes through steps (a sign-in, an

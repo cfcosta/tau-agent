@@ -54,17 +54,6 @@ local questions = g.composite(function(draw)
 	return { questions = list }
 end)
 
-local function copy(value)
-	if type(value) ~= "table" then
-		return value
-	end
-	local out = {}
-	for key, item in pairs(value) do
-		out[key] = copy(item)
-	end
-	return out
-end
-
 local function starts(text, prefix)
 	return string.sub(text, 1, #prefix) == prefix
 end
@@ -77,7 +66,7 @@ end
 t.property("questions within the limits are asked and faults refused", function(draw)
 	local asked = draw(questions)
 	t.equal(ask.check(asked), nil)
-	local wrong = copy(asked)
+	local wrong = heiko.values.copy(asked)
 	local n = #asked.questions
 	local i = draw(g.integers({ min = 1, max = n }))
 	local at = i
@@ -88,7 +77,7 @@ t.property("questions within the limits are asked and faults refused", function(
 	elseif fault == 1 then
 		local extra = asked.questions[1]
 		while #wrong.questions <= ask.MAX_QUESTIONS do
-			local more = copy(extra)
+			local more = heiko.values.copy(extra)
 			more.question = more.question .. " " .. #wrong.questions
 			table.insert(wrong.questions, more)
 		end
@@ -108,7 +97,7 @@ t.property("questions within the limits are asked and faults refused", function(
 	else
 		local again = " " .. wrong.questions[1].question .. "\t"
 		if #wrong.questions < 2 then
-			local twin = copy(wrong.questions[1])
+			local twin = heiko.values.copy(wrong.questions[1])
 			twin.question = again
 			table.insert(wrong.questions, twin)
 		else
@@ -223,11 +212,11 @@ t.property("the model reads every answer and note", function(draw)
 			table.insert(parts, label)
 		end
 		if answer.other then
-			table.insert(parts, ask.trim(answer.other))
+			table.insert(parts, heiko.text.trim(answer.other))
 		end
 		want ..= '\n"' .. question.question .. '" = "' .. table.concat(parts, ", ") .. '"'
 		if answer.note then
-			local lines = string.split(ask.trim(answer.note), "\n")
+			local lines = string.split(heiko.text.trim(answer.note), "\n")
 			want ..= "\n  note: " .. table.concat(lines, "\n        ")
 		end
 	end

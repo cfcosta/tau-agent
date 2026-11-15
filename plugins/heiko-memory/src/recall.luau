@@ -5,6 +5,7 @@
 -- Search finds entry points; links carry what search misses, such as a
 -- decision that names neither of a query's words. Superseded notes rank
 -- lower and are labelled, never hidden: history is often the answer.
+local heiko = require("heiko")
 local bm25 = require("bm25")
 local note = require("note")
 local text = require("text")
@@ -67,8 +68,8 @@ function M.snippet(body, query)
 	if best == nil or most == 0 then
 		return nil
 	end
-	local line = text.trim(best)
-	local cut, more = text.prefix(line, SNIPPET)
+	local line = heiko.text.trim(best)
+	local cut, more = heiko.text.prefix(line, SNIPPET)
 	if more then
 		return cut .. "…"
 	end

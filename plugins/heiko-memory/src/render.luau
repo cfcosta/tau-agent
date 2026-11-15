@@ -1,6 +1,7 @@
 -- What heiko-memory's model reads: the prompts of its two memory
 -- requests, hits, notes and what a write did, as text, and a
 -- conversation shown to a memory request.
+local heiko = require("heiko")
 local note = require("note")
 local text = require("text")
 
@@ -154,7 +155,7 @@ function M.serialize(messages)
 				table.insert(out, "[call " .. call.name .. "]\n{" .. table.concat(parts, ",") .. "}\n\n")
 			end
 		elseif message.role == "toolResult" then
-			local result, more = text.prefix(message.text or "", RESULT_CHARS)
+			local result, more = heiko.text.prefix(message.text or "", RESULT_CHARS)
 			if more then
 				result ..= "… (cut)"
 			end

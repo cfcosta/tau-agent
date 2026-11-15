@@ -164,14 +164,12 @@ cmd.http = {
 	end,
 }
 
--- Jev, as the `jev` global took it: `ask`, `noul`, `choice` and `score`
--- answer with `(answer, cost)`.
-cmd.jev = {}
-for _, name in ipairs({ "ask", "noul", "choice", "score" }) do
-	cmd.jev[name] = function(request)
-		return command("jev", { fn = name, request = request })
-	end
-end
+-- Jev: `ask` answers with `(answers, cost)`, the answers by question.
+cmd.jev = {
+	ask = function(request)
+		return command("jev", { fn = "ask", request = request })
+	end,
+}
 
 function cmd.transcript()
 	return command("transcript")

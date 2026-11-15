@@ -212,16 +212,6 @@ t.property("notes show only where the effort changes", function(draw)
 	t.equal(count, notes)
 end)
 
-t.property("token counts read in thousands from a thousand", function(draw)
-	local n = draw(g.integers({ min = 0, max = 10000000 }))
-	local text = effort.tokens_text(n)
-	if n < 1000 then
-		t.equal(text, tostring(n))
-	else
-		t.equal(text, ((n + 500) // 1000) .. "k")
-	end
-end)
-
 local function chosen(chose, level, runs_at)
 	return {
 		verdict = chose and "chose" or "kept",

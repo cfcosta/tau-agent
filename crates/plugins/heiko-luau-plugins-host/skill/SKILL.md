@@ -287,7 +287,8 @@ made by `heiko.cmd`, which heiko carries out:
   await later in the hook sees what it did.
 - A failure raises the command's own message. Catch it with `pcall`
   where the hook goes on without the answer:
-  `local ok, answers, cost = pcall(heiko.await, cmd.jev.ask(request))`.
+  `local ok, values = pcall(heiko.await, cmd.http.request(request))`.
+  `heiko.jev.ask` and `heiko.infer` do it for Jev and the model.
 
 ```luau
 local cmd = heiko.cmd
@@ -349,7 +350,7 @@ The commands, in `heiko.cmd`:
 | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cmd.tool(name, args)`                                                     | in a tool's `call`: one of the tools `uses.tools` names, as `cmd.tool("read", { path = "a" })`; awaited, it gives the tool's answer                                                                                                 |
 | `cmd.infer(request)`                                                       | with `uses.infer`: the person's model (below); awaited                                                                                                                                                                              |
-| `cmd.jev.ask`, `noul`, `choice`, `score`                                   | with `uses.jev`: Jev, in a tool's `call` and every run hook but `on_event`, booked to the run; awaited, it gives the answer and what it cost: `local answers, cost = heiko.await(cmd.jev.ask(req))`                                   |
+| `cmd.jev.ask(request)`                                                     | with `uses.jev`: Jev, in a tool's `call` and every run hook but `on_event`, booked to the run; awaited, it gives the answer and what it cost: `local answers, cost = heiko.await(cmd.jev.ask(req))`                                   |
 | `cmd.http.request(request)`                                                | with `uses.network`: an HTTP request (below); awaited                                                                                                                                                                               |
 | `cmd.store.get(key)`, `list(prefix)`; `put(key, value)`, `delete(key)`     | with `uses.store`: the plugin's store in the repository the hook works in (below); reads awaited, writes given                                                                                                                      |
 | `cmd.transcript()`                                                         | with `uses.transcript`, in `before_request`, `after_tool_result` and `rewrite_context`: the run's conversation, whole (below); in `rewritten`, what the rewrite replaced; in `run_end`, the run's conversation as it ended; awaited |
@@ -495,8 +496,42 @@ so far, to count steps without reading it.
 - `heiko.cmd`, the commands; `heiko.await(command)`, `heiko.all(commands)`,
   `heiko.give(command)` and `heiko.log(text)` (above).
 - `heiko.secret(name)`: a secret in an HTTP request (above).
-- `heiko.contains(list, value)`: whether `list` holds `value`.
+- `heiko.text`, `heiko.count`, `heiko.values`, `heiko.store`, `heiko.jev`,
+  `heiko.infer` and `heiko.now`: the standard part (below).
 - `heiko.machine(spec)`: a lifecycle as data (below).
+
+### The standard part
+
+What most plugins need and should not write again. It is part of
+`heiko`, the same for every plugin, and will not change under you.
+
+| Function                                  | What it gives                                                                                              |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `heiko.text.is_space(code)`               | whether a code point is white space, as Unicode has it                                                      |
+| `heiko.text.trim(s)`                      | `s` without white space at either end                                                                       |
+| `heiko.text.one_line(s)`                  | `s` on one line: each run of white space one space                                                          |
+| `heiko.text.prefix(s, chars)`             | the first `chars` characters, and whether more is left                                                      |
+| `heiko.text.cut(s, chars)`                | `s` in at most `chars` characters, the last an ellipsis when it was cut                                     |
+| `heiko.text.codes(s)`                     | its characters as code points                                                                               |
+| `heiko.count.plural(n, one, many)`        | `1 note`, `3 notes`; `many` is `one` with an `s` unless given                                               |
+| `heiko.count.tokens(n)`                   | `900`, `184k`, `1.2M`, rounded down                                                                         |
+| `heiko.values.count(map)`                 | how many keys                                                                                               |
+| `heiko.values.copy(value)`                | a copy, however deep; a list stays a list                                                                   |
+| `heiko.values.same(a, b)`                 | whether two values hold the same, however deep                                                              |
+| `heiko.values.is_array(value)`            | whether a table is a list                                                                                   |
+| `heiko.values.contains(list, value)`      | whether `list` holds `value`                                                                                |
+| `heiko.store.get(key)`, `list(prefix)`    | with `uses.store`: awaited reads of the plugin's store                                                      |
+| `heiko.store.put(key, value)`, `delete`   | writes, given: they land when the step ends                                                                 |
+| `heiko.store.bump()`                      | adds one to `rev`, which a repository's pages draw again on                                                 |
+| `heiko.store.of(repo)`                    | the same five on another repository's store, in a job                                                       |
+| `heiko.jev.ask(request)`                  | with `uses.jev`: the answers and what they cost, or `nil` and why; it never raises                          |
+| `heiko.jev.scores(request, ids)`          | each of `ids`' probability, in order, and the cost; or `nil` and why when one is missing                    |
+| `heiko.infer(request)`                    | with `uses.infer`: `{ ok, value, error, reason }`; with `tools`, `value` is `{ text, calls }`               |
+| `heiko.now(env)`                          | the step's time, in Unix seconds                                                                            |
+
+The text functions count characters, not bytes. `heiko.store`,
+`heiko.jev` and `heiko.infer` await, so only a hook may call them, and
+what they answer may be stale by the next await.
 
 ### `heiko.ui`: what views are made of
 
@@ -946,7 +981,9 @@ no longer accepts gives way to the defaults, and the pane says so.
 
 `src/<module>.luau` is `require("<module>")` in `src/plugin.luau`, the
 two side by side: `src/` has no folders of its own. A module may require `heiko` and the plugin's other modules, as long as no two
-require each other, however far around. `heiko` and `plugin` are taken.
+require each other, however far around. `plugin`, `heiko` and any name
+starting with `heiko_` are taken. A plugin cannot require another
+plugin's modules: what plugins share is the standard part of `heiko`.
 
 ### A lifecycle: `heiko.machine`
 

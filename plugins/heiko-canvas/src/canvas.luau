@@ -1,6 +1,8 @@
 -- A run's canvas: its items, each an image or a document with every
 -- revision of it, numbered from 1 as the model names them; the edits
 -- that revise a document; and which revision the pane shows.
+local heiko = require("heiko")
+
 local canvas = {}
 
 -- The largest image the canvas takes: 8 MiB, so its bytes reach a phone
@@ -165,7 +167,7 @@ function canvas.excerpt(text, count)
 	local lines = {}
 	for line in string.gmatch(text .. "\n", "([^\n]*)\n") do
 		line = string.gsub(line, "^#+", "")
-		line = string.gsub((string.gsub(line, "^%s+", "")), "%s+$", "")
+		line = heiko.text.trim(line)
 		line = string.gsub(line, "`", "")
 		if line ~= "" then
 			table.insert(lines, line)

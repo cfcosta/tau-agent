@@ -41,7 +41,7 @@ return heiko.plugin { uses = { tools = { "exec_command" } },
     deploy_window = {
       description = "Whether now is a safe time to deploy.",
       call = function(args, model, env)
-        return { ok = not heiko.contains(env.settings.days, env.now.weekday) }
+        return { ok = not heiko.values.contains(env.settings.days, env.now.weekday) }
       end,
       card = function(input, model, env) local call, result = input.call, input.result;
         return ui.badge(result.ok and "safe" or "wait", result.ok and "good" or "warn")
@@ -949,8 +949,8 @@ return heiko.plugin { uses = { infer = true, jev = true },
   before_request = function(request, model, env)
     if request.turn ~= 1 then return nil end
     local picked = heiko.await(heiko.cmd.infer({ task = "Pick an effort.", context = json.null, effort = "low" }))
-    local odd = heiko.await(heiko.cmd.jev.noul({ state = { n = 1 }, question = "Is n odd?", yes = "odd" }))
-    model.said = { picked = picked, odd = odd.probability }
+    local odd = heiko.jev.scores({ state = { n = 1 }, questions = { odd = { kind = "noul", question = "Is n odd?", yes = "odd" } } }, { "odd" })
+    model.said = { picked = picked, odd = odd[1] }
     return heiko.effort(picked)
   end,
 }
@@ -960,7 +960,7 @@ const PLAIN: &str = r#"
 local heiko = require("heiko")
 return heiko.plugin { before_request = function(request, model, env)
     local inferred, why_infer = pcall(heiko.await, heiko.cmd.infer({ task = "Pick.", context = json.null }))
-    local asked, why_jev = pcall(heiko.await, heiko.cmd.jev.noul({ state = { n = 1 }, question = "Is n odd?" }))
+    local asked, why_jev = pcall(heiko.await, heiko.cmd.jev.ask({ state = { n = 1 }, questions = { odd = { kind = "noul", question = "Is n odd?" } } }))
     model.infer = if inferred then "reached" else tostring(why_infer)
     model.jev = if asked then "reached" else tostring(why_jev)
   end,
@@ -1969,8 +1969,8 @@ return heiko.plugin { uses = { jev = true },
   start = function(_, model) model.started = true end,
   actions = {
     note = function(_, model)
-      local answer = heiko.await(heiko.cmd.jev.noul({ question = "Is it done?" }))
-      model.noted = answer.probability
+      local answers = heiko.await(heiko.cmd.jev.ask({ questions = { done = { kind = "noul", question = "Is it done?" } } }))
+      model.noted = answers.done.probability
     end,
   },
 }
@@ -2067,8 +2067,8 @@ const CHECKER: &str = r#"
 local heiko = require("heiko")
 return heiko.plugin { uses = { jev = true },
   before_stop = function(_, model)
-    local answer = heiko.await(heiko.cmd.jev.noul({ question = "Is it done?" }))
-    model.checked = answer.probability
+    local answers = heiko.await(heiko.cmd.jev.ask({ questions = { done = { kind = "noul", question = "Is it done?" } } }))
+    model.checked = answers.done.probability
   end,
 }
 "#;

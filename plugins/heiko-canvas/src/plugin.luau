@@ -412,7 +412,7 @@ return heiko.plugin({
 		return {
 			pane = pane(of, model.pick, env),
 			calls = calls,
-			status = ui.status(count == 1 and "1 item on the canvas" or (count .. " items on the canvas")),
+			status = ui.status(heiko.count.plural(count, "item on the canvas", "items on the canvas")),
 		}
 	end,
 })

@@ -317,7 +317,7 @@ return heiko.plugin({
 			return view
 		end
 		local n = #call.ask.questions
-		view.status = ui.status(n == 1 and "1 question waiting" or (n .. " questions waiting"), nil, "warn")
+		view.status = ui.status(heiko.count.plural(n, "question waiting", "questions waiting"), nil, "warn")
 		-- The run asks the person: its first question says what.
 		view.asks = call.ask.questions[1].question
 		view.composer = panel.tree(

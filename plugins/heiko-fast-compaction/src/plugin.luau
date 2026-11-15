@@ -88,33 +88,19 @@ local function overfull(tokens, window, settings)
 	return window ~= nil and window > 0 and tokens > math.max(window - settings.start_reserve_tokens, 0)
 end
 
-local function count(n, one, many)
-	return n .. " " .. (n == 1 and one or many)
-end
-
--- `184000` as `184k`.
-local function tokens_text(n)
-	if n < 1000 then
-		return tostring(n)
-	elseif n < 1000000 then
-		return (n // 1000) .. "k"
-	end
-	return string.format("%.1fM", n / 1000000)
-end
-
 -- What a pass judged: `12 calls judged in 1 Jev request · …`.
 local function detail(stats)
-	return count(stats.calls - stats.pinned, "call", "calls")
+	return heiko.count.plural(stats.calls - stats.pinned, "call")
 		.. " judged in "
-		.. count(stats.requests, "Jev request", "Jev requests")
+		.. heiko.count.plural(stats.requests, "Jev request")
 		.. " · "
-		.. count(stats.results_dropped, "result", "results")
+		.. heiko.count.plural(stats.results_dropped, "result")
 		.. " cut, "
-		.. count(stats.calls_dropped, "call", "calls")
+		.. heiko.count.plural(stats.calls_dropped, "call")
 		.. " dropped · −"
 		.. string.format("%.0f", stats.reduction_ratio * 100)
 		.. "% · Jev read "
-		.. tokens_text(stats.state_tokens)
+		.. heiko.count.tokens(stats.state_tokens)
 		.. " tokens of history, "
 		.. stats.state_stage
 end
@@ -263,7 +249,7 @@ local function pass(view, model, settings)
 		table.insert(judged, {
 			call_id = call.call_id,
 			tool = call.tool,
-			input = estimate.truncate(argument(call.input), 120),
+			input = heiko.text.cut(argument(call.input), 120),
 			tokens = estimate.div_ceil(utf8.len(call.input) + call.result_chars, 4),
 			matters = decision and decision.keep_call or json.null,
 			verbatim = decision and decision.keep_result or json.null,
@@ -376,8 +362,8 @@ local function before_after(one)
 		return ui.ticks(math.clamp(math.floor(tokens / window * WINDOW_TICKS + 0.5), 0, WINDOW_TICKS), WINDOW_TICKS, tone, { math.floor(COMPACT_AT / 100 * WINDOW_TICKS) })
 	end
 	return ui.table({}, {
-		{ ui.toned("Before", "neutral"), strip(one.before, "neutral"), ui.mono(tokens_text(one.before)) },
-		{ ui.toned("After", "neutral"), strip(one.after, "info"), ui.mono(tokens_text(one.after)) },
+		{ ui.toned("Before", "neutral"), strip(one.before, "neutral"), ui.mono(heiko.count.tokens(one.before)) },
+		{ ui.toned("After", "neutral"), strip(one.after, "info"), ui.mono(heiko.count.tokens(one.after)) },
 	}, { widths = { 1, 8, 1 } })
 end
 
@@ -447,8 +433,8 @@ local function ledger_page(state_now)
 		end
 		table.insert(rows, {
 			ui.mono(entry.tool),
-			ui.mono(estimate.truncate(argument(entry.input), ARGUMENT_CHARS)),
-			ui.mono(tokens_text(entry.tokens)),
+			ui.mono(heiko.text.cut(argument(entry.input), ARGUMENT_CHARS)),
+			ui.mono(heiko.count.tokens(entry.tokens)),
 			odds(entry.matters),
 			odds(entry.verbatim),
 			decision(entry.decision),
@@ -456,7 +442,7 @@ local function ledger_page(state_now)
 	end
 	return ui.stack({
 		ui.header(
-			"Pruned " .. tokens_text(math.max(last.before - last.after, 0)) .. " tokens of this run's tool history",
+			"Pruned " .. heiko.count.tokens(math.max(last.before - last.after, 0)) .. " tokens of this run's tool history",
 			{ meta = NAME }
 		),
 		ui.toned(last.detail, "neutral"),
@@ -477,7 +463,7 @@ local function ledger_page(state_now)
 						{ "next request", "1 full resend" },
 						{
 							"outputs pruned",
-							pruned_outputs == 0 and "none" or (pruned_outputs .. " · −" .. tokens_text(saved) .. " tokens"),
+							pruned_outputs == 0 and "none" or (pruned_outputs .. " · −" .. heiko.count.tokens(saved) .. " tokens"),
 						},
 					}),
 				}),
@@ -582,7 +568,7 @@ return heiko.plugin({
 		for at, one in ipairs(passes) do
 			view.notes["pass-" .. at] = ui.stack({
 				ui.row({
-					ui.title("Pruned " .. tokens_text(math.max(one.before - one.after, 0)) .. " tokens"),
+					ui.title("Pruned " .. heiko.count.tokens(math.max(one.before - one.after, 0)) .. " tokens"),
 					ui.spacer(),
 					ui.mono(NAME),
 					ledger_link(),

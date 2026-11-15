@@ -9,7 +9,7 @@
 -- them as the regex crate does: leftmost first, `\b` and `\s` by
 -- Unicode, and `(?i)` folding the Kelvin sign into `k` and the long s
 -- into `s`, as Unicode's case folding does.
-local text = require("text")
+local heiko = require("heiko")
 local unicode = require("unicode")
 
 local M = {}
@@ -20,7 +20,7 @@ M.REDACTED = "[redacted]"
 -- Pattern pieces.
 
 local function lit(s, ci)
-	return { lit = text.codes(s), ci = ci }
+	return { lit = heiko.text.codes(s), ci = ci }
 end
 
 local function class(test)
@@ -51,7 +51,7 @@ local function is_word(code)
 	return unicode.has(unicode.WORD, code)
 end
 
-local is_space = text.is_space
+local is_space = heiko.text.is_space
 
 -- The ASCII letter `code` is under `(?i)`, lowercase, or nil.
 local function folded(code)
@@ -366,7 +366,7 @@ function M.redact(s)
 	for _, pattern in ipairs(SECRETS) do
 		local ascii = is_ascii(s)
 		if may_hold(pattern, s, string.lower(s), ascii) then
-			local codes = text.codes(s)
+			local codes = heiko.text.codes(s)
 			local out = {}
 			local at = 1
 			local found = 0
@@ -414,7 +414,7 @@ function M.refusal(s)
 	local codes
 	for _, pattern in ipairs(INSTRUCTIONS) do
 		if may_hold(pattern, s, lowered, ascii) then
-			codes = codes or text.codes(s)
+			codes = codes or heiko.text.codes(s)
 			local start, stop = find(pattern, codes, 1)
 			if start then
 				return string.format('"%s" reads as an instruction to the model; memory records what is, not what to do', encode(codes, start, stop))

@@ -334,16 +334,6 @@ function heiko.continue(message)
 	return { decision = "continue", message = tostring(message) }
 end
 
--- Whether `list` holds `value`.
-function heiko.contains(list, value)
-	for _, item in ipairs(list or {}) do
-		if item == value then
-			return true
-		end
-	end
-	return false
-end
-
 -- State machines (ADR 0054): a machine holds no state. A state is a
 -- plain table, `{ state = "<tag>", ...fields }`, kept where the plugin
 -- keeps state, so it persists and replicates; `step` moves it.
@@ -1650,6 +1640,12 @@ end
 
 -- Commands, awaiting them, and a plugin's actor (ADR 0056).
 require("heiko_actor")(heiko, { tool_text = tool_text })
+
+-- The standard part (`plugins/heiko-std`): `heiko.text`, `heiko.count`,
+-- `heiko.values`, `heiko.store`, `heiko.jev`, `heiko.infer` and `heiko.now`.
+for _, part in ipairs({ "text", "count", "values", "store", "jev", "infer", "clock" }) do
+	require("heiko_" .. part)(heiko)
+end
 
 -- For the test harness (`heiko_test`): reading a frame as a stream does,
 -- and how many keys a poll keeps.

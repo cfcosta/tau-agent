@@ -359,8 +359,8 @@ t.property("a snippet is the line holding most of the query", function(draw)
 		most = math.max(most, held(line))
 	end
 	local function shown(line)
-		line = text.trim(line)
-		local cut, more = text.prefix(line, 200)
+		line = heiko.text.trim(line)
+		local cut, more = heiko.text.prefix(line, 200)
 		return more and (cut .. "…") or line
 	end
 	local snippet = hits[1].snippet

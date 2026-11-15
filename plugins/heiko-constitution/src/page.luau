@@ -97,7 +97,7 @@ end
 function page.add_place(draft, typed)
 	local target = rules.target(typed)
 	if target == nil then
-		draft.bad_place = rules.trim(typed)
+		draft.bad_place = heiko.text.trim(typed)
 		return false
 	end
 	draft.bad_place = nil
@@ -119,7 +119,7 @@ end
 
 -- What keeps the draft from being saved, if anything.
 function page.problem(draft)
-	if rules.trim(draft.text or "") == "" then
+	if heiko.text.trim(draft.text or "") == "" then
 		return "Write the rule: one sentence, the way you would tell a person, then Enter."
 	elseif #draft.places == 0 then
 		return "Pick at least one place, or Jev has nothing to check."
@@ -166,7 +166,7 @@ function page.try(draft, calls, answers)
 			return nil, why
 		end
 	end
-	local rule = { id = "new", text = rules.trim(draft.text or ""), on = draft.places, review = draft.review, block = draft.block }
+	local rule = { id = "new", text = heiko.text.trim(draft.text or ""), on = draft.places, review = draft.review, block = draft.block }
 	local one = { rules = { rule } }
 	local asks = {}
 	for _, call in ipairs(calls) do
@@ -186,7 +186,7 @@ function page.try(draft, calls, answers)
 	end
 	local trials, cost = array({}), 0
 	for _, ask in ipairs(asks) do
-		local scores, spent = checks.ask(ask.request, 1)
+		local scores, spent = heiko.jev.scores(ask.request, checks.question_ids(1))
 		if scores == nil then
 			return nil, spent
 		end
@@ -238,7 +238,7 @@ local function intro(totals)
 	if totals.runs == 0 then
 		table.insert(counts, ui.toned("Nothing checked yet.", "neutral"))
 	else
-		table.insert(counts, ui.toned(totals.runs .. " " .. (totals.runs == 1 and "run" or "runs"), "neutral", true))
+		table.insert(counts, ui.toned(heiko.count.plural(totals.runs, "run"), "neutral", true))
 		table.insert(counts, ui.toned(totals.checked .. " checked", "neutral", true))
 		for _, count in ipairs({
 			{ totals.blocked, "blocked", "bad" },
@@ -520,7 +520,7 @@ local function try_section(draft, trying, jev)
 			end
 			table.insert(rows, {
 				ui.mono(trial.tool or "answer"),
-				ui.mono(checks.cut(trial.shown, checks.SHOWN_CHARS)),
+				ui.mono((heiko.text.prefix(trial.shown, checks.SHOWN_CHARS))),
 				marks(draft.review, draft.block, trial.score, tone),
 				ui.stamp(checks.two(trial.score) .. " " .. would, tone),
 			})

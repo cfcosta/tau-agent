@@ -9,27 +9,11 @@ local heiko = require("heiko")
 local ui = heiko.ui
 local compaction = require("compaction")
 
--- The model's answer to `request` as its envelope, `{ ok, value, error,
--- reason }`: awaited through `heiko.all`, which keeps the `reason` an
--- answer was refused for, where `heiko.await` keeps only its error.
-local function infer(request)
-	local answers = heiko.all({ heiko.cmd.infer(request) })
-	local answer = answers[1]
-	if not answer.ok then
-		return { ok = false, error = answer.error }
-	end
-	local envelope = (answer.values or {})[1]
-	if type(envelope) ~= "table" then
-		return { ok = false, error = "the model gave no answer" }
-	end
-	return envelope
-end
-
 -- One summary request of its own, with pi's instructions, on the run's
 -- model at the effort the run started at: the summary, or why it is
 -- none.
 local function summarize(request, model)
-	local answer = infer({
+	local answer = heiko.infer({
 		task = request,
 		instructions = compaction.SYSTEM_PROMPT,
 		effort = model.effort,
@@ -48,7 +32,7 @@ local function rewrite(view, plan, summary, files, model, env)
 		tokens_before = view.tokens,
 		read_files = array(read_files),
 		modified_files = array(modified_files),
-		timestamp = env.now.unix * 1000,
+		timestamp = heiko.now(env) * 1000,
 	}
 	model.compacted = record
 	local keep = {}
@@ -114,7 +98,7 @@ local function compact_in_context(view, model, env)
 		return nil
 	end
 	compaction.extract(files, compaction.slice(view.messages, { summarized + 1, plan.kept_from - 1 }))
-	local answer = infer({
+	local answer = heiko.infer({
 		task = compaction.in_context_request(summarized == 1),
 		conversation = plan.kept_from - 1,
 	})

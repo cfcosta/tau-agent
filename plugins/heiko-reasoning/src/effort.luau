@@ -1,6 +1,7 @@
 -- Picks a run's reasoning effort with Jev (docs/reference/plugins.md,
 -- `heiko-reasoning`): the policy, what Jev reads, and what the run's state
 -- keeps of each choice. The plugin (plugin.luau) asks and draws.
+local heiko = require("heiko")
 
 local effort = {}
 
@@ -88,9 +89,7 @@ function effort.task(text)
 end
 
 function effort.instructions(text)
-	text = text or ""
-	local stop = utf8.offset(text, effort.INSTRUCTIONS_SEEN + 1)
-	return stop and string.sub(text, 1, stop - 1) or text
+	return (heiko.text.prefix(text or "", effort.INSTRUCTIONS_SEEN))
 end
 
 -- What Jev reads as a message comes in: the task, and for a short one
@@ -300,14 +299,6 @@ function effort.runs_at(picked, known, last, prefix, sticky_after)
 	return last, nil
 end
 
--- A count of tokens as a note says it: `48k`, or `900` under a thousand.
-function effort.tokens_text(tokens)
-	if tokens < 1000 then
-		return tostring(tokens)
-	end
-	return ((tokens + 500) // 1000) .. "k"
-end
-
 local function name_of(value)
 	if value == nil then
 		return "the model's default"
@@ -325,14 +316,6 @@ function effort.state(state)
 	state.choices = state.choices or {}
 	state.notes = state.notes or {}
 	return state
-end
-
-local function count(map)
-	local n = 0
-	for _ in pairs(map) do
-		n += 1
-	end
-	return n
 end
 
 -- Keeps `choice`, as the UI's fold did: the status and the plan's field,
@@ -381,7 +364,7 @@ function effort.record_choice(state, choice)
 			.. ": switching to "
 			.. choice.effort
 			.. " would resend "
-			.. effort.tokens_text(kept)
+			.. heiko.count.tokens(kept)
 			.. " tokens uncached."
 	elseif runs_at ~= nil and chose then
 		outcome = "so " .. what .. " runs at " .. runs_at .. "."
@@ -393,7 +376,7 @@ function effort.record_choice(state, choice)
 	if choice.lease and effort.HOLDS[choice.lease] then
 		outcome ..= " It holds " .. effort.HOLDS[choice.lease] .. "."
 	end
-	local key = "n" .. count(state.notes)
+	local key = "n" .. heiko.values.count(state.notes)
 	state.notes[key] = { kind = "choice", choice = #state.choices, text = text, outcome = outcome }
 	return key
 end
@@ -402,7 +385,7 @@ end
 -- did, and the failure gets a note.
 function effort.record_error(state, message, runs_at, turn)
 	local stayed = runs_at and ("stayed at " .. runs_at) or "kept the default"
-	local key = "n" .. count(state.notes)
+	local key = "n" .. heiko.values.count(state.notes)
 	state.notes[key] = {
 		kind = "failed",
 		message = message,

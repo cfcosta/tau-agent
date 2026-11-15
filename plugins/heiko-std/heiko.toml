@@ -1,0 +1,4 @@
+name = "heiko-std"
+version = "0.1.0"
+description = "What every plugin gets with require(\"heiko\"): text, counts, values, the store, Jev and the model"
+entry = "src/plugin.luau"

@@ -24,9 +24,7 @@ M.IMPORT_SHORT = "import"
 -- The review page's search input.
 M.SEARCH = "review-search"
 
-local function plural(n, one, many)
-	return n .. " " .. (n == 1 and one or many)
-end
+local plural = heiko.count.plural
 
 -- Whether either tool is on this computer.
 function M.any_found(imports)
@@ -93,7 +91,7 @@ function M.banner(repo, imports)
 	end
 	local text = kept(banner)
 	if banner.ready > 0 then
-		text ..= " " .. (banner.ready == 1 and "1 note is" or (banner.ready .. " notes are")) .. " ready to look at."
+		text ..= " " .. plural(banner.ready, "note is", "notes are") .. " ready to look at."
 	end
 	local buttons = {}
 	if banner.ready > 0 then
@@ -204,11 +202,11 @@ function M.summary(imports)
 	local from = {}
 	local claude = read_of("claude_code", "saved")
 	if claude > 0 then
-		table.insert(from, claude .. " Claude Code " .. (claude == 1 and "note" or "notes"))
+		table.insert(from, plural(claude, "Claude Code note"))
 	end
 	local codex = read_of("codex", "saved")
 	if codex > 0 then
-		table.insert(from, codex .. " Codex " .. (codex == 1 and "summary" or "summaries"))
+		table.insert(from, plural(codex, "Codex summary", "Codex summaries"))
 	end
 	local chats = read_of("claude_code", "chat") + read_of("codex", "chat")
 	if chats > 0 then
@@ -412,7 +410,7 @@ local function foot(shown)
 			table.insert(ticked, pending.id)
 		end
 	end
-	local label = #ticked == 1 and "Keep 1 note" or ("Keep " .. #ticked .. " notes")
+	local label = "Keep " .. plural(#ticked, "note")
 	local row = {
 		ui.text(#ticked .. " to keep · " .. (#shown - #ticked) .. " left for you to decide"),
 		ui.spacer(),

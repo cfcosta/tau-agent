@@ -71,14 +71,4 @@ function estimate.json_tenths(json_text)
 	return estimate.tenths(json_text, estimate.STATE_DIGIT_TENTHS)
 end
 
--- `text` cut to `limit` characters, the last one an ellipsis.
-function estimate.truncate(text, limit)
-	if utf8.len(text) <= limit then
-		return text
-	end
-	local kept = math.max(limit - 1, 0)
-	local cut = utf8.offset(text, kept + 1)
-	return string.sub(text, 1, cut - 1) .. "…"
-end
-
 return estimate

@@ -19,23 +19,15 @@ local flow = require("flow")
 
 local cmd = heiko.cmd
 
-local function get(key)
-	return heiko.await(cmd.store.get(key))
-end
-
 local function has_token()
 	return heiko.await(cmd.secrets.has(github.SECRET))
-end
-
-local function now(env)
-	return env.now.unix or 0
 end
 
 -- How the sign-in stands, as the setup step and the Models screen draw
 -- it: `{ state, code?, user?, error? }`.
 local function standing()
-	local going = get("sign_in")
-	local account = get("account")
+	local going = heiko.store.get("sign_in")
+	local account = heiko.store.get("account")
 	local token = has_token()
 	-- A failure stands until a token is typed again: the job checks it.
 	local typed = going and going.state == "failed" and account == nil and token
@@ -55,8 +47,8 @@ end
 -- Signed in as `user`, with a token that lasts `expires_in` seconds if it
 -- expires: the token form closes.
 local function signed(env, user, expires_in)
-	heiko.give(cmd.store.put("account", { user = user, expires_at = expires_in and (now(env) + expires_in) or nil }))
-	heiko.give(cmd.store.put("token_form", false))
+	heiko.store.put("account", { user = user, expires_at = expires_in and (heiko.now(env) + expires_in) or nil })
+	heiko.store.put("token_form", false)
 end
 
 -- Steps the sign-in with `event` and carries out what it says: a poll of
@@ -64,13 +56,13 @@ end
 -- The sign-in is read from the store at each step, so one stepped while
 -- a request was out is what the answer steps on.
 local function step(env, event)
-	local next, effects = flow.machine:step(get("sign_in"), event)
-	heiko.give(cmd.store.put("sign_in", next))
+	local next, effects = flow.machine:step(heiko.store.get("sign_in"), event)
+	heiko.store.put("sign_in", next)
 	for _, effect in ipairs(effects) do
 		local name = type(effect) == "table" and effect[1] or effect
 		if name == "poll" then
 			local ok, polled = pcall(github.poll, next.device_code)
-			local at = now(env)
+			local at = heiko.now(env)
 			if not ok then
 				step(env, { event = "refused", error = tostring(polled) })
 			elseif polled.pending then
@@ -89,7 +81,7 @@ local function step(env, event)
 				step(env, { event = "checked", ok = true })
 			else
 				heiko.give(cmd.secrets.forget(github.SECRET))
-				heiko.give(cmd.store.delete("account"))
+				heiko.store.delete("account")
 				step(env, { event = "checked", ok = false, error = tostring(user) })
 			end
 		end
@@ -111,15 +103,15 @@ return heiko.plugin({
 		sign_in = {
 			every = 1,
 			run = function(_, _, env)
-				local account = get("account")
-				if account and account.expires_at and now(env) >= account.expires_at then
+				local account = heiko.store.get("account")
+				if account and account.expires_at and heiko.now(env) >= account.expires_at then
 					heiko.give(cmd.secrets.forget(github.SECRET))
-					heiko.give(cmd.store.delete("account"))
+					heiko.store.delete("account")
 					return
 				end
-				if flow.machine:is(get("sign_in"), "waiting") then
-					step(env, { event = "tick", at = now(env) })
-				elseif has_token() and get("account") == nil then
+				if flow.machine:is(heiko.store.get("sign_in"), "waiting") then
+					step(env, { event = "tick", at = heiko.now(env) })
+				elseif has_token() and heiko.store.get("account") == nil then
 					step(env, { event = "token" })
 				end
 			end,
@@ -129,7 +121,7 @@ return heiko.plugin({
 	actions = {
 		-- Asks GitHub for a device code and shows it; the job polls.
 		sign_in = function(_, _, env)
-			heiko.give(cmd.store.put("token_form", false))
+			heiko.store.put("token_form", false)
 			step(env, { event = "start" })
 			local ok, start = pcall(github.start_device)
 			if not ok then
@@ -138,7 +130,7 @@ return heiko.plugin({
 			end
 			step(env, {
 				event = "started",
-				at = now(env),
+				at = heiko.now(env),
 				code = {
 					code = start.user_code,
 					url = github.address(start.verification_uri),
@@ -155,17 +147,17 @@ return heiko.plugin({
 		end,
 		sign_out = function(_, _, env)
 			heiko.give(cmd.secrets.forget(github.SECRET))
-			heiko.give(cmd.store.delete("account"))
+			heiko.store.delete("account")
 			step(env, { event = "sign_out" })
 		end,
 		-- Shows the token form, or the device code again.
 		token_form = function(args)
-			heiko.give(cmd.store.put("token_form", args.open == true))
+			heiko.store.put("token_form", args.open == true)
 		end,
 	},
 
 	app = function()
-		return { sign_in = standing(), token_form = get("token_form") == true }
+		return { sign_in = standing(), token_form = heiko.store.get("token_form") == true }
 	end,
 	setup = function(app)
 		return sign_in.step(app.sign_in, app.token_form)
@@ -185,7 +177,7 @@ return heiko.plugin({
 				return json.null
 			end
 			-- Read after the secret's answer: a sign-out may have come.
-			local account = get("account")
+			local account = heiko.store.get("account")
 			if account then
 				return account.user
 			end

@@ -62,7 +62,7 @@ return heiko.plugin {
 	before_tool = function(call, ctx)
 		local command = call.args.cmd
 		if call.name == "exec_command" and type(command) == "string" and command:find("deploy") then
-			if heiko.contains(ctx.settings.days, ctx.now.weekday) then
+			if heiko.values.contains(ctx.settings.days, ctx.now.weekday) then
 				return heiko.block("No deploys on " .. ctx.now.weekday .. ".")
 			end
 		end

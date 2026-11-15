@@ -31,69 +31,11 @@ scan.PRINCIPLE = "principle-"
 -- The tool's name, as the model calls it.
 scan.TOOL = "skill"
 
--- What Unicode calls white space past ASCII's, by code point: what a
--- description's runs of white space are made of too.
-local WIDE_SPACE = {
-	[0x85] = true,
-	[0xA0] = true,
-	[0x1680] = true,
-	[0x2028] = true,
-	[0x2029] = true,
-	[0x202F] = true,
-	[0x205F] = true,
-	[0x3000] = true,
-}
-for point = 0x2000, 0x200A do
-	WIDE_SPACE[point] = true
-end
-
-local function is_space(point)
-	return point == 0x20 or (point >= 0x09 and point <= 0x0D) or WIDE_SPACE[point] == true
-end
-
 -- `text` on one line, its runs of white space one space, cut to
--- `DESCRIPTION_LIMIT` characters.
+-- `DESCRIPTION_LIMIT` characters and an ellipsis after them.
 function scan.one_line(text)
-	local words = {}
-	local word = {}
-	for _, point in utf8.codes(text) do
-		if is_space(point) then
-			if #word > 0 then
-				table.insert(words, table.concat(word))
-				word = {}
-			end
-		else
-			table.insert(word, utf8.char(point))
-		end
-	end
-	if #word > 0 then
-		table.insert(words, table.concat(word))
-	end
-	local joined = table.concat(words, " ")
-	if utf8.len(joined) > scan.DESCRIPTION_LIMIT then
-		return string.sub(joined, 1, utf8.offset(joined, scan.DESCRIPTION_LIMIT + 1) - 1) .. "…"
-	end
-	return joined
-end
-
--- `text` with its white space at both ends gone.
-function scan.trim(text)
-	local points = {}
-	for _, point in utf8.codes(text) do
-		table.insert(points, point)
-	end
-	local first, last = 1, #points
-	while first <= last and is_space(points[first]) do
-		first += 1
-	end
-	while last >= first and is_space(points[last]) do
-		last -= 1
-	end
-	local kept = {}
-	for at = first, last do
-		table.insert(kept, utf8.char(points[at]))
-	end
-	return table.concat(kept)
+	local line, more = heiko.text.prefix(heiko.text.one_line(text), scan.DESCRIPTION_LIMIT)
+	return more and (line .. "…") or line
 end
 
 -- `text` quoted as Rust's `{:?}` writes a string: the quotes, backslash

@@ -5,7 +5,7 @@ local heiko = require("heiko")
 return heiko.plugin {
 	fills = { "heiko.title" },
 	title = function(run)
-		local task = string.match(run.task, "^%s*(.-)%s*$")
+		local task = heiko.text.trim(run.task)
 		local first = string.match(task, "^[^%.!?\n]+")
 		if first == nil then
 			return nil

@@ -24,7 +24,7 @@ end
 -- What the chat `run` has waiting, soonest first, from `store`.
 local function waiting(store, run)
 	local list = {}
-	for _, item in ipairs(heiko.await(store.list(wake.prefix(run)))) do
+	for _, item in ipairs(store.list(wake.prefix(run))) do
 		table.insert(list, item.value)
 	end
 	return wake.sort(list)
@@ -39,7 +39,7 @@ local function refresh(model, env, woken)
 		gone[one.name] = true
 	end
 	local list = {}
-	for _, one in ipairs(waiting(cmd.store, env.run.id)) do
+	for _, one in ipairs(waiting(heiko.store, env.run.id)) do
 		if not (gone[one.name] and one.at <= env.now.unix) then
 			table.insert(list, one)
 		end
@@ -86,14 +86,14 @@ local function schedule(args, model, env)
 			error("unknown field `" .. tostring(field) .. "`", 0)
 		end
 	end
-	local name = string.match(tostring(args.name or ""), "^%s*(.-)%s*$")
+	local name = heiko.text.trim(tostring(args.name or ""))
 	if not wake.valid_name(name) then
 		error(
 			"`" .. name .. "` cannot name a wake-up: lower-case letters, digits, `-` and `_`, starting with a letter, at most 40",
 			0
 		)
 	end
-	local note = string.match(tostring(args.note or ""), "^%s*(.-)%s*$")
+	local note = heiko.text.trim(tostring(args.note or ""))
 	if note == "" then
 		error("Leave yourself a note: what to do then", 0)
 	end
@@ -110,11 +110,11 @@ local function schedule(args, model, env)
 	end
 	local run = env.run.id
 	local key = wake.key(run, name)
-	local replaced = heiko.await(cmd.store.get(key)) ~= nil
-	if not replaced and #waiting(cmd.store, run) >= wake.MAX_WAITING then
+	local replaced = heiko.store.get(key) ~= nil
+	if not replaced and #waiting(heiko.store, run) >= wake.MAX_WAITING then
 		error("This chat has " .. wake.MAX_WAITING .. " waiting, the most it may: cancel some first", 0)
 	end
-	heiko.give(cmd.store.put(key, { run = run, name = name, note = note, at = at, made = now }))
+	heiko.store.put(key, { run = run, name = name, note = note, at = at, made = now })
 	refresh(model, env)
 	return (replaced and "Replaced" or "Scheduled")
 		.. " `"
@@ -125,7 +125,7 @@ local function schedule(args, model, env)
 end
 
 local function scheduled(_, _, env)
-	local list = waiting(cmd.store, env.run.id)
+	local list = waiting(heiko.store, env.run.id)
 	local now = local_time(env.now.unix)
 	if #list == 0 then
 		return "It is " .. now .. ". Nothing is scheduled."
@@ -140,9 +140,9 @@ end
 
 -- Cancels what the chat scheduled as `name`: whether there was one.
 local function cancel(name, model, env)
-	local key = wake.key(env.run.id, string.match(tostring(name), "^%s*(.-)%s*$"))
-	local had = heiko.await(cmd.store.get(key)) ~= nil
-	heiko.give(cmd.store.delete(key))
+	local key = wake.key(env.run.id, heiko.text.trim(tostring(name)))
+	local had = heiko.store.get(key) ~= nil
+	heiko.store.delete(key)
 	refresh(model, env)
 	return had
 end
@@ -204,7 +204,7 @@ end
 local function wake_due(store, now, model)
 	local due, runs = {}, {}
 	local retry = model.retry or {}
-	for _, item in ipairs(heiko.await(store.list("wake/"))) do
+	for _, item in ipairs(store.list("wake/")) do
 		local one = item.value
 		if one.at <= now and (retry[one.run] or 0) <= now then
 			if due[one.run] == nil then
@@ -231,17 +231,17 @@ local function wake_due(store, now, model)
 			for _, one in ipairs(list) do
 				-- One scheduled again meanwhile stays.
 				local key = wake.key(run, one.name)
-				local kept = heiko.await(store.get(key))
+				local kept = store.get(key)
 				if kept ~= nil and kept.at == one.at and kept.made == one.made and kept.note == one.note then
-					heiko.give(store.delete(key))
+					store.delete(key)
 				end
 			end
 		elseif answer == "gone" then
 			-- A chat that landed or was dropped takes no turn, and what it
 			-- had waiting goes.
 			model.retry[run] = nil
-			for _, item in ipairs(heiko.await(store.list(wake.prefix(run)))) do
-				heiko.give(store.delete(item.key))
+			for _, item in ipairs(store.list(wake.prefix(run))) do
+				store.delete(item.key)
 			end
 		end
 	end
@@ -327,7 +327,7 @@ return heiko.plugin({
 				end
 				model.retry = retry
 				for _, repo in ipairs(heiko.await(cmd.repos())) do
-					wake_due(cmd.stores(repo), now, model)
+					wake_due(heiko.store.of(repo), now, model)
 				end
 			end,
 		},

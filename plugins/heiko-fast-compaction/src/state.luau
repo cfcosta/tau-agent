@@ -6,25 +6,13 @@
 -- THIRD_PARTY_NOTICES.md). Lengths count characters. What Jev reads is
 -- written here as JSON text, its keys in order, as the Rust plugin's
 -- types wrote it: a Luau table keeps no order.
-local estimate = require("estimate")
+local heiko = require("heiko")
 
 local state = {}
 
 -- What the state tells Jev about itself.
 state.CONTEXT = [==[
 A coding assistant conversation is being compacted to free context. `history` is the conversation so far, oldest first, verbatim except that tool outputs are replaced by a short `result` note. A long conversation is split into ordered segments that are asked about separately; then `history` is one segment, `calls` lists the tool calls asked about, and a keep in any segment keeps the call. Oversized fields continue across entries labeled `part`, with their field name and character offset. Each question asks whether one tool call, or the full output of that call, still needs to stay in the history verbatim. Whatever is not kept is deleted from model context: a cut output keeps its head and the path of a file holding it whole, and a dropped call goes with its output, though the assistant can re-run a tool or re-read a file.]==]
-
--- White space as Unicode has it, by code point.
-local SPACE = {}
-for _, c in ipairs({ 0x20, 0x85, 0xA0, 0x1680, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000 }) do
-	SPACE[c] = true
-end
-for c = 0x09, 0x0D do
-	SPACE[c] = true
-end
-for c = 0x2000, 0x200A do
-	SPACE[c] = true
-end
 
 local ESCAPES = { ['"'] = '\\"', ["\\"] = "\\\\", ["\b"] = "\\b", ["\f"] = "\\f", ["\n"] = "\\n", ["\r"] = "\\r", ["\t"] = "\\t" }
 
@@ -43,7 +31,7 @@ end
 -- Whether `text` is empty or white space alone.
 function state.blank(text)
 	for _, c in utf8.codes(text) do
-		if not SPACE[c] then
+		if not heiko.text.is_space(c) then
 			return false
 		end
 	end
@@ -255,7 +243,7 @@ function state.goal_from(entries)
 	local prompts = {}
 	for _, entry in ipairs(entries) do
 		if entry.role == "user" and not state.blank(entry.text) and #entry.outcomes == 0 then
-			table.insert(prompts, estimate.truncate(entry.text, 500))
+			table.insert(prompts, heiko.text.cut(entry.text, 500))
 		end
 	end
 	return table.concat(prompts, "\n", math.max(#prompts - 2, 1), #prompts)

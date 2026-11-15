@@ -1,6 +1,7 @@
 -- Notes what the person missed (docs/reference/watcher.md, ADR 0032):
 -- the cadence, the side request and its reply, and the run's notes. The
 -- plugin (plugin.luau) asks and draws; everything it decides is here.
+local heiko = require("heiko")
 
 local watch = {}
 
@@ -22,69 +23,6 @@ watch.RESULT_CHARS = 2000
 
 -- The two kinds of note, as the model spells them.
 watch.TAGS = { "You should know", "Heads up" }
-
--- Unicode's white space: what is trimmed, as Rust trims.
-local SPACE = {}
-for _, code in
-	ipairs({
-		0x09,
-		0x0A,
-		0x0B,
-		0x0C,
-		0x0D,
-		0x20,
-		0x85,
-		0xA0,
-		0x1680,
-		0x2000,
-		0x2001,
-		0x2002,
-		0x2003,
-		0x2004,
-		0x2005,
-		0x2006,
-		0x2007,
-		0x2008,
-		0x2009,
-		0x200A,
-		0x2028,
-		0x2029,
-		0x202F,
-		0x205F,
-		0x3000,
-	})
-do
-	SPACE[code] = true
-end
-
-local function codes(text)
-	local out = {}
-	for _, code in utf8.codes(text) do
-		table.insert(out, code)
-	end
-	return out
-end
-
-local function chars(list, from, to)
-	local out = {}
-	for at = from, to do
-		table.insert(out, utf8.char(list[at]))
-	end
-	return table.concat(out)
-end
-
--- `text` without white space at either end.
-function watch.trim(text)
-	local list = codes(text)
-	local from, to = 1, #list
-	while from <= to and SPACE[list[from]] do
-		from += 1
-	end
-	while to >= from and SPACE[list[to]] do
-		to -= 1
-	end
-	return chars(list, from, to)
-end
 
 local function lower(text)
 	return string.lower(text)
@@ -336,10 +274,10 @@ local function field(line, key)
 	if at == nil then
 		return nil
 	end
-	if lower(watch.trim(string.sub(line, 1, at - 1))) ~= lower(key) then
+	if lower(heiko.text.trim(string.sub(line, 1, at - 1))) ~= lower(key) then
 		return nil
 	end
-	return watch.trim(string.sub(line, at + 1))
+	return heiko.text.trim(string.sub(line, at + 1))
 end
 
 local function starts(text, prefix)
@@ -363,7 +301,7 @@ watch.UNREADABLE = {
 local function explanation(rest)
 	local lines = {}
 	for _, line in ipairs(rest) do
-		table.insert(lines, watch.trim(line))
+		table.insert(lines, heiko.text.trim(line))
 	end
 	local at = 1
 	while at <= #lines and lines[at] == "" do
@@ -383,7 +321,7 @@ local function explanation(rest)
 	if head == nil or #head < 4 or not starts(head, "**") or string.sub(head, -2) ~= "**" then
 		return nil, watch.UNREADABLE.bad_explain
 	end
-	local title = watch.trim(string.sub(head, 3, -3))
+	local title = heiko.text.trim(string.sub(head, 3, -3))
 	if title == "" or string.find(title, "**", 1, true) then
 		return nil, watch.UNREADABLE.bad_explain
 	end
@@ -393,7 +331,7 @@ local function explanation(rest)
 		if line ~= "" then
 			local bullet
 			if starts(line, "- ") or starts(line, "* ") then
-				bullet = watch.trim(string.sub(line, 3))
+				bullet = heiko.text.trim(string.sub(line, 3))
 			end
 			if bullet == nil or bullet == "" then
 				return nil, watch.UNREADABLE.bad_explain
@@ -411,7 +349,7 @@ end
 -- `{ kind = "note", tag, line, explain? }`; nil and why it could not be
 -- used. A note the model got slightly wrong is worse than none.
 function watch.parse(text)
-	text = watch.trim(text)
+	text = heiko.text.trim(text)
 	if text == "" then
 		return nil, watch.UNREADABLE.empty
 	end
@@ -428,7 +366,7 @@ function watch.parse(text)
 	local bare = string.gsub(line, "%.+$", "")
 	if lower(bare) == "none" then
 		for at = 2, #lines do
-			if watch.trim(lines[at]) ~= "" then
+			if heiko.text.trim(lines[at]) ~= "" then
 				return nil, watch.UNREADABLE.many_lines
 			end
 		end
@@ -571,7 +509,7 @@ function watch.status(state)
 	if n == 0 then
 		return nil
 	end
-	return n == 1 and "1 note" or (n .. " notes")
+	return heiko.count.plural(n, "note")
 end
 
 return watch

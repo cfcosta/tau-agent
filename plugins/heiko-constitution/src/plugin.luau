@@ -16,43 +16,8 @@ local rules = require("rules")
 local checks = require("checks")
 local page = require("page")
 
-local cmd = heiko.cmd
+local store = heiko.store
 local NAME = checks.NAME
-
--- The repository's store, as commands: a read awaits it, a write is
--- given and lands when the step ends, before the next read.
-local store = {
-	get = function(key)
-		return heiko.await(cmd.store.get(key))
-	end,
-	list = function(prefix)
-		return heiko.await(cmd.store.list(prefix))
-	end,
-	put = function(key, value)
-		heiko.give(cmd.store.put(key, value))
-	end,
-	delete = function(key)
-		heiko.give(cmd.store.delete(key))
-	end,
-}
-
--- Whether two values read from the store hold the same.
-local function same(a, b)
-	if type(a) ~= "table" or type(b) ~= "table" then
-		return a == b
-	end
-	for key, value in pairs(a) do
-		if not same(value, b[key]) then
-			return false
-		end
-	end
-	for key in pairs(b) do
-		if a[key] == nil then
-			return false
-		end
-	end
-	return true
-end
 
 -- How many past calls, and answers, the store keeps for Try it.
 local SAMPLE_CALLS = 24
@@ -76,11 +41,6 @@ end
 -- `constitution` as the store keeps it.
 local function stored(constitution)
 	return { on_error = constitution.on_error, max_holds = constitution.max_holds, rules = constitution.rules }
-end
-
--- Tells the page and the sidebar that what they draw changed.
-local function bump()
-	store.put("rev", (store.get("rev") or 0) + 1)
 end
 
 -- Puts `entry` first in `list`, unless it is there already, keeping at
@@ -147,7 +107,7 @@ end
 -- What rule `rule` last caught, for its caption.
 local function caught(rule, shown)
 	local last = store.get("caught") or {}
-	last[rule] = checks.cut(string.match(shown, "^[^\n]*"), TITLE_CHARS)
+	last[rule] = heiko.text.prefix(string.match(shown, "^[^\n]*"), TITLE_CHARS)
 	store.put("caught", last)
 end
 
@@ -188,7 +148,7 @@ local function apply(model, env, records, call, shown, answer)
 		elseif record.kind == "flagged" and record.call_id == nil then
 			waiting({
 				run = env.run.id,
-				shown = checks.cut(answer or "", checks.SHOWN_CHARS),
+				shown = heiko.text.prefix(answer or "", checks.SHOWN_CHARS),
 				rule = record.rule,
 				score = record.score,
 				title = title,
@@ -198,7 +158,7 @@ local function apply(model, env, records, call, shown, answer)
 	-- The state as it is now, after the store's reads.
 	state = checks.state(model)
 	store.put("run/" .. env.run.id, { title = state.title or env.run.id, stats = state.stats })
-	bump()
+	store.bump()
 end
 
 -- The fields every rule about a call reads, as one text.
@@ -212,7 +172,7 @@ local function shown_of(about)
 			fields[name] = found.fields[name]
 		end
 	end
-	return checks.cut(checks.shown(fields, names), checks.SHOWN_CHARS)
+	return (heiko.text.prefix(checks.shown(fields, names), checks.SHOWN_CHARS))
 end
 
 -- Its name, small and muted: what ends the first line of a note.
@@ -381,7 +341,7 @@ local function edit(env, failed, change)
 		error(failed .. ": " .. refused, 0)
 	end
 	store.put("constitution", stored(constitution))
-	bump()
+	store.bump()
 end
 
 -- Changes the rule being written with `change`; `fresh` drops what
@@ -396,7 +356,7 @@ local function drafting(fresh, change)
 	if fresh then
 		store.delete("trying")
 	end
-	bump()
+	store.bump()
 end
 
 local actions = {
@@ -406,17 +366,17 @@ local actions = {
 		local rule = constitution and args.rule and rules.find(constitution, args.rule)
 		store.put("editor", page.draft(rule))
 		store.delete("trying")
-		bump()
+		store.bump()
 	end,
 	close = function(_, _, env)
 		store.delete("editor")
 		store.delete("trying")
-		bump()
+		store.bump()
 	end,
 	-- Enter in the rule's field: what it said is the rule.
 	write = function(args, _, env)
 		drafting(false, function(draft)
-			if rules.trim(args.text or "") ~= "" then
+			if heiko.text.trim(args.text or "") ~= "" then
 				draft.text = args.text
 			end
 		end)
@@ -455,10 +415,10 @@ local actions = {
 		if page.problem(draft) then
 			draft.tried_to_save = true
 			store.put("editor", draft)
-			bump()
+			store.bump()
 			return
 		end
-		local text = rules.trim(draft.text)
+		local text = heiko.text.trim(draft.text)
 		if draft.editing then
 			edit(env, "Could not save the rule", function(constitution)
 				return rules.replace(constitution, draft.editing, text, draft.places, draft.review, draft.block)
@@ -481,7 +441,7 @@ local actions = {
 		if page.problem(draft) then
 			draft.tried_to_save = true
 			store.put("editor", draft)
-			bump()
+			store.bump()
 			return
 		end
 		if not env.run.jev then
@@ -491,7 +451,7 @@ local actions = {
 			local trials, cost = page.try(draft, calls, answers)
 			-- The rule as it is now: changed or closed while Jev answered,
 			-- what it gave is not this rule's.
-			if not same(store.get("editor"), draft) then
+			if not heiko.values.same(store.get("editor"), draft) then
 				return
 			end
 			if trials == nil then
@@ -500,7 +460,7 @@ local actions = {
 				store.put("trying", { trials = trials, cost = cost })
 			end
 		end
-		bump()
+		store.bump()
 	end,
 	remove = function(args, _, env)
 		edit(env, "Could not remove the rule", function(constitution)
@@ -529,13 +489,13 @@ local actions = {
 		else
 			store.delete("resetting")
 		end
-		bump()
+		store.bump()
 	end,
 	-- Removes them, as confirmed: no rules, to start again.
 	reset = function(_, _, env)
 		store.put("constitution", stored(rules.default()))
 		store.delete("resetting")
-		bump()
+		store.bump()
 	end,
 	-- A flagged call or answer looked fine: off the queue, for good.
 	fine = function(args, _, env)
@@ -546,7 +506,7 @@ local actions = {
 		store.delete(args.id)
 		local shown = item.tool and (item.tool .. " " .. item.shown) or ("final answer: " .. item.shown)
 		handled({ what = "fine", shown = shown, rule = item.rule, title = item.title })
-		bump()
+		store.bump()
 	end,
 }
 
@@ -564,7 +524,7 @@ return heiko.plugin({
 		state.live = true
 		state.repo = env.run.repo
 		if state.title == nil then
-			state.title = checks.cut(string.match(plan.input or "", "^[^\n]*"), TITLE_CHARS)
+			state.title = heiko.text.prefix(string.match(plan.input or "", "^[^\n]*"), TITLE_CHARS)
 		end
 		if not env.run.jev then
 			state.starting = checks.starting(false)
@@ -593,7 +553,7 @@ return heiko.plugin({
 			return nil
 		end
 		local shown = shown_of(about)
-		local scores, cost = checks.ask(checks.call_request(call.name, about), #about)
+		local scores, cost = heiko.jev.scores(checks.call_request(call.name, about), checks.question_ids(#about))
 		local records, reason
 		if scores == nil then
 			local record
@@ -621,7 +581,7 @@ return heiko.plugin({
 			return nil
 		end
 		local answer = stop.text or ""
-		local scores, cost = checks.ask(checks.answer_request(answer, found), #found)
+		local scores, cost = heiko.jev.scores(checks.answer_request(answer, found), checks.question_ids(#found))
 		-- The holds as they are now, after Jev answered.
 		local holds = model.holds or 0
 		local records, message

@@ -1,14 +1,16 @@
 -- Text as the Rust heiko-memory read it: the words it searches by
 -- (`char::is_alphanumeric` runs and `_`, lowercased as `to_lowercase`
--- does, final sigma too), white space as `trim` reads it, and lines as
--- `str::lines` gives them. The tables are Rust's (`unicode`).
+-- does, final sigma too), and lines as `str::lines` gives them. The
+-- tables are Rust's (`unicode`); white space is `heiko.text`'s.
+local heiko = require("heiko")
 local unicode = require("unicode")
 
 local M = {}
 
-local ALNUM, SPACE = unicode.ALNUM, unicode.SPACE
+local ALNUM = unicode.ALNUM
 local CASED, IGNORABLE = unicode.CASED, unicode.IGNORABLE
 local has = unicode.has
+local is_space = heiko.text.is_space
 
 local SIGMA = 0x3A3
 local UNDERSCORE = 95
@@ -21,15 +23,6 @@ local function in_word(code)
 	return has(ALNUM, code)
 end
 M.in_word = in_word
-
--- Whether `code` is white space.
-local function is_space(code)
-	if code < 128 then
-		return code == 32 or (code >= 9 and code <= 13)
-	end
-	return has(SPACE, code)
-end
-M.is_space = is_space
 
 -- Whether the first character of `codes`, from `from` by `step`, that
 -- is not case-ignorable is cased.
@@ -83,40 +76,6 @@ function M.words(text)
 	return found
 end
 
--- The code points of `text`.
-function M.codes(text)
-	local codes = {}
-	for _, code in utf8.codes(text) do
-		table.insert(codes, code)
-	end
-	return codes
-end
-
--- `text` without white space at either end.
-function M.trim(text)
-	local first, last
-	local positions = {}
-	for at, code in utf8.codes(text) do
-		if not is_space(code) then
-			first = first or at
-			last = at
-		end
-		table.insert(positions, at)
-	end
-	if first == nil then
-		return ""
-	end
-	-- `last` starts the last character kept: its end is the next start.
-	local after = #text + 1
-	for i, at in ipairs(positions) do
-		if at == last then
-			after = positions[i + 1] or (#text + 1)
-			break
-		end
-	end
-	return string.sub(text, first, after - 1)
-end
-
 -- `text` without white space at its end.
 function M.trim_end(text)
 	local after = 1
@@ -166,18 +125,6 @@ end
 -- How many characters `text` holds.
 function M.length(text)
 	return utf8.len(text) or #text
-end
-
--- The first `n` characters of `text`, and whether there were more.
-function M.prefix(text, n)
-	local count = 0
-	for at in utf8.codes(text) do
-		if count == n then
-			return string.sub(text, 1, at - 1), true
-		end
-		count += 1
-	end
-	return text, false
 end
 
 return M

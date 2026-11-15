@@ -47,7 +47,7 @@ end
 -- What became of the choice, as a stamp.
 local function verdict(choice)
 	if choice.kept_for_cache then
-		return ui.stamp("held · " .. effort.tokens_text(choice.kept_for_cache) .. " cached", "warn")
+		return ui.stamp("held · " .. heiko.count.tokens(choice.kept_for_cache) .. " cached", "warn")
 	elseif choice.confidence >= choice.threshold then
 		return ui.stamp("applied", "good")
 	end
@@ -100,15 +100,12 @@ end
 -- choice, or nil and why. It awaits Jev: the model may have changed
 -- when it returns.
 local function ask(env, levels_of, state_for_jev, redecides)
-	local ok, answers, cost = pcall(heiko.await, cmd.jev.ask({
+	local answers, cost = heiko.jev.ask({
 		state = state_for_jev,
 		questions = effort.questions(levels_of, redecides),
-	}))
-	if not ok then
-		return nil, tostring(answers)
-	end
-	if type(answers) ~= "table" then
-		return nil, "Jev gave no answer"
+	})
+	if answers == nil then
+		return nil, cost
 	end
 	return effort.choice(answers, levels_of, env.settings.threshold, cost, redecides)
 end
