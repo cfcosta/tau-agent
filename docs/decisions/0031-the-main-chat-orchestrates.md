@@ -44,9 +44,10 @@ drain reports to main.
   It ends the work only when nothing is left.
 - **Sub-agents are main's crew, not the person's chats.** Forks are
   kept; sub-agents are disposable. The sidebar lists main's sub-agents
-  only while they work, with the sub-agent mark, above its forks and
-  outside the limit on forks shown; one that ends leaves the list, and
-  folded, main's row counts those at work. Main's chat shows them in a
+  with the sub-agent mark, above its forks: those at work always, outside
+  the limit on older runs shown, and one that ended dim, as a landed or
+  dropped fork is, so its chat can still be opened; folded, main's row
+  counts those at work. Main's chat shows them in a
   tray above its composer: each one working, with its turn, latest
   call and cost, and those spawned since the person's last message,
   faded, with how they ended. History keeps them all.

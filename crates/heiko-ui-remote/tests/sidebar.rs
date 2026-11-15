@@ -463,8 +463,8 @@ fn queued_chats_and_conflicts_on_main_say_so(cx: &mut TestAppContext) {
 }
 
 /// A run with forks folds them away, and shows them again; a run with
-/// none has nothing to fold. A sub-agent that ended is not listed: it
-/// is in main's tray, for the round.
+/// none has nothing to fold. A sub-agent closed with no ending is not
+/// listed.
 #[gpui::test]
 fn a_run_folds_its_children_away(cx: &mut TestAppContext) {
     install_plugins();
@@ -506,8 +506,8 @@ fn a_run_folds_its_children_away(cx: &mut TestAppContext) {
 
 /// A main chat's crew is every sub-agent still working, and those it
 /// spawned since the person's last message; the others went with their
-/// round. The sidebar lists those working under main; one that ended
-/// is not listed, and its chat marks main.
+/// round. The sidebar lists them all under main, each marking its own
+/// row; only those that ended count toward the chats shown.
 #[gpui::test]
 fn the_crew_is_this_rounds_sub_agents(cx: &mut TestAppContext) {
     use std::sync::Arc;
@@ -579,15 +579,157 @@ fn the_crew_is_this_rounds_sub_agents(cx: &mut TestAppContext) {
             .listed_children(main)
             .map(|run| run.title.as_str())
             .collect();
-        assert_eq!(listed, ["working"]);
-        // Sub-agents at work do not count toward the forks shown.
+        assert_eq!(listed, ["working", "new", "old"]);
+        // Sub-agents at work do not count toward the chats shown.
         let rows = ws.repo_rows("");
         assert_eq!(rows[0].older, 0);
         assert_eq!(rows[0].main_children, None);
-        let working = ws.run(&id("working")).unwrap();
-        assert_eq!(ws.listed_as(working), &id("working"));
-        let ended = ws.run(&id("new")).unwrap();
-        assert_eq!(ws.listed_as(ended), &id("main"));
+        assert_eq!(rows[0].total, 3, "main and the two that ended");
+        for run in ["working", "new"] {
+            let view = ws.run(&id(run)).unwrap();
+            assert_eq!(ws.listed_as(view), &id(run));
+        }
+    });
+}
+
+/// A sub-agent's chat is listed under the run that spawned it as soon
+/// as it starts, working; choosing its row opens its chat. It stays
+/// there once it ends, saying how: one that finished and one that
+/// landed are done, one that failed is dropped.
+#[gpui::test]
+fn a_spawned_sub_agent_is_listed_under_its_run(cx: &mut TestAppContext) {
+    use std::sync::Arc;
+
+    use heiko_agent::{event::RunEvent, tool::ToolOutput};
+    use heiko_ui_remote::route::Route;
+
+    install_plugins();
+    cx.update(heiko_ui_remote::init);
+    let main =
+        RunView::new(id("main"), "main", "coder", "gpt-5.5").in_repo(REPO);
+    let window = cx.add_window(|window, cx| {
+        Workspace::new("heiko", vec![main], catalog(), window, cx)
+    });
+    let workspace = window.root(cx).unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    // The tree's rows: each run's title, how deep it is, and its route.
+    let tree = |ws: &Workspace| -> Vec<(String, usize, Option<Route>)> {
+        let rows = ws.rows_named(REPO).unwrap();
+        ws.repo_tree(&rows)
+            .into_iter()
+            .filter_map(|row| match row {
+                TreeRow::Run { run, depth, .. } => {
+                    Some((run.title.clone(), depth, row.route()))
+                }
+                TreeRow::Child { .. } => None,
+            })
+            .collect()
+    };
+    let end = |run: &str, stop: StopReason| RunEvent::RunEnd {
+        run: id(run),
+        parent: Some(id("main")),
+        stop,
+        cost: 0.0,
+    };
+    workspace.update(&mut cx, |ws, cx| {
+        let event = |event| HostUpdate::Event(event);
+        ws.apply(
+            event(RunEvent::RunStart {
+                run: id("main"),
+                parent: None,
+                agent: Arc::from("coder"),
+                call: None,
+            }),
+            cx,
+        );
+        // Main spawns three; `spawn` answers at once.
+        for (call, run) in [("c1", "lands"), ("c2", "fails"), ("c3", "works")] {
+            ws.apply(
+                event(RunEvent::ToolStart {
+                    run: id("main"),
+                    call_id: call.into(),
+                    tool: Arc::from("spawn"),
+                    args: serde_json::json!({ "task": run }),
+                    parent: None,
+                }),
+                cx,
+            );
+            ws.apply(
+                event(RunEvent::RunStart {
+                    run: id(run),
+                    parent: Some(id("main")),
+                    agent: Arc::from("coder"),
+                    call: Some(call.into()),
+                }),
+                cx,
+            );
+            ws.apply(
+                event(RunEvent::ToolEnd {
+                    run: id("main"),
+                    call_id: call.into(),
+                    output: Arc::new(ToolOutput {
+                        details: Some(serde_json::json!({ "run": run })),
+                        ..ToolOutput::text("started")
+                    }),
+                    is_error: false,
+                    parent: None,
+                }),
+                cx,
+            );
+        }
+        let sub =
+            |title: &str| (title.to_owned(), 1, Some(Route::Run(id(title))));
+        let listed = [
+            ("main".to_owned(), 0, Some(Route::Run(id("main")))),
+            sub("works"),
+            sub("fails"),
+            sub("lands"),
+        ];
+        assert_eq!(tree(ws), listed, "listed as they start");
+        for run in ["lands", "fails", "works"] {
+            let view = ws.run(&id(run)).unwrap();
+            assert!(
+                matches!(ws.attention(view), Attention::Working { .. }),
+                "{run} works"
+            );
+        }
+        // Main ends its turn; two of them end, one of them failing.
+        ws.apply(event(end("lands", StopReason::Stop)), cx);
+        ws.apply(event(end("fails", StopReason::Error("no".into()))), cx);
+        ws.apply(
+            event(RunEvent::RunEnd {
+                run: id("main"),
+                parent: None,
+                stop: StopReason::Stop,
+                cost: 0.0,
+            }),
+            cx,
+        );
+        // The host takes the failed one's closing, and lands the other.
+        ws.apply(HostUpdate::Closed(id("fails")), cx);
+        ws.apply(
+            HostUpdate::Landed {
+                run: id("lands"),
+                landing: Ok(heiko_vcs::Landing {
+                    changes: Vec::new(),
+                    conflicts: Vec::new(),
+                    head: "00".into(),
+                }),
+            },
+            cx,
+        );
+        assert_eq!(tree(ws), listed, "still listed once they end");
+        let said = |run: &str| ws.attention(ws.run(&id(run)).unwrap());
+        assert!(matches!(said("works"), Attention::Working { .. }));
+        assert_eq!(said("fails"), Attention::Dropped);
+        assert_eq!(said("lands"), Attention::Landed);
+        for run in ["lands", "fails", "works"] {
+            let view = ws.run(&id(run)).unwrap();
+            assert_eq!(ws.listed_as(view), &id(run), "{run} marks its own row");
+        }
+        // Its row opens its chat.
+        ws.navigate(Route::Run(id("lands")), cx);
+        assert_eq!(ws.route(), &Route::Run(id("lands")));
     });
 }
 

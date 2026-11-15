@@ -205,33 +205,31 @@ impl Workspace {
             .any(|repo| repo.main.as_ref() == Some(run))
     }
 
-    /// `run`'s forks the sidebar lists under it, newest first: those
-    /// that are open, and those that landed or were dropped, which stay
-    /// listed, dim, saying so; and its sub-agents while they work. A
-    /// sub-agent that ended leaves the list: it stays in main's tray for
-    /// the round ([`Workspace::crew`]).
+    /// `run`'s forks and sub-agents the sidebar lists under it, newest
+    /// first: those that are open, and those that landed or were
+    /// dropped, which stay listed, dim, saying so.
     pub fn listed_children<'a>(
         &'a self,
         run: &'a RunView,
     ) -> impl Iterator<Item = &'a RunView> {
-        self.runs.iter().filter(move |view| match &view.origin {
-            Origin::Fork { from, .. } => {
-                *from == run.id
-                    && (!self.closed.contains(&view.id)
-                        || view.ending.is_some())
-            }
-            Origin::SubAgent { parent } => {
-                *parent == run.id && self.is_listed_sub_agent(view)
-            }
-            Origin::Root => false,
+        self.runs.iter().filter(move |view| {
+            view.origin.parent() == Some(&run.id) && self.is_listed_child(view)
         })
     }
 
-    /// Whether the sidebar lists `run`, a sub-agent: while it works.
-    pub fn is_listed_sub_agent(&self, run: &RunView) -> bool {
-        run.status.is_live()
+    /// Whether the sidebar lists `run`, a fork or a sub-agent, under the
+    /// run it came from: while it is open, and once it landed or was
+    /// dropped.
+    pub fn is_listed_child(&self, run: &RunView) -> bool {
+        !self.closed.contains(&run.id) || run.ending.is_some()
+    }
+
+    /// Whether `run` is a sub-agent at work: listed whatever the limit
+    /// on the chats shown under its main chat.
+    fn is_working_sub_agent(&self, run: &RunView) -> bool {
+        matches!(run.origin, Origin::SubAgent { .. })
+            && run.status.is_live()
             && run.ending.is_none()
-            && !self.closed.contains(&run.id)
     }
 
     /// Whether `run` ended for good: it landed, was dropped, or was
@@ -291,14 +289,14 @@ impl Workspace {
         if !has || folded {
             return;
         }
-        // The limit is on forks: sub-agents at work are all listed.
-        let mut forks = limit.unwrap_or(usize::MAX);
+        // Sub-agents at work are all listed, outside the limit.
+        let mut shown = limit.unwrap_or(usize::MAX);
         for child in children {
-            if child.origin.is_fork() {
-                if forks == 0 {
+            if !self.is_working_sub_agent(child) {
+                if shown == 0 {
                     continue;
                 }
-                forks -= 1;
+                shown -= 1;
             }
             self.tree_rows(tree, child, depth + 1, None, false);
         }
@@ -396,7 +394,7 @@ impl Workspace {
         let main = repo.main.as_ref().and_then(|id| self.run(id));
         let chats = main.map_or(0, |main| {
             self.listed_children(main)
-                .filter(|run| run.origin.is_fork())
+                .filter(|run| !self.is_working_sub_agent(run))
                 .count()
         });
         let total = all.len() + chats;
