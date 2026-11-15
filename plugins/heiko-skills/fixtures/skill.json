@@ -8,7 +8,10 @@
         "name": "release-notes"
       }
     },
-    "order": ["code-review", "release-notes"],
+    "order": [
+      "code-review",
+      "release-notes"
+    ],
     "skills": {
       "code-review": {
         "description": "Reviews the current diff for correctness bugs, ranked by severity, with a failing input for each.",
@@ -27,33 +30,25 @@
         "body": {
           "children": [
             {
+              "piece": "text",
+              "text": "Writes release notes from the commits between two tags: groups by kind, leads with what users notice."
+            },
+            {
               "piece": "mono",
               "text": "~/.agents/skills/release-notes/SKILL.md"
             },
             {
-              "piece": "text",
+              "first_line": null,
+              "lang": "markdown",
+              "piece": "code",
               "text": "Run scripts/commits.sh with the two tags, group what it lists, and lead with what users will notice."
             }
           ],
           "piece": "stack"
         },
         "head": {
-          "children": [
-            {
-              "name": "skill",
-              "piece": "icon",
-              "tone": "info"
-            },
-            {
-              "piece": "mono",
-              "text": "release-notes"
-            },
-            {
-              "piece": "text",
-              "text": "Writes release notes from the commits between two tags: groups by kind, leads with what users notice."
-            }
-          ],
-          "piece": "row"
+          "piece": "mono",
+          "text": "release-notes"
         }
       }
     }

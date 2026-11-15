@@ -122,22 +122,27 @@ t.case("the pane shows the item revised last, and its buttons pick another", fun
 	t.equal(view.pane.fresh, 3)
 	t.equal(view.status.text, "2 items on the canvas")
 	local buttons = find(view.pane.body, "button")
-	-- A tab per item, the one shown marked, and the step back.
-	t.equal(buttons[1].label, "Image · Plot")
-	t.equal(buttons[1].kind, "secondary")
-	t.equal(buttons[2].label, "Document · Plan")
-	t.equal(buttons[2].kind, "primary")
-	t.equal(buttons[3].icon, "back")
+	-- A tab per item, the one shown in bold, a square per revision, the
+	-- one shown filled, and the step back.
+	t.equal(buttons[1].label, "Plot")
+	t.equal(find(view.pane.body, "rich")[1].text, "**Plan**")
+	t.equal(buttons[2].label, "older")
+	t.equal(#buttons, 2, "nothing newer")
+	local squares = find(view.pane.body, "square")
+	t.equal({ squares[1].label, squares[2].label }, { "1", "2" })
+	t.equal({ squares[1].style, squares[2].style }, { "quiet", "filled" })
 	t.equal(find(view.pane.body, "markdown")[1].text, "b")
 	-- Back a revision: it says it is not the latest.
-	r:action("pick", buttons[3].args)
+	r:action("pick", buttons[2].args)
 	view = r:view()
 	t.equal(find(view.pane.body, "markdown")[1].text, "a")
 	local texts = {}
 	for _, piece in ipairs(find(view.pane.body, "text")) do
 		table.insert(texts, piece.text)
 	end
-	t.equal(texts, { "Revision 1 of 2", "· not the latest" })
+	t.equal(texts, { "Revision 1 of 2" })
+	t.equal(find(view.pane.body, "toned")[1].text, "not the latest")
+	t.equal(find(view.pane.body, "button")[2].label, "newer")
 	-- The image tab: the image, its caption, what it is and where from.
 	r:action("pick", find(view.pane.body, "button")[1].args)
 	view = r:view()
@@ -161,7 +166,7 @@ t.case("each call's card shows its revision and opens it on the canvas", functio
 	t.equal(find(calls.c1.body, "image")[1].height, 10)
 	t.equal(calls.c2.label, "revision 1 · 5 words")
 	local open = find(calls.c2.body, "button")[1]
-	t.equal(open.label, "Open on the canvas")
+	t.equal(open.label, "open on the canvas")
 	t.equal(r:action("open", open.args), heiko.interface("pane"))
 	t.equal(r.state.pick, { item = 2, revision = 1, fresh = 2 })
 	local lines = {}

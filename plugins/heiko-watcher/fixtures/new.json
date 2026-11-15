@@ -27,62 +27,80 @@
     "band": {
       "children": [
         {
-          "piece": "badge",
-          "text": "Heads up",
-          "tone": "warn"
-        },
-        {
-          "piece": "text",
-          "text": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
+          "piece": "kanji",
+          "text": "報",
+          "tone": "cyan"
         },
         {
           "children": [
             {
-              "action": "answer",
-              "args": {
-                "answer": "learned",
-                "key": "n0",
-                "line": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
-              },
-              "kind": "secondary",
-              "label": "Learn more",
-              "piece": "button"
+              "children": [
+                {
+                  "piece": "heading",
+                  "text": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
+                },
+                {
+                  "piece": "spacer"
+                },
+                {
+                  "label": "Heads up",
+                  "piece": "stamp",
+                  "tone": "cyan"
+                }
+              ],
+              "piece": "row"
             },
             {
-              "action": "answer",
-              "args": {
-                "answer": "knew",
-                "key": "n0",
-                "line": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
-              },
-              "kind": "secondary",
-              "label": "Knew this already",
-              "piece": "button"
-            },
-            {
-              "action": "answer",
-              "args": {
-                "answer": "chatted",
-                "key": "n0",
-                "line": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
-              },
-              "kind": "secondary",
-              "label": "Chat about it",
-              "piece": "button"
-            },
-            {
-              "action": "answer",
-              "args": {
-                "answer": "dismissed",
-                "key": "n0",
-                "line": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
-              },
-              "kind": "secondary",
-              "label": "Dismiss",
-              "piece": "button"
+              "children": [
+                {
+                  "action": "answer",
+                  "args": {
+                    "answer": "knew",
+                    "key": "n0",
+                    "line": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
+                  },
+                  "kind": "primary",
+                  "label": "knew this already",
+                  "piece": "button"
+                },
+                {
+                  "action": "answer",
+                  "args": {
+                    "answer": "learned",
+                    "key": "n0",
+                    "line": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
+                  },
+                  "kind": "secondary",
+                  "label": "learn more",
+                  "piece": "button"
+                },
+                {
+                  "action": "answer",
+                  "args": {
+                    "answer": "chatted",
+                    "key": "n0",
+                    "line": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
+                  },
+                  "kind": "secondary",
+                  "label": "chat about it",
+                  "piece": "button"
+                },
+                {
+                  "action": "answer",
+                  "args": {
+                    "answer": "dismissed",
+                    "key": "n0",
+                    "line": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
+                  },
+                  "kind": "secondary",
+                  "label": "dismiss",
+                  "piece": "button"
+                }
+              ],
+              "piece": "row"
             }
           ],
-          "piece": "row"
+          "piece": "stack"
         }
       ],
       "piece": "row"
@@ -91,70 +109,83 @@
       "n0": {
         "children": [
           {
-            "children": [
-              {
-                "piece": "badge",
-                "text": "Heads up",
-                "tone": "warn"
-              },
-              {
-                "piece": "text",
-                "text": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
-              }
-            ],
-            "piece": "row"
+            "piece": "kanji",
+            "text": "報",
+            "tone": "cyan"
           },
           {
             "children": [
               {
-                "action": "answer",
-                "args": {
-                  "answer": "learned",
-                  "key": "n0",
-                  "line": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
-                },
-                "kind": "secondary",
-                "label": "Learn more",
-                "piece": "button"
+                "children": [
+                  {
+                    "piece": "heading",
+                    "text": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
+                  },
+                  {
+                    "piece": "spacer"
+                  },
+                  {
+                    "label": "Heads up",
+                    "piece": "stamp",
+                    "tone": "cyan"
+                  }
+                ],
+                "piece": "row"
               },
               {
-                "action": "answer",
-                "args": {
-                  "answer": "knew",
-                  "key": "n0",
-                  "line": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
-                },
-                "kind": "secondary",
-                "label": "Knew this already",
-                "piece": "button"
-              },
-              {
-                "action": "answer",
-                "args": {
-                  "answer": "chatted",
-                  "key": "n0",
-                  "line": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
-                },
-                "kind": "secondary",
-                "label": "Chat about it",
-                "piece": "button"
-              },
-              {
-                "action": "answer",
-                "args": {
-                  "answer": "dismissed",
-                  "key": "n0",
-                  "line": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
-                },
-                "kind": "secondary",
-                "label": "Dismiss",
-                "piece": "button"
+                "children": [
+                  {
+                    "action": "answer",
+                    "args": {
+                      "answer": "knew",
+                      "key": "n0",
+                      "line": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
+                    },
+                    "kind": "primary",
+                    "label": "knew this already",
+                    "piece": "button"
+                  },
+                  {
+                    "action": "answer",
+                    "args": {
+                      "answer": "learned",
+                      "key": "n0",
+                      "line": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
+                    },
+                    "kind": "secondary",
+                    "label": "learn more",
+                    "piece": "button"
+                  },
+                  {
+                    "action": "answer",
+                    "args": {
+                      "answer": "chatted",
+                      "key": "n0",
+                      "line": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
+                    },
+                    "kind": "secondary",
+                    "label": "chat about it",
+                    "piece": "button"
+                  },
+                  {
+                    "action": "answer",
+                    "args": {
+                      "answer": "dismissed",
+                      "key": "n0",
+                      "line": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
+                    },
+                    "kind": "secondary",
+                    "label": "dismiss",
+                    "piece": "button"
+                  }
+                ],
+                "piece": "row"
               }
             ],
-            "piece": "row"
+            "piece": "stack"
           }
         ],
-        "piece": "stack"
+        "piece": "row"
       }
     },
     "status": {

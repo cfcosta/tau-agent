@@ -1,10 +1,9 @@
 //! What reaches the person about their agents when they are not looking
 //! (ADR 0037): a note or a question an agent left, and an agent that
-//! spent its day. The desktop shows these as notifications, and so does
+//! reached its day's allowance. The desktop shows these as notifications, and so does
 //! the paired phone; heiko-ui-plugin's `Watch` decides when, for both.
 
 use heiko_agent::tool::RunId;
-use heiko_ui_kit::format::usd;
 use heiko_ui_plugin::{WaitGroup, WaitItem, Waiting};
 
 use crate::{Agent, Overview, Status};
@@ -47,10 +46,9 @@ fn items(agent: &Agent) -> Vec<WaitItem> {
         items.push(WaitItem {
             id: AT_CAP.into(),
             title: format!("{} reached its cap", agent.name),
-            body: format!(
-                "It spent {} today; its events wait for tomorrow or for you",
-                usd(agent.cap_today)
-            ),
+            body: "It reached today's allowance; its events wait for tomorrow \
+                   or for you"
+                .into(),
         });
     }
     items
@@ -78,7 +76,7 @@ fn away(agent: &Agent) -> Option<WaitItem> {
     .flatten()
     .collect();
     if at_cap {
-        parts.push(format!("it spent its {} for today", usd(agent.cap_today)));
+        parts.push("it reached today's allowance".to_owned());
     }
     if parts.is_empty() {
         return None;

@@ -2,15 +2,39 @@
 //! for the store.
 
 use gpui::{AnyElement, Context, SharedString, div, prelude::*, rems};
+use heiko_agent::event::StopReason;
 
 use crate::{
-    assets::Icon,
+    attention::{day, time, when},
     route::Route,
-    theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
-    ui::{self, components::ButtonKind, icon, mono, status_icon, status_look},
-    view::{Origin, RunView, usd},
+    theme::{Design as _, Theme, Type, sp, weight},
+    ui::{
+        self,
+        SquareStyle,
+        State,
+        components::ButtonKind,
+        mark,
+        mono,
+        status_look,
+    },
+    view::{Origin, RunStatus, RunView},
     workspace::Workspace,
 };
+
+/// The mark a run's status is listed with: at work, stopped at a limit,
+/// stopped short, or waiting on the person.
+fn state(status: &RunStatus) -> State {
+    match status {
+        RunStatus::Planning | RunStatus::Running => State::Working,
+        RunStatus::Finished(StopReason::Limit(_)) => State::Limit,
+        RunStatus::Finished(StopReason::Cancelled | StopReason::Error(_)) => {
+            State::Failing
+        }
+        RunStatus::Finished(StopReason::Stop) | RunStatus::Interrupted => {
+            State::Idle
+        }
+    }
+}
 
 pub fn render(
     ws: &Workspace,
@@ -45,7 +69,6 @@ pub fn render(
     let rows: Vec<_> =
         rows.into_iter().filter(|(run, _)| matches(run)).collect();
 
-    let total: f64 = ws.runs.iter().map(|run| run.usage.cost).sum();
     let forks = ws
         .runs
         .iter()
@@ -58,33 +81,27 @@ pub fn render(
         .filter(|child| child.kind == crate::view::ChildKind::SubAgent)
         .count();
     let summary = format!(
-        "Every run, in every repository: {} runs, {forks} forks and \
-         {sub_agents} sub-agent runs, {} in all.",
+        "{} runs · {forks} forks · {sub_agents} sub-agent runs",
         ws.runs.len(),
-        usd(total),
     );
 
+    // What is typed filters as it is typed: a line to write on, with no
+    // box.
     let search = div()
-        .flex()
-        .items_center()
-        .gap(sp(2.))
-        .h(rems(2.25))
-        .px(sp(2.5))
+        .flex_shrink_0()
+        .pb(sp(0.75))
         .when(compact, |search| search.w_full())
         .when(!compact, |search| search.w(rems(20.)))
-        .border_1()
-        .border_color(t.border_strong)
-        .rounded(radius::CONTROL)
-        .typeset(Type::CAPTION)
-        .child(icon(Icon::Search, IconSize::BASE, t.dim))
+        .border_b_1()
+        .border_color(t.slate)
+        .typeset(Type::LEAD)
         .child(ws.history_filter.clone());
 
     let body = if compact {
         div()
             .flex()
             .flex_col()
-            .border_t_1()
-            .border_color(t.border)
+            .child(search.mb(sp(2.)))
             .children(rows.iter().map(|(run, nested)| {
                 let (color, label) = status_look(&run.status, t);
                 let route = Route::Run(run.id.clone());
@@ -93,12 +110,12 @@ pub fn render(
                     .flex()
                     .items_center()
                     .gap(sp(3.))
-                    .min_h(rems(3.5))
-                    .pl(sp(if *nested { 6. } else { 0. }))
+                    .min_h(rems(3.25))
+                    .pl(sp(if *nested { 5. } else { 0. }))
                     .border_b_1()
-                    .border_color(t.border)
+                    .border_color(t.hairline)
                     .cursor_pointer()
-                    .child(status_icon(run, t, IconSize::BASE))
+                    .child(mark(state(&run.status), t))
                     .child(
                         div()
                             .flex_1()
@@ -109,25 +126,30 @@ pub fn render(
                             .child(
                                 div()
                                     .truncate()
-                                    .font_weight(weight::EMPHASIS)
+                                    .font_weight(weight::STRONG)
+                                    .text_color(t.bright)
                                     .child(run.title.clone()),
                             )
                             .child(
-                                div()
-                                    .typeset(Type::CAPTION)
-                                    .text_color(color)
-                                    .child(format!(
+                                mono(
+                                    format!(
                                         "{} · {label} · {} turns",
                                         ws.repo_of(run),
                                         run.turn
-                                    )),
+                                    ),
+                                    Type::CAPTION,
+                                    color,
+                                )
+                                .truncate(),
                             ),
                     )
-                    .child(mono(usd(run.usage.cost), Type::CAPTION, t.muted))
                     .on_click(cx.listener(move |ws, _, _, cx| {
                         ws.navigate(route.clone(), cx)
                     }))
             }))
+            .when(rows.is_empty(), |list| {
+                list.child(ui::empty("No runs match.", t))
+            })
             .into_any_element()
     } else {
         // The newest first, under the day they started.
@@ -146,23 +168,37 @@ pub fn render(
         let names: Vec<Option<String>> = std::iter::once(None)
             .chain(ws.catalog.listed().map(|repo| Some(repo.name.clone())))
             .collect();
-        let mut chips = div().flex().flex_wrap().gap(sp(1.5));
+        let mut filters = div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_x(sp(5.))
+            .gap_y(sp(2.))
+            .py(sp(3.))
+            .border_b_1()
+            .border_color(t.slate);
         for name in names {
-            chips = chips.child(repo_chip(ws, name, t, cx));
+            filters = filters.child(repo_word(ws, name, t, cx));
         }
-        let mut list = div().flex().flex_col().child(chips.pb(sp(2.)));
+        let mut list = div()
+            .flex()
+            .flex_col()
+            .child(filters.child(div().flex_1()).child(search));
         for (label, runs) in days {
-            list = list.child(
-                div()
-                    .pt(sp(3.5))
-                    .pb(sp(1.))
-                    .px(sp(1.))
-                    .typeset(Type::CAPTION)
-                    .text_color(t.dim)
-                    .child(label),
-            );
-            for (run, nested) in runs {
-                list = list.child(history_row(ws, run, nested, t, cx));
+            let last = runs.len().saturating_sub(1);
+            for (n, (run, nested)) in runs.into_iter().enumerate() {
+                // The day is said once, on its first run; a hairline
+                // closes it under its last.
+                let said = if n == 0 { label.as_str() } else { "" };
+                list = list.child(history_row(
+                    ws,
+                    run,
+                    nested,
+                    said,
+                    n == last,
+                    t,
+                    cx,
+                ));
             }
         }
         list.when(rows.is_empty(), |list| {
@@ -170,21 +206,16 @@ pub fn render(
         })
         .child(
             div()
-                .mt(sp(6.))
+                .mt(sp(11.))
                 .flex()
                 .flex_col()
-                .gap(sp(2.))
-                .child(
-                    div()
-                        .typeset(Type::CAPTION)
-                        .text_color(t.dim)
-                        .child("Ask the store"),
-                )
+                .gap(sp(3.))
+                .child(ui::section_header("Ask the store", None, t))
                 .child(
                     div()
                         .flex()
                         .items_center()
-                        .gap(sp(3.))
+                        .gap(sp(4.))
                         .child(
                             div()
                                 .flex_1()
@@ -195,7 +226,7 @@ pub fn render(
                             div()
                                 .id("run-query")
                                 .child(ui::button(
-                                    "Run query",
+                                    "run query",
                                     ButtonKind::Secondary,
                                     t,
                                 ))
@@ -213,78 +244,36 @@ pub fn render(
         .into_any_element()
     };
 
-    ui::screen(
-        "history",
-        compact,
-        div()
-            .flex()
-            .flex_col()
-            .gap(sp(4.))
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .items_end()
-                    .gap(sp(3.))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(rems(17.5))
-                            .child(ui::screen_title("History", summary, t)),
-                    )
-                    .child(search),
-            )
-            .child(body),
-    )
-    .into_any_element()
+    // The screen stands in from the sidebar as a chat's header does.
+    div()
+        .id("history")
+        .flex_1()
+        .min_h(rems(0.))
+        .overflow_y_scroll()
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .when(compact, |page| page.px(sp(4.5)).py(sp(4.)))
+                .when(!compact, |page| {
+                    page.pl(sp(13.)).pr(sp(11.)).pt(sp(11.)).pb(sp(11.))
+                })
+                .when(!compact, |page| {
+                    page.child(ui::section_header(
+                        "History",
+                        Some(summary.into()),
+                        t,
+                    ))
+                })
+                .child(body),
+        )
+        .into_any_element()
 }
 
-/// The day a run started on, as a heading: Today, Yesterday, Sep 26.
-fn day(started: &str) -> String {
-    let mut words = started.split_whitespace();
-    match words.next() {
-        Some("today") => "Today".into(),
-        Some("yesterday") => "Yesterday".into(),
-        Some(month) => match words.next() {
-            Some(date) => format!("{month} {date}"),
-            None => month.to_owned(),
-        },
-        None => "Earlier".into(),
-    }
-}
-
-/// A key that orders runs by when they started, from what the run
-/// list shows: `today 14:02`, `yesterday 22:10`, `Sep 26 19:02`.
-fn when(started: &str) -> (u8, u8, u8, String) {
-    const MONTHS: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct",
-        "Nov", "Dec",
-    ];
-    let words: Vec<&str> = started.split_whitespace().collect();
-    let clock = words.last().copied().unwrap_or_default().to_owned();
-    match words.first().copied() {
-        Some("today") => (2, 0, 0, clock),
-        Some("yesterday") => (1, 0, 0, clock),
-        Some(month) => {
-            let month = MONTHS.iter().position(|m| *m == month).unwrap_or(0);
-            let date = words.get(1).and_then(|d| d.parse().ok()).unwrap_or(0);
-            (0, month as u8 + 1, date, clock)
-        }
-        None => (0, 0, 0, clock),
-    }
-}
-
-/// When in its day a run started: `14:02`.
-fn time(started: &str) -> String {
-    started
-        .split_whitespace()
-        .last()
-        .unwrap_or_default()
-        .to_owned()
-}
-
-/// A chip that shows one repository's runs, or all of them.
-fn repo_chip(
+/// A word that shows one repository's runs, or all of them: underlined
+/// as a thing to choose, in the repository's color, with how many it
+/// has. The one chosen is bright over a blue line.
+fn repo_word(
     ws: &Workspace,
     repo: Option<String>,
     t: &Theme,
@@ -303,101 +292,112 @@ fn repo_chip(
     div()
         .id(SharedString::from(format!("history-repo-{label}")))
         .flex()
+        .items_baseline()
         .gap(sp(1.5))
-        .px(sp(2.75))
-        .py(sp(1.5))
-        .rounded(radius::BOX)
+        .flex_shrink_0()
+        .border_b_1()
+        .border_color(if on { t.blue } else { t.slate })
+        .typeset(Type::LEAD)
         .cursor_pointer()
-        .when(on, |chip| chip.bg(t.raised))
-        .when(!on, |chip| chip.hover(|style| style.bg(t.card)))
-        .child(div().text_color(if on { t.text } else { ink }).child(label))
-        .child(div().text_color(t.dim).child(count.to_string()))
+        .child(
+            div()
+                .text_color(if on { t.bright } else { ink })
+                .child(label),
+        )
+        .child(mono(count.to_string(), Type::CAPTION, t.dim))
         .on_click(cx.listener(move |ws, _, _, cx| {
             ws.history_repo = repo.clone();
             cx.notify();
         }))
 }
 
-/// A run in the history: its repository's mark, title, task, state,
-/// cost and the time it started.
+/// A run in the history: the day it started, when that is new; its
+/// repository's letter in a square of its color; whether it is a fork
+/// or a sub-agent; its title and task; its state; and the time it
+/// started. The `last` of a day closes it with a hairline.
 fn history_row(
     ws: &Workspace,
     run: &RunView,
     nested: bool,
+    day: &str,
+    last: bool,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
     let (color, label) = status_look(&run.status, t);
     let route = Route::Run(run.id.clone());
     let repo = ws.repo_of(run).to_owned();
+    let kind = match (&run.origin, nested) {
+        (Origin::Fork { .. }, true) => "fork",
+        (Origin::SubAgent { .. }, true) => "sub",
+        _ => "",
+    };
     div()
         .id(SharedString::from(format!("history-{}", run.id)))
         .flex()
         .items_center()
-        .gap(sp(3.5))
-        .px(sp(1.))
-        .py(sp(2.25))
+        .gap(sp(3.))
+        .h(rems(2.375))
         .border_b_1()
-        .border_color(t.border)
+        .border_color(if last {
+            t.hairline
+        } else {
+            gpui::transparent_black()
+        })
         .cursor_pointer()
-        .hover(|row| row.bg(t.card))
-        .child(heiko_ui_kit::components::repo_mark(&repo, 18., t))
+        .hover(|row| row.text_color(t.bright))
         .child(
             div()
-                .w(rems(11.875))
+                .w(rems(4.75))
                 .flex_shrink_0()
-                .flex()
-                .items_center()
-                .gap(sp(1.5))
-                .when(nested, |cell| {
-                    cell.pl(sp(3.)).child(icon(
-                        if matches!(run.origin, Origin::Fork { .. }) {
-                            Icon::Fork
-                        } else {
-                            Icon::SubAgent
-                        },
-                        IconSize::SMALL,
-                        t.roles.agent,
-                    ))
-                })
-                .child(
-                    div()
-                        .truncate()
-                        .font_weight(weight::EMPHASIS)
-                        .child(run.title.clone()),
-                ),
+                .typeset(Type::SECTION.sized(13.5))
+                .text_color(t.bright)
+                .child(day.to_owned()),
+        )
+        .child(ui::square(
+            ws.repo_named(&repo).letter(),
+            SquareStyle::Outlined(t.mark(&repo)),
+            t,
+        ))
+        .child(
+            mono(kind, Type::MICRO, t.dim)
+                .w(rems(1.625))
+                .flex_shrink_0(),
+        )
+        .child(
+            div()
+                .w(rems(8.25))
+                .flex_shrink_0()
+                .truncate()
+                .font_weight(weight::STRONG)
+                .text_color(t.bright)
+                .child(run.title.clone()),
         )
         .child(
             div()
                 .flex_1()
                 .min_w(rems(0.))
                 .truncate()
-                .typeset(Type::CAPTION)
-                .text_color(t.muted)
+                .text_color(t.text_soft)
                 .child(super::repo::task(run)),
         )
         .child(
             div()
-                .w(rems(6.875))
+                .w(rems(6.5))
                 .flex_shrink_0()
-                .typeset(Type::CAPTION)
+                .flex()
+                .items_center()
+                .gap(sp(1.75))
+                .typeset(Type::SMALL)
                 .text_color(color)
-                .child(label),
+                .child(mark(state(&run.status), t))
+                .child(div().truncate().child(label)),
         )
         .child(
-            mono(usd(run.usage.cost), Type::CAPTION, t.roles.cost)
-                .w(rems(4.375))
+            mono(time(&run.started), Type::CAPTION, t.dim)
+                .w(rems(2.75))
                 .flex_shrink_0()
                 .text_right(),
-        )
-        .child(
-            div()
-                .w(rems(3.75))
-                .flex_shrink_0()
-                .text_right()
-                .typeset(Type::CAPTION)
-                .text_color(t.dim)
-                .child(time(&run.started)),
         )
         .on_click(
             cx.listener(move |ws, _, _, cx| ws.navigate(route.clone(), cx)),
@@ -409,10 +409,9 @@ fn row(t: &Theme) -> gpui::Div {
         .flex()
         .items_center()
         .gap(sp(3.))
-        .px(sp(4.))
-        .py(sp(2.5))
+        .py(sp(2.))
         .border_b_1()
-        .border_color(t.border)
+        .border_color(t.hairline)
 }
 
 /// What the query returned: a table, or SQLite's reason.
@@ -422,8 +421,8 @@ fn query_result(
 ) -> gpui::Div {
     let table = match result {
         Err(error) => {
-            return div().px(sp(4.)).py(sp(3.)).child(ui::notice(
-                Icon::Warning,
+            return div().py(sp(3.)).child(ui::notice(
+                crate::assets::Icon::Warning,
                 error.clone(),
                 t.red,
                 Type::SMALL,
@@ -445,11 +444,10 @@ fn query_result(
     div()
         .flex()
         .flex_col()
-        .child(line(&table.columns, t.dim))
+        .child(line(&table.columns, t.dim).border_color(t.slate))
         .children(table.rows.iter().map(|cells| line(cells, t.text)))
         .child(
             div()
-                .px(sp(4.))
                 .py(sp(2.))
                 .typeset(Type::CAPTION)
                 .text_color(t.dim)

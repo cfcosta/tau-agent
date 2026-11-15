@@ -432,11 +432,4 @@ function effort.starting_choice(state)
 	return nil
 end
 
--- What the note under a chart says: the confidence against the
--- threshold, and how it came out.
-function effort.verdict(choice, outcome)
-	local comparison = choice.verdict == "chose" and "above" or "below"
-	return string.format("Confidence %.2f is %s %.2f, %s", choice.confidence, comparison, choice.threshold, outcome)
-end
-
 return effort

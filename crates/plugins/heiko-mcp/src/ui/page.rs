@@ -1,21 +1,20 @@
-//! The Servers page, a tab of a repository's page: a line on its MCP
-//! servers (or the user's alone) and what waits on the user, the
+//! The Servers page, one of a repository's pages: a line of counts on
+//! its MCP servers (or the user's alone) and what waits on the user, the
 //! repository servers that wait for approval, entries that were
-//! skipped, and each server with where it comes from, how it is reached
-//! and exposed, whether it is connected and its tools; and the editor
-//! for the servers the page adds. A view tree (ADR 0045), in the frame
-//! the interface gives a page. The tree has no modal, so the editor is
-//! a card at the page's top while it is open.
+//! skipped, and each server as a ruled row with where it comes from, how
+//! it is reached and exposed, whether it is connected and its tools; and
+//! the editor for the servers the page adds. A view tree (ADR 0045), in
+//! the frame the interface gives a page.
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use heiko_ui_plugin::{
     Handle,
     ViewCx,
-    tree::{Kind, Node, Tone, draft_key},
+    tree::{Kind, MarkState, Node, Tone, draft_key},
 };
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 use super::{
     Act,
@@ -36,6 +35,8 @@ pub const EDITOR: &str = "editor";
 /// The UI state key of the server whose removal waits for a second
 /// click.
 pub const REMOVING: &str = "removing";
+/// The UI state key of the servers whose details show: their names.
+pub const OPEN: &str = "open";
 /// The editor's inputs: a new server's name, and its entry. Their
 /// drafts are kept under [`draft_key`].
 pub const NAME_INPUT: &str = "mcp-name";
@@ -54,6 +55,8 @@ pub const SAVE: &str = "save";
 /// Asks to remove a server, or removes it once asked: `{ name,
 /// confirmed }`.
 pub const REMOVE: &str = "remove";
+/// Shows a server's details, or hides them: `{ name }`.
+pub const DETAILS: &str = "details";
 
 /// A server being added or edited.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -80,11 +83,13 @@ pub(super) fn answered(handle: &Handle, reply: Reply) {
 }
 
 /// What the page keeps in the window's UI state: the editor, the
-/// removal asked, and the editor's drafts.
+/// removal asked, the servers whose details show, and the editor's
+/// drafts.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Held {
     pub editor: Option<Editor>,
     pub removing: Option<String>,
+    pub open: BTreeSet<String>,
     pub name: String,
     pub entry: String,
 }
@@ -105,6 +110,10 @@ impl Held {
                 .ui_value(REMOVING)
                 .and_then(Value::as_str)
                 .map(str::to_owned),
+            open: view
+                .ui_value(OPEN)
+                .and_then(|value| serde_json::from_value(value.clone()).ok())
+                .unwrap_or_default(),
             name: draft(NAME_INPUT),
             entry: draft(ENTRY_INPUT),
         }
@@ -196,6 +205,16 @@ pub fn on_action(action: &str, args: &Value, view: &mut ViewCx<'_, McpUi>) {
                 handle.set_ui(REMOVING, Some(Value::String(name)));
             }
         }
+        DETAILS => {
+            let Some(name) = text("name") else {
+                return;
+            };
+            let mut open = Held::of(view).open;
+            if !open.remove(&name) {
+                open.insert(name);
+            }
+            handle.set_ui(OPEN, (!open.is_empty()).then(|| json!(open)));
+        }
         _ => {}
     }
 }
@@ -227,11 +246,11 @@ pub fn servers_of<'a>(
     }
 }
 
-/// The most tools a server shows as chips; the rest are counted, and
+/// The most tools a server shows by name; the rest are counted, and
 /// its details show them all.
 pub const CHIPS: usize = 12;
 
-/// The page: what the servers are and what waits on the user, the
+/// The page: the servers counted and what waits on the user, the
 /// editor while open, the repository servers waiting for approval,
 /// entries that were skipped, and each server with its tools.
 pub fn render(view: &mut ViewCx<'_, McpUi>) -> Node {
@@ -263,28 +282,41 @@ pub fn tree(
     }
     page.extend(servers.pending.iter().map(|row| pending(repo, row)));
     page.extend(servers.errors.iter().map(|error| {
-        Node::row([icon("warning", Tone::Bad), Node::text(error.clone())])
+        Node::row([mark(MarkState::Failing), Node::text(error.clone())])
     }));
     if servers.servers.is_empty() {
         page.push(Node::Empty {
-            text: "No servers yet. Add one here, or in ~/.config/heiko/mcp.json."
-                .into(),
+            text:
+                "No servers yet. Add one here, or in ~/.config/heiko/mcp.json."
+                    .into(),
         });
     }
-    for (at, server) in servers.servers.iter().enumerate() {
-        if at > 0 {
-            page.push(Node::Rule);
-        }
+    for server in &servers.servers {
+        page.push(Node::Rule);
         let removing = held.removing.as_deref() == Some(server.name.as_str());
-        page.push(server_node(repo, server, removing, compact));
+        let open = held.open.contains(&server.name);
+        page.push(server_node(repo, server, removing, open, compact));
     }
     Node::stack(page)
 }
 
-fn icon(name: &str, tone: Tone) -> Node {
-    Node::Icon {
-        name: name.into(),
+fn mark(state: MarkState) -> Node {
+    Node::Mark { state, count: None }
+}
+
+/// A line in mono, in `tone`.
+fn toned(text: impl Into<String>, tone: Tone) -> Node {
+    Node::Toned {
+        text: text.into(),
         tone,
+        mono: true,
+    }
+}
+
+/// A name, in bold.
+fn name(text: &str) -> Node {
+    Node::Rich {
+        text: format!("**{text}**"),
     }
 }
 
@@ -299,6 +331,7 @@ fn button(label: &str, kind: Kind, action: &str, args: Value) -> Node {
         args,
         kind,
         icon: None,
+        size: Default::default(),
     }
 }
 
@@ -320,15 +353,12 @@ fn counted(count: usize, one: &str, many: &str) -> String {
     }
 }
 
-/// What these servers are, how many are connected and what waits on
-/// the user, each count in its tone; where they are read from; and what
-/// can be done: connect them before a run does, or add one.
+/// How many servers are connected and what waits on the user, each
+/// count in its tone, with what can be done: connect them before a run
+/// does, or add one; and, on a computer, where they are read from.
 fn intro(repo: Option<&str>, servers: &Servers, compact: bool) -> Node {
-    let mut line = vec![Node::text(match repo {
-        Some(_) => "Servers this repository's runs can call.",
-        None => "Your servers, which every repository's runs can call.",
-    })];
-    let mut count = |text: String, tone| line.push(Node::Pill { text, tone });
+    let mut line = Vec::new();
+    let mut count = |text: String, tone| line.push(toned(text, tone));
     if !servers.servers.is_empty() {
         match servers.started {
             true => {
@@ -348,31 +378,14 @@ fn intro(repo: Option<&str>, servers: &Servers, compact: bool) -> Node {
     }
     if !servers.pending.is_empty() {
         count(
-            counted(
-                servers.pending.len(),
-                "needs your approval",
-                "need your approval",
-            ),
+            counted(servers.pending.len(), "needs approval", "need approval"),
             Tone::Warn,
         );
     }
-    let mut intro = vec![Node::row(line)];
-    let files = [servers.user_file.as_deref(), servers.repo_file.as_deref()]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join(" and ");
-    if !compact && !files.is_empty() {
-        intro.push(Node::text(format!(
-            "Read from {files}, and the servers added here. A repository's \
-             own servers wait for your approval; until a run starts them, \
-             Connect does."
-        )));
-    }
-    let mut buttons = Vec::new();
+    line.push(Node::Spacer);
     if !servers.started && !servers.servers.is_empty() {
-        buttons.push(act_button(
-            "Connect now",
+        line.push(act_button(
+            "connect now",
             Kind::Secondary,
             &Act::Reconnect {
                 repo: repo.map(str::to_owned),
@@ -380,8 +393,16 @@ fn intro(repo: Option<&str>, servers: &Servers, compact: bool) -> Node {
             },
         ));
     }
-    buttons.push(button("Add a server", Kind::Secondary, ADD, Value::Null));
-    intro.push(Node::row(buttons));
+    line.push(button("add a server", Kind::Secondary, ADD, Value::Null));
+    let mut intro = vec![Node::row(line)];
+    let files = [servers.user_file.as_deref(), servers.repo_file.as_deref()]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ");
+    if !compact && !files.is_empty() {
+        intro.push(toned(files, Tone::Neutral));
+    }
     Node::stack(intro)
 }
 
@@ -427,12 +448,12 @@ fn editor_card(editor: &Editor, held: &Held) -> Node {
     ];
     if let Some(problem) = &editor.problem {
         body.push(Node::row([
-            icon("warning", Tone::Bad),
+            mark(MarkState::Failing),
             Node::text(problem.clone()),
         ]));
     }
     body.push(Node::row([
-        button("Cancel", Kind::Secondary, CANCEL, Value::Null),
+        button("cancel", Kind::Secondary, CANCEL, Value::Null),
         button(
             "Save",
             Kind::Primary,
@@ -451,25 +472,21 @@ fn editor_card(editor: &Editor, held: &Held) -> Node {
     }
 }
 
-/// A repository server waiting for approval, in a card with its whole
-/// entry: approving runs what it says.
+/// A repository server waiting for approval, with its whole entry on a
+/// flat band: approving runs what it says.
 fn pending(repo: Option<&str>, row: &PendingRow) -> Node {
-    let mut card = vec![
+    let mut block = vec![
         Node::row([
-            Node::Heading {
-                text: row.name.clone(),
-            },
+            mark(MarkState::Asks),
+            name(&row.name),
             mono(row.transport.clone()),
-            Node::Spacer,
-            Node::Badge {
-                text: "needs approval".into(),
-                tone: Tone::Warn,
-            },
         ]),
-        Node::text(
-            "The repository's .heiko/mcp.json starts this server. It connects \
-             once approved, and asks again if the entry changes.",
-        ),
+        toned("needs approval", Tone::Warn),
+        Node::Rich {
+            text: "This repository's `.heiko/mcp.json` starts it. It asks \
+                   again if the entry changes."
+                .into(),
+        },
         Node::Code {
             lang: Some("json".into()),
             text: serde_json::to_string_pretty(&row.entry).unwrap_or_default(),
@@ -477,7 +494,7 @@ fn pending(repo: Option<&str>, row: &PendingRow) -> Node {
         },
     ];
     if let Some(repo) = repo {
-        card.push(Node::row([act_button(
+        block.push(Node::row([act_button(
             "Approve",
             Kind::Primary,
             &Act::Approve {
@@ -487,20 +504,18 @@ fn pending(repo: Option<&str>, row: &PendingRow) -> Node {
             },
         )]));
     }
-    Node::Card {
-        children: vec![Node::stack(card)],
-    }
+    Node::Card { children: block }
 }
 
-/// A state's tone.
-fn state_tone(state: Option<&str>) -> Tone {
-    match state {
-        Some("connected") => Tone::Good,
-        Some("connecting") => Tone::Info,
-        Some("failed") => Tone::Bad,
-        Some(super::NEEDS_AUTH) => Tone::Warn,
-        _ => Tone::Neutral,
-    }
+/// A state's mark.
+fn state_mark(state: Option<&str>) -> Node {
+    mark(match state {
+        Some("connected") => MarkState::Met,
+        Some("connecting") => MarkState::Working,
+        Some("failed") => MarkState::Failing,
+        Some(super::NEEDS_AUTH) => MarkState::Asks,
+        _ => MarkState::Idle,
+    })
 }
 
 /// A state as the page says it.
@@ -577,12 +592,14 @@ fn origin(server: &ServerRow) -> String {
     parts.join(" · ")
 }
 
-/// What can be done to a server: sign in or out, connect it again, and
-/// edit or remove it.
+/// What can be done to a server: sign in or out, see its details,
+/// connect it again, and edit or remove it. Signing in is the row's
+/// block; the rest are links.
 fn server_actions(
     repo: Option<&str>,
     server: &ServerRow,
     removing: bool,
+    open: bool,
 ) -> Vec<Node> {
     let (repo, name) = (repo.map(str::to_owned), server.name.clone());
     let waiting = server.state.as_deref() == Some(super::NEEDS_AUTH);
@@ -604,7 +621,7 @@ fn server_actions(
     }
     if signed_in {
         actions.push(act_button(
-            "Sign out",
+            "sign out",
             Kind::Secondary,
             &Act::SignOut {
                 repo: repo.clone(),
@@ -612,9 +629,17 @@ fn server_actions(
             },
         ));
     }
+    if !server.tools.is_empty() || has_more(server) {
+        actions.push(button(
+            if open { "hide details" } else { "details" },
+            Kind::Secondary,
+            DETAILS,
+            json!({ "name": name }),
+        ));
+    }
     if server.state.is_some() && server.enabled {
         actions.push(act_button(
-            "Reconnect",
+            "reconnect",
             Kind::Secondary,
             &Act::Reconnect {
                 repo,
@@ -624,7 +649,7 @@ fn server_actions(
     }
     if server.defined == Defined::Settings {
         actions.push(button(
-            "Edit",
+            "edit",
             Kind::Secondary,
             EDIT,
             json!({
@@ -633,12 +658,8 @@ fn server_actions(
             }),
         ));
         actions.push(button(
-            if removing { "Remove it" } else { "Remove" },
-            if removing {
-                Kind::Danger
-            } else {
-                Kind::Secondary
-            },
+            if removing { "remove it" } else { "remove" },
+            Kind::Danger,
             REMOVE,
             json!({ "name": name, "confirmed": removing }),
         ));
@@ -646,32 +667,39 @@ fn server_actions(
     actions
 }
 
-/// One server: its state's dot, its name and how it is reached, what it
-/// has; where it comes from and what can be done; its description,
-/// sign-in and last error; whether it is on; and its tools as chips,
-/// with its details (tools whole, resources and prompts) to open.
+/// One server, a ruled row: its state's mark, its name and how it is
+/// reached, what it has; where it comes from and what can be done; its
+/// description, sign-in and last error; its tools in mono; whether it is
+/// on; and, when `open`, its details (tools whole, resources and
+/// prompts).
 fn server_node(
     repo: Option<&str>,
     server: &ServerRow,
     removing: bool,
+    open: bool,
     compact: bool,
 ) -> Node {
-    let mut head = vec![Node::Status {
-        text: server.name.clone(),
-        detail: Some(server.transport.clone()),
-        tone: state_tone(server.state.as_deref()),
-    }];
+    let failed = server.state.as_deref() == Some("failed");
+    let note = toned(
+        server_note(server, repo),
+        if failed { Tone::Bad } else { Tone::Neutral },
+    );
+    let mut head = vec![
+        state_mark(server.state.as_deref()),
+        name(&server.name),
+        mono(server.transport.clone()),
+    ];
     if !compact {
         head.push(Node::Spacer);
-        head.push(Node::text(server_note(server, repo)));
+        head.push(note.clone());
     }
-    let about = match compact {
-        true => format!("{} · {}", origin(server), server_note(server, repo)),
-        false => origin(server),
-    };
-    let mut actions = vec![mono(about), Node::Spacer];
-    actions.extend(server_actions(repo, server, removing));
-    let mut lines = vec![Node::row(head), Node::row(actions)];
+    let mut actions = vec![toned(origin(server), Tone::Neutral), Node::Spacer];
+    actions.extend(server_actions(repo, server, removing, open));
+    let mut lines = vec![Node::row(head)];
+    if compact {
+        lines.push(note);
+    }
+    lines.push(Node::row(actions));
     if let Some(description) = &server.description {
         lines.push(Node::text(description.clone()));
     }
@@ -683,25 +711,20 @@ fn server_node(
             Some(super::NEEDS_AUTH) => Tone::Warn,
             _ => Tone::Bad,
         };
-        lines.push(Node::row([icon("warning", tone), mono(error.clone())]));
+        lines.push(toned(error.clone(), tone));
+    }
+    if !server.tools.is_empty() {
+        lines.push(tool_names(server));
     }
     lines.push(toggle(repo, server));
-    if !server.tools.is_empty() {
-        lines.push(tool_chips(server));
-    }
-    if !server.tools.is_empty() || has_more(server) {
-        lines.push(Node::Section {
-            id: format!("mcp-details-{}", server.name),
-            title: "Details".into(),
-            open: false,
-            children: details(server),
-        });
+    if open {
+        lines.extend(details(server));
     }
     Node::stack(lines)
 }
 
-/// A tool's chip tone: hidden tools quiet, destructive ones bad.
-fn chip_tone(tool: &ToolRow) -> Tone {
+/// A tool's tone: hidden tools quiet, destructive ones bad.
+fn tool_tone(tool: &ToolRow) -> Tone {
     if tool.name.is_none() {
         Tone::Neutral
     } else if tool.annotations.destructive == Some(true) {
@@ -711,25 +734,20 @@ fn chip_tone(tool: &ToolRow) -> Tone {
     }
 }
 
-/// A server's first [`CHIPS`] tools as chips, and the rest counted.
-fn tool_chips(server: &ServerRow) -> Node {
+/// A server's first [`CHIPS`] tools by name, in mono, and the rest
+/// counted.
+fn tool_names(server: &ServerRow) -> Node {
     let more = server.tools.len().saturating_sub(CHIPS);
-    let mut chips: Vec<Node> = server
+    let mut names: Vec<Node> = server
         .tools
         .iter()
         .take(CHIPS)
-        .map(|tool| Node::Badge {
-            text: tool.tool.clone(),
-            tone: chip_tone(tool),
-        })
+        .map(|tool| toned(tool.tool.clone(), tool_tone(tool)))
         .collect();
     if more > 0 {
-        chips.push(Node::Badge {
-            text: format!("+{more}"),
-            tone: Tone::Neutral,
-        });
+        names.push(toned(format!("+{more}"), Tone::Neutral));
     }
-    Node::row(chips)
+    Node::row(names)
 }
 
 /// Whether `server` is one of the user's that is on and runs once per
@@ -834,6 +852,7 @@ fn details(server: &ServerRow) -> Vec<Node> {
     if !server.tools.is_empty() {
         details.push(Node::Heading {
             text: format!("Tools · {}", server.tools.len()),
+            tone: Default::default(),
         });
         details.push(Node::Table {
             head: vec![
@@ -932,6 +951,7 @@ fn listed(title: &str, count: usize, rows: impl Iterator<Item = Node>) -> Node {
     let mut list = vec![
         Node::Heading {
             text: format!("{title} · {count}"),
+            tone: Default::default(),
         },
         Node::List {
             items: rows.take(LIST_ROWS).collect(),

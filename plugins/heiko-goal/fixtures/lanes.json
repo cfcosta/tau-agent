@@ -44,22 +44,43 @@
     },
     "notes": {
       "g0": {
+        "checks": [
+          false
+        ],
         "detail": "check 1 · turn 9 · p 0.12 · continuing 1 of 2",
+        "kind": "not_met",
         "text": "the goal is not met yet",
         "tone": "warn"
       },
       "g1": {
+        "checks": [
+          false,
+          false
+        ],
         "detail": "check 2 · turn 11 · p 0.11 · continuing 2 of 2",
+        "kind": "not_met",
         "text": "the goal is not met yet",
         "tone": "warn"
       },
       "g2": {
+        "checks": [
+          false,
+          false,
+          false
+        ],
         "detail": "check 3 · turn 13 · p 0.11 · not continuing",
+        "kind": "not_met",
         "text": "the goal is not met yet",
         "tone": "warn"
       },
       "g3": {
+        "checks": [
+          false,
+          false,
+          false
+        ],
         "detail": "before_stop",
+        "kind": "stopped",
         "text": "stopped the goal: out of continuations, and it is not met",
         "tone": "bad"
       }
@@ -89,59 +110,100 @@
     "banner": {
       "children": [
         {
-          "name": "target",
-          "piece": "icon",
+          "piece": "kanji",
+          "text": "的",
           "tone": "bad"
         },
         {
           "children": [
             {
+              "piece": "heading",
+              "text": "Goal stopped, not met"
+            },
+            {
+              "piece": "text",
+              "text": "Every lane has an owner in lanes.toml"
+            },
+            {
               "children": [
                 {
-                  "piece": "badge",
-                  "text": "goal",
+                  "label": "✕",
+                  "piece": "square",
+                  "style": "outlined",
                   "tone": "bad"
                 },
                 {
-                  "piece": "text",
-                  "text": "Every lane has an owner in lanes.toml"
+                  "label": "✕",
+                  "piece": "square",
+                  "style": "outlined",
+                  "tone": "bad"
+                },
+                {
+                  "label": "✕",
+                  "piece": "square",
+                  "style": "outlined",
+                  "tone": "bad"
+                },
+                {
+                  "label": "■",
+                  "piece": "square",
+                  "style": "filled",
+                  "tone": "bad"
+                },
+                {
+                  "piece": "spacer"
+                },
+                {
+                  "lit": 2,
+                  "marked": [],
+                  "piece": "ticks",
+                  "tone": "bad",
+                  "total": 2
+                },
+                {
+                  "piece": "mono",
+                  "text": "2 of 2"
                 }
               ],
               "piece": "row"
             },
             {
-              "piece": "mono",
-              "text": "stopped: 2 of 2 continuations used · not met · $0.360"
+              "children": [
+                {
+                  "action": "act",
+                  "args": {
+                    "what": "keep_going"
+                  },
+                  "kind": "primary",
+                  "label": "raise the limit",
+                  "piece": "button"
+                },
+                {
+                  "action": "act",
+                  "args": {
+                    "what": "edit"
+                  },
+                  "kind": "secondary",
+                  "label": "edit",
+                  "piece": "button"
+                },
+                {
+                  "action": "act",
+                  "args": {
+                    "what": "clear"
+                  },
+                  "kind": "secondary",
+                  "label": "clear",
+                  "piece": "button"
+                },
+                {
+                  "piece": "spacer"
+                }
+              ],
+              "piece": "row"
             }
           ],
           "piece": "stack"
-        },
-        {
-          "action": "act",
-          "args": {
-            "what": "keep_going"
-          },
-          "kind": "primary",
-          "label": "Keep going · +10",
-          "piece": "button"
-        },
-        {
-          "action": "act",
-          "args": {
-            "what": "edit"
-          },
-          "kind": "secondary",
-          "label": "Edit",
-          "piece": "button"
-        },
-        {
-          "action": "act",
-          "args": {
-            "what": "clear"
-          },
-          "kind": "secondary",
-          "label": "Clear",
-          "piece": "button"
         }
       ],
       "piece": "row"
@@ -155,7 +217,11 @@
               "text": "Goal"
             },
             {
-              "piece": "pill",
+              "piece": "spacer"
+            },
+            {
+              "mono": false,
+              "piece": "toned",
               "text": "stopped · not met",
               "tone": "bad"
             }
@@ -167,114 +233,102 @@
           "text": "Every lane has an owner in lanes.toml"
         },
         {
-          "piece": "text",
-          "text": "Checked when the agent stops · met at p ≥ 0.7 · up to 2 continuations and $2.00"
-        },
-        {
-          "piece": "heading",
-          "text": "Limits"
-        },
-        {
-          "label": "Continuations · 2 / 2",
-          "piece": "progress",
-          "share": 1
-        },
-        {
-          "label": "Cost · $0.360 / $2.00",
-          "piece": "progress",
-          "share": 0.18002501099999998
+          "children": [
+            {
+              "mono": false,
+              "piece": "toned",
+              "text": "continuations",
+              "tone": "neutral"
+            },
+            {
+              "lit": 2,
+              "marked": [],
+              "piece": "ticks",
+              "tone": "good",
+              "total": 2
+            },
+            {
+              "piece": "mono",
+              "text": "2 of 2"
+            }
+          ],
+          "piece": "row"
         },
         {
           "piece": "heading",
           "text": "Checks"
         },
         {
-          "children": [
-            {
-              "children": [
-                {
-                  "piece": "mono",
-                  "text": "#3"
-                },
-                {
-                  "piece": "badge",
-                  "text": "not met",
-                  "tone": "warn"
-                },
-                {
-                  "piece": "text",
-                  "text": "stopped here"
-                },
-                {
-                  "piece": "mono",
-                  "text": "turn 13 · p 0.11"
-                }
-              ],
-              "piece": "row"
-            },
-            {
-              "children": [
-                {
-                  "piece": "mono",
-                  "text": "#2"
-                },
-                {
-                  "piece": "badge",
-                  "text": "not met",
-                  "tone": "warn"
-                },
-                {
-                  "piece": "text",
-                  "text": "sent back, 2 of 2"
-                },
-                {
-                  "piece": "mono",
-                  "text": "turn 11 · p 0.11"
-                }
-              ],
-              "piece": "row"
-            },
-            {
-              "children": [
-                {
-                  "piece": "mono",
-                  "text": "#1"
-                },
-                {
-                  "piece": "badge",
-                  "text": "not met",
-                  "tone": "warn"
-                },
-                {
-                  "piece": "text",
-                  "text": "sent back, 1 of 2"
-                },
-                {
-                  "piece": "mono",
-                  "text": "turn 9 · p 0.12"
-                }
-              ],
-              "piece": "row"
-            }
-          ],
-          "piece": "stack"
-        },
-        {
-          "piece": "rows",
+          "head": [],
+          "piece": "table",
           "rows": [
-            {
-              "key": "checked by",
-              "value": "heiko-goal · Jev"
-            },
-            {
-              "key": "Jev cost",
-              "value": "$0.00005"
-            }
+            [
+              {
+                "label": "✕",
+                "piece": "square",
+                "style": "outlined",
+                "tone": "bad"
+              },
+              {
+                "piece": "text",
+                "text": "stopped here"
+              },
+              {
+                "piece": "mono",
+                "text": "turn 13"
+              },
+              {
+                "piece": "mono",
+                "text": "p 0.11"
+              }
+            ],
+            [
+              {
+                "label": "✕",
+                "piece": "square",
+                "style": "outlined",
+                "tone": "bad"
+              },
+              {
+                "piece": "text",
+                "text": "sent back, 2 of 2"
+              },
+              {
+                "piece": "mono",
+                "text": "turn 11"
+              },
+              {
+                "piece": "mono",
+                "text": "p 0.11"
+              }
+            ],
+            [
+              {
+                "label": "✕",
+                "piece": "square",
+                "style": "outlined",
+                "tone": "bad"
+              },
+              {
+                "piece": "text",
+                "text": "sent back, 1 of 2"
+              },
+              {
+                "piece": "mono",
+                "text": "turn 9"
+              },
+              {
+                "piece": "mono",
+                "text": "p 0.12"
+              }
+            ]
+          ],
+          "widths": [
+            0.6,
+            4,
+            1.5,
+            1.5
           ]
-        },
-        {
-          "piece": "text",
-          "text": "Jev reads the goal, the agent's last answer and its last tool results. When they fall short, the agent is sent back."
         }
       ],
       "piece": "stack"
@@ -283,88 +337,44 @@
       "/goal --continuations 2 Every lane has an owner in lanes.toml": {
         "children": [
           {
-            "children": [
-              {
-                "name": "target",
-                "piece": "icon",
-                "tone": "info"
-              },
-              {
-                "piece": "mono",
-                "text": "/goal"
-              },
-              {
-                "piece": "rich",
-                "text": "Every lane has an owner in lanes.toml"
-              }
-            ],
-            "piece": "row"
+            "piece": "mono",
+            "text": "/goal"
           },
           {
-            "children": [
-              {
-                "piece": "badge",
-                "text": "up to 2 continuations",
-                "tone": "neutral"
-              },
-              {
-                "piece": "badge",
-                "text": "$2.00 budget",
-                "tone": "neutral"
-              },
-              {
-                "piece": "badge",
-                "text": "checked by Jev",
-                "tone": "neutral"
-              }
-            ],
-            "piece": "row"
+            "piece": "rich",
+            "text": "Every lane has an owner in lanes.toml"
+          },
+          {
+            "piece": "spacer"
+          },
+          {
+            "label": "up to 2 continuations",
+            "piece": "stamp",
+            "tone": "neutral"
           }
         ],
-        "piece": "stack"
+        "piece": "row"
       },
       "/goal Every lane has an owner in lanes.toml\n\nThis is your goal. Keep working until it holds. Each time you stop, heiko-goal checks it against your last answer and your recent tool results, and sends you back if it does not hold yet, so run what proves it before you stop.": {
         "children": [
           {
-            "children": [
-              {
-                "name": "target",
-                "piece": "icon",
-                "tone": "info"
-              },
-              {
-                "piece": "mono",
-                "text": "/goal"
-              },
-              {
-                "piece": "rich",
-                "text": "Every lane has an owner in lanes.toml"
-              }
-            ],
-            "piece": "row"
+            "piece": "mono",
+            "text": "/goal"
           },
           {
-            "children": [
-              {
-                "piece": "badge",
-                "text": "up to 2 continuations",
-                "tone": "neutral"
-              },
-              {
-                "piece": "badge",
-                "text": "$2.00 budget",
-                "tone": "neutral"
-              },
-              {
-                "piece": "badge",
-                "text": "checked by Jev",
-                "tone": "neutral"
-              }
-            ],
-            "piece": "row"
+            "piece": "rich",
+            "text": "Every lane has an owner in lanes.toml"
+          },
+          {
+            "piece": "spacer"
+          },
+          {
+            "label": "up to 2 continuations",
+            "piece": "stamp",
+            "tone": "neutral"
           }
         ],
-        "piece": "stack"
+        "piece": "row"
       },
       "heiko-goal: the goal is not met yet (check 1, probability 0.12).\nGoal: Every lane has an owner in lanes.toml\n\nKeep working toward it, and run what proves it. Continuation 1 of 2.": {
         "children": [],
@@ -379,13 +389,17 @@
       "g0": {
         "children": [
           {
-            "name": "target",
-            "piece": "icon",
-            "tone": "warn"
+            "label": "✕",
+            "piece": "square",
+            "style": "outlined",
+            "tone": "bad"
           },
           {
             "piece": "text",
             "text": "the goal is not met yet"
+          },
+          {
+            "piece": "spacer"
           },
           {
             "piece": "mono",
@@ -397,13 +411,17 @@
       "g1": {
         "children": [
           {
-            "name": "target",
-            "piece": "icon",
-            "tone": "warn"
+            "label": "✕",
+            "piece": "square",
+            "style": "outlined",
+            "tone": "bad"
           },
           {
             "piece": "text",
             "text": "the goal is not met yet"
+          },
+          {
+            "piece": "spacer"
           },
           {
             "piece": "mono",
@@ -415,13 +433,17 @@
       "g2": {
         "children": [
           {
-            "name": "target",
-            "piece": "icon",
-            "tone": "warn"
+            "label": "✕",
+            "piece": "square",
+            "style": "outlined",
+            "tone": "bad"
           },
           {
             "piece": "text",
             "text": "the goal is not met yet"
+          },
+          {
+            "piece": "spacer"
           },
           {
             "piece": "mono",
@@ -433,17 +455,70 @@
       "g3": {
         "children": [
           {
-            "name": "target",
-            "piece": "icon",
+            "piece": "kanji",
+            "text": "的",
             "tone": "bad"
           },
           {
-            "piece": "text",
-            "text": "stopped the goal: out of continuations, and it is not met"
-          },
-          {
-            "piece": "mono",
-            "text": "before_stop"
+            "children": [
+              {
+                "piece": "heading",
+                "text": "Goal stopped, not met"
+              },
+              {
+                "children": [
+                  {
+                    "label": "✕",
+                    "piece": "square",
+                    "style": "outlined",
+                    "tone": "bad"
+                  },
+                  {
+                    "label": "✕",
+                    "piece": "square",
+                    "style": "outlined",
+                    "tone": "bad"
+                  },
+                  {
+                    "label": "✕",
+                    "piece": "square",
+                    "style": "outlined",
+                    "tone": "bad"
+                  },
+                  {
+                    "label": "■",
+                    "piece": "square",
+                    "style": "filled",
+                    "tone": "bad"
+                  }
+                ],
+                "piece": "row"
+              },
+              {
+                "children": [
+                  {
+                    "action": "act",
+                    "args": {
+                      "what": "keep_going"
+                    },
+                    "kind": "primary",
+                    "label": "raise the limit",
+                    "piece": "button"
+                  },
+                  {
+                    "action": "act",
+                    "args": {
+                      "what": "clear"
+                    },
+                    "kind": "secondary",
+                    "label": "clear",
+                    "piece": "button"
+                  }
+                ],
+                "piece": "row"
+              }
+            ],
+            "piece": "stack"
           }
         ],
         "piece": "row"
@@ -453,7 +528,7 @@
       "count": "2/2",
       "icon": "target",
       "line": "goal not met · Every lane has an owner in lanes.toml",
-      "phone_line": "goal · stopped: 2 of 2 continuations used · not met · $0.360",
+      "phone_line": "goal · stopped: 2 of 2 continuations used · not met",
       "tone": "bad"
     },
     "status": {

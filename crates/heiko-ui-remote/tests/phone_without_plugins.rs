@@ -118,6 +118,7 @@ fn answer(asked: &[heiko_ui_plugin::wire::ViewKey]) -> HostUpdate {
                             args: json!("Pause"),
                             kind: Kind::Secondary,
                             icon: None,
+                            size: Default::default(),
                         })
                         .unwrap(),
                     )

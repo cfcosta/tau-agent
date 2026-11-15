@@ -190,14 +190,13 @@ fn main() {
                     let signed_in = host.signed_in();
                     with_notices(host, &workspace, window, cx)
                         .attach(&workspace, events, cx);
-                    workspace.update(cx, |ws, cx| {
-                        if signed_in {
-                            ws.navigate(Route::NewRun, cx)
-                        } else {
-                            // No model yet: set one up.
+                    // Signed in, it opens on Home: a new run's composer.
+                    if !signed_in {
+                        // No model yet: set one up.
+                        workspace.update(cx, |ws, cx| {
                             ws.start_setup(SetupStep::Welcome, cx)
-                        }
-                    });
+                        });
+                    }
                     if let Some(prompt) = args.prompt.clone() {
                         workspace
                             .update(cx, |ws, cx| ws.submit_prompt(prompt, cx));
@@ -298,6 +297,12 @@ fn demo_workspace(
         Workspace::new("heiko-agent", runs, demo::catalog(), window, cx);
     workspace.set_phone_preview(args.phone, cx);
     workspace.set_frame(args.frame, cx);
+    // The demo opens on its run, at work; `--open home` shows Home. A
+    // phone opens on its list of runs.
+    let phone = args.phone || args.frame.is_some_and(|(width, _)| width < 720.);
+    if !phone {
+        workspace.navigate(Route::Run(demo::run_id()), cx);
+    }
     if let Some(steps) = args.steps {
         for (_, update) in demo::script().into_iter().take(steps) {
             workspace.update_run(&demo::run_id(), update, cx);

@@ -55,7 +55,9 @@
     "setup": false,
     "models": false
   },
-  "actions": ["answer"],
+  "actions": [
+    "answer"
+  ],
   "events": [],
   "fills": [],
   "compaction": null,

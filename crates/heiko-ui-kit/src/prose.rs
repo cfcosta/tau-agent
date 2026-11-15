@@ -254,30 +254,6 @@ fn marked(
     StyledText::new(plain).with_runs(runs)
 }
 
-/// How wide [`rich`] draws `text` on one line, at the window's current
-/// text size: the widest of its lines.
-///
-/// For a box that shrinks to its text: given this width, GPUI measures
-/// the text at the width it draws it. Left to find the width itself, it
-/// can size the box for fewer lines than it then draws.
-pub fn rich_width(
-    text: &str,
-    t: &Theme,
-    window: &gpui::Window,
-) -> gpui::Pixels {
-    let size = window.text_style().font_size.to_pixels(window.rem_size());
-    text.split('\n')
-        .map(|line| {
-            let (plain, runs) = marked_runs(line, SANS, t.text, true, t);
-            window
-                .text_system()
-                .shape_line(plain.into(), size, &runs, None)
-                .width
-        })
-        .fold(gpui::Pixels::ZERO, gpui::Pixels::max)
-        .ceil()
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mark {
     Plain,

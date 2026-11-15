@@ -1,12 +1,11 @@
 //! The Agents page and the New agent form, each a view tree (ADR 0045)
 //! in the frame the interface gives a page.
 
-use serde_json::{Value, json};
-use heiko_ui_kit::format::usd;
 use heiko_ui_plugin::{
     ViewCx,
-    tree::{Kind, Node, Tone},
+    tree::{Ink, Kind, MarkState, Node, Tone},
 };
+use serde_json::{Value, json};
 
 use super::{
     AgentsUi,
@@ -25,21 +24,26 @@ use super::{
     START,
     WINDOW,
     act_button,
+    allowance,
     button,
+    events,
     open,
-    status_pill,
-    tree_tone,
+    state_mark,
 };
-use crate::{Act, Agent, COMMAND, Overview, Status};
+use crate::{Act, Agent, Overview, Status};
 
-/// What a click on "Allow more" lets an agent spend, on top of its cap.
-const MORE: f64 = 1.0;
+/// What a click on "Allow more today" lets an agent spend, on top of its
+/// cap.
+pub(super) const MORE: f64 = 1.0;
 
-/// Every agent: those that need the person first, then a card each.
+/// How many agents stand side by side.
+const COLUMNS: usize = 3;
+
+/// Every agent: those that need the person first, then a column each.
 pub(super) fn overview(view: &mut ViewCx<'_, AgentsUi>) -> Node {
     let overview = view.data.clone();
-    // A card opens its agent's conversation: its main chat, or the first
-    // run the window knows in its repository.
+    // A column opens its agent's conversation: its main chat, or the
+    // first run the window knows in its repository.
     let runs: Vec<Option<String>> = overview
         .agents
         .iter()
@@ -55,246 +59,230 @@ pub(super) fn overview(view: &mut ViewCx<'_, AgentsUi>) -> Node {
             .and_then(Value::as_str)
             .map(str::to_owned)
     };
-    overview_tree(&overview, &runs, &draft)
+    overview_tree(&overview, &runs, view.compact, &draft)
 }
 
-/// The Agents page's tree: `runs` are what each agent's card opens, in
+/// The Agents page's tree: `runs` are what each agent's column opens, in
 /// the order of `overview`'s agents; question fields' drafts are read
-/// with `draft`.
+/// with `draft`. On a phone (`compact`) the agents are one under the
+/// other.
 pub fn overview_tree(
     overview: &Overview,
     runs: &[Option<String>],
+    compact: bool,
     draft: &dyn Fn(&str) -> Option<String>,
 ) -> Node {
-    let mut page = vec![
-        Node::row([
-            Node::Title {
-                text: "Agents".into(),
-                subtitle: None,
-            },
-            Node::Spacer,
-            button("New agent", Kind::Primary, GO, json!({ "page": NEW })),
-        ]),
-        Node::Rich {
-            text: format!(
-                "Each agent is one conversation that never ends, in a \
-                 repository of its own. What it listens to arrives as \
-                 messages; it works through codemode and rewrites its own \
-                 Luau, tools and instructions as it learns. Agents run while \
-                 heiko is open and catch up when it starts. `/{COMMAND}` and \
-                 what it should do makes one from any chat."
-            ),
-        },
-    ];
+    let mut page = vec![Node::row([
+        Node::Spacer,
+        button("New agent", Kind::Primary, GO, json!({ "page": NEW })),
+    ])];
     let waiting: Vec<&Agent> = overview
         .agents
         .iter()
         .filter(|agent| agent.needs_you())
         .collect();
     if !waiting.is_empty() {
-        page.extend(needs_you(&waiting, draft));
+        page.push(needs_you(&waiting, draft));
     }
     if overview.agents.is_empty() {
         page.push(Node::Empty {
             text: "No agents yet.".into(),
         });
-    } else {
-        page.extend(overview.agents.iter().enumerate().map(|(at, agent)| {
-            agent_card(agent, runs.get(at).cloned().flatten())
-        }));
+        return Node::Stack { children: page };
     }
+    let columns: Vec<Node> = overview
+        .agents
+        .iter()
+        .enumerate()
+        .map(|(at, agent)| agent_column(agent, runs.get(at).cloned().flatten()))
+        .collect();
+    let agents = if compact {
+        ruled(columns)
+    } else {
+        // Rows of columns; the last row keeps its columns' widths.
+        columns
+            .chunks(COLUMNS)
+            .map(|row| {
+                let mut row = row.to_vec();
+                row.resize(COLUMNS, Node::Stack { children: vec![] });
+                Node::Table {
+                    head: vec![],
+                    rows: vec![row],
+                    widths: vec![],
+                }
+            })
+            .collect()
+    };
+    page.push(Node::Section {
+        id: "agents-all".into(),
+        title: format!("Agents · {}", overview.agents.len()),
+        open: true,
+        children: agents,
+    });
     Node::Stack { children: page }
 }
 
-/// The agents that wait on the person, each with what to do about it.
+/// `rows` with a hairline between each two.
+pub(super) fn ruled(rows: Vec<Node>) -> Vec<Node> {
+    let mut ruled = Vec::with_capacity(rows.len() * 2);
+    for (at, row) in rows.into_iter().enumerate() {
+        if at > 0 {
+            ruled.push(Node::Rule);
+        }
+        ruled.push(row);
+    }
+    ruled
+}
+
+/// The agents that wait on the person, a ruled row for each thing, each
+/// answerable in place.
 fn needs_you(
     agents: &[&Agent],
     draft: &dyn Fn(&str) -> Option<String>,
-) -> Vec<Node> {
-    let mut card = Vec::new();
+) -> Node {
+    let name = |agent: &Agent| Node::Rich {
+        text: format!("**{}**", agent.name),
+    };
+    let mut rows = Vec::new();
     for agent in agents {
-        let (line, action) = match &agent.status {
-            Status::AtCap => (
-                format!(
-                    "Reached its {} for today; {} waiting.",
-                    usd(agent.cap_today),
+        match &agent.status {
+            Status::AtCap => rows.push(Node::row([
+                Node::Mark {
+                    state: MarkState::Limit,
+                    count: None,
+                },
+                name(agent),
+                Node::text(format!(
+                    "Reached today's allowance; {} waiting.",
                     events(agent.queued),
-                ),
-                Some(act_button(
-                    &format!("Allow {} more today", usd(MORE)),
+                )),
+                Node::Spacer,
+                act_button(
+                    "Allow more today",
                     Kind::Primary,
                     &Act::AllowMore {
                         agent: agent.name.clone(),
                         amount: MORE,
                     },
-                )),
-            ),
-            Status::Broken { error } => {
-                (format!("Nothing wakes it: {error}"), None)
-            }
-            _ => continue,
-        };
-        let mut row = vec![
-            Node::Mono {
-                text: agent.name.clone(),
-            },
-            Node::text(line),
-            Node::Spacer,
-        ];
-        row.extend(action);
-        card.push(Node::Row { children: row });
-    }
-    // What each agent left for the person: its notes and questions.
-    for agent in agents.iter().filter(|agent| !agent.notices.is_empty()) {
-        if !card.is_empty() {
-            card.push(Node::Rule);
+                ),
+            ])),
+            Status::Broken { error } => rows.push(Node::row([
+                Node::Mark {
+                    state: MarkState::Failing,
+                    count: None,
+                },
+                name(agent),
+                Node::text(format!("Nothing wakes it: {error}")),
+            ])),
+            _ => {}
         }
-        card.push(Node::Mono {
-            text: agent.name.clone(),
-        });
-        card.extend(super::notices::rows(agent, draft));
+        // What it left for the person: its notes and questions.
+        rows.extend(super::notices::rows(agent, true, draft));
     }
     let count: usize = agents.iter().map(|agent| agent.waits_on_you()).sum();
-    vec![
-        Node::row([
-            Node::Heading {
-                text: "Needs you".into(),
-            },
-            Node::Pill {
-                text: count.to_string(),
-                tone: Tone::Info,
-            },
-        ]),
-        Node::Card { children: card },
-    ]
-}
-
-/// `n events`, said as a count.
-fn events(count: usize) -> String {
-    match count {
-        0 => "no events".to_owned(),
-        1 => "1 event".to_owned(),
-        n => format!("{n} events"),
+    Node::Section {
+        id: "agents-needs-you".into(),
+        title: format!("Needs you · {count}"),
+        open: true,
+        children: ruled(rows),
     }
 }
 
-/// One agent: what it is for, where it stands, what wakes it, and what
-/// it spent of today's cap; `run`, the conversation it opens.
-fn agent_card(agent: &Agent, run: Option<String>) -> Node {
+/// One agent: its name, where it stands, what it is for, what wakes it,
+/// what it did last, and how much of the day's allowance it used; `run`,
+/// the conversation it opens.
+fn agent_column(agent: &Agent, run: Option<String>) -> Node {
     let caption = match (&agent.status, agent.next()) {
         (Status::Working, _) => {
-            Node::text(format!("in a turn · {}", events(agent.queued)))
+            vec![Node::text(format!("in a turn · {}", events(agent.queued)))]
         }
-        (Status::Waiting, Some(next)) => Node::row([
+        (Status::Waiting, Some(next)) => vec![
             Node::text("waiting · next"),
             Node::Due {
                 id: format!("agent-{}-next", agent.name),
                 at: next * 1000,
             },
-        ]),
-        (Status::Waiting, None) => Node::text("waiting"),
-        (Status::Paused, _) => {
-            Node::text(format!("paused · {} waiting", events(agent.queued)))
-        }
-        (Status::AtCap, _) => {
-            Node::text(format!("at its cap · {} waiting", events(agent.queued)))
-        }
-        (Status::Broken { .. }, _) => Node::text("broken"),
+        ],
+        (Status::Waiting, None) => vec![Node::text("waiting")],
+        (Status::Paused, _) => vec![Node::text(format!(
+            "paused · {} waiting",
+            events(agent.queued)
+        ))],
+        (Status::AtCap, _) => vec![Node::text(format!(
+            "at its cap · {} waiting",
+            events(agent.queued)
+        ))],
+        (Status::Broken { .. }, _) => vec![Node::text("broken")],
     };
-    let last = match &agent.last {
-        Some(last) => Node::row([
-            Node::text(format!("{} ·", last.line)),
-            super::run::ago(format!("agent-{}-last", agent.name), last.at),
-        ]),
-        None => Node::text("nothing yet"),
-    };
-    let mut card = vec![
-        Node::row([
-            Node::Icon {
-                name: "sub-agent".into(),
-                tone: tree_tone(&agent.status),
-            },
-            Node::Mono {
-                text: agent.name.clone(),
-            },
-            status_pill(&agent.status),
-            Node::Spacer,
-            caption,
-        ]),
+    let mut head = vec![
+        Node::Title {
+            text: agent.name.clone(),
+            subtitle: None,
+        },
+        Node::Spacer,
+    ];
+    if let Some(run) = run {
+        head.push(button("open", Kind::Secondary, OPEN, json!({ "run": run })));
+    }
+    let mut state = vec![state_mark(&agent.status)];
+    state.extend(caption);
+    let mut column = vec![
+        Node::Row { children: head },
+        Node::Row { children: state },
         Node::text(agent.purpose.clone()),
     ];
     if let Some(problem) = &agent.sandbox {
-        card.push(Node::Status {
+        column.push(Node::Status {
             text: problem.clone(),
             detail: None,
             tone: Tone::Warn,
         });
     }
-    if !agent.triggers.is_empty() {
-        // A poll that fails shows red; its panel says why.
-        card.push(Node::Row {
-            children: agent
-                .triggers
-                .iter()
-                .flat_map(|trigger| {
-                    let failing = trigger.error.is_some();
-                    [
-                        Node::Icon {
-                            name: trigger_icon(trigger.kind_label()).into(),
-                            tone: if failing {
-                                Tone::Bad
-                            } else {
-                                Tone::Neutral
-                            },
-                        },
-                        Node::Pill {
-                            text: trigger.label(),
-                            tone: if failing {
-                                Tone::Bad
-                            } else {
-                                Tone::Neutral
-                            },
-                        },
-                    ]
-                })
-                .collect(),
-        });
-    }
-    card.push(Node::Rule);
-    card.push(Node::row([
-        last,
-        Node::Spacer,
-        Node::Mono {
-            text: format!(
-                "{} of {}",
-                usd(agent.spend_today),
-                usd(agent.cap_today)
-            ),
-        },
-    ]));
-    card.push(Node::Progress {
-        share: f64::from(agent.spent_share()),
-        label: None,
-    });
-    if let Some(run) = run {
-        card.push(Node::row([
+    // What wakes it, a ruled row each: its kind, what, and when next. A
+    // poll that fails shows red; its panel says why.
+    for trigger in &agent.triggers {
+        column.push(Node::Rule);
+        let mut row = vec![
+            Node::Toned {
+                text: trigger.kind_label().into(),
+                tone: if trigger.error.is_some() {
+                    Tone::Bad
+                } else {
+                    Tone::Info
+                },
+                mono: true,
+            },
+            Node::Mono {
+                text: trigger.label(),
+            },
             Node::Spacer,
-            button("Open", Kind::Secondary, OPEN, json!({ "run": run })),
-        ]));
+        ];
+        if let Some(next) = trigger.next {
+            row.push(Node::Due {
+                id: format!("agent-{}-{}-next", agent.name, trigger.name),
+                at: next * 1000,
+            });
+        }
+        column.push(Node::Row { children: row });
     }
-    Node::Card { children: card }
-}
-
-/// The icon of a trigger's kind, by its file's name.
-fn trigger_icon(kind: &str) -> &'static str {
-    match kind {
-        "schedule" => "clock",
-        "command" => "terminal",
-        "poll" => "history",
-        "stream" => "arrow",
-        "mcp" => "plug",
-        _ => "chat",
-    }
+    column.push(Node::Rule);
+    column.push(match &agent.last {
+        Some(last) => Node::row([
+            Node::Toned {
+                text: format!("{} ·", last.line),
+                tone: Tone::Neutral,
+                mono: false,
+            },
+            super::run::ago(format!("agent-{}-last", agent.name), last.at),
+        ]),
+        None => Node::Toned {
+            text: "nothing yet".into(),
+            tone: Tone::Neutral,
+            mono: false,
+        },
+    });
+    column.extend(allowance(agent));
+    Node::Stack { children: column }
 }
 
 /// The New agent form: a name, what it should do, its model, cap and
@@ -331,30 +319,28 @@ pub(super) fn new_agent(view: &mut ViewCx<'_, AgentsUi>) -> Node {
 /// The form's tree: `servers` are the person's MCP servers, and `taken`
 /// whether an agent has the name it would take.
 pub fn new_agent_tree(form: &Form, servers: &[String], taken: bool) -> Node {
+    // A choice: the one chosen outlined, the others a click away.
     let set = |label: &str, on: bool, key: &str, value: Value| {
+        if on {
+            return Node::Stamp {
+                label: label.to_owned(),
+                tone: Ink::Bright,
+            };
+        }
         button(
             label,
-            if on { Kind::Primary } else { Kind::Secondary },
+            Kind::Secondary,
             SET,
             json!({ "key": key, "value": value }),
         )
     };
-    let label = |text: &str| Node::Heading { text: text.into() };
+    let label = |text: &str| Node::Heading { text: text.into(), tone: Default::default() };
     let suggested = form.suggested();
     let name = form.chosen_name();
     let mut page = vec![
         Node::Title {
             text: "New agent".into(),
             subtitle: None,
-        },
-        Node::Rich {
-            text: format!(
-                "It gets a repository and a conversation of its own. What it \
-                 should do is its first message; from there it sets up what \
-                 wakes it, its tools and its instructions itself. \
-                 `/{COMMAND}` and what it should do in any chat opens this \
-                 form."
-            ),
         },
         label("Name"),
         Node::Input {
@@ -408,9 +394,6 @@ pub fn new_agent_tree(form: &Form, servers: &[String], taken: bool) -> Node {
     });
     let default_model = crate::default_model();
     page.push(label("Model"));
-    page.push(Node::text(
-        "A small model keeps a conversation that never ends cheap.",
-    ));
     page.push(Node::Row {
         children: heiko_ai::model::plan_models()
             .into_iter()
@@ -451,29 +434,27 @@ pub fn new_agent_tree(form: &Form, servers: &[String], taken: bool) -> Node {
     });
     if !servers.is_empty() {
         page.push(label("MCP servers it starts with"));
-        page.push(Node::text(
-            "Yours, as heiko-mcp lists them. It can connect more itself.",
-        ));
-        page.push(Node::Row {
-            children: servers
-                .iter()
-                .map(|server| {
-                    let on = form.servers.contains(server);
-                    let mut next = form.servers.clone();
-                    if on {
-                        next.remove(server);
-                    } else {
-                        next.insert(server.clone());
-                    }
-                    let next = if next.is_empty() {
-                        Value::Null
-                    } else {
-                        json!(next)
-                    };
-                    set(server.as_str(), on, SERVERS, next)
-                })
-                .collect(),
-        });
+        page.extend(servers.iter().map(|server| {
+            let on = form.servers.contains(server);
+            let mut next = form.servers.clone();
+            if on {
+                next.remove(server);
+            } else {
+                next.insert(server.clone());
+            }
+            let next = if next.is_empty() {
+                Value::Null
+            } else {
+                json!(next)
+            };
+            Node::Switch {
+                label: server.clone(),
+                detail: None,
+                on,
+                action: SET.into(),
+                args: json!({ "key": SERVERS, "value": next }),
+            }
+        }));
     }
     if let Some(error) = &form.error {
         page.push(Node::Status {
@@ -495,13 +476,6 @@ pub fn new_agent_tree(form: &Form, servers: &[String], taken: bool) -> Node {
             START,
             Value::Null,
         ),
-    ]));
-    page.push(Node::row([
-        Node::Icon {
-            name: "info".into(),
-            tone: Tone::Neutral,
-        },
-        Node::text("Only you can change what it may spend; it cannot."),
     ]));
     Node::Stack { children: page }
 }

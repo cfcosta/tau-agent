@@ -1,12 +1,18 @@
-//! Drawing the workspace: the run screen, the desktop and phone layouts,
-//! and the transcript.
+//! Drawing the workspace: Home, the run screen, the desktop and phone
+//! layouts, and the transcript.
 
 use super::*;
+use crate::attention::{Happened, Sign};
 
-/// The desktop sidebar's width: wider on a wide window.
+/// The desktop sidebar's width, its rail and its tree: wider on a wide
+/// window.
 pub(super) fn sidebar_width(wide: bool) -> gpui::Rems {
-    rems(if wide { 16.5 } else { 14.5 })
+    rems(if wide { 19. } else { 17. })
 }
+
+/// How far a desktop screen stands in from the sidebar, and from the
+/// window's right edge, in spacing steps.
+const INSET: (f32, f32) = (13., 11.);
 
 impl Workspace {
     /// How wide a screen beside the sidebar is drawn: the window less
@@ -74,7 +80,7 @@ impl Render for Workspace {
             && width / self.zoom >= NARROW_MAX
             && self.details_open
             && pane.is_none()
-            && matches!(self.route, Route::Home | Route::Run(_));
+            && matches!(self.route, Route::Run(_));
         let body = if phone {
             self.phone(pane, &t, cx)
         } else {
@@ -115,7 +121,6 @@ impl Render for Workspace {
                         .max_h_full()
                         .flex_shrink_0()
                         .overflow_hidden()
-                        .rounded(radius::DEVICE)
                         .border_1()
                         .border_color(t.border_strong)
                         .bg(t.bg)
@@ -225,11 +230,7 @@ impl Workspace {
         t: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        if self
-            .current()
-            .filter(|_| self.route != Route::NewRun)
-            .is_none()
-        {
+        if self.shown_run().is_none() {
             return div()
                 .id("transcript")
                 .flex_1()
@@ -248,9 +249,7 @@ impl Workspace {
         let list = gpui::list(
             self.transcript.clone(),
             cx.processor(move |ws, index: usize, window, cx| {
-                let Some(run) =
-                    ws.current().filter(|_| ws.route != Route::NewRun)
-                else {
+                let Some(run) = ws.shown_run() else {
                     return div().into_any_element();
                 };
                 transcript::item(ws, run, index, &theme, compact, window, cx)
@@ -323,33 +322,27 @@ impl Workspace {
         // One more row, past the items, for an open landing's card, a
         // landed chat's, a queued chat's, or a main chat's queue,
         // conflicts and push cards.
-        let now =
-            self.current()
-                .filter(|_| self.route != Route::NewRun)
-                .map(|run| {
-                    let pushed = self
-                        .main_repo(&run.id)
-                        .and_then(|repo| self.push_state(repo))
-                        .is_some_and(|state| {
-                            !matches!(state, PushState::Pushing { .. })
-                        });
-                    let card = usize::from(
-                        self.landings.contains_key(&run.id)
-                            || matches!(
-                                run.ending,
-                                Some(Ending::Landed { .. })
-                            )
-                            || run.status == RunStatus::Interrupted
-                            || self.queued(&run.id).is_some()
-                            || !run.landing_queue.is_empty()
-                            || run
-                                .main_conflicts
-                                .as_ref()
-                                .is_some_and(|c| !c.dismissed)
-                            || pushed,
-                    );
-                    (run.id.clone(), run.items.len() + card)
+        let now = self.shown_run().map(|run| {
+            let pushed = self
+                .main_repo(&run.id)
+                .and_then(|repo| self.push_state(repo))
+                .is_some_and(|state| {
+                    !matches!(state, PushState::Pushing { .. })
                 });
+            let card = usize::from(
+                self.landings.contains_key(&run.id)
+                    || matches!(run.ending, Some(Ending::Landed { .. }))
+                    || run.status == RunStatus::Interrupted
+                    || self.queued(&run.id).is_some()
+                    || !run.landing_queue.is_empty()
+                    || run
+                        .main_conflicts
+                        .as_ref()
+                        .is_some_and(|c| !c.dismissed)
+                    || pushed,
+            );
+            (run.id.clone(), run.items.len() + card)
+        });
         match (&now, &self.listed) {
             (Some((run, count)), Some((listed, before))) if run == listed => {
                 if count > before {
@@ -372,8 +365,8 @@ impl Workspace {
         }
     }
 
-    /// Land on the parent: in the run's bar, for a finished chat (ADR
-    /// 0014). It opens the landing card at the end of the chat.
+    /// Land on the parent: among the header's actions, for a finished
+    /// chat (ADR 0014). It opens the landing card at the end of the chat.
     pub(super) fn land_button(
         &self,
         run: &RunView,
@@ -388,219 +381,111 @@ impl Workspace {
         {
             return None;
         }
-        let label = format!("Land on {target}");
+        let label = format!("land on {target}");
         let id = run.id.clone();
-        Some(
-            div()
-                .id("land")
-                .child(ui::button(label, ButtonKind::Primary, t))
-                .on_click(cx.listener(move |ws, _, _, cx| {
-                    ws.follow = true;
-                    ws.preview_landing(&id, cx)
-                })),
-        )
+        Some(div().id("land").child(ui::link_action(label, t)).on_click(
+            cx.listener(move |ws, _, _, cx| {
+                ws.follow = true;
+                ws.preview_landing(&id, cx)
+            }),
+        ))
     }
 
+    /// A chat's header: its name, its state in words, how full its
+    /// context is, then what can be done with it, Push first; over a
+    /// heavy rule.
     pub(super) fn run_header(
         &self,
         t: &Theme,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let Some(run) = self.current().filter(|_| self.route != Route::NewRun)
-        else {
-            return div()
-                .h(rems(3.))
-                .flex_shrink_0()
-                .flex()
-                .items_center()
-                .px(sp(6.))
-                .border_b_1()
-                .border_color(t.border)
-                .font_weight(weight::STRONG)
-                .child("New run");
+        let name = |title: &str, color| {
+            div()
+                .min_w(rems(0.))
+                .truncate()
+                .typeset(Type::PAGE_TITLE)
+                .text_color(color)
+                .child(title.to_owned())
         };
-        // A chat that ended is read-only: its title, and a tag saying so.
+        let Some(run) = self.shown_run() else {
+            return header(t).child(name("New run", t.bright));
+        };
+        // A chat that ended is read-only: its title, and a stamp saying
+        // so.
         if run.ending.is_some() {
-            return div()
-                .h(rems(3.))
-                .flex_shrink_0()
-                .flex()
-                .items_center()
-                .gap(sp(3.))
-                .px(sp(6.))
-                .border_b_1()
-                .border_color(t.border)
-                .child(
-                    div()
-                        .typeset(Type::LEAD)
-                        .font_weight(weight::STRONG)
-                        .text_color(t.muted)
-                        .child(run.title.clone()),
-                )
-                .child(
-                    ui::mono(ui::ending::READ_ONLY, Type::MICRO, t.dim)
-                        .px(sp(1.5))
-                        .py(sp(0.5))
-                        .rounded(radius::CONTROL)
-                        .border_1()
-                        .border_color(t.border),
-                );
+            return header(t).child(name(&run.title, t.muted)).child(
+                ui::stamp(ui::ending::READ_ONLY, crate::theme::Tone::Quiet, t),
+            );
         }
-        let (color, label) = ui::status_look(&run.status, t);
         let live = run.status.is_live();
-        let repo = self.repo_of(run).to_owned();
-        // How full the context is, as a bar beside its numbers.
-        let window = run.context.window.filter(|window| *window > 0);
-        let fill = window.map_or(0., |window| {
-            (run.context.used as f32 / window as f32).clamp(0., 1.)
-        });
+        let (color, state): (gpui::Hsla, gpui::SharedString) = if live {
+            (t.green, format!("working, turn {}", run.turn).into())
+        } else {
+            ui::status_look(&run.status, t)
+        };
+        // With the run's pane open the header has half the width: the
+        // context's size goes.
+        let paned = self.pane_title.is_some() && self.pane_is_open(&run.id);
+        let context = run
+            .context
+            .window
+            .filter(|window| *window > 0 && !paned)
+            .map(|window| {
+                format!(
+                    "{} of {}",
+                    crate::view::tokens(run.context.used),
+                    crate::view::tokens(window)
+                )
+            });
         // A main chat pushes to the forge instead (ADR 0023).
         let done = self.catalog.pull_requests
             && run.status == RunStatus::Finished(StopReason::Stop)
             && !self.is_main(&run.id);
         let id = run.id.clone();
-        // With the run's pane open the header has half the width: the
-        // context meter goes.
-        let paned = self.pane_title.is_some() && self.pane_is_open(&run.id);
-        let window = window.filter(|_| !paned);
-        div()
-            .h(rems(3.))
-            .flex_shrink_0()
-            .flex()
-            .items_center()
-            .gap(sp(3.))
-            .px(sp(6.))
-            .border_b_1()
-            .border_color(t.border)
-            // Where the run is: its repository, then its title.
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(sp(1.5))
-                    .min_w(rems(0.))
-                    .overflow_hidden()
-                    .child(div().text_color(t.mark(&repo)).child(repo))
-                    .child(div().text_color(t.dim).child("/"))
-                    .child(
-                        div()
-                            .truncate()
-                            .font_weight(weight::STRONG)
-                            .child(run.title.clone()),
-                    ),
-            )
-            // Who works on it, how far, and what it cost.
-            .child(
-                div()
-                    .flex()
-                    .flex_shrink_0()
-                    .gap(sp(1.))
-                    .typeset(Type::CAPTION)
-                    .text_color(t.dim)
-                    .child(
-                        div()
-                            .text_color(t.roles.agent)
-                            .child(run.agent.clone()),
-                    )
-                    .child(format!("· turn {} ·", run.turn))
-                    .child(
-                        div()
-                            .text_color(t.roles.cost)
-                            .child(crate::view::usd(run.usage.cost)),
-                    )
-                    .when(!matches!(run.status, RunStatus::Running), |row| {
-                        row.child("·")
-                            .child(div().text_color(color).child(label))
-                    }),
-            )
-            .child(div().flex_1())
-            .when_some(window, |header, window| {
-                header.child(
-                    div()
-                        .flex()
-                        .flex_shrink_0()
-                        .items_center()
-                        .gap(sp(2.))
-                        .typeset(Type::CAPTION)
-                        .text_color(t.dim)
-                        .child(format!(
-                            "{} of {}",
-                            crate::view::tokens(run.context.used),
-                            crate::view::tokens(window)
-                        ))
-                        .child(
-                            div()
-                                .w(rems(5.))
-                                .h(rems(0.25))
-                                .rounded(radius::HAIRLINE)
-                                .bg(t.raised)
-                                .child(
-                                    div()
-                                        .h_full()
-                                        .w(gpui::relative(fill.max(0.02)))
-                                        .rounded(radius::HAIRLINE)
-                                        .bg(t.roles.meter),
-                                ),
-                        ),
-                )
+        let compare = run
+            .children
+            .iter()
+            .find(|child| child.kind == ChildKind::Fork)
+            .map(|fork| (run.id.clone(), fork.id.clone()))
+            // A fork compares with the run it came from.
+            .or_else(|| match &run.origin {
+                Origin::Fork { from, .. } => {
+                    Some((from.clone(), run.id.clone()))
+                }
+                _ => None,
             })
+            .map(|(main, fork)| Route::Compare { main, fork });
+        let actions = div()
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .gap(sp(4.))
+            .typeset(Type::LEAD)
             .children(ui::push::header(self, run, t, cx))
-            .children(
-                run.children
-                    .iter()
-                    .find(|child| child.kind == ChildKind::Fork)
-                    .map(|fork| (run.id.clone(), fork.id.clone()))
-                    // A fork compares with the run it came from.
-                    .or_else(|| match &run.origin {
-                        Origin::Fork { from, .. } => {
-                            Some((from.clone(), run.id.clone()))
-                        }
-                        _ => None,
-                    })
-                    .map(|(main, fork)| {
-                        let route = Route::Compare { main, fork };
-                        div()
-                            .id("compare")
-                            .child(ui::button(
-                                "Compare forks",
-                                ButtonKind::Secondary,
-                                t,
-                            ))
-                            .on_click(cx.listener(move |ws, _, _, cx| {
-                                ws.navigate(route.clone(), cx)
-                            }))
-                    }),
-            )
-            .when(done, |header| {
-                header.child(
+            .children(compare.map(|route| {
+                div()
+                    .id("compare")
+                    .child(ui::link_action("compare forks", t))
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        ws.navigate(route.clone(), cx)
+                    }))
+            }))
+            .when(done, |actions| {
+                actions.child(
                     div()
                         .id("pull-request")
-                        .child(
-                            ui::button(
-                                "Pull request",
-                                ButtonKind::Secondary,
-                                t,
-                            )
-                            .child(ui::icon(
-                                Icon::PullRequest,
-                                IconSize::COMPACT,
-                                t.text_soft,
-                            )),
-                        )
+                        .child(ui::link_action("pull request", t))
                         .on_click(cx.listener(move |ws, _, _, cx| {
                             ws.open_pull_request(&id, cx)
                         })),
                 )
             })
             .children(self.land_button(run, t, cx))
-            .when(self.can_fork(run), |header| {
-                header.child(
+            .when(self.can_fork(run), |actions| {
+                actions.child(
                     div()
                         .id("fork")
-                        .child(
-                            ui::button("Fork", ButtonKind::Secondary, t)
-                                .text_color(t.roles.agent),
-                        )
+                        .child(ui::link_action("fork", t))
                         .on_click(cx.listener(|ws, _, window, cx| {
                             ws.start_fork(window, cx)
                         })),
@@ -611,24 +496,21 @@ impl Workspace {
             .children(self.pane_title.clone().filter(|_| !paned).map(|title| {
                 div()
                     .id("pane")
-                    .child(ui::button(title, ButtonKind::Secondary, t).child(
-                        ui::icon(Icon::Image, IconSize::COMPACT, t.text_soft),
-                    ))
+                    .child(ui::link_action(title.to_lowercase(), t))
                     .on_click(cx.listener(|ws, _, _, cx| ws.toggle_pane(cx)))
             }))
             // The run's details beside the transcript: its plugins,
-            // budget and events.
-            .when(self.width >= NARROW_MAX, |header| {
-                header.child(
+            // limits and events.
+            .when(self.width >= NARROW_MAX, |actions| {
+                actions.child(
                     div()
                         .id("details")
-                        .child(ui::button(
+                        .child(ui::link_action(
                             if self.details_open && !paned {
-                                "Hide details"
+                                "hide details"
                             } else {
-                                "Details"
+                                "details"
                             },
-                            ButtonKind::Secondary,
                             t,
                         ))
                         .on_click(
@@ -636,14 +518,22 @@ impl Workspace {
                         ),
                 )
             })
-            .when(live, |header| {
-                header.child(
+            .when(live, |actions| {
+                actions.child(
                     div()
                         .id("cancel")
-                        .child(ui::button("Cancel", ButtonKind::Danger, t))
+                        .child(ui::link_action("cancel", t).border_color(t.red))
                         .on_click(cx.listener(|ws, _, _, cx| ws.cancel(cx))),
                 )
-            })
+            });
+        header(t)
+            .child(name(&run.title, t.bright))
+            .child(div().flex_shrink_0().text_color(color).child(state))
+            .children(context.map(|context| {
+                ui::mono(context, Type::CAPTION, t.dim).flex_shrink_0()
+            }))
+            .child(div().flex_1())
+            .child(actions)
     }
 
     pub(super) fn inspector(
@@ -657,7 +547,8 @@ impl Workspace {
             .flex()
             .flex_col()
             .min_h(rems(0.))
-            .chrome(ui::Edge::Right, t)
+            .border_l_1()
+            .border_color(t.hairline)
             .child(
                 div()
                     .h(rems(3.))
@@ -666,7 +557,7 @@ impl Workspace {
                     .items_center()
                     .px(sp(4.))
                     .border_b_1()
-                    .border_color(t.border)
+                    .border_color(t.hairline)
                     .children(run.map(|run| inspector::header(self, run, t))),
             )
             .child(
@@ -697,10 +588,10 @@ impl Workspace {
             .flex()
             .flex_col()
             .when(!compact, |screen| screen.child(self.run_header(t, cx)))
-            .when(self.route != Route::NewRun, |screen| {
+            .map(|screen| {
                 // What plugins put above the transcript.
                 let banners = self
-                    .current()
+                    .shown_run()
                     .map(|run| {
                         self.drawn(
                             heiko_ui_plugin::points::RUN_BANNER,
@@ -714,8 +605,7 @@ impl Workspace {
             .child(self.transcript(compact, t, cx))
             // A main chat's crew, docked above its composer.
             .children(
-                self.current()
-                    .filter(|_| self.route != Route::NewRun)
+                self.shown_run()
                     .and_then(|run| ui::crew::tray(self, run, compact, t, cx))
                     .map(|tray| {
                         div()
@@ -730,8 +620,7 @@ impl Workspace {
             )
             // What plugins put between the transcript and the composer.
             .children(
-                self.current()
-                    .filter(|_| self.route != Route::NewRun)
+                self.shown_run()
                     .map(|run| {
                         self.drawn(
                             heiko_ui_plugin::points::COMPOSER_BAND,
@@ -762,16 +651,12 @@ impl Workspace {
                 // takes them back.
                 self.tree_widgets.borrow_mut().composer_anew =
                     !self.composer_replaced.get();
-                let instead = self
-                    .current()
-                    .filter(|_| self.route != Route::NewRun)
-                    .and_then(|run| {
-                        let at =
-                            heiko_ui_plugin::points::AtRun { run: run.info() };
-                        self.drawn(heiko_ui_plugin::points::COMPOSER, &at, cx)
-                            .into_iter()
-                            .next()
-                    });
+                let instead = self.shown_run().and_then(|run| {
+                    let at = heiko_ui_plugin::points::AtRun { run: run.info() };
+                    self.drawn(heiko_ui_plugin::points::COMPOSER, &at, cx)
+                        .into_iter()
+                        .next()
+                });
                 self.tree_widgets.borrow_mut().composer_anew = false;
                 if self.composer_replaced.replace(instead.is_some())
                     && instead.is_none()
@@ -780,8 +665,7 @@ impl Workspace {
                 }
                 // A chat that ended takes no more messages.
                 let ended = self
-                    .current()
-                    .filter(|_| self.route != Route::NewRun)
+                    .shown_run()
                     .and_then(|run| ui::ending::note(run, compact, t, cx));
                 match (instead, ended) {
                     (_, Some(note)) => note.into_any_element(),
@@ -803,6 +687,231 @@ impl Workspace {
             })
     }
 
+    /// Home, on a desktop: a new run's composer, beside what happened
+    /// since the person last looked. A narrow window stacks them.
+    pub(super) fn home(&self, t: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let page = div()
+            .flex()
+            .pl(sp(INSET.0))
+            .pr(sp(INSET.1))
+            .pt(sp(13.5))
+            .pb(sp(11.));
+        let page = if self.width / self.zoom >= NARROW_MAX {
+            page.items_start()
+                .gap(sp(14.5))
+                .child(
+                    div()
+                        .w(rems(26.875))
+                        .flex_shrink_0()
+                        .child(self.new_run(t, cx)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(rems(0.))
+                        .child(self.since_list(t, cx)),
+                )
+        } else {
+            page.flex_col()
+                .gap(sp(13.))
+                .child(self.new_run(t, cx))
+                .child(self.since_list(t, cx))
+        };
+        div()
+            .id("home")
+            .flex_1()
+            .min_h(rems(0.))
+            .overflow_y_scroll()
+            .child(page)
+            .into_any_element()
+    }
+
+    /// A new run's composer, on Home: what to do, large, between two
+    /// rules; then where it starts and on what, as words that open what
+    /// changes them, and Start.
+    fn new_run(&self, t: &Theme, cx: &mut Context<Self>) -> gpui::Div {
+        let repo = self.selected_repo().map(str::to_owned);
+        let branch = repo.as_deref().map(|repo| {
+            self.repo_named(repo)
+                .trunk
+                .clone()
+                .unwrap_or_else(|| "main".to_owned())
+        });
+        let choice = self.choice_for(&PickerTarget::Next);
+        let quiet = |text: &'static str| {
+            div().flex_shrink_0().text_color(t.dim).child(text)
+        };
+        // A word the person can change: underlined, in its color.
+        let word = |id: &'static str, text: String, color: gpui::Hsla| {
+            div()
+                .id(id)
+                .flex_shrink_0()
+                .border_b_1()
+                .border_color(t.slate)
+                .text_color(color)
+                .cursor_pointer()
+                .hover(|style| style.text_color(t.bright))
+                .child(text)
+        };
+        let pick =
+            |ws: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
+                if ws.picker == Some(PickerTarget::Next) {
+                    ws.close_picker(cx)
+                } else {
+                    ws.open_picker(PickerTarget::Next, window, cx)
+                }
+            };
+        let words = div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(sp(2.))
+            .pt(sp(3.5))
+            .border_t_1()
+            .border_color(t.hairline)
+            .typeset(Type::LEAD)
+            // The repository: search lists the others.
+            .when_some(repo, |row, repo| {
+                row.child(quiet("in")).child(
+                    word("home-repo", repo, t.text).on_click(cx.listener(
+                        |ws, _, window, cx| ws.open_search(window, cx),
+                    )),
+                )
+            })
+            // A run starts from its repository's trunk.
+            .when_some(branch, |row, branch| {
+                row.child(quiet("from")).child(
+                    div()
+                        .flex_shrink_0()
+                        .border_b_1()
+                        .border_color(t.slate)
+                        .text_color(t.roles.branch)
+                        .child(branch),
+                )
+            })
+            .child(quiet("with"))
+            .child(word("home-model", choice.model.clone(), t.blue).on_click(
+                cx.listener(move |ws, _, window, cx| pick(ws, window, cx)),
+            ))
+            .child(
+                word("home-effort", choice.effort.label().to_owned(), t.text)
+                    .on_click(cx.listener(move |ws, _, window, cx| {
+                        pick(ws, window, cx)
+                    })),
+            )
+            .child(div().flex_1())
+            .child(
+                div()
+                    .id("send")
+                    .child(ui::primary_block("Start", ui::BlockSize::Large, t))
+                    .on_click(
+                        cx.listener(|ws, _, _, cx| ws.submit_from_button(cx)),
+                    ),
+            );
+        div()
+            .flex()
+            .flex_col()
+            // Files dropped on it are attached: images as images.
+            .on_drop(cx.listener(|ws, paths: &gpui::ExternalPaths, _, cx| {
+                for path in paths.paths() {
+                    ws.attach_path(path, cx);
+                }
+            }))
+            .child(ui::section_header("New run", Some("ctrl n".into()), t))
+            .child(
+                div()
+                    .min_h(rems(9.375))
+                    .pt(sp(4.5))
+                    .pb(sp(3.))
+                    .typeset(Type::HEADLINE.sized(23.))
+                    .leading(1.35)
+                    .text_color(t.bright)
+                    .child(self.composer.clone()),
+            )
+            .when(!self.attachments.is_empty(), |column| {
+                column.child(
+                    div().flex().flex_wrap().gap(sp(3.5)).pb(sp(3.)).children(
+                        self.attachments.iter().enumerate().map(|(n, file)| {
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(sp(1.5))
+                                .child(ui::mono(
+                                    file.name.clone(),
+                                    Type::CAPTION,
+                                    t.text_soft,
+                                ))
+                                .child(
+                                    div()
+                                        .id(("detach", n))
+                                        .cursor_pointer()
+                                        .child(ui::icon(
+                                            Icon::Close,
+                                            IconSize::SMALL,
+                                            t.dim,
+                                        ))
+                                        .on_click(cx.listener(
+                                            move |ws, _, _, cx| {
+                                                ws.remove_attachment(n, cx)
+                                            },
+                                        )),
+                                )
+                        }),
+                    ),
+                )
+            })
+            .when_some(self.composer_note(), |column, note| {
+                column.child(
+                    div()
+                        .id("composer-note")
+                        .pb(sp(3.))
+                        .text_color(t.green)
+                        .child(note.to_owned()),
+                )
+            })
+            .child(words)
+            // The commands a slash opens, under what is written.
+            .children(
+                self.slash_popover(true, t, cx)
+                    .map(|popover| div().pt(sp(4.)).child(popover)),
+            )
+    }
+
+    /// What happened across runs and agents, on Home: a ruled list,
+    /// each thing with when, its mark, whose it is, one line and the one
+    /// thing to do about it.
+    fn since_list(&self, t: &Theme, cx: &mut Context<Self>) -> gpui::Div {
+        let list = self.since();
+        let waiting = list.iter().filter(|happened| happened.hot).count();
+        let meta = (waiting > 0).then(|| {
+            gpui::SharedString::from(format!("{waiting} waiting on you"))
+        });
+        // As far back as the oldest thing listed.
+        let oldest = list
+            .iter()
+            .rev()
+            .find(|happened| !happened.day.is_empty())
+            .map(|happened| happened.day.as_str());
+        let title = match oldest {
+            None | Some("Today") => "Today".to_owned(),
+            Some("Yesterday") => "Since yesterday".to_owned(),
+            Some("Earlier") => "Earlier".to_owned(),
+            Some(day) => format!("Since {day}"),
+        };
+        div()
+            .flex()
+            .flex_col()
+            .child(ui::section_header(title, meta, t))
+            .when(list.is_empty(), |column| {
+                column.child(ui::empty("Nothing yet.", t))
+            })
+            .children(
+                list.into_iter()
+                    .enumerate()
+                    .map(|(n, happened)| happened_row(n, happened, t, cx)),
+            )
+    }
+
     /// Any screen but a run's.
     pub(super) fn screen(
         &self,
@@ -811,6 +920,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         match &self.route {
+            Route::Home | Route::NewRun if !compact => self.home(t, cx),
             Route::Home | Route::Run(_) | Route::NewRun => {
                 self.run_screen(compact, t, cx).into_any_element()
             }
@@ -833,25 +943,16 @@ impl Workspace {
                 plugin,
                 page,
                 params,
-            } => {
-                let page = self
-                    .plugin_page(plugin, page, params, cx)
-                    .unwrap_or_else(|| {
-                        ui::screen(
-                            "plugin-page",
-                            compact,
-                            ui::empty("This page's plugin is not here.", t),
-                        )
-                        .into_any_element()
-                    });
-                // A page a repository lists is one of its tabs.
-                match screens::repo::owner(self, &self.route) {
-                    Some(repo) => {
-                        screens::repo::framed(self, &repo, page, compact, t, cx)
-                    }
-                    None => page,
-                }
-            }
+            } => self.plugin_page(plugin, page, params, cx).unwrap_or_else(
+                || {
+                    ui::screen(
+                        "plugin-page",
+                        compact,
+                        ui::empty("This page's plugin is not here.", t),
+                    )
+                    .into_any_element()
+                },
+            ),
         }
     }
 
@@ -873,14 +974,18 @@ impl Workspace {
             .gap(sp(2.))
             .px(sp(if compact { 1.5 } else { 4. }))
             .border_b_1()
-            .border_color(t.border)
+            .border_color(t.hairline)
             .child(
                 div()
                     .flex_1()
                     .min_w(rems(0.))
                     .truncate()
-                    .typeset(if compact { Type::LEAD } else { Type::SMALL })
-                    .font_weight(weight::STRONG)
+                    .typeset(Type::SECTION.sized(if compact {
+                        17.
+                    } else {
+                        15.
+                    }))
+                    .text_color(t.bright)
                     .when(compact, |title| title.pl(sp(2.5)))
                     .child(pane.title),
             )
@@ -899,7 +1004,7 @@ impl Workspace {
             .min_w(rems(0.))
             .min_h(rems(0.))
             .bg(t.bg)
-            .when(!compact, |pane| pane.chrome(ui::Edge::Right, t))
+            .when(!compact, |pane| pane.border_l_1().border_color(t.hairline))
             .child(bar)
             .child(
                 div()
@@ -925,7 +1030,7 @@ impl Workspace {
         // An open pane takes the inspector's place.
         let details = self.details_open
             && pane.is_none()
-            && matches!(self.route, Route::Home | Route::Run(_));
+            && matches!(self.route, Route::Run(_));
         div()
             .size_full()
             .flex()
@@ -940,12 +1045,15 @@ impl Workspace {
                             .w(sidebar_width(wide))
                             .flex_shrink_0(),
                     )
+                    // The screen: a flat plane, with the one hairline
+                    // the sidebar draws between them.
                     .child(
                         div()
                             .flex_1()
                             .min_w(rems(0.))
                             .flex()
                             .flex_col()
+                            .bg(t.bg)
                             .child(self.screen(false, t, cx)),
                     )
                     .when_some(pane, |row, pane| {
@@ -1007,6 +1115,7 @@ impl Workspace {
         match (&self.route, self.current()) {
             (Route::Run(_), Some(run)) => screen
                 .child(chrome::phone_run_bar(
+                    self,
                     run,
                     self.is_main(&run.id),
                     self.pane_title.is_some(),
@@ -1083,22 +1192,12 @@ impl Workspace {
                     .flex()
                     .flex_col()
                     .gap(sp(4.))
-                    .px(sp(4.))
-                    .pt(sp(2.))
+                    .px(sp(4.5))
                     .pb(sp(6.))
-                    .raised(t)
-                    .border_t_1()
-                    .border_color(t.border_strong)
-                    .rounded_t(radius::SHEET)
-                    .child(
-                        div().flex().justify_center().child(
-                            div()
-                                .w(rems(2.5))
-                                .h(rems(0.25))
-                                .rounded(radius::HAIRLINE)
-                                .bg(t.border_strong),
-                        ),
-                    )
+                    .bg(t.panel)
+                    .border_t_2()
+                    .border_color(t.rule)
+                    .pt(sp(4.))
                     .child(inspector::header(self, run, t))
                     .child(
                         div()
@@ -1124,7 +1223,7 @@ impl Workspace {
                                     div()
                                         .id("sheet-fork")
                                         .child(ui::big_button(
-                                            "Fork here",
+                                            "fork here",
                                             None,
                                             ButtonKind::Secondary,
                                             t,
@@ -1145,7 +1244,7 @@ impl Workspace {
                                                 "Push to {}",
                                                 self.catalog.forge_name()
                                             ),
-                                            Some(Icon::Push),
+                                            None,
                                             ButtonKind::Primary,
                                             t,
                                         ))
@@ -1161,7 +1260,7 @@ impl Workspace {
                                     div()
                                         .id("sheet-pull-request")
                                         .child(ui::big_button(
-                                            "Pull request",
+                                            "pull request",
                                             None,
                                             ButtonKind::Secondary,
                                             t,
@@ -1178,7 +1277,7 @@ impl Workspace {
                                     div()
                                         .id("sheet-cancel")
                                         .child(ui::big_button(
-                                            "Cancel run",
+                                            "cancel run",
                                             None,
                                             ButtonKind::Danger,
                                             t,
@@ -1191,4 +1290,88 @@ impl Workspace {
                     ),
             )
     }
+}
+
+/// A screen's header on a desktop: one row over a heavy rule, standing
+/// in from the sidebar as the screen under it does.
+fn header(t: &Theme) -> gpui::Div {
+    div()
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .gap(sp(3.5))
+        .min_h(rems(4.75))
+        .ml(sp(INSET.0))
+        .mr(sp(INSET.1))
+        .pt(sp(6.))
+        .pb(sp(2.5))
+        .border_b_2()
+        .border_color(t.rule)
+        .typeset(Type::BODY)
+}
+
+/// One thing that happened, in Home's list: when, its mark, whose it
+/// is, what happened, and its one action; the loud one when it waits on
+/// the person.
+fn happened_row(
+    n: usize,
+    happened: Happened,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> gpui::Stateful<gpui::Div> {
+    let sign = match happened.sign {
+        Sign::State(state) => ui::mark(state, t).into_any_element(),
+        Sign::Note => div()
+            .size(rems(0.875))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(ui::dot(t.roles.agent, 6.))
+            .into_any_element(),
+        Sign::Push => {
+            ui::icon(Icon::Push, IconSize::BASE, t.blue).into_any_element()
+        }
+    };
+    let action = if happened.hot {
+        ui::hot_action(happened.action, t)
+    } else {
+        ui::link_action(happened.action, t)
+    };
+    let act = happened.act;
+    div()
+        .id(("since", n))
+        .flex()
+        .items_start()
+        .gap(sp(4.))
+        .py(sp(2.75))
+        .border_b_1()
+        .border_color(t.hairline)
+        .typeset(Type::BODY)
+        .leading(1.5)
+        .child(
+            ui::mono(happened.when, Type::CAPTION, t.dim)
+                .w(rems(2.625))
+                .flex_shrink_0()
+                .pt(sp(0.5)),
+        )
+        .child(div().flex_shrink_0().pt(sp(0.75)).child(sign))
+        .child(
+            div()
+                .w(rems(7.75))
+                .flex_shrink_0()
+                .truncate()
+                .font_weight(weight::STRONG)
+                .text_color(t.bright)
+                .child(happened.name),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w(rems(0.))
+                .text_color(t.text_soft)
+                .child(happened.line),
+        )
+        .child(div().id("act").flex_shrink_0().child(action).on_click(
+            cx.listener(move |ws, _, _, cx| ws.act_on(act.clone(), cx)),
+        ))
 }

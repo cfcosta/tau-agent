@@ -35,71 +35,43 @@ local function plural(n, one, many)
 	return n == 1 and ("1 " .. one) or (tostring(n) .. " " .. many)
 end
 
--- The page's header: its title and the folder's button, what skills are,
--- and where they are read from.
+-- The page's header: its title, how many skills there are, where they
+-- are read from, and the way to open that folder.
 local function header(skills)
-	local title = { ui.heading("Skills"), ui.spacer() }
+	local title = { ui.title("Skills"), ui.toned(tostring(#skills.found), "neutral", true), ui.spacer() }
 	if skills.dir then
-		table.insert(title, ui.button("Open folder", "heiko.reveal", { path = skills.dir }, "secondary"))
+		table.insert(title, ui.mono(skills.dir))
+		table.insert(title, ui.button("open folder", "heiko.reveal", { path = skills.dir }, "secondary"))
 	end
-	local rows = {
-		ui.row(title),
-		ui.text(
-			"Instructions the model loads when a task calls for them, or that you start with /name. Each is a folder with a "
-				.. scan.SKILL_FILE
-				.. "."
-		),
-	}
-	if skills.dir then
-		table.insert(
-			rows,
-			ui.row({
-				ui.text("From"),
-				ui.mono(skills.dir),
-				ui.text("read as each run starts; new ones show in the next run"),
-			})
-		)
-	end
-	return ui.stack(rows)
+	return ui.stack({ ui.row(title), ui.rule() })
 end
 
+-- A skill as a ruled row: its name, what it is for, and its files.
 local function row(skill)
 	local files = plural(skill.files, "file", "files")
 	if skill.builtin then
 		files ..= " · built in"
 	end
-	local children = {
-		ui.row({ ui.mono(skill.name), ui.spacer(), ui.mono(files) }),
-		ui.text(skill.description),
-	}
+	local about = { ui.text(skill.description) }
 	if #skill.ignored > 0 then
-		table.insert(
-			children,
-			ui.text("Also sets " .. table.concat(skill.ignored, ", ") .. ", which heiko does not act on yet.")
-		)
+		table.insert(about, ui.toned("ignores " .. table.concat(skill.ignored, ", "), "warn"))
 	end
-	return ui.card(children)
+	return { ui.mono(skill.name), ui.stack(about), ui.toned(files, "neutral", true) }
 end
 
+-- A folder that is no skill: its name, why, and that the model is not
+-- offered it.
 local function problem_row(problem)
-	return ui.card({
-		ui.row({
-			ui.icon("warning", "bad"),
-			ui.mono(string.match(problem.dir, "([^/]+)$") or problem.dir),
-			ui.badge("not offered to the model", "bad"),
-		}),
-		ui.text(problem.reason),
-		ui.mono(problem.dir),
-	})
+	return {
+		ui.toned(string.match(problem.dir, "([^/]+)$") or problem.dir, "bad", true),
+		ui.stack({ ui.text(problem.reason), ui.mono(problem.dir) }),
+		ui.stamp("not offered", "bad"),
+	}
 end
 
 local function list(skills)
 	if #skills.found == 0 and #skills.problems == 0 then
-		return ui.empty(
-			"No skills yet. A skill is a folder here with a "
-				.. scan.SKILL_FILE
-				.. ": YAML frontmatter with a name and a description, then the instructions."
-		)
+		return ui.empty("No skills yet. A skill is a folder with a " .. scan.SKILL_FILE .. ".")
 	end
 	local rows = {}
 	for _, skill in ipairs(skills.found) do
@@ -108,7 +80,7 @@ local function list(skills)
 	for _, problem in ipairs(skills.problems) do
 		table.insert(rows, problem_row(problem))
 	end
-	return ui.stack(rows)
+	return ui.table({}, rows, { widths = { 2, 7, 1.5 } })
 end
 
 return heiko.plugin({
@@ -189,8 +161,8 @@ return heiko.plugin({
 		local calls = {}
 		for call, loaded in pairs(model.loaded or {}) do
 			calls[call] = {
-				head = ui.row({ ui.icon("skill", "info"), ui.mono(loaded.name), ui.text(loaded.description) }),
-				body = ui.stack({ ui.mono(loaded.file), ui.text(loaded.instructions) }),
+				head = ui.mono(loaded.name),
+				body = ui.stack({ ui.text(loaded.description), ui.mono(loaded.file), ui.code("markdown", loaded.instructions) }),
 			}
 		end
 		if next(calls) == nil then

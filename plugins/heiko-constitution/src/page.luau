@@ -200,9 +200,32 @@ local function button(label, action, args, kind)
 	return ui.button(label, action, args or {}, kind or "secondary")
 end
 
--- A field's name, and what it is for.
-local function label_row(name, hint)
-	return ui.row({ ui.heading(name), ui.text(hint) })
+-- How many ticks a score's strip has.
+local TICKS = 20
+
+-- The tick a threshold or a score falls on, from 0.
+local function tick(value)
+	return math.clamp(math.floor(value * TICKS + 0.5), 0, TICKS - 1)
+end
+
+-- A strip with the flag and block thresholds marked on it, and `score`
+-- lit up to where it reached, when there is one.
+local function marks(review, block, score, tone)
+	return ui.ticks(score and math.floor(score * TICKS + 0.5) or 0, TICKS, tone or "neutral", { tick(review), tick(block) })
+end
+
+-- The two thresholds in figures over their strip.
+local function thresholds(review, block)
+	return ui.stack({
+		ui.row({
+			ui.toned("flag", "neutral", true),
+			ui.mono(checks.two(review)),
+			ui.spacer(),
+			ui.toned("block", "neutral", true),
+			ui.toned(checks.two(block), "bad", true),
+		}),
+		marks(review, block),
+	})
 end
 
 -- What the rules did over the repository's runs, each count in its
@@ -214,10 +237,10 @@ local function intro(totals)
 	end
 	local counts = {}
 	if totals.runs == 0 then
-		table.insert(counts, ui.text("Nothing checked yet."))
+		table.insert(counts, ui.toned("Nothing checked yet.", "neutral"))
 	else
-		table.insert(counts, ui.text("Across " .. totals.runs .. " " .. (totals.runs == 1 and "run" or "runs") .. ":"))
-		table.insert(counts, ui.pill(totals.checked .. " checked", "neutral"))
+		table.insert(counts, ui.toned(totals.runs .. " " .. (totals.runs == 1 and "run" or "runs"), "neutral", true))
+		table.insert(counts, ui.toned(totals.checked .. " checked", "neutral", true))
 		for _, count in ipairs({
 			{ totals.blocked, "blocked", "bad" },
 			{ totals.flagged, "flagged", "warn" },
@@ -225,21 +248,13 @@ local function intro(totals)
 			{ totals.failed, "not checked", "warn" },
 		}) do
 			if count[1] > 0 then
-				table.insert(counts, ui.pill(count[1] .. " " .. count[2], count[3]))
+				table.insert(counts, ui.toned(count[1] .. " " .. count[2], count[3], true))
 			end
 		end
-		if totals.cost > 0 then
-			table.insert(counts, ui.text("Jev cost"))
-			table.insert(counts, ui.mono(totals.cost < 0.01 and string.format("$%.5f", totals.cost) or checks.usd(totals.cost)))
-		end
 	end
-	return ui.stack({
-		ui.row({
-			ui.rich("**heiko-constitution** checks every tool call and final answer against these rules before they run."),
-			button("Add a rule", "open"),
-		}),
-		ui.row(counts),
-	})
+	table.insert(counts, ui.spacer())
+	table.insert(counts, button("add a rule", "open"))
+	return ui.row(counts)
 end
 
 -- Rules that cannot be read from the store: why, what it means, and
@@ -259,15 +274,15 @@ local function broken(why, repo, jev, confirming)
 	local actions
 	if confirming then
 		actions = ui.row({
-			ui.text("This deletes them for good, so you can write them again."),
-			button("Delete", "reset", {}, "danger"),
-			button("Keep", "ask_reset", { yes = false }),
+			ui.text("This deletes them for good."),
+			button("delete", "reset", {}, "danger"),
+			button("keep", "ask_reset", { yes = false }),
 		})
 	else
-		actions = ui.row({ button("Remove these rules", "ask_reset", { yes = true }, "danger") })
+		actions = ui.row({ button("remove these rules", "ask_reset", { yes = true }, "danger") })
 	end
 	return ui.stack({
-		ui.row({ ui.icon("blocked", "bad"), ui.heading(title) }),
+		ui.row({ ui.mark("failing"), ui.heading(title) }),
 		ui.text(why),
 		actions,
 	})
@@ -277,23 +292,17 @@ end
 -- it.
 local function no_key()
 	return ui.row({
-		ui.icon("key", "info"),
-		ui.stack({
-			ui.heading("Rules aren't checked yet"),
-			ui.text("heiko-constitution asks Jev, TypeSafe's scoring model. Add a TypeSafe key and every run checks these rules."),
-		}),
+		ui.mark("asks"),
+		ui.heading("Rules aren't checked yet"),
+		ui.spacer(),
 		ui.link("Add TypeSafe key", "key", { plugin = "heiko-jev" }),
 	})
 end
 
--- No rules: what a rule is, and how to write one.
+-- No rules: the way to write one.
 local function nothing_yet(repo)
 	return ui.stack({
-		ui.icon("blocked", "neutral"),
 		ui.heading("No rules for " .. repo),
-		ui.text(
-			"A rule is one sentence, checked where you say: a shell command, an edit, a written file, or the final answer. Past its block mark the call is refused and the model gets the rule back."
-		),
 		ui.row({ button("New rule", "open", {}, "primary") }),
 	})
 end
@@ -323,80 +332,96 @@ local function verdict(rule, totals)
 	return table.concat(parts, " · "), tone
 end
 
--- Where a rule reads and how strict it is, and what it last caught.
-local function caption(rule, caught)
-	local text = "Checks "
-		.. table.concat(rule.on, ", ")
-		.. " · flag "
-		.. checks.two(rule.review)
-		.. " · block "
-		.. checks.two(rule.block)
-	if caught[rule.id] then
-		text ..= " · last: " .. caught[rule.id]
+-- The verdict as the page prints it: a met mark while the rule caught
+-- nothing, else a stamp of what it caught.
+local function status(rule, totals)
+	local said, tone = verdict(rule, totals)
+	if said == "clear" then
+		return ui.row({ ui.mark("met"), ui.toned(said, tone) })
 	end
-	return text
+	return ui.stamp(said, tone)
+end
+
+-- Where a rule reads, and what it last caught.
+local function reads(rule, caught)
+	local line = { ui.toned("checks", "neutral", true), ui.mono(table.concat(rule.on, ", ")) }
+	if caught[rule.id] then
+		table.insert(line, ui.toned("last", "neutral", true))
+		table.insert(line, ui.toned(caught[rule.id], "bad", true))
+	end
+	return ui.row(line)
 end
 
 -- Editing a rule, and removing it.
 local function rule_actions(rule)
 	return ui.row({
-		button("Edit", "open", { rule = rule.id }),
-		button("Remove", "remove", { id = rule.id }, "danger"),
+		button("edit", "open", { rule = rule.id }),
+		button("remove", "remove", { id = rule.id }, "danger"),
 	})
 end
+
+-- A rule's id on a square, outlined once the rule blocked a call.
+local function id_square(rule, totals)
+	local counts = totals.per_rule[rule.id] or { 0, 0, 0 }
+	return ui.square(rule.id, counts[1] > 0 and "outlined" or "quiet", "bad")
+end
+
+-- One rule as a ruled row: the id, the rule over where it reads, its
+-- thresholds marked on a strip, what it caught, and the ways to edit
+-- or remove it.
+local function rule_row(rule, totals, caught)
+	return {
+		id_square(rule, totals),
+		ui.stack({ ui.rich("**" .. rule.text .. "**"), reads(rule, caught) }),
+		thresholds(rule.review, rule.block),
+		status(rule, totals),
+		rule_actions(rule),
+	}
+end
+
+local WIDTHS = { 0.6, 7, 2.6, 1.4, 1.6 }
 
 -- The rule the page was opened on, above the list.
 local function focused(rule, totals, caught)
-	local said, tone = verdict(rule, totals)
-	return ui.stack({
-		ui.row({ ui.mono(rule.id), ui.heading(rule.text), ui.badge(said, tone) }),
-		ui.text(caption(rule, caught)),
-		ui.progress(rule.block, "flags from " .. checks.two(rule.review) .. ", blocks from " .. checks.two(rule.block)),
-		rule_actions(rule),
-	})
+	return ui.table({}, { rule_row(rule, totals, caught) }, { widths = WIDTHS })
 end
 
--- The rules, one row each: the id, the rule with where it reads and how
--- strict it is, what it caught, and the ways to edit or remove it.
+-- The rules, one ruled row each.
 local function rules_list(constitution, totals, caught)
 	local rows = {}
 	for _, rule in ipairs(constitution.rules) do
-		local said, tone = verdict(rule, totals)
-		table.insert(rows, {
-			ui.mono(rule.id),
-			ui.stack({ ui.text(rule.text), ui.text(caption(rule, caught)) }),
-			ui.badge(said, tone),
-			rule_actions(rule),
-		})
+		table.insert(rows, rule_row(rule, totals, caught))
 	end
-	return ui.table({ "Rule", "", "Caught", "" }, rows)
+	return ui.table({}, rows, { widths = WIDTHS })
 end
 
 -- How the checks behave beyond each rule: what happens when Jev cannot
--- answer, and how many times an answer may go back, with a note on what
--- Jev reads.
+-- answer, the one in force the primary; and how many times an answer
+-- may go back, a square each.
 local function settings(constitution)
 	local blocks, holds = constitution.on_error == "block", constitution.max_holds
 	local function set(blocks_unchecked, max_holds)
 		return { blocks_unchecked = blocks_unchecked, max_holds = max_holds }
 	end
-	local detail = blocks and "Calls it could not check are refused, and answers sent back while holds are left."
-		or "Calls it could not check run, and answers stand; each is noted."
-	local sent_back = holds == 0 and "A final answer that breaks a rule stands, flagged."
-		or ("Up to " .. holds .. "; past that, an answer that breaks a rule stands, flagged.")
+	local sent_back = { ui.text("Answers sent back per run"), ui.spacer(), button("−", "settings", set(blocks, page.next_holds(holds, -1))) }
+	if holds == 0 then
+		table.insert(sent_back, ui.square("0"))
+	end
+	for n = 1, holds do
+		table.insert(sent_back, ui.square(tostring(n), "outlined", "warn"))
+	end
+	table.insert(sent_back, button("+", "settings", set(blocks, page.next_holds(holds, 1))))
 	return ui.stack({
 		ui.heading("Settings"),
+		ui.rule(),
 		ui.row({
-			ui.stack({ ui.text("Refuse what Jev can't answer"), ui.text(detail) }),
-			button(blocks and "On" or "Off", "settings", set(not blocks, holds), blocks and "primary" or "secondary"),
+			ui.text("When Jev can't answer"),
+			ui.spacer(),
+			button("let through", "settings", set(false, holds), blocks and "secondary" or "primary"),
+			button("refuse", "settings", set(true, holds), blocks and "primary" or "secondary"),
 		}),
-		ui.row({
-			ui.stack({ ui.text("Answers sent back per run"), ui.text(sent_back) }),
-			button("−", "settings", set(blocks, page.next_holds(holds, -1))),
-			ui.mono(tostring(holds)),
-			button("+", "settings", set(blocks, page.next_holds(holds, 1))),
-		}),
-		ui.text("Jev sees only the fields a rule names, as the model wrote them. Never tool output or file contents."),
+		ui.rule(),
+		ui.row(sent_back),
 	})
 end
 
@@ -406,101 +431,81 @@ local function review_card(item, rule)
 	local answer = item.tool == nil
 	local card = {
 		ui.row({
-			ui.icon(answer and "chat" or "runs", "neutral"),
 			ui.mono(item.tool or "final answer"),
-			ui.text("in " .. item.title),
-			ui.badge("p " .. checks.two(item.score), "warn"),
+			ui.toned(item.title, "neutral"),
+			ui.spacer(),
+			ui.toned("p " .. checks.two(item.score), "warn", true),
 		}),
 		answer and ui.text(item.shown) or ui.code(nil, item.shown),
 	}
 	if rule then
-		table.insert(card, ui.row({ ui.mono(rule.id), ui.text(rule.text) }))
-		table.insert(
-			card,
-			ui.progress(
-				item.score,
-				"p "
-					.. checks.two(item.score)
-					.. " · flags from "
-					.. checks.two(rule.review)
-					.. ", blocks from "
-					.. checks.two(rule.block)
-			)
-		)
+		table.insert(card, ui.row({ ui.square(rule.id, "outlined", "warn"), ui.text(rule.text) }))
+		table.insert(card, marks(rule.review, rule.block, item.score, "warn"))
 	end
 	table.insert(
 		card,
-		ui.text(
-			answer and "The answer stood, but its score is between this rule's flag and block marks."
-				or "It ran: its score is between this rule's flag and block marks."
-		)
-	)
-	table.insert(
-		card,
 		ui.row({
-			button("Adjust rule", "open", { rule = rule and rule.id }),
-			button("Open in run", "heiko.open_run", { run = item.run }),
-			button("Looks fine", "fine", { id = item.id }, "primary"),
+			button("looks fine", "fine", { id = item.id }, "primary"),
+			button("adjust rule", "open", { rule = rule and rule.id }),
+			button("open in run", "heiko.open_run", { run = item.run }),
 		})
 	)
+	table.insert(card, ui.rule())
 	return ui.stack(card)
 end
 
+-- What became of a handled call, and its tone.
 local HANDLED = {
-	blocked = { "blocked", "bad", "blocked" },
-	held = { "chat", "info", "held" },
-	fine = { "check", "good", "looked fine" },
+	blocked = { "blocked", "bad" },
+	held = { "held", "info" },
+	fine = { "looked fine", "good" },
 }
 
 -- What waits for a person, and what the rules handled on their own.
 local function review(constitution, waiting, handled)
-	local list = { ui.heading("Waiting for you · " .. #waiting) }
+	local list = { ui.heading("Waiting for you · " .. #waiting), ui.rule() }
 	if #waiting == 0 then
-		table.insert(list, ui.empty("Nothing waits for you. Flagged calls land here."))
+		table.insert(list, ui.empty("Nothing waits."))
 	end
 	for _, item in ipairs(waiting) do
 		table.insert(list, review_card(item, rules.find(constitution, item.rule)))
 	end
 	table.insert(list, ui.heading("Handled by the rules"))
 	if #handled == 0 then
-		table.insert(list, ui.text("Nothing yet."))
+		table.insert(list, ui.empty("Nothing yet."))
 	else
 		local rows = {}
 		for _, done in ipairs(handled) do
-			local glyph = HANDLED[done.what] or HANDLED.fine
+			local what = HANDLED[done.what] or HANDLED.fine
 			table.insert(rows, {
-				ui.icon(glyph[1], glyph[2]),
-				ui.stack({ ui.mono(done.shown), ui.text(done.title) }),
-				ui.mono(done.rule .. " · " .. glyph[3]),
+				ui.square(done.rule, "outlined", what[2]),
+				ui.mono(done.shown),
+				ui.toned(done.title, "neutral"),
+				ui.stamp(what[1], what[2]),
 			})
 		end
-		table.insert(list, ui.table({}, rows))
+		table.insert(list, ui.table({}, rows, { widths = { 0.6, 6, 3, 1.4 } }))
 	end
-	table.insert(
-		list,
-		ui.text(
-			"Blocked calls need nothing from you: the model got the rule and changed the call. They show that a rule does its job."
-		)
-	)
 	return ui.stack(list)
 end
 
 -- Trying the rule on the repository's latest calls, with Jev.
 local function try_section(draft, trying, jev)
 	local head = ui.row({
-		label_row("Try it", "before it runs for real"),
-		button(trying == nil and "Try on recent calls" or "Try again", "try"),
+		ui.heading("Try it"),
+		ui.spacer(),
+		button(trying == nil and "try on recent calls" or "try again", "try"),
 	})
 	local body
 	if trying == nil then
-		body = ui.text(
-			jev and "Jev scores the latest calls and answers this rule would read, as a check would. Nothing runs again."
-				or "Trying a rule asks Jev: add a TypeSafe key first."
-		)
+		if jev then
+			return head
+		end
+		body = ui.toned("Trying a rule asks Jev: add a TypeSafe key first.", "neutral")
 	elseif trying.failed then
-		body = ui.row({ ui.icon("warning", "bad"), ui.text(trying.failed) })
+		body = ui.row({ ui.mark("failing"), ui.text(trying.failed) })
 	elseif #trying.trials == 0 then
-		body = ui.text("No calls in this repository's runs that the rule reads yet.")
+		body = ui.empty("No calls the rule reads yet.")
 	else
 		local rows = {}
 		for _, trial in ipairs(trying.trials) do
@@ -513,22 +518,11 @@ local function try_section(draft, trying, jev)
 			table.insert(rows, {
 				ui.mono(trial.tool or "answer"),
 				ui.mono(checks.cut(trial.shown, checks.SHOWN_CHARS)),
-				ui.progress(trial.score),
-				ui.badge(checks.two(trial.score) .. " " .. would, tone),
+				marks(draft.review, draft.block, trial.score, tone),
+				ui.stamp(checks.two(trial.score) .. " " .. would, tone),
 			})
 		end
-		local n = #trying.trials
-		body = ui.stack({
-			ui.table({}, rows),
-			ui.text(
-				n
-					.. " "
-					.. (n == 1 and "call" or "calls")
-					.. " · "
-					.. checks.usd(trying.cost)
-					.. ". Only what a check shows went to Jev; nothing ran again."
-			),
-		})
+		body = ui.table({}, rows, { widths = { 1.5, 5, 3, 2 } })
 	end
 	return ui.stack({ head, body })
 end
@@ -540,17 +534,16 @@ local function editor(draft, trying, jev)
 	local shown_problem = draft.tried_to_save and problem or nil
 	local title = draft.editing and ("Edit " .. draft.editing) or "New rule"
 	local save = button(draft.editing and "Save" or "Add rule", "save", {}, "primary")
-	local cancel = button("Cancel", "close")
+	local cancel = button("cancel", "close")
 
-	local rule = { label_row("Rule", "one sentence, the way you would tell a person") }
+	local rule = { ui.heading("Rule") }
 	if draft.text then
-		table.insert(rule, ui.row({ ui.text("Rule:"), ui.mono(draft.text) }))
+		table.insert(rule, ui.rich("**" .. draft.text .. "**"))
 	end
 	table.insert(
 		rule,
 		ui.input("rule-text", {
-			placeholder = draft.text and "Type to write it again; Enter keeps it"
-				or 'A rule in plain words: "No unwrap or expect outside tests." Enter keeps it',
+			placeholder = draft.text and "Write it again, then Enter" or "One sentence, then Enter",
 			submit = "write",
 		})
 	)
@@ -569,20 +562,24 @@ local function editor(draft, trying, jev)
 			table.insert(offered, { place, "another tool's field" })
 		end
 	end
-	local applies = { label_row("Applies to", "what Jev reads for this rule") }
+	local applies = { ui.heading("Applies to") }
 	for _, offer in ipairs(offered) do
 		local place = offer[1]
 		local on = table.find(draft.places, place) ~= nil
 		local dot = string.find(place, ".", 1, true)
-		local label = dot and (string.sub(place, 1, dot - 1) .. " · " .. string.sub(place, dot + 1)) or "Final answer"
+		local label = dot and (string.sub(place, 1, dot - 1) .. " · " .. string.sub(place, dot + 1)) or "final answer"
 		table.insert(
 			applies,
-			ui.row({ button((on and "✓ " or "") .. label, "place", { place = place }, on and "primary" or "secondary"), ui.text(offer[2]) })
+			ui.row({
+				ui.square(on and "✓" or "", on and "filled" or "quiet", "info"),
+				button(label, "place", { place = place }),
+				ui.toned(offer[2], "neutral"),
+			})
 		)
 	end
-	table.insert(applies, ui.input("rule-on", { placeholder = "tool.field, then Enter to add it", submit = "add_place" }))
+	table.insert(applies, ui.input("rule-on", { placeholder = "tool.field, then Enter", submit = "add_place" }))
 	if draft.bad_place then
-		table.insert(applies, ui.row({ ui.icon("warning", "bad"), ui.text('"' .. draft.bad_place .. '" names no field: write tool.field.') }))
+		table.insert(applies, ui.row({ ui.mark("failing"), ui.text('"' .. draft.bad_place .. '" names no field: write tool.field.') }))
 	end
 
 	local presets = {}
@@ -592,43 +589,30 @@ local function editor(draft, trying, jev)
 	end
 	local function stepper(name, mark, value)
 		return ui.row({
-			ui.text(name),
+			ui.toned(name, "neutral", true),
 			button("−", "nudge", { mark = mark, delta = -0.05 }),
 			ui.mono(checks.two(value)),
 			button("+", "nudge", { mark = mark, delta = 0.05 }),
 		})
 	end
 	local strictness = ui.stack({
-		label_row("Strictness", "how sure Jev must be that the rule is broken"),
+		ui.heading("Strictness"),
 		ui.row(presets),
-		ui.progress(draft.block, "flags from " .. checks.two(draft.review) .. ", blocks from " .. checks.two(draft.block)),
-		ui.row({ stepper("Flag at", "review", draft.review), stepper("Block at", "block", draft.block) }),
-		ui.rows({
-			{ "Below " .. checks.two(draft.review), "The call runs." },
-			{ checks.two(draft.review) .. " to " .. checks.two(draft.block), "It runs, and waits in Review for you." },
-			{ checks.two(draft.block) .. " and up", "Refused. The model gets the rule and tries again." },
-		}),
+		marks(draft.review, draft.block),
+		ui.row({ stepper("flag", "review", draft.review), ui.spacer(), stepper("block", "block", draft.block) }),
 	})
 
 	local body = {
-		ui.row({ ui.heading(title), cancel, save }),
+		ui.row({ ui.title(title), ui.spacer(), cancel, save }),
+		ui.rule(),
 		ui.stack(rule),
 		ui.stack(applies),
+		strictness,
+		try_section(draft, trying, jev),
 	}
 	if shown_problem then
-		table.insert(body, ui.row({ ui.icon("warning", "bad"), ui.text(shown_problem) }))
+		table.insert(body, ui.row({ ui.mark("failing"), ui.text(shown_problem) }))
 	end
-	table.insert(body, strictness)
-	table.insert(body, try_section(draft, trying, jev))
-	local footer
-	if shown_problem then
-		footer = shown_problem
-	elseif draft.editing then
-		footer = "Saves over " .. draft.editing .. "; runs check with it from their next tool call"
-	else
-		footer = "Adds it; runs check with it from their next tool call"
-	end
-	table.insert(body, ui.row({ ui.text(footer), cancel, save }))
 	return ui.stack(body)
 end
 

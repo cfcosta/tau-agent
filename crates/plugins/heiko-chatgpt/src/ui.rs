@@ -11,7 +11,7 @@ use heiko_ui_plugin::{
     ViewCx,
     points::{self, AtApp, AtSetup, LinkState, SetupAt, SetupLink, SetupView},
     provider::PROVIDER,
-    tree::{Kind, Node, Tone},
+    tree::{Kind, MarkState, Node, Tone},
 };
 
 use crate::NAME;
@@ -180,6 +180,7 @@ fn button(label: &str, kind: Kind, what: Do) -> Node {
         args: serde_json::to_value(what).unwrap_or_default(),
         kind,
         icon: None,
+        size: Default::default(),
     }
 }
 
@@ -398,18 +399,18 @@ fn step(_: &AtSetup, view: &mut ViewCx<'_, ChatGptUi>) -> Option<SetupView> {
 fn section(_: &AtApp, view: &mut ViewCx<'_, ChatGptUi>) -> Option<Node> {
     let data = &view.data;
     let active = data.accounts.iter().find(|account| account.active);
-    let (line, tone) = match (&data.sign_in, active.map(|a| a.state)) {
+    let (line, state) = match (&data.sign_in, active.map(|a| a.state)) {
         (SignIn::Connected { .. }, _) | (_, Some(AccountState::Plan)) => {
-            ("Runs use your ChatGPT plan", Tone::Good)
+            ("Runs use your ChatGPT plan", MarkState::Met)
         }
         (_, Some(AccountState::PlanDisabled)) => (
             "Signed in, but plan use isn't enabled · enable it to run tasks",
-            Tone::Warn,
+            MarkState::Asks,
         ),
         (_, Some(AccountState::SignedOut)) => {
-            ("Signed out · sign in again", Tone::Neutral)
+            ("Signed out · sign in again", MarkState::Idle)
         }
-        _ => ("Not signed in", Tone::Neutral),
+        _ => ("Not signed in", MarkState::Idle),
     };
     let add = sign_in(
         if data.accounts.is_empty() {
@@ -420,36 +421,33 @@ fn section(_: &AtApp, view: &mut ViewCx<'_, ChatGptUi>) -> Option<Node> {
         Kind::Secondary,
         false,
     );
-    let mut children = vec![Node::row([
-        Node::Icon {
-            name: "chat".into(),
-            tone,
-        },
-        Node::Stack {
-            children: vec![
-                Node::Heading {
-                    text: "ChatGPT".into(),
-                },
-                Node::text(line),
-            ],
-        },
-        Node::Spacer,
-        add,
-    ])];
+    let mut children = vec![
+        Node::row([
+            Node::Mark { state, count: None },
+            Node::Rich {
+                text: "**ChatGPT**".into(),
+            },
+            Node::Spacer,
+            add,
+        ]),
+        note(line),
+    ];
     for account in &data.accounts {
+        children.push(Node::Rule);
         let state = match account.state {
             AccountState::Plan => "Plan use enabled",
             AccountState::PlanDisabled => "Plan use not enabled",
             AccountState::SignedOut => "Signed out",
         };
         let pick = if account.active {
-            Node::Badge {
-                text: "Active".into(),
+            Node::Toned {
+                text: "active".into(),
                 tone: Tone::Good,
+                mono: true,
             }
         } else {
             act(
-                "Switch",
+                "switch",
                 Kind::Secondary,
                 Act::Switch {
                     account: account.id.clone(),
@@ -480,9 +478,10 @@ fn section(_: &AtApp, view: &mut ViewCx<'_, ChatGptUi>) -> Option<Node> {
                 sign_in("Sign in again", Kind::Primary, false)
             }
         };
+        children.push(Node::Rule);
         children.push(Node::row([
             main,
-            act("Sign out", Kind::Secondary, Act::SignOut),
+            act("sign out", Kind::Danger, Act::SignOut),
         ]));
     }
     Some(Node::Card { children })

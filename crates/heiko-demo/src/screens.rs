@@ -13,6 +13,9 @@ pub type Screen = fn(&mut Workspace, &DemoHost, &mut Context<Workspace>);
 
 /// Every screen `--open` names.
 pub static SCREENS: &[(&str, Screen)] = &[
+    // A new run's composer, and what happened since: on a phone, the
+    // list of runs.
+    ("home", |ws, _, cx| ws.navigate(Route::Home, cx)),
     ("run", |ws, _, cx| ws.navigate(Route::Run(run_id()), cx)),
     // Main's crew tray: two sub-agents at work, one landed, one failed.
     ("crew", |ws, _, cx| crew(ws, cx)),
@@ -508,12 +511,12 @@ pub static SCREENS: &[(&str, Screen)] = &[
     ("commit", |ws, _, cx| {
         vcs_card(ws, COMMIT_CALL, DIFF_FILE, cx)
     }),
-    // The repository tree's states.
-    ("repo-open", |ws, _, cx| ws.toggle_repo_open("docbert", cx)),
+    // Another repository chosen on the rail: its tree.
+    ("repo-open", |ws, _, cx| ws.choose_repo("docbert", cx)),
     // Every chat state a row can show, at once, under heiko-agent's main.
     ("sidebar-states", |ws, _, cx| sidebar_states(ws, cx)),
     ("repo-menu", |ws, _, cx| {
-        ws.toggle_repo_open("docbert", cx);
+        ws.choose_repo("docbert", cx);
         ws.toggle_repo_menu("homelab.nix", cx);
     }),
     // The Constitution page's states.
@@ -554,6 +557,7 @@ pub static SCREENS: &[(&str, Screen)] = &[
     // The demo streams heiko-reasoning's note in right after the task.
     // Its chart is a section of the note, open in the UI state (ADR 0045).
     ("note-open", |ws, _, cx| {
+        ws.navigate(Route::Run(run_id()), cx);
         ws.toggle_note(&run_id(), 1, cx);
         let open =
             format!("{}/note-n0.open", heiko_luau_plugins::names::REASONING);
@@ -594,7 +598,10 @@ pub static SCREENS: &[(&str, Screen)] = &[
         ws.navigate(Route::Run(run_id()), cx);
         ws.toggle_sheet(cx);
     }),
-    ("search", |ws, _, cx| ws.show_search("re", cx)),
+    ("search", |ws, _, cx| {
+        ws.navigate(Route::Run(run_id()), cx);
+        ws.show_search("re", cx)
+    }),
     ("history-query", |ws, _, cx| {
         ws.navigate(Route::History, cx);
         ws.run_query(cx);
@@ -1517,7 +1524,6 @@ fn agents(
         run.finish_stored(heiko_agent::event::StopReason::Stop, 0.0, 0.0);
         ws.apply(HostUpdate::Run(Box::new(run)), cx);
     }
-    ws.toggle_agent_open("pr-triage", cx);
     let agents = |page: &str| Route::Plugin {
         plugin: heiko_agents::NAME.to_owned(),
         page: page.to_owned(),

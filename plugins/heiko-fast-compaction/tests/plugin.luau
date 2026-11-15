@@ -155,9 +155,9 @@ t.case("a pass marks what it drops on the calls' cards", function()
 	local view = run:view()
 	t.equal(view.status.text, "2 pruned · −50%")
 	t.equal(view.calls.a, nil)
-	t.equal(view.calls.b.badge.text, "result dropped")
+	t.equal(view.calls.b.badge.label, "result dropped")
 	t.equal(view.calls.b.dropped, "result")
-	t.equal(view.calls.c.badge.text, "call dropped")
+	t.equal(view.calls.c.badge.label, "call dropped")
 	t.equal(view.calls.c.dropped, "call")
 	t.equal(#run.state.decisions, 3)
 	t.equal(rewrite.rewrite.details.stats.calls_dropped, 1)
@@ -182,8 +182,8 @@ t.case("each decision has its card label", function()
 	local calls = run:view().calls
 	t.equal(calls.p, nil)
 	t.equal(calls.k, nil)
-	t.equal(calls.r.badge.text, "result dropped")
-	t.equal(calls.d.badge.text, "call dropped")
+	t.equal(calls.r.badge.label, "result dropped")
+	t.equal(calls.d.badge.label, "call dropped")
 end)
 
 local RANK = { keep = 1, drop_result = 2, drop_call = 3 }
@@ -250,10 +250,10 @@ t.property("passes mark what they drop", function(draw)
 	for _, id in ipairs(ids) do
 		local decision = held[id]
 		if decision == "drop_result" then
-			t.equal(calls[id].badge.text, "result dropped", id)
+			t.equal(calls[id].badge.label, "result dropped", id)
 			t.equal(calls[id].dropped, "result", id)
 		elseif decision == "drop_call" then
-			t.equal(calls[id].badge.text, "call dropped", id)
+			t.equal(calls[id].badge.label, "call dropped", id)
 			t.equal(calls[id].dropped, "call", id)
 		else
 			t.equal(calls[id], nil, id)

@@ -1,13 +1,21 @@
-//! Everything around the screens: title bar, sidebar, status bar, and
-//! their phone versions.
+//! Everything around the screens: the sidebar's rail and tree, the
+//! status bar, and their phone versions.
+//!
+//! The sidebar is a rail of square tiles (Home, one per repository, one
+//! per agent) beside the tree of the one chosen: a repository's chats
+//! and what plugins keep for it, an agent's conversation, or the list of
+//! agents. A row says where it stands with marks alone, packed at its
+//! right edge in one order ([`Marks::shown`]).
 
 use gpui::{
     Anchor,
     AnyElement,
     Context,
     Div,
+    Hsla,
     IntoElement,
     SharedString,
+    Stateful,
     anchored,
     deferred,
     div,
@@ -16,908 +24,725 @@ use gpui::{
     px,
     rems,
 };
+use heiko_agent::event::StopReason;
 use heiko_ui_plugin::{
     KindPlace,
+    Link,
+    NavEntry,
     RepoKind,
-    points::{self, AtRepo},
+    points::{self, AtApp, AtRepo},
 };
 
 use super::{
-    Edge,
     Material,
-    attention_color,
-    attention_icon,
-    attention_tint,
-    dot,
+    State,
+    counted_mark,
+    hot_action,
     icon,
     icon_button,
+    link_action,
     logo,
+    mark,
     mono,
     status_look,
+    text_link,
 };
 use crate::{
     assets::Icon,
-    attention::Attention,
-    catalog::ProjectStatus,
-    repos::{RepoRows, TreeRow},
+    attention::{Attention, Marks, count},
+    catalog::{ProjectStatus, Repo},
+    repos::{RepoRows, TreeOf, TreeRow},
     route::{Route, Tab},
-    theme::{Design as _, IconSize, MONO, Theme, Type, radius, sp, weight},
-    view::{ChildKind, Ending, Origin, RunView, usd},
+    theme::{
+        Design as _,
+        IconSize,
+        MONO,
+        Theme,
+        Tone,
+        Type,
+        radius,
+        sp,
+        weight,
+    },
+    view::{ChildRun, Origin, RunStatus, RunView},
     workspace::Workspace,
 };
 
-fn tab_icon(tab: Tab) -> Icon {
-    match tab {
-        Tab::Runs => Icon::Runs,
-        Tab::History => Icon::History,
-        Tab::Plugins => Icon::Plug,
-        Tab::Models => Icon::Settings,
-    }
-}
+/// How wide the sidebar's rail is, in rems: 60 px.
+const RAIL: f32 = 3.75;
 
-/// The desktop sidebar: a new run in the selected repository, the
-/// repositories as a tree (each with what plugins list under it, and its
-/// runs),
-/// then what is the same everywhere.
-pub fn sidebar(
-    ws: &Workspace,
-    t: &Theme,
-    cx: &mut Context<Workspace>,
-) -> gpui::Stateful<Div> {
-    let filter = ws.sidebar_filter.read(cx).text().to_owned();
-    let rows = ws.repo_rows(&filter);
-    let many = ws.catalog.listed().count() > 3;
-
-    let new_run = div()
-        .id("new-run")
-        .flex()
-        .flex_shrink_0()
-        .items_center()
-        .gap(sp(2.))
-        .h(rems(2.125))
-        .px(sp(2.5))
-        .rounded(radius::CONTROL)
-        .cursor_pointer()
-        .text_color(t.text_soft)
-        .hover(|style| style.bg(t.raised))
-        .child(icon(Icon::Plus, IconSize::BASE, t.roles.branch))
-        .child(div().flex_1().child("New run"))
-        .child(mono("Ctrl N", Type::MICRO, t.dim))
-        .on_click(
-            cx.listener(|ws, _, window, cx| ws.start_new_run(window, cx)),
-        );
-
-    let filter_field = div()
-        .flex()
-        .flex_shrink_0()
-        .items_center()
-        .gap(sp(2.))
-        .h(rems(2.125))
-        .mt(sp(2.))
-        .px(sp(2.5))
-        .well(t)
-        .rounded(radius::CONTROL)
-        .child(icon(Icon::Search, IconSize::COMPACT, t.dim))
-        .child(
+/// The desktop sidebar: the rail of tiles, and beside it the tree of
+/// the one chosen, over what is the same everywhere.
+pub fn sidebar(ws: &Workspace, t: &Theme, cx: &mut Context<Workspace>) -> Div {
+    let tree = match ws.tree_of() {
+        Some(TreeOf::Repo(name)) => repo_tree(ws, &name, t, cx),
+        Some(TreeOf::Agent(name)) => agent_tree(ws, &name, t, cx),
+        Some(TreeOf::Kind(plugin, kind)) => kind_tree(ws, plugin, &kind, t, cx),
+        None => vec![
             div()
-                .flex_1()
-                .min_w(rems(0.))
-                .child(ws.sidebar_filter.clone()),
-        );
-
-    let add = div()
-        .id("add-repo")
-        .size(rems(1.375))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(radius::TAG)
-        .cursor_pointer()
-        .hover(|style| style.bg(t.selected))
-        .child(icon(Icon::Plus, IconSize::COMPACT, t.muted))
-        .on_click(cx.listener(|ws, _, _, cx| ws.pick_repos(cx)));
-
-    let mut everywhere = vec![(
-        Route::History,
-        "History".to_owned(),
-        "all repos".to_owned(),
-        t.dim,
-    )];
-    // What plugins list there.
-    for entry in ws.contributions(points::EVERYWHERE, &points::AtApp) {
-        let Some(route) = ws.link_route(&entry.to, None) else {
-            continue;
-        };
-        let (meta, ink) = match (entry.badge, entry.detail) {
-            (Some((badge, tone)), _) => (badge, t.tone(tone)),
-            (None, detail) => (detail.unwrap_or_default(), t.dim),
-        };
-        everywhere.push((route, entry.label, meta, ink));
-    }
-    // Sign-ins, keys and the models runs use.
-    everywhere.push((
-        Route::Models,
-        "Models and accounts".to_owned(),
-        String::new(),
-        t.dim,
-    ));
-
-    // The app's name, and what all runs cost today.
-    let total: f64 = ws.runs.iter().map(|run| run.usage.cost).sum();
-    let brand = div()
-        .flex()
-        .flex_shrink_0()
-        .items_center()
-        .gap(sp(2.5))
-        .px(sp(2.))
-        .pt(sp(1.))
-        .pb(sp(3.))
-        .child(logo(t, 22.))
-        .child(div().font_weight(weight::STRONG).child("heiko"))
-        .child(div().flex_1())
-        .child(
-            div()
-                .flex()
-                .gap(sp(1.))
-                .typeset(Type::CAPTION)
-                .text_color(t.dim)
-                .child("today")
-                .child(div().text_color(t.roles.cost).child(usd(total))),
-        );
-
-    div()
-        .id("sidebar")
-        .flex()
-        .flex_col()
-        .gap(sp(0.5))
-        .p(sp(2.5))
-        .bg(t.panel)
-        .border_r_1()
-        .border_color(t.border)
-        .overflow_y_scroll()
-        .child(brand)
-        .child(new_run)
-        .when(many, |bar| bar.child(filter_field))
-        .child(section("Repositories", Some(add.into_any_element()), t))
-        .children({
-            let groups: Vec<AnyElement> = rows
-                .into_iter()
-                .map(|rows| repo_group(ws, rows, t, cx).into_any_element())
-                .collect();
-            groups
-        })
-        .when(ws.catalog.listed().next().is_none(), |bar| {
-            bar.child(
-                div()
-                    .px(sp(2.5))
-                    .py(sp(2.))
-                    .typeset(Type::CAPTION)
-                    .text_color(t.muted)
-                    .child("No repositories yet. Add one to start runs in it."),
-            )
-        })
-        .children(kind_sections(ws, t, cx))
-        .child(div().flex_1().min_h(sp(4.)))
-        .child(section("Everywhere", None, t))
-        .child(plugins_tree(ws, t, cx))
-        .children(everywhere.into_iter().map(|(route, label, meta, ink)| {
-            let active = ws.route == route;
-            div()
-                .id(SharedString::from(label.clone()))
-                .flex()
-                .flex_shrink_0()
-                .items_center()
-                .h(rems(1.875))
                 .px(sp(2.))
-                .rounded(radius::BOX)
-                .cursor_pointer()
-                .text_color(if active { t.text } else { t.text_soft })
-                .when(active, |row| row.bg(t.raised))
-                .when(!active, |row| row.hover(|style| style.bg(t.card)))
-                .child(div().flex_1().child(label))
-                .child(div().typeset(Type::CAPTION).text_color(ink).child(meta))
-                .on_click(cx.listener(move |ws, _, _, cx| {
-                    ws.navigate(route.clone(), cx)
-                }))
-        }))
-}
-
-/// Plugins in the sidebar: the ones built in, the person's own in heiko's
-/// plugins repository (ADR 0036), and that repository's chats, which
-/// write them. Its chevron folds them away; the rest of its row opens
-/// the built-in ones.
-fn plugins_tree(ws: &Workspace, t: &Theme, cx: &mut Context<Workspace>) -> Div {
-    let open = ws.plugins_open;
-    let waiting = ws.catalog.yours_need_you();
-    let head = div()
-        .id("plugins")
-        .flex()
-        .flex_shrink_0()
-        .items_center()
-        .gap(sp(2.))
-        .h(rems(1.875))
-        .px(sp(2.))
-        .rounded(radius::BOX)
-        .cursor_pointer()
-        .text_color(if open { t.text } else { t.text_soft })
-        .hover(|style| style.bg(t.card))
-        .child(
-            div()
-                .id("fold-plugins")
-                .size(rems(1.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(icon(
-                    if open { Icon::Down } else { Icon::Chevron },
-                    IconSize::TINY,
-                    t.dim,
-                ))
-                .on_click(cx.listener(|ws, _, _, cx| {
-                    cx.stop_propagation();
-                    ws.toggle_plugins_open(cx)
-                })),
-        )
-        .child(icon(Icon::Plug, IconSize::COMPACT, t.change))
-        .child(
-            div()
-                .flex_1()
-                .when(open, |label| label.font_weight(weight::EMPHASIS))
-                .child("Plugins"),
-        )
-        .when(waiting > 0, |row| {
-            row.child(need_you_pill(waiting, Type::MICRO, t))
-        })
-        .on_click(cx.listener(|ws, _, _, cx| ws.navigate(Route::Plugins, cx)));
-    let tree = div().flex().flex_col().flex_shrink_0().child(head);
-    if !open {
-        return tree;
-    }
-
-    let link = |id: &'static str, label: String, count: usize, route: Route| {
-        let active = match (&ws.route, &route) {
-            (
-                Route::Plugin { plugin, page, .. },
-                Route::Plugin {
-                    plugin: to,
-                    page: to_page,
-                    ..
-                },
-            ) => plugin == to && page == to_page,
-            (at, to) => at == to,
-        };
-        div()
-            .id(id)
-            .flex()
-            .flex_shrink_0()
-            .items_center()
-            .gap(sp(2.))
-            .h(rems(1.875))
-            .px(sp(2.))
-            .rounded(radius::BOX)
-            .cursor_pointer()
-            .text_color(if active { t.text } else { t.text_soft })
-            .when(active, |row| row.bg(t.raised))
-            .when(!active, |row| row.hover(|style| style.bg(t.card)))
-            .child(div().flex_1().min_w(rems(0.)).truncate().child(label))
-            .child(
-                div()
-                    .typeset(Type::CAPTION)
-                    .text_color(t.dim)
-                    .child(count.to_string()),
-            )
-            .on_click(
-                cx.listener(move |ws, _, _, cx| ws.navigate(route.clone(), cx)),
-            )
-    };
-    let mut body = div()
-        .flex()
-        .flex_col()
-        .gap(sp(0.25))
-        .pl(sp(6.5))
-        .pt(sp(0.5))
-        .pb(sp(1.5))
-        .child(link(
-            "plugins-built-in",
-            "Built in".to_owned(),
-            ws.catalog.built_in().count(),
-            Route::Plugins,
-        ));
-    let yours = ws.catalog.yours();
-    if let (Some(yours), Some(route)) = (yours, ws.yours_route(None)) {
-        let label = match ws.plugins_repo() {
-            Some(repo) => format!("Yours, in {}", repo.name),
-            None => "Yours".to_owned(),
-        };
-        body = body.child(link(
-            "plugins-yours",
-            label,
-            yours.entries.len(),
-            route,
-        ));
-    }
-    // The chats in the plugins repository, as a repository lists its own.
-    if let Some(rows) = ws.plugins_rows() {
-        let tree = ws.repo_tree(&rows);
-        if !tree.is_empty() {
-            body = body.child(
-                div()
-                    .px(sp(2.))
-                    .pt(sp(2.))
-                    .pb(sp(0.5))
-                    .typeset(Type::CAPTION)
-                    .text_color(t.dim)
-                    .child("Chats"),
-            );
-        }
-        let current = ws.current().map(|run| ws.listed_as(run).clone());
-        let on_run = matches!(ws.route, Route::Run(_) | Route::Home);
-        for row in tree {
-            body = match row {
-                TreeRow::Run { run, depth, folded } => {
-                    let active = on_run && current.as_ref() == Some(&run.id);
-                    body.child(run_row(ws, run, active, depth, folded, t, cx))
-                }
-                TreeRow::Child { child, depth, .. } => {
-                    body.child(child_row(ws, &row, child, depth, t, cx))
-                }
-            };
-        }
-    }
-    if yours.is_some() {
-        body =
-            body.child(
-                div()
-                    .id("write-plugin")
-                    .flex()
-                    .flex_shrink_0()
-                    .items_center()
-                    .gap(sp(2.))
-                    .h(rems(1.875))
-                    .px(sp(2.))
-                    .rounded(radius::BOX)
-                    .cursor_pointer()
-                    .text_color(t.dim)
-                    .hover(|style| style.bg(t.card).text_color(t.text_soft))
-                    .child(icon(Icon::Plus, IconSize::COMPACT, t.dim))
-                    .child(div().flex_1().child("Write a plugin"))
-                    .on_click(cx.listener(|ws, _, window, cx| {
-                        ws.write_plugin(window, cx)
-                    })),
-            );
-    }
-    tree.child(body)
-}
-
-/// The sections of the kinds of repository plugins make (`REPO_KIND`),
-/// each of their own: an agent's (ADR 0037).
-fn kind_sections(
-    ws: &Workspace,
-    t: &Theme,
-    cx: &mut Context<Workspace>,
-) -> Vec<Div> {
-    ws.repo_kinds()
-        .into_iter()
-        .filter(|(_, kind)| kind.place == KindPlace::Section)
-        .map(|(plugin, kind)| kind_section(ws, plugin, &kind, t, cx))
-        .collect()
-}
-
-/// A kind's section: its heading opens the kind's page and its `+` the
-/// page that makes one; each repository's row opens its conversation,
-/// and its chevron shows its last word and its sub-agents at work.
-fn kind_section(
-    ws: &Workspace,
-    plugin: &str,
-    kind: &RepoKind,
-    t: &Theme,
-    cx: &mut Context<Workspace>,
-) -> Div {
-    let page = ws.kind_route(plugin, &kind.page);
-    let on_page = page.as_ref() == Some(&ws.route);
-    let new = kind.new.as_ref().and_then(|new| ws.kind_route(plugin, new));
-    let new = new.map(|route| {
-        div()
-            .id(SharedString::from(format!("new-{}", kind.kind)))
-            .size(rems(1.375))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(radius::TAG)
-            .cursor_pointer()
-            .hover(|style| style.bg(t.selected))
-            .child(icon(Icon::Plus, IconSize::COMPACT, t.muted))
-            .on_click(cx.listener(move |ws, _, _, cx| {
-                cx.stop_propagation();
-                ws.navigate(route.clone(), cx)
-            }))
-    });
-    let heading = div()
-        .id(SharedString::from(format!("kind-{}", kind.kind)))
-        .flex()
-        .flex_shrink_0()
-        .items_center()
-        .mt(sp(2.))
-        .pt(sp(1.5))
-        .pb(sp(1.5))
-        .px(sp(2.))
-        .rounded(radius::BOX)
-        .cursor_pointer()
-        .typeset(Type::CAPTION)
-        .text_color(if on_page { t.text } else { t.dim })
-        .hover(|style| style.text_color(t.text_soft))
-        .child(div().flex_1().child(kind.title.clone()))
-        .children(new)
-        .on_click(cx.listener(move |ws, _, _, cx| {
-            if let Some(page) = page.clone() {
-                ws.navigate(page, cx)
-            }
-        }));
-    let mut section = div().flex().flex_col().flex_shrink_0().child(heading);
-    let agents: Vec<&crate::catalog::Repo> =
-        ws.catalog.of_kind(&kind.kind).collect();
-    if agents.is_empty() {
-        return section.child(
-            div()
-                .px(sp(2.5))
-                .py(sp(1.5))
+                .py(sp(2.))
                 .typeset(Type::CAPTION)
                 .text_color(t.muted)
-                .child(kind.empty.clone()),
-        );
-    }
-    let current = ws.current().map(|run| ws.listed_as(run).clone());
-    let on_run = matches!(ws.route, Route::Run(_) | Route::Home);
-    for repo in agents {
-        let name = repo.name.clone();
-        let open = ws.open_agents.contains(&name);
-        let active = on_run
-            && repo.main.is_some()
-            && current.as_ref() == repo.main.as_ref();
-        let end = kind_row_end(ws, repo, Type::MICRO, t, cx);
-        let fold = {
-            let name = name.clone();
+                .child("No repositories yet.")
+                .into_any_element(),
+        ],
+    };
+    div()
+        .flex()
+        .bg(t.panel)
+        .border_r_1()
+        .border_color(t.hairline)
+        .child(rail(ws, t, cx))
+        .child(
             div()
-                .id(SharedString::from(format!("fold-agent-{name}")))
-                .size(rems(1.))
+                .id("sidebar")
+                .flex_1()
+                .min_w(rems(0.))
+                .h_full()
                 .flex()
-                .items_center()
-                .justify_center()
-                .child(icon(
-                    if open { Icon::Down } else { Icon::Chevron },
-                    IconSize::TINY,
-                    t.dim,
-                ))
-                .on_click(cx.listener(move |ws, _, _, cx| {
-                    cx.stop_propagation();
-                    ws.toggle_agent_open(&name, cx)
-                }))
-        };
-        let row = div()
-            .id(SharedString::from(format!("agent-{name}")))
+                .flex_col()
+                .pt(sp(3.5))
+                .pb(sp(3.5))
+                .pl(sp(1.5))
+                .pr(sp(1.))
+                .overflow_y_scroll()
+                .children(tree)
+                .child(div().flex_1().min_h(sp(4.5)))
+                .children(foot(ws, t, cx)),
+        )
+}
+
+/// A row's marks, packed at its right edge in their one order.
+pub fn marks(marks: Marks, t: &Theme) -> Option<Div> {
+    let shown = marks.shown();
+    (!shown.is_empty()).then(|| {
+        div()
             .flex()
             .flex_shrink_0()
             .items_center()
-            .gap(sp(2.))
-            .h(rems(2.))
-            .px(sp(2.))
-            .rounded(radius::BOX)
-            .cursor_pointer()
-            .text_color(if active { t.text } else { t.text_soft })
-            .when(active, |row| row.bg(t.raised))
-            .when(!active, |row| row.hover(|style| style.bg(t.card)))
-            .child(fold)
-            .child(agent_mark(&name, 18., t))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(rems(0.))
-                    .truncate()
-                    .when(active, |label| label.font_weight(weight::EMPHASIS))
-                    .child(name.clone()),
+            .gap(sp(1.5))
+            .children(
+                shown
+                    .into_iter()
+                    .map(|(count, state)| counted_mark(count, state, t)),
             )
-            .children(end)
-            .on_click({
-                let name = name.clone();
-                cx.listener(move |ws, _, _, cx| ws.open_agent(&name, cx))
-            });
-        section = section.child(row);
-        if !open {
-            continue;
-        }
-        let mut body = div()
-            .flex()
-            .flex_col()
-            .gap(sp(0.25))
-            .pl(sp(6.5))
-            .pb(sp(1.5));
-        let at = AtRepo { repo: name.clone() };
-        body = body.children(
-            ws.drawn(points::KIND_ROW_LINE, &at, cx)
-                .into_iter()
-                .map(|line| {
-                    div()
-                        .py(sp(0.5))
-                        .px(sp(2.))
-                        .typeset(Type::CAPTION)
-                        .text_color(t.dim)
-                        .child(line)
-                }),
-        );
-        // Its row stands for its main chat: what is under it is the
-        // agent's crew.
-        if let Some(rows) = ws.kind_rows(&name) {
-            let tree: Vec<TreeRow<'_>> = ws
-                .repo_tree(&rows)
-                .into_iter()
-                .filter(|row| {
-                    !matches!(row, TreeRow::Run { run, .. }
-                        if repo.main.as_ref() == Some(&run.id))
-                })
-                .collect();
-            if !tree.is_empty() {
-                body = body.child(
-                    div()
-                        .px(sp(2.))
-                        .pt(sp(1.))
-                        .typeset(Type::CAPTION)
-                        .text_color(t.dim)
-                        .child("Sub-agents"),
-                );
-            }
-            for row in tree {
-                body = match row {
-                    TreeRow::Run { run, depth, folded } => {
-                        let active =
-                            on_run && current.as_ref() == Some(&run.id);
-                        body.child(run_row(
-                            ws,
-                            run,
-                            active,
-                            depth.saturating_sub(1),
-                            folded,
-                            t,
-                            cx,
-                        ))
-                    }
-                    TreeRow::Child { child, depth, .. } => {
-                        body.child(child_row(
-                            ws,
-                            &row,
-                            child,
-                            depth.saturating_sub(1),
-                            t,
-                            cx,
-                        ))
-                    }
-                };
-            }
-        }
-        section = section.child(body);
-    }
-    section
+    })
 }
 
-/// Where a repository of a kind stands, on its row's end: `working`
-/// while its main chat is, else what its plugins say (`KIND_ROW_END`).
-fn kind_row_end(
-    ws: &Workspace,
-    repo: &crate::catalog::Repo,
-    size: Type,
+/// A row of the tree: its words, then whatever the caller packs at its
+/// right edge. The one the screen is on is on a flat band.
+fn row(
+    id: impl Into<SharedString>,
+    label: impl Into<SharedString>,
+    ink: Hsla,
+    on: bool,
     t: &Theme,
-    cx: &mut Context<Workspace>,
-) -> Vec<AnyElement> {
-    let live = repo
-        .main
-        .as_ref()
-        .and_then(|id| ws.run(id))
-        .is_some_and(|main| main.status.is_live());
-    if live {
-        return vec![
-            status_tag("working", t.roles.live, size).into_any_element(),
-        ];
-    }
-    let at = AtRepo {
-        repo: repo.name.clone(),
-    };
-    ws.drawn(points::KIND_ROW_END, &at, cx)
-}
-
-/// A word on a small tinted pill: an agent's `working`, `paused`.
-fn status_tag(text: &'static str, color: gpui::Hsla, size: Type) -> Div {
+) -> Stateful<Div> {
     div()
-        .flex_shrink_0()
-        .px(sp(1.75))
-        .rounded(radius::FULL)
-        .border_1()
-        .border_color(color.opacity(0.4))
-        .bg(color.opacity(0.1))
-        .typeset(size)
-        .text_color(color)
-        .child(text)
-}
-
-/// A heading in the sidebar, with an action at its end.
-fn section(title: &str, action: Option<AnyElement>, t: &Theme) -> Div {
-    div()
-        .flex()
-        .flex_shrink_0()
-        .items_center()
-        .pt(sp(3.5))
-        .pb(sp(1.5))
-        .px(sp(2.))
-        .typeset(Type::CAPTION)
-        .text_color(t.dim)
-        .child(div().flex_1().child(title.to_owned()))
-        .children(action)
-}
-
-/// A repository in the sidebar's tree: its row, then, when open, what
-/// plugins list under it, and its runs.
-fn repo_group(
-    ws: &Workspace,
-    rows: RepoRows<'_>,
-    t: &Theme,
-    cx: &mut Context<Workspace>,
-) -> impl IntoElement {
-    let name = rows.repo.name.clone();
-    let menu = ws.repo_menu.as_deref() == Some(name.as_str());
-    let hovered = menu || ws.hovered_repo.as_deref() == Some(name.as_str());
-    let need_you = ws.need_you(&name);
-    let on_page = super::screens::repo::owner(ws, &ws.route).as_deref()
-        == Some(name.as_str());
-    let action = |id: &'static str, glyph: Option<Icon>, t: &Theme| {
-        div()
-            .id(id)
-            .size(rems(1.5))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(radius::TAG)
-            .key(t)
-            .text_color(t.text_soft)
-            .cursor_pointer()
-            .hover(|style| style.border_color(t.border_strong))
-            .map(|button| match glyph {
-                Some(glyph) => {
-                    button.child(icon(glyph, IconSize::COMPACT, t.text_soft))
-                }
-                None => button.child("···"),
-            })
-    };
-    let head = div()
-        .id(SharedString::from(format!("repo-{name}")))
+        .id(id.into())
         .flex()
         .flex_shrink_0()
         .items_center()
         .gap(sp(2.))
-        .h(rems(2.))
+        .h(rems(1.75))
         .px(sp(2.))
-        .rounded(radius::BOX)
         .cursor_pointer()
-        .text_color(if rows.open { t.text } else { t.text_soft })
-        .when(on_page, |row| row.bg(t.raised))
-        .when(hovered && !on_page, |row| row.bg(t.card))
-        // The chevron folds the repository; the rest of the row opens
-        // its page.
-        .child(
-            div()
-                .id(SharedString::from(format!("fold-{name}")))
-                .size(rems(1.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(icon(
-                    if rows.open { Icon::Down } else { Icon::Chevron },
-                    IconSize::TINY,
-                    t.dim,
-                ))
-                .on_click({
-                    let name = name.clone();
-                    cx.listener(move |ws, _, _, cx| {
-                        cx.stop_propagation();
-                        ws.toggle_repo_open(&name, cx)
-                    })
-                }),
-        )
-        .child(super::repo_mark(rows.repo, 18., t))
+        .text_color(if on { t.bright } else { ink })
+        .when(on, |row| row.pressed(t))
+        .when(!on, |row| row.hover(|style| style.text_color(t.bright)))
         .child(
             div()
                 .flex_1()
                 .min_w(rems(0.))
                 .truncate()
-                .when(rows.open, |label| label.font_weight(weight::EMPHASIS))
-                .child(name.clone()),
+                .child(label.into()),
         )
-        .map(|row| {
-            if hovered {
-                let (new, more) = (name.clone(), name.clone());
-                row.child(action("repo-new", Some(Icon::Plus), t).on_click(
-                    cx.listener(move |ws, _, window, cx| {
-                        cx.stop_propagation();
-                        ws.new_run_in(&new, window, cx)
-                    }),
-                ))
-                .child(action("repo-more", None, t).on_click(cx.listener(
-                    move |ws, _, _, cx| {
-                        cx.stop_propagation();
-                        ws.toggle_repo_menu(&more, cx)
-                    },
-                )))
-            } else {
-                let branch = rows
-                    .repo
-                    .trunk
-                    .clone()
-                    .unwrap_or_else(|| "main".to_owned());
-                row.when(need_you > 0, |row| {
-                    row.child(need_you_pill(need_you, Type::MICRO, t))
-                })
-                .map(|row| {
-                    if rows.open {
-                        let ahead = ws.unpushed(&name).map(|(ahead, _)| ahead);
-                        row.child(mono(branch, Type::MICRO, t.roles.branch))
-                            .when_some(ahead, |row, ahead| {
-                                row.child(mono(
-                                    format!("↑{ahead}"),
-                                    Type::MICRO,
-                                    t.roles.waiting,
-                                ))
-                            })
-                    } else {
-                        row.child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(sp(1.5))
-                                .typeset(Type::CAPTION)
-                                .text_color(t.dim)
-                                .when(rows.live > 0, |count| {
-                                    count.child(dot(t.roles.live, 6.))
-                                })
-                                .child(rows.total.to_string()),
-                        )
-                    }
-                })
-            }
-        })
-        .on_hover({
-            let name = name.clone();
-            cx.listener(move |ws, hovered: &bool, _, cx| {
-                ws.hover_repo(&name, *hovered, cx)
-            })
-        })
-        .on_click({
-            let name = name.clone();
-            cx.listener(move |ws, _, _, cx| ws.open_repo_page(&name, cx))
-        });
-
-    let group = div()
-        .flex()
-        .flex_col()
-        .flex_shrink_0()
-        .child(head)
-        .when(menu, |group| group.child(repo_menu(ws, &name, t, cx)));
-    if !rows.open {
-        return group;
-    }
-
-    // A sub-agent that ended is not listed: its main chat stands for it.
-    let current = ws.current().map(|run| ws.listed_as(run).clone());
-    let on_run = matches!(ws.route, Route::Run(_) | Route::Home);
-
-    let mut body = div()
-        .flex()
-        .flex_col()
-        .gap(sp(0.25))
-        .pl(sp(6.5))
-        .pt(sp(0.5))
-        .pb(sp(1.5));
-    // What plugins keep for the repository is on its page; the tree
-    // lists its runs.
-    for row in ws.repo_tree(&rows) {
-        body = match row {
-            TreeRow::Run { run, depth, folded } => {
-                let active = on_run && current.as_ref() == Some(&run.id);
-                body.child(run_row(ws, run, active, depth, folded, t, cx))
-            }
-            TreeRow::Child { child, depth, .. } => {
-                body.child(child_row(ws, &row, child, depth, t, cx))
-            }
-        };
-    }
-    if rows.older > 0 {
-        let name = name.clone();
-        body = body.child(
-            div()
-                .typeset(Type::CAPTION)
-                .text_color(t.dim)
-                .hover(|style| style.text_color(t.text_soft))
-                .child(format!("{} older runs", rows.older))
-                .id(SharedString::from(format!("older-{name}")))
-                .h(rems(1.625))
-                .flex()
-                .items_center()
-                .pl(sp(5.5))
-                .cursor_pointer()
-                .on_click(cx.listener(move |ws, _, _, cx| {
-                    ws.show_older_runs(&name, cx)
-                })),
-        );
-    }
-    group.child(body)
 }
 
-/// How many of a repository's chats need the person: they ask, would
-/// conflict, or are ready to land.
-fn need_you_pill(count: usize, size: Type, t: &Theme) -> Div {
-    div()
-        .flex_shrink_0()
-        .px(sp(1.75))
-        .rounded(radius::FULL)
-        .border_1()
-        .border_color(t.blue_border)
-        .bg(t.blue.opacity(0.1))
-        .typeset(size)
-        .text_color(t.blue)
-        .child(format!("{count} need you"))
+/// Small print at a row's right edge: a key, a count.
+fn meta(text: impl Into<SharedString>, t: &Theme) -> Div {
+    mono(text, Type::CAPTION, t.dim).flex_shrink_0()
 }
 
-/// A child the workspace has no conversation for: a fork opens the
-/// comparison with its run.
-fn child_row(
-    ws: &Workspace,
-    row: &TreeRow<'_>,
-    child: &crate::view::ChildRun,
-    depth: usize,
-    t: &Theme,
-    cx: &mut Context<Workspace>,
-) -> impl IntoElement {
-    let route = row.route();
-    let active = route.as_ref() == Some(&ws.route);
+/// The room between two groups of the tree's rows.
+fn gap() -> Div {
+    div().h(sp(4.5)).flex_shrink_0()
+}
+
+/// A tree's head: what it is of, in bold, then the caller's small print
+/// or marks.
+fn head(id: impl Into<SharedString>, name: &str, t: &Theme) -> Stateful<Div> {
     div()
-        .id(SharedString::from(format!("child-{}", child.id)))
+        .id(id.into())
         .flex()
         .flex_shrink_0()
         .items_center()
         .gap(sp(2.))
         .h(rems(2.125))
-        .pl(sp(indent(depth)))
-        .pr(sp(2.5))
-        .rounded(radius::CONTROL)
-        .text_color(t.text_soft)
-        .when(active, |row| row.pressed(t))
-        .child(icon(
-            match child.kind {
-                ChildKind::SubAgent => Icon::SubAgent,
-                ChildKind::Fork => Icon::Fork,
-            },
-            IconSize::SMALL,
-            t.blue,
-        ))
-        .child(div().flex_1().truncate().child(child.title.clone()))
-        .when_some(route, |row, route| {
-            row.cursor_pointer()
-                .hover(|style| style.bg(gpui::white().opacity(0.03)))
-                .on_click(cx.listener(move |ws, _, _, cx| {
-                    ws.navigate(route.clone(), cx)
-                }))
+        .px(sp(2.))
+        .child(
+            div()
+                .flex_1()
+                .min_w(rems(0.))
+                .truncate()
+                .typeset(Type::SUBTITLE)
+                .font_weight(weight::STRONG)
+                .text_color(t.bright)
+                .child(name.to_owned()),
+        )
+}
+
+/// A row `depth` levels under another, on the thin lines that tie it to
+/// it: one down the parent's left edge, as far as the row's middle when
+/// it is the `last` under it, and a tick across to the row.
+fn nested(
+    depth: usize,
+    last: bool,
+    t: &Theme,
+    row: impl IntoElement,
+) -> AnyElement {
+    if depth == 0 {
+        return row.into_any_element();
+    }
+    let depth = depth.min(4) as f32;
+    let at = sp(3.25 + 5.25 * (depth - 1.));
+    div()
+        .relative()
+        .flex()
+        .flex_col()
+        .flex_shrink_0()
+        .pl(sp(5.25 * depth))
+        .child(
+            div()
+                .absolute()
+                .left(at)
+                .top_0()
+                .w(rems(0.0625))
+                .bg(t.border_strong)
+                .map(|line| {
+                    if last {
+                        line.h(rems(0.875))
+                    } else {
+                        line.bottom_0()
+                    }
+                }),
+        )
+        .child(
+            div()
+                .absolute()
+                .left(at)
+                .top(rems(0.875))
+                .w(rems(0.625))
+                .h(rems(0.0625))
+                .bg(t.border_strong),
+        )
+        .child(row)
+        .into_any_element()
+}
+
+/// The rail: Home, with how many things need the person on its corner;
+/// a tile per repository, and one to add another; a tile per agent. Its
+/// foot is kept for the plan's usage, which nothing reports yet.
+fn rail(ws: &Workspace, t: &Theme, cx: &mut Context<Workspace>) -> Div {
+    let of = ws.tree_of();
+    let needs = ws.need_you_everywhere();
+    let home = div()
+        .id("home")
+        .relative()
+        .w(rems(2.5))
+        .h(rems(2.25))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .child(logo(t, 26.))
+        .when(needs > 0, |home| {
+            home.child(
+                mono(
+                    needs.to_string(),
+                    Type::MICRO.sized(10.5),
+                    t.roles.on_primary,
+                )
+                .absolute()
+                .top(rems(-0.3125))
+                .right(rems(-0.3125))
+                .min_w(rems(1.0625))
+                .h(rems(1.0625))
+                .px(sp(0.75))
+                .flex()
+                .items_center()
+                .justify_center()
+                .border_2()
+                .border_color(t.panel)
+                .bg(t.roles.live)
+                .font_weight(weight::STRONG),
+            )
+        })
+        .on_click(cx.listener(|ws, _, _, cx| ws.navigate(Route::Home, cx)));
+    let line = || {
+        div()
+            .w(rems(1.625))
+            .h(rems(0.0625))
+            .flex_shrink_0()
+            .bg(t.border)
+    };
+
+    let repos: Vec<AnyElement> = ws
+        .catalog
+        .listed()
+        .map(|repo| {
+            let name = repo.name.clone();
+            let current = of == Some(TreeOf::Repo(name.clone()));
+            let menu = ws.repo_menu.as_deref() == Some(name.as_str());
+            let (choose, more) = (name.clone(), name.clone());
+            let square = tile(
+                format!("tile-{name}"),
+                repo.letter(),
+                t.mark(&name),
+                current,
+                ws.need_you(&name) > 0,
+                t,
+            )
+            .on_click(
+                cx.listener(move |ws, _, _, cx| ws.choose_repo(&choose, cx)),
+            )
+            // The other button opens its menu.
+            .on_mouse_down(
+                gpui::MouseButton::Right,
+                cx.listener(move |ws, _, _, cx| ws.toggle_repo_menu(&more, cx)),
+            );
+            div()
+                .flex()
+                .flex_shrink_0()
+                .child(square)
+                .when(menu, |tile| tile.child(repo_menu(ws, &name, t, cx)))
+                .into_any_element()
+        })
+        .collect();
+
+    let add = div()
+        .id("add-repo")
+        .size(rems(2.25))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(radius::SELECTED)
+        .border_1()
+        .border_dashed()
+        .border_color(t.border_strong)
+        .typeset(Type::LEAD.mono())
+        .text_color(t.dim)
+        .cursor_pointer()
+        .hover(|style| style.text_color(t.text))
+        .child("+")
+        .on_click(cx.listener(|ws, _, _, cx| ws.pick_repos(cx)));
+
+    // The repositories of the kinds plugins make: the agents.
+    let kinds: Vec<(&'static str, RepoKind)> = ws
+        .repo_kinds()
+        .into_iter()
+        .filter(|(_, kind)| kind.place == KindPlace::Section)
+        .collect();
+    let mut agents: Vec<AnyElement> = Vec::new();
+    for (plugin, kind) in &kinds {
+        for repo in ws.catalog.of_kind(&kind.kind) {
+            let name = repo.name.clone();
+            let current = of == Some(TreeOf::Agent(name.clone()));
+            let pip = ws.agent_waits(&name) > 0 || ws.need_you(&name) > 0;
+            let open = name.clone();
+            agents.push(
+                tile(
+                    format!("tile-{name}"),
+                    repo.letter(),
+                    t.roles.agent,
+                    current,
+                    pip,
+                    t,
+                )
+                .on_click(
+                    cx.listener(move |ws, _, _, cx| ws.open_agent(&open, cx)),
+                )
+                .into_any_element(),
+            );
+        }
+        // With none yet, the way to the kind's own page.
+        if ws.catalog.of_kind(&kind.kind).next().is_none()
+            && let Some(page) = ws.kind_route(plugin, &kind.page)
+        {
+            agents.push(
+                div()
+                    .id(SharedString::from(format!("kind-{}", kind.kind)))
+                    .size(rems(2.25))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(radius::SELECTED)
+                    .border_1()
+                    .border_dashed()
+                    .border_color(t.border_strong)
+                    .typeset(Type::LEAD.mono())
+                    .text_color(t.roles.agent)
+                    .cursor_pointer()
+                    .child("+")
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        ws.navigate(page.clone(), cx)
+                    }))
+                    .into_any_element(),
+            );
+        }
+    }
+
+    div()
+        .w(rems(RAIL))
+        .h_full()
+        .flex_shrink_0()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(sp(2.5))
+        .pt(sp(4.5))
+        .pb(sp(3.5))
+        .border_r_1()
+        .border_color(t.hairline)
+        .child(home)
+        .child(line())
+        .children(repos)
+        .child(add)
+        .when(!agents.is_empty(), |rail| {
+            rail.child(line()).children(agents)
+        })
+        .child(div().flex_1())
+}
+
+/// A square tile of the rail: a letter on a flat block of `color`. The
+/// one whose tree shows is printed over the offset, and a pip on its
+/// corner says something inside needs the person.
+fn tile(
+    id: String,
+    letter: String,
+    color: Hsla,
+    current: bool,
+    pip: bool,
+    t: &Theme,
+) -> Stateful<Div> {
+    div()
+        .id(SharedString::from(id))
+        .relative()
+        .size(rems(2.25))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(radius::SELECTED)
+        .cursor_pointer()
+        .map(|tile| if current { tile.printed(3., t) } else { tile })
+        .bg(color)
+        .text_color(t.roles.on_primary)
+        .typeset(Type::LEAD.mono())
+        .font_weight(weight::STRONG)
+        .child(letter)
+        .when(pip, |tile| {
+            tile.child(
+                div()
+                    .absolute()
+                    .top(rems(-0.25))
+                    .right(rems(-0.25))
+                    .size(rems(0.6875))
+                    .border_2()
+                    .border_color(t.panel)
+                    .bg(t.roles.live),
+            )
         })
 }
 
-/// A tree row's left padding, `depth` levels in.
-fn indent(depth: usize) -> f32 {
-    2.5 + 4.5 * depth.min(4) as f32
+/// What is the same under every tree: plugins, history, what plugins
+/// list everywhere, and models and accounts.
+fn foot(
+    ws: &Workspace,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Vec<AnyElement> {
+    fn to(
+        row: Stateful<Div>,
+        route: Route,
+        cx: &mut Context<Workspace>,
+    ) -> AnyElement {
+        row.on_click(
+            cx.listener(move |ws, _, _, cx| ws.navigate(route.clone(), cx)),
+        )
+        .into_any_element()
+    }
+    let waiting = ws.catalog.yours_need_you();
+    let yours = ws.yours_route(None);
+    let on_plugins =
+        ws.route == Route::Plugins || yours.as_ref() == Some(&ws.route);
+    let mut rows = vec![
+        to(
+            row("plugins", "plugins", t.text_soft, on_plugins, t)
+                .when(waiting > 0, |row| {
+                    row.child(counted_mark(waiting, State::Asks, t))
+                }),
+            Route::Plugins,
+            cx,
+        ),
+        to(
+            row(
+                "history",
+                "history",
+                t.text_soft,
+                ws.route == Route::History,
+                t,
+            ),
+            Route::History,
+            cx,
+        ),
+    ];
+    // What plugins list there.
+    for (n, entry) in ws
+        .contributions(points::EVERYWHERE, &AtApp)
+        .into_iter()
+        .enumerate()
+    {
+        let Some(route) = ws.link_route(&entry.to, None) else {
+            continue;
+        };
+        rows.push(to(
+            nav_row(format!("everywhere-{n}"), &entry, ws.route == route, t),
+            route,
+            cx,
+        ));
+    }
+    // Sign-ins, keys and the models runs use.
+    rows.push(to(
+        row(
+            "models",
+            "models and accounts",
+            t.text_soft,
+            ws.route == Route::Models,
+            t,
+        ),
+        Route::Models,
+        cx,
+    ));
+    rows
 }
 
-/// A conversation in the tree: an icon in the color of where it stands,
-/// git's way (a draft at work, a pull request to land, a merge once it
-/// landed), its title, and its counts: changes to push or land,
-/// conflicting files, its place in the queue. Its unread replies show
-/// as a count in their place. Hovering it offers to close it, unless it
-/// is its repository's main chat or it ended for good. A fork or
-/// sub-agent sits under its run, which folds them away with a chevron
-/// when `folded` is given.
+/// The row of something a plugin lists: its name, then its count as a
+/// mark when it wants attention, else its small print.
+fn nav_row(id: String, entry: &NavEntry, on: bool, t: &Theme) -> Stateful<Div> {
+    let row = row(id, entry.label.to_lowercase(), t.text_soft, on, t);
+    match (&entry.badge, &entry.detail) {
+        (Some((badge, tone)), _) => row.child(counted_mark(
+            badge.trim().parse().unwrap_or(1),
+            if *tone == Tone::Danger {
+                State::Failing
+            } else {
+                State::Asks
+            },
+            t,
+        )),
+        (None, Some(detail)) => row.child(meta(detail.clone(), t)),
+        (None, None) => row,
+    }
+}
+
+/// The route of a link a plugin lists under `repo`: its page, about
+/// that repository.
+fn repo_link(ws: &Workspace, link: &Link, repo: &str) -> Option<Route> {
+    let mut link = link.clone();
+    if let Some(value) = link.params.get_mut("repo")
+        && value.is_empty()
+    {
+        *value = repo.to_owned();
+    }
+    ws.link_route(&link, None)
+}
+
+/// The rows of what plugins keep for `repo`: memory, constitution, MCP
+/// servers, each with its count.
+fn repo_pages(
+    ws: &Workspace,
+    repo: &str,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Vec<AnyElement> {
+    let at = AtRepo {
+        repo: repo.to_owned(),
+    };
+    ws.contributions(points::SIDEBAR_REPO, &at)
+        .into_iter()
+        .enumerate()
+        .filter_map(|(n, entry)| {
+            let route = repo_link(ws, &entry.to, repo)?;
+            Some(
+                nav_row(format!("nav-{n}"), &entry, ws.route == route, t)
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        ws.navigate(route.clone(), cx)
+                    }))
+                    .into_any_element(),
+            )
+        })
+        .collect()
+}
+
+/// A repository's tree: its name with its branch and how far ahead of
+/// the forge it is, a new run and search, its chats with what is under
+/// each, then what plugins keep for it.
+fn repo_tree(
+    ws: &Workspace,
+    name: &str,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Vec<AnyElement> {
+    let repo = ws.repo_named(name);
+    let branch = repo.trunk.clone().unwrap_or_else(|| "main".to_owned());
+    let ahead = ws.unpushed(name).map(|(ahead, _)| ahead);
+    let hovered = ws.hovered_repo.as_deref() == Some(name)
+        || ws.repo_menu.as_deref() == Some(name);
+    let listed = ws.catalog.is_listed(name);
+    let (page, hover, more) =
+        (name.to_owned(), name.to_owned(), name.to_owned());
+    let mut rows = vec![
+        head(format!("repo-{name}"), name, t)
+            .cursor_pointer()
+            .child(mono(branch, Type::CAPTION, t.roles.branch))
+            .when_some(ahead, |head, ahead| {
+                head.child(mono(format!("↑{ahead}"), Type::CAPTION, t.blue))
+            })
+            // Its menu, while the pointer is on it.
+            .when(hovered && listed, |head| {
+                head.child(
+                    div()
+                        .id("repo-more")
+                        .flex_shrink_0()
+                        .text_color(t.dim)
+                        .hover(|style| style.text_color(t.bright))
+                        .child("···")
+                        .on_click(cx.listener(move |ws, _, _, cx| {
+                            cx.stop_propagation();
+                            ws.toggle_repo_menu(&more, cx)
+                        })),
+                )
+            })
+            .on_hover(cx.listener(move |ws, hovered: &bool, _, cx| {
+                ws.hover_repo(&hover, *hovered, cx)
+            }))
+            .on_click(
+                cx.listener(move |ws, _, _, cx| ws.open_repo_page(&page, cx)),
+            )
+            .into_any_element(),
+    ];
+    if listed {
+        rows.push(
+            row("new-run", "new run", t.blue, false, t)
+                .child(meta("ctrl n", t))
+                .on_click(
+                    cx.listener(|ws, _, window, cx| {
+                        ws.start_new_run(window, cx)
+                    }),
+                )
+                .into_any_element(),
+        );
+    }
+    rows.push(
+        row("search-row", "search", t.dim, false, t)
+            .child(meta("ctrl k", t))
+            .on_click(
+                cx.listener(|ws, _, window, cx| ws.open_search(window, cx)),
+            )
+            .into_any_element(),
+    );
+    rows.push(gap().into_any_element());
+    if let Some(chats) = ws.rows_named(name) {
+        rows.extend(chat_rows(ws, &chats, 0, None, t, cx));
+        if chats.older > 0 {
+            let name = name.to_owned();
+            rows.push(
+                row(
+                    format!("older-{name}"),
+                    count(chats.older, "older run"),
+                    t.dim,
+                    false,
+                    t,
+                )
+                .on_click(cx.listener(move |ws, _, _, cx| {
+                    ws.show_older_runs(&name, cx)
+                }))
+                .into_any_element(),
+            );
+        }
+    }
+    let pages = repo_pages(ws, name, t, cx);
+    if !pages.is_empty() {
+        rows.push(gap().into_any_element());
+        rows.extend(pages);
+    }
+    rows
+}
+
+/// The rows of a repository's chats, each under the lines of what it
+/// came from. `shift` levels are taken off every row, and `skip` is
+/// left out: an agent's tree leaves out its conversation, whose row
+/// stands above them.
+fn chat_rows(
+    ws: &Workspace,
+    chats: &RepoRows<'_>,
+    shift: usize,
+    skip: Option<&heiko_agent::tool::RunId>,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Vec<AnyElement> {
+    let tree: Vec<TreeRow<'_>> = ws
+        .repo_tree(chats)
+        .into_iter()
+        .filter(|row| {
+            !matches!(row, TreeRow::Run { run, .. } if Some(&run.id) == skip)
+        })
+        .collect();
+    let depth = |row: &TreeRow<'_>| match row {
+        TreeRow::Run { depth, .. } | TreeRow::Child { depth, .. } => *depth,
+    };
+    let current = ws.shown_run().map(|run| ws.listed_as(run).clone());
+    let on_run = matches!(ws.route, Route::Run(_));
+    tree.iter()
+        .enumerate()
+        .map(|(n, row)| {
+            let level = depth(row);
+            // The last under its parent: what follows is no deeper
+            // than the parent.
+            let last = tree[n + 1..]
+                .iter()
+                .map(depth)
+                .find(|next| *next <= level)
+                .is_none_or(|next| next < level);
+            let shown = level.saturating_sub(shift);
+            match row {
+                TreeRow::Run { run, folded, .. } => {
+                    let active = on_run && current.as_ref() == Some(&run.id);
+                    nested(
+                        shown,
+                        last,
+                        t,
+                        run_row(ws, run, active, shown, *folded, t, cx),
+                    )
+                }
+                TreeRow::Child { child, .. } => {
+                    nested(shown, last, t, child_row(ws, row, child, t, cx))
+                }
+            }
+        })
+        .collect()
+}
+
+/// A conversation in the tree: its title, and its marks. One with
+/// replies not read yet is in bold. Hovering it offers to close it,
+/// unless it is its repository's main chat, a sub-agent, or ended for
+/// good. Choosing the one on screen folds what is under it away, or
+/// shows it again.
 fn run_row(
     ws: &Workspace,
     run: &RunView,
@@ -926,237 +751,250 @@ fn run_row(
     folded: Option<bool>,
     t: &Theme,
     cx: &mut Context<Workspace>,
-) -> impl IntoElement {
+) -> Stateful<Div> {
     let route = Route::Run(run.id.clone());
     let hovered = ws.hovered_run.as_ref() == Some(&run.id);
     let unread = ws.unread(run);
+    let ended = ws.has_ended(run);
+    // A sub-agent is not closed: it leaves the list as it ends, and
+    // the crew's Stop stops it.
+    let sub_agent = matches!(run.origin, Origin::SubAgent { .. });
+    let closes = hovered && !ended && !ws.is_main(&run.id) && !sub_agent;
+    let ink = if ended {
+        t.dim
+    } else if depth == 0 || unread > 0 {
+        t.text
+    } else {
+        t.text_soft
+    };
     let (hover_id, close_id, fold_id) =
         (run.id.clone(), run.id.clone(), run.id.clone());
-    let attention = ws.attention(run);
-    let ended = matches!(attention, Attention::Landed | Attention::Dropped)
-        || ws.has_ended(run);
-    let note = ws.run_rows(run).into_iter().next();
-    let is_main = ws.is_main(&run.id);
-    let unpushed = is_main
-        .then(|| ws.main_repo(&run.id))
-        .flatten()
-        .and_then(|repo| ws.unpushed(repo))
-        .map_or(0, |(ahead, _)| ahead);
-    let (glyph, ink) = state_icon(&attention, run, is_main, unpushed, t);
-    let counts = counts(&attention, run, note.as_ref(), unpushed, t);
-    // Main's crew at work, counted while main is folded: unfolded, each
-    // is a row under it.
-    let crew = if is_main && folded == Some(true) {
-        ws.working_crew(&run.id)
-    } else {
-        0
-    };
-    let strong = active || unread > 0 || attention.needs_you();
-    div()
-        .id(SharedString::from(format!("run-{}", run.id)))
-        .flex()
-        .flex_shrink_0()
-        .items_center()
-        .gap(sp(2.))
-        .h(rems(1.875))
-        .pl(sp(2. + 4. * depth.min(4) as f32))
-        .pr(sp(2.))
-        .rounded(radius::BOX)
-        .cursor_pointer()
-        .text_color(if ended {
-            t.dim
-        } else if active || strong {
-            t.text
-        } else {
-            t.text_soft
-        })
-        .when(active, |row| row.bg(t.raised))
-        .when(!active, |row| row.hover(|style| style.bg(t.card)))
-        .child(icon(
-            glyph,
-            IconSize::SMALL,
-            if ended { t.dim } else { ink },
-        ))
-        .child(
-            div()
-                .flex_1()
-                .min_w(rems(0.))
-                .truncate()
-                .when(strong, |title| title.font_weight(weight::EMPHASIS))
-                .child(run.title.clone()),
-        )
-        .when(crew > 0, |row| {
-            row.child(
-                div()
-                    .flex()
-                    .flex_shrink_0()
-                    .items_center()
-                    .gap(sp(0.75))
-                    .child(icon(Icon::SubAgent, IconSize::TINY, t.roles.live))
-                    .child(mono(crew.to_string(), Type::CAPTION, t.roles.live)),
-            )
-        })
-        .when_some(folded, |row, folded| {
-            row.child(
-                div()
-                    .id("fold-run")
-                    .size(rems(1.125))
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(radius::TAG)
-                    .hover(|style| style.bg(t.border_strong))
-                    .child(icon(
-                        if folded { Icon::Chevron } else { Icon::Down },
-                        IconSize::TINY,
-                        t.dim,
-                    ))
-                    .on_click(cx.listener(move |ws, _, _, cx| {
-                        cx.stop_propagation();
-                        ws.toggle_fold(&fold_id, cx)
-                    })),
-            )
+    row(format!("run-{}", run.id), run.title.clone(), ink, active, t)
+        .when(unread > 0 && !active, |row| {
+            row.font_weight(weight::EMPHASIS)
         })
         .map(|row| {
-            // A sub-agent is not closed: it leaves the list as it ends,
-            // and the tray's Stop stops it.
-            let sub_agent = matches!(run.origin, Origin::SubAgent { .. });
-            if hovered && !ended && !ws.is_main(&run.id) && !sub_agent {
+            if closes {
                 row.child(
                     div()
                         .id("close-run")
                         .size(rems(1.125))
+                        .flex_shrink_0()
                         .flex()
                         .items_center()
                         .justify_center()
-                        .rounded(radius::TAG)
-                        .hover(|style| style.bg(t.border_strong))
                         .child(icon(Icon::Close, IconSize::TINY, t.text_soft))
                         .on_click(cx.listener(move |ws, _, _, cx| {
                             cx.stop_propagation();
                             ws.close_run(&close_id, cx)
                         })),
                 )
-            } else if unread > 0 {
-                row.child(super::unread_count(unread, t))
             } else {
-                row.child(
-                    div().flex().gap(sp(1.5)).children(
-                        counts.into_iter().map(|(count, ink)| {
-                            mono(count, Type::CAPTION, ink)
-                        }),
-                    ),
-                )
+                row.children(marks(ws.run_marks(run, folded == Some(true)), t))
             }
         })
         .on_hover(cx.listener(move |ws, hovered: &bool, _, cx| {
             ws.hover_run(&hover_id, *hovered, cx)
         }))
-        .on_click(
+        .on_click(cx.listener(move |ws, _, _, cx| {
+            if active && folded.is_some() {
+                ws.toggle_fold(&fold_id, cx)
+            } else {
+                ws.navigate(route.clone(), cx)
+            }
+        }))
+}
+
+/// A child the workspace has no conversation for: a fork opens the
+/// comparison with its run.
+fn child_row(
+    ws: &Workspace,
+    row_of: &TreeRow<'_>,
+    child: &ChildRun,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Stateful<Div> {
+    let route = row_of.route();
+    let active = route.as_ref() == Some(&ws.route);
+    row(
+        format!("child-{}", child.id),
+        child.title.clone(),
+        t.text_soft,
+        active,
+        t,
+    )
+    .children(status_state(&child.status).map(|state| mark(state, t)))
+    .when_some(route, |row, route| {
+        row.on_click(
             cx.listener(move |ws, _, _, cx| ws.navigate(route.clone(), cx)),
         )
+    })
 }
 
-/// The icon for where a run stands, and its color: git's, for what is
-/// git's (a branch for main, at work or at rest; a draft at work, a pull
-/// request to land, a merge or a closed one at the end), else what it
-/// needs of the person.
-/// A run at rest is drawn as what it is: a fork, a sub-agent, a chat.
-pub fn state_icon(
-    attention: &Attention,
-    run: &RunView,
-    is_main: bool,
-    unpushed: u32,
+/// The mark a status alone shows: working, failing or at a limit. One
+/// that waits on the person's next message has none.
+fn status_state(status: &RunStatus) -> Option<State> {
+    match status {
+        RunStatus::Planning | RunStatus::Running => Some(State::Working),
+        RunStatus::Finished(StopReason::Error(_)) => Some(State::Failing),
+        RunStatus::Finished(StopReason::Limit(_)) => Some(State::Limit),
+        RunStatus::Finished(_) | RunStatus::Interrupted => None,
+    }
+}
+
+/// An agent's marks: its conversation's, its sub-agents at work with
+/// it, and what it left for the person as questions.
+fn agent_marks(ws: &Workspace, repo: &Repo) -> Marks {
+    let own = repo
+        .main
+        .as_ref()
+        .and_then(|id| ws.run(id))
+        .map(|main| ws.run_marks(main, true))
+        .unwrap_or_default();
+    own.and(Marks {
+        asks: ws.agent_waits(&repo.name),
+        ..Marks::default()
+    })
+}
+
+/// An agent's tree (ADR 0037): its name and marks, the way to all
+/// agents, its conversation with its sub-agents at work under it, what
+/// plugins keep for it, and its repository.
+fn agent_tree(
+    ws: &Workspace,
+    name: &str,
     t: &Theme,
-) -> (Icon, gpui::Hsla) {
-    match attention {
-        // Main is the branch others land on, whatever it does.
-        Attention::Working { .. } if is_main => (Icon::Branch, t.roles.live),
-        Attention::Working { .. }
-            if matches!(run.origin, Origin::SubAgent { .. }) =>
-        {
-            (Icon::SubAgent, t.roles.live)
-        }
-        Attention::Working { .. } => (Icon::Draft, t.roles.live),
-        Attention::Asks { .. } => (Icon::Question, t.roles.waiting),
-        Attention::ReadyToLand { .. } => (Icon::PullRequest, t.green),
-        Attention::WouldConflict { .. } | Attention::ConflictsOnMain { .. } => {
-            (Icon::Warning, t.red)
-        }
-        Attention::Queued(queued) if queued.needs_confirmation => {
-            (Icon::Clock, t.roles.waiting)
-        }
-        Attention::Queued(_) => (Icon::Clock, t.dim),
-        Attention::Interrupted => (Icon::Interrupted, t.dim),
-        Attention::Failed => (Icon::Failed, t.red),
-        Attention::Landed => (Icon::Merge, t.change),
-        Attention::Dropped => (Icon::Closed, t.dim),
-        Attention::Idle if is_main => (
-            Icon::Branch,
-            if unpushed > 0 { t.roles.waiting } else { t.dim },
-        ),
-        Attention::Idle => match run.origin {
-            Origin::Fork { .. } => (Icon::Fork, t.dim),
-            Origin::SubAgent { .. } => (Icon::SubAgent, t.dim),
-            Origin::Root => (Icon::Chat, t.dim),
-        },
+    cx: &mut Context<Workspace>,
+) -> Vec<AnyElement> {
+    let repo = ws.repo_named(name);
+    let mut rows = vec![
+        head(format!("agent-{name}"), name, t)
+            .children(marks(agent_marks(ws, repo), t))
+            .into_any_element(),
+    ];
+    // Its kind's page lists them all.
+    let kind = ws.repo_kinds().into_iter().find_map(|(plugin, kind)| {
+        (repo.kind.as_deref() == Some(kind.kind.as_str()))
+            .then(|| Some((ws.kind_route(plugin, &kind.page)?, kind)))
+            .flatten()
+    });
+    if let Some((page, kind)) = kind {
+        rows.push(
+            row(
+                format!("kind-{}", kind.kind),
+                kind.title.to_lowercase(),
+                t.blue,
+                false,
+                t,
+            )
+            .on_click(
+                cx.listener(move |ws, _, _, cx| ws.navigate(page.clone(), cx)),
+            )
+            .into_any_element(),
+        );
     }
+    rows.push(gap().into_any_element());
+    let main = repo.main.as_ref().and_then(|id| ws.run(id));
+    let current = ws.shown_run().map(|run| ws.listed_as(run).clone());
+    let active = matches!(ws.route, Route::Run(_))
+        && main.is_some_and(|main| current.as_ref() == Some(&main.id));
+    let open = name.to_owned();
+    rows.push(
+        row("conversation", "conversation", t.text, active, t)
+            .children(main.and_then(|main| marks(ws.run_marks(main, false), t)))
+            .on_click(cx.listener(move |ws, _, _, cx| ws.open_agent(&open, cx)))
+            .into_any_element(),
+    );
+    // Its row stands for its main chat: what is under it is its crew.
+    if let Some(chats) = ws.rows_named(name) {
+        // With no conversation yet, nothing is under it.
+        let shift = usize::from(main.is_none());
+        rows.extend(chat_rows(
+            ws,
+            &chats,
+            shift,
+            main.map(|main| &main.id),
+            t,
+            cx,
+        ));
+    }
+    let pages = repo_pages(ws, name, t, cx);
+    rows.push(gap().into_any_element());
+    rows.extend(pages);
+    let page = Route::Repo(name.to_owned());
+    rows.push(
+        row(
+            "agent-repo",
+            "its repository",
+            t.text_soft,
+            ws.route == page,
+            t,
+        )
+        .on_click(
+            cx.listener(move |ws, _, _, cx| ws.navigate(page.clone(), cx)),
+        )
+        .into_any_element(),
+    );
+    rows
 }
 
-/// A run's counts, each in its color: main's changes to push, a fork's
-/// changes to land or its conflicting files, its place in the landing
-/// queue, the changes it landed; else what a plugin says of it (a goal
-/// met).
-pub fn counts(
-    attention: &Attention,
-    run: &RunView,
-    note: Option<&heiko_ui_plugin::RowNote>,
-    unpushed: u32,
+/// The tree of a kind's own pages: its title, the way to make one, and
+/// each of its repositories with its marks.
+fn kind_tree(
+    ws: &Workspace,
+    plugin: &str,
+    kind: &RepoKind,
     t: &Theme,
-) -> Vec<(String, gpui::Hsla)> {
-    let files = |n: usize| {
-        if n == 1 {
-            "1 file".to_owned()
-        } else {
-            format!("{n} files")
-        }
-    };
-    let mut out = Vec::new();
-    if unpushed > 0 {
-        out.push((format!("↑{unpushed}"), t.roles.waiting));
+    cx: &mut Context<Workspace>,
+) -> Vec<AnyElement> {
+    let mut rows = vec![
+        head(format!("kind-{}", kind.kind), &kind.title, t).into_any_element(),
+    ];
+    let new = kind.new.as_ref().and_then(|new| ws.kind_route(plugin, new));
+    if let Some(new) = new {
+        rows.push(
+            row(
+                format!("new-{}", kind.kind),
+                format!("new {}", kind.kind),
+                t.blue,
+                ws.route == new,
+                t,
+            )
+            .on_click(
+                cx.listener(move |ws, _, _, cx| ws.navigate(new.clone(), cx)),
+            )
+            .into_any_element(),
+        );
     }
-    match attention {
-        Attention::ReadyToLand { changes } => {
-            out.push((changes.to_string(), t.green));
-        }
-        Attention::WouldConflict { files: names }
-        | Attention::ConflictsOnMain { files: names } => {
-            out.push((files(names.len()), t.red));
-        }
-        Attention::Queued(queued) => {
-            out.push((format!("#{}", queued.position), t.dim));
-        }
-        Attention::Landed => {
-            if let Some(Ending::Landed { changes, .. }) = run.ending
-                && changes > 0
-            {
-                out.push((changes.to_string(), t.dim));
-            }
-        }
-        Attention::Idle => {
-            if let Some(said) = note
-                .and_then(|note| Some((note.count.clone()?, t.tone(note.tone))))
-            {
-                out.push(said);
-            }
-        }
-        _ => {}
+    rows.push(gap().into_any_element());
+    let mut none = true;
+    for repo in ws.catalog.of_kind(&kind.kind) {
+        none = false;
+        let name = repo.name.clone();
+        rows.push(
+            row(format!("agent-{name}"), name.clone(), t.text, false, t)
+                .children(marks(agent_marks(ws, repo), t))
+                .on_click(
+                    cx.listener(move |ws, _, _, cx| ws.open_agent(&name, cx)),
+                )
+                .into_any_element(),
+        );
     }
-    out
+    if none {
+        rows.push(
+            div()
+                .px(sp(2.))
+                .py(sp(1.5))
+                .typeset(Type::CAPTION)
+                .text_color(t.muted)
+                .child(kind.empty.clone())
+                .into_any_element(),
+        );
+    }
+    rows
 }
 
-/// A repository's menu, under its row.
+/// A repository's menu, beside its tile.
 fn repo_menu(
     ws: &Workspace,
     name: &str,
@@ -1165,30 +1003,23 @@ fn repo_menu(
 ) -> impl IntoElement {
     // What plugins keep per repository: their entries, after heiko's.
     let plugins = ws.drawn(
-        heiko_ui_plugin::points::REPO_MENU,
-        &heiko_ui_plugin::points::AtRepo {
+        points::REPO_MENU,
+        &AtRepo {
             repo: name.to_owned(),
         },
         cx,
     );
-    let entry = |id: &'static str, glyph: Icon, label: String, color| {
+    let entry = |id: &'static str, label: String, color: Hsla| {
         div()
             .id(id)
             .debug_selector(|| id.to_owned())
             .flex()
             .items_center()
-            .gap(sp(2.5))
-            .h(rems(2.125))
+            .h(rems(2.))
             .px(sp(2.5))
-            .rounded(radius::CONTROL)
             .cursor_pointer()
             .text_color(color)
             .hover(|style| style.bg(t.selected))
-            .child(icon(
-                glyph,
-                IconSize::BASE,
-                if color == t.red { t.red } else { t.muted },
-            ))
             .child(label)
     };
     let owned = |name: &str| name.to_owned();
@@ -1201,45 +1032,31 @@ fn repo_menu(
         .flex_col()
         .p(sp(1.5))
         .raised(t)
-        .border_1()
         .border_color(t.border_strong)
-        .rounded(radius::LARGE)
+        .lifted(t)
         .child(
-            entry("menu-new", Icon::Plus, format!("New run in {name}"), t.text)
-                .on_click(cx.listener(move |ws, _, window, cx| {
+            entry("menu-new", format!("New run in {name}"), t.text).on_click(
+                cx.listener(move |ws, _, window, cx| {
                     ws.new_run_in(&new, window, cx)
-                })),
+                }),
+            ),
         )
         .child(
-            entry(
-                "menu-update",
-                Icon::Arrow,
-                "Fetch new commits".into(),
-                t.text,
-            )
-            .on_click(
+            entry("menu-update", "Fetch new commits".into(), t.text).on_click(
                 cx.listener(move |ws, _, _, cx| ws.update_repo(&update, cx)),
             ),
         )
         .child(
-            entry("menu-files", Icon::Folder, "Show in files".into(), t.text)
-                .on_click(cx.listener(move |ws, _, _, cx| {
-                    ws.show_in_files(&files, cx)
-                })),
+            entry("menu-files", "Show in files".into(), t.text).on_click(
+                cx.listener(move |ws, _, _, cx| ws.show_in_files(&files, cx)),
+            ),
         )
         .when(!plugins.is_empty(), |menu| {
-            menu.child(div().h(rems(0.0625)).my(sp(1.)).bg(t.border))
-                .children(plugins)
+            menu.child(super::rule(t).my(sp(1.))).children(plugins)
         })
-        .child(div().h(rems(0.0625)).my(sp(1.)).bg(t.border))
+        .child(super::rule(t).my(sp(1.)))
         .child(
-            entry(
-                "menu-remove",
-                Icon::Warning,
-                "Remove from heiko".into(),
-                t.red,
-            )
-            .on_click(
+            entry("menu-remove", "Remove from heiko".into(), t.red).on_click(
                 cx.listener(move |ws, _, _, cx| ws.remove_repo(&remove, cx)),
             ),
         )
@@ -1248,7 +1065,7 @@ fn repo_menu(
     deferred(
         anchored()
             .anchor(Anchor::TopLeft)
-            .offset(point(px(120.), px(2.)))
+            .offset(point(px(10.), px(0.)))
             .snap_to_window_with_margin(px(8.))
             .child(menu),
     )
@@ -1269,11 +1086,7 @@ pub fn status_bar(
     cx: &mut Context<Workspace>,
 ) -> Option<Div> {
     let busy = !matches!(ws.catalog.project, ProjectStatus::Unknown);
-    let activity = ws.drawn(
-        heiko_ui_plugin::points::ACTIVITY,
-        &heiko_ui_plugin::points::AtApp,
-        cx,
-    );
+    let activity = ws.drawn(points::ACTIVITY, &AtApp, cx);
     let jobs = &ws.catalog.jobs;
     if !busy
         && ws.catalog.update.is_none()
@@ -1294,28 +1107,28 @@ pub fn status_bar(
     });
     Some(
         div()
-            .h(rems(1.625))
+            .h(rems(1.75))
             .flex_shrink_0()
             .flex()
             .items_center()
             .gap(sp(4.5))
-            .px(sp(3.5))
-            .chrome(Edge::Bottom, t)
+            .px(sp(5.))
+            .bg(t.panel)
+            .border_t_1()
+            .border_color(t.hairline)
             .font_family(MONO)
             .typeset(Type::MICRO)
-            .text_color(t.muted)
+            .text_color(t.dim)
             .overflow_hidden()
             .children(match &ws.catalog.project {
                 ProjectStatus::Unknown => None,
                 ProjectStatus::Importing(name) => Some(
                     div()
-                        .text_color(t.accent)
+                        .text_color(t.blue)
                         .child(format!("importing {name}…")),
                 ),
                 ProjectStatus::Updating(name) => Some(
-                    div()
-                        .text_color(t.accent)
-                        .child(format!("updating {name}…")),
+                    div().text_color(t.blue).child(format!("updating {name}…")),
                 ),
                 ProjectStatus::Failed(name) => Some(
                     div()
@@ -1342,8 +1155,8 @@ pub fn status_bar(
 }
 
 /// A job going on, in the status bar: its plugin, what it does, how far
-/// it is, and what it does now. Clicking it opens the page it names, or
-/// its plugin's.
+/// it is as ticks, and what it does now. Clicking it opens the page it
+/// names, or its plugin's.
 fn job_item(
     ws: &Workspace,
     job: &heiko_ui_plugin::JobInfo,
@@ -1364,14 +1177,14 @@ fn job_item(
         .child(
             div()
                 .flex_shrink_0()
-                .text_color(t.accent)
+                .text_color(t.text_soft)
                 .child(job.label.clone()),
         )
-        .child(div().w(rems(3.)).flex_shrink_0().child(super::bar(
+        .child(div().w(rems(3.5)).flex_shrink_0().child(super::bar(
             job.fraction,
-            4.,
-            t.accent,
-            t.border,
+            6.,
+            t.blue,
+            t.hairline,
         )))
         .when(job.stopping, |item| {
             item.child(
@@ -1395,83 +1208,112 @@ fn job_item(
     }
 }
 
-/// The phone's header above a run: back, title and status, close,
-/// details.
+/// How far a phone's screens stand in from its edges, in spacing
+/// steps: 18 px.
+const PHONE_MARGIN: f32 = 4.5;
+
+/// The words a run's state reads as on a phone, in its color: at work
+/// with its turn, else its status.
+fn state_words(run: &RunView, t: &Theme) -> (Hsla, SharedString) {
+    if run.ending.is_none() && run.status.is_live() {
+        (t.green, format!("working, turn {}", run.turn).into())
+    } else {
+        super::run_look(run, t)
+    }
+}
+
+/// The phone's header above a run: back and its title, with Push for a
+/// main chat ahead of the forge; then its state in words, and the ways
+/// to its pane, its details and closing it; over a heavy rule.
 pub fn phone_run_bar(
+    ws: &Workspace,
     run: &RunView,
     main: bool,
     pane: bool,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Div {
-    let (color, label) = super::run_look(run, t);
+    let (color, label) = state_words(run, t);
     let id = run.id.clone();
+    // A word to tap, as tall as a finger needs.
+    let word = |id: &'static str, label: &'static str| {
+        div()
+            .id(id)
+            .min_h(rems(2.75))
+            .flex()
+            .items_center()
+            .child(text_link(label, Type::SMALL, t))
+    };
     div()
-        .h(rems(3.5))
         .flex_shrink_0()
         .flex()
-        .items_center()
-        .gap(sp(1.))
-        .px(sp(1.5))
-        .chrome(Edge::Top, t)
-        .child(
-            icon_button("phone-back", Icon::Back, 44., t)
-                .on_click(cx.listener(|ws, _, _, cx| ws.back(cx))),
-        )
+        .flex_col()
+        .mx(sp(PHONE_MARGIN))
+        .pt(sp(2.))
+        .pb(sp(2.5))
+        .border_b_2()
+        .border_color(t.rule)
         .child(
             div()
-                .flex_1()
-                .min_w(rems(0.))
                 .flex()
-                .flex_col()
-                .gap(sp(0.5))
+                .items_center()
+                .gap(sp(1.))
+                .min_h(rems(2.75))
                 .child(
-                    div()
-                        .typeset(Type::LEAD)
-                        .font_weight(weight::STRONG)
-                        .truncate()
-                        .child(run.title.clone()),
+                    icon_button("phone-back", Icon::Back, 44., t)
+                        .ml(sp(-3.))
+                        .on_click(cx.listener(|ws, _, _, cx| ws.back(cx))),
                 )
                 .child(
                     div()
-                        .flex()
-                        .items_center()
-                        .gap(sp(1.5))
-                        .typeset(Type::CAPTION)
-                        .text_color(t.muted)
-                        .child(dot(color, 6.))
-                        .child(label)
-                        .child(mono(
-                            format!(
-                                "· turn {} · {}",
-                                run.turn,
-                                usd(run.usage.cost)
-                            ),
-                            Type::CAPTION,
-                            t.muted,
-                        )),
-                ),
+                        .flex_1()
+                        .min_w(rems(0.))
+                        .truncate()
+                        .typeset(Type::PAGE_TITLE.sized(19.))
+                        .text_color(t.bright)
+                        .child(run.title.clone()),
+                )
+                .children(super::push::header(ws, run, t, cx)),
         )
-        // A repository's main chat stays open.
-        .when(!main, |bar| {
-            bar.child(icon_button("phone-close", Icon::Close, 44., t).on_click(
-                cx.listener(move |ws, _, _, cx| ws.close_run_to_list(&id, cx)),
-            ))
-        })
-        // What a plugin shows in the run's pane.
-        .when(pane, |bar| {
-            bar.child(
-                icon_button("phone-pane", Icon::Image, 44., t)
-                    .on_click(cx.listener(|ws, _, _, cx| ws.toggle_pane(cx))),
-            )
-        })
         .child(
-            icon_button("phone-details", Icon::Panel, 44., t)
-                .on_click(cx.listener(|ws, _, _, cx| ws.toggle_sheet(cx))),
+            div()
+                .flex()
+                .items_center()
+                .gap(sp(3.5))
+                .typeset(Type::SMALL)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(rems(0.))
+                        .truncate()
+                        .text_color(color)
+                        .child(label),
+                )
+                // What a plugin shows in the run's pane.
+                .when(pane, |bar| {
+                    bar.child(word("phone-pane", "pane").on_click(
+                        cx.listener(|ws, _, _, cx| ws.toggle_pane(cx)),
+                    ))
+                })
+                .child(
+                    word("phone-details", "details").on_click(
+                        cx.listener(|ws, _, _, cx| ws.toggle_sheet(cx)),
+                    ),
+                )
+                // A repository's main chat stays open.
+                .when(!main, |bar| {
+                    bar.child(word("phone-close", "close").on_click(
+                        cx.listener(move |ws, _, _, cx| {
+                            ws.close_run_to_list(&id, cx)
+                        }),
+                    ))
+                }),
         )
 }
 
-/// The phone's header on every other screen.
+/// The phone's header on every other screen: its title over a heavy
+/// rule, with back on a screen under another, and adding a repository
+/// on the list of runs.
 pub fn phone_header(
     ws: &Workspace,
     t: &Theme,
@@ -1482,31 +1324,29 @@ pub fn phone_header(
         _ => ws.route_title(),
     };
     div()
-        .h(rems(3.5))
         .flex_shrink_0()
         .flex()
         .items_center()
-        .gap(sp(1.))
-        .px(sp(1.5))
-        .chrome(Edge::Top, t)
+        .gap(sp(2.))
+        .min_h(rems(3.5))
+        .mx(sp(PHONE_MARGIN))
+        .pt(sp(2.))
+        .border_b_2()
+        .border_color(t.rule)
         .when(!ws.route.is_top_level(), |bar| {
             bar.child(
                 icon_button("phone-back", Icon::Back, 44., t)
+                    .ml(sp(-3.))
                     .on_click(cx.listener(|ws, _, _, cx| ws.back(cx))),
             )
-        })
-        .when(ws.route.is_top_level(), |bar| {
-            bar.pl(sp(4.))
-                .child(logo(t, 28.))
-                .child(div().w(rems(0.375)))
         })
         .child(
             div()
                 .flex_1()
                 .min_w(rems(0.))
                 .truncate()
-                .typeset(Type::TITLE)
-                .font_weight(weight::STRONG)
+                .typeset(Type::PAGE_TITLE.sized(19.))
+                .text_color(t.bright)
                 .child(title),
         )
         // What the person did here that the computer has not taken:
@@ -1523,14 +1363,19 @@ pub fn phone_header(
         })
         .when(matches!(ws.route, Route::Home), |bar| {
             bar.child(
-                icon_button("phone-add-repo", Icon::Folder, 44., t)
+                div()
+                    .id("phone-add-repo")
+                    .min_h(rems(2.75))
+                    .flex()
+                    .items_center()
+                    .child(text_link("add repository", Type::SMALL, t))
                     .on_click(cx.listener(|ws, _, _, cx| ws.pick_repos(cx))),
             )
         })
 }
 
 /// The phone's home: runs grouped by repository, each group with what
-/// plugins list under it.
+/// plugins list under it, then the agents.
 pub fn phone_run_list(
     ws: &Workspace,
     t: &Theme,
@@ -1548,6 +1393,8 @@ pub fn phone_run_list(
         .overflow_y_scroll()
         .flex()
         .flex_col()
+        .px(sp(PHONE_MARGIN))
+        .pb(sp(4.))
         .children(groups)
         .when(ws.catalog.listed().next().is_none(), |list| {
             list.child(super::empty(
@@ -1572,62 +1419,115 @@ fn phone_kinds(
         .collect()
 }
 
+/// A title in a phone's list, in the display face: a repository's name,
+/// a kind's.
+fn phone_title(text: impl Into<SharedString>, t: &Theme) -> Div {
+    div()
+        .min_w(rems(0.))
+        .truncate()
+        .typeset(Type::SECTION.sized(17.))
+        .text_color(t.bright)
+        .child(text.into())
+}
+
+/// A row of a phone's list: what it is drawn with, its name over one
+/// line in small mono print, and what the caller packs at its end.
+fn phone_row(
+    id: String,
+    lead: AnyElement,
+    name: impl Into<SharedString>,
+    line: Option<AnyElement>,
+    t: &Theme,
+) -> Stateful<Div> {
+    div()
+        .id(SharedString::from(id))
+        .flex()
+        .items_center()
+        .gap(sp(2.5))
+        .min_h(rems(3.))
+        .py(sp(1.5))
+        .border_b_1()
+        .border_color(t.hairline)
+        .child(
+            div()
+                .w(rems(0.875))
+                .flex_shrink_0()
+                .flex()
+                .justify_center()
+                .child(lead),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w(rems(0.))
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .truncate()
+                        .font_weight(weight::STRONG)
+                        .text_color(t.bright)
+                        .child(name.into()),
+                )
+                .children(line),
+        )
+}
+
 /// A kind's repositories on the phone: one row each, opening its
-/// conversation, with where it stands.
+/// conversation, with how many of its things need the person.
 fn phone_kind(
     ws: &Workspace,
     kind: &RepoKind,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Option<Div> {
-    let agents: Vec<&crate::catalog::Repo> =
-        ws.catalog.of_kind(&kind.kind).collect();
+    let agents: Vec<&Repo> = ws.catalog.of_kind(&kind.kind).collect();
     if agents.is_empty() {
         return None;
     }
     let heading = div()
-        .px(sp(4.))
+        .flex()
         .pt(sp(5.))
         .pb(sp(2.))
-        .typeset(Type::CAPTION)
-        .text_color(t.dim)
-        .child(kind.title.clone());
+        .border_b_2()
+        .border_color(t.rule)
+        .child(phone_title(kind.title.clone(), t));
     let rows = agents.into_iter().map(|repo| {
         let name = repo.name.clone();
         let at = AtRepo { repo: name.clone() };
-        let line = ws.drawn(points::KIND_ROW_LINE, &at, cx);
-        let end = kind_row_end(ws, repo, Type::CAPTION, t, cx);
-        div()
-            .id(SharedString::from(format!("phone-agent-{name}")))
-            .flex()
-            .items_center()
-            .gap(sp(3.))
-            .min_h(rems(3.25))
-            .px(sp(4.))
-            .chrome(Edge::Top, t)
-            .cursor_pointer()
-            .child(agent_mark(&name, 26., t))
-            .child(
+        let line = ws
+            .drawn(points::KIND_ROW_LINE, &at, cx)
+            .into_iter()
+            .next()
+            .map(|line| {
                 div()
-                    .flex_1()
-                    .min_w(rems(0.))
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .truncate()
-                            .typeset(Type::SUBTITLE)
-                            .font_weight(weight::STRONG)
-                            .child(name.clone()),
-                    )
-                    .children(line.into_iter().map(|line| {
-                        div()
-                            .typeset(Type::CAPTION)
-                            .text_color(t.dim)
-                            .child(line)
-                    })),
-            )
-            .children(end)
+                    .truncate()
+                    .font_family(MONO)
+                    .typeset(Type::CAPTION)
+                    .text_color(t.dim)
+                    .child(line)
+                    .into_any_element()
+            });
+        let waits = ws.agent_waits(&name) + ws.need_you(&name);
+        let working = repo
+            .main
+            .as_ref()
+            .and_then(|id| ws.run(id))
+            .is_some_and(|main| main.status.is_live());
+        let lead = if working {
+            mark(State::Working, t).into_any_element()
+        } else {
+            super::dot(t.roles.agent, 6.).into_any_element()
+        };
+        phone_row(format!("phone-agent-{name}"), lead, name.clone(), line, t)
+            .cursor_pointer()
+            .when(waits > 0, |row| {
+                row.child(
+                    hot_action(format!("{waits} need you"), t)
+                        .typeset(Type::CAPTION)
+                        .font_weight(weight::STRONG),
+                )
+            })
             .on_click(cx.listener(move |ws, _, _, cx| ws.open_agent(&name, cx)))
     });
     Some(div().flex().flex_col().child(heading).children(rows))
@@ -1640,49 +1540,42 @@ fn phone_group(
     cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
     let name = rows.repo.name.clone();
-    let need_you = ws.need_you(&name);
+    let working = Marks {
+        working: rows.live,
+        ..Marks::default()
+    };
+    let asks = Marks {
+        asks: ws.need_you(&name),
+        ..Marks::default()
+    };
     let head = div()
         .id(SharedString::from(format!("phone-repo-{name}")))
         .flex()
         .items_center()
-        .gap(sp(3.))
-        .min_h(rems(3.25))
-        .px(sp(4.))
-        .chrome(Edge::Top, t)
+        .gap(sp(2.5))
+        .min_h(rems(2.75))
+        .pt(sp(1.))
         .cursor_pointer()
-        .child(icon(
-            if rows.open { Icon::Down } else { Icon::Chevron },
-            IconSize::BASE,
-            t.muted,
-        ))
-        .child(super::repo_mark(rows.repo, 26., t))
+        // Open, it heads its runs; closed, it is one row among others.
+        .map(|head| {
+            if rows.open {
+                head.border_b_2().border_color(t.rule)
+            } else {
+                head.border_b_1().border_color(t.hairline)
+            }
+        })
+        .child(phone_title(name.clone(), t))
+        .children(marks(working, t))
+        // Closed, what waits inside shows on it.
+        .when(!rows.open, |head| head.children(marks(asks, t)))
+        .child(div().flex_1())
         .child(
             div()
-                .flex_1()
-                .min_w(rems(0.))
-                .truncate()
-                .typeset(Type::SUBTITLE)
-                .font_weight(weight::STRONG)
-                .child(name.clone()),
-        )
-        .when(need_you > 0, |row| {
-            row.child(need_you_pill(need_you, Type::CAPTION, t))
-        })
-        .when(rows.live > 0, |row| {
-            row.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(sp(1.25))
-                    .typeset(Type::CAPTION)
-                    .text_color(t.accent)
-                    .child(dot(t.accent, 7.))
-                    .child(rows.live.to_string()),
-            )
-        })
-        .child(
-            icon_button("phone-repo-new", Icon::Plus, 44., t)
-                .mr(sp(-3.))
+                .id("phone-repo-new")
+                .min_h(rems(2.75))
+                .flex()
+                .items_center()
+                .child(text_link("new run", Type::SMALL, t))
                 .on_click({
                     let name = name.clone();
                     cx.listener(move |ws, _, window, cx| {
@@ -1699,49 +1592,45 @@ fn phone_group(
     if !rows.open {
         return group;
     }
-    let chips = div()
-        .flex()
-        .gap(sp(2.))
-        .px(sp(4.))
-        .py(sp(2.5))
-        .border_b_1()
-        .border_color(t.border);
     // What plugins list under the repository.
-    let entries = ws.contributions(
-        heiko_ui_plugin::points::SIDEBAR_REPO,
-        &heiko_ui_plugin::points::AtRepo { repo: name.clone() },
-    );
-    let mut chips = chips;
+    let entries =
+        ws.contributions(points::SIDEBAR_REPO, &AtRepo { repo: name.clone() });
+    let mut pages = div()
+        .flex()
+        .flex_wrap()
+        .items_center()
+        .gap_x(sp(4.))
+        .min_h(rems(2.75))
+        .border_b_1()
+        .border_color(t.hairline)
+        .typeset(Type::SMALL);
+    let mut listed = false;
     for (n, entry) in entries.into_iter().enumerate() {
-        let Some(route) = ws.link_route(&entry.to, None) else {
+        let Some(route) = repo_link(ws, &entry.to, &name) else {
             continue;
         };
-        chips = chips.child(
+        listed = true;
+        pages = pages.child(
             div()
                 .id(SharedString::from(format!("phone-nav-{n}")))
                 .flex()
                 .items_center()
-                .gap(sp(1.5))
-                .px(sp(3.))
-                .py(sp(2.))
-                .rounded(radius::BOX)
-                .key(t)
-                .typeset(Type::SMALL)
+                .gap(sp(2.))
+                .min_h(rems(2.75))
                 .cursor_pointer()
-                .child(icon(entry.icon, IconSize::BASE, t.text_soft))
-                .child(entry.label.clone())
+                .child(link_action(entry.label.clone(), t))
                 .children(
                     entry
                         .detail
                         .clone()
-                        .map(|detail| mono(detail, Type::SMALL, t.dim)),
+                        .map(|detail| mono(detail, Type::CAPTION, t.dim)),
                 )
                 .on_click(cx.listener(move |ws, _, _, cx| {
                     ws.navigate(route.clone(), cx)
                 })),
         );
     }
-    let mut group = group.child(chips);
+    let mut group = group.when(listed, |group| group.child(pages));
     for row in ws.repo_tree(&rows) {
         group = match row {
             TreeRow::Run { run, .. } => {
@@ -1754,25 +1643,38 @@ fn phone_group(
     }
     if rows.older > 0 {
         group = group.child(
-            super::text_link(
-                format!("Show {} older runs", rows.older),
-                Type::SMALL,
-                t,
-            )
-            .id(SharedString::from(format!("phone-older-{name}")))
-            .min_h(rems(2.75))
-            .flex()
-            .items_center()
-            .px(sp(4.))
-            .border_b_1()
-            .border_color(t.border)
-            .cursor_pointer()
-            .on_click(
-                cx.listener(move |ws, _, _, cx| ws.show_older_runs(&name, cx)),
-            ),
+            div()
+                .id(SharedString::from(format!("phone-older-{name}")))
+                .min_h(rems(2.75))
+                .flex()
+                .items_center()
+                .child(text_link(
+                    format!("Show {} older runs", rows.older),
+                    Type::SMALL,
+                    t,
+                ))
+                .on_click(cx.listener(move |ws, _, _, cx| {
+                    ws.show_older_runs(&name, cx)
+                })),
         );
     }
     group
+}
+
+/// The mark a phone's row leads with: what the run is doing, or how it
+/// stopped; a hollow ring when it waits on the person's next message.
+fn lead_state(marks: &Marks) -> State {
+    if marks.working > 0 {
+        State::Working
+    } else if marks.failing > 0 {
+        State::Failing
+    } else if marks.limit > 0 {
+        State::Limit
+    } else if marks.met > 0 {
+        State::Met
+    } else {
+        State::Idle
+    }
 }
 
 fn phone_run_row(
@@ -1783,8 +1685,8 @@ fn phone_run_row(
 ) -> impl IntoElement {
     let (color, label) = status_look(&run.status, t);
     let route = Route::Run(run.id.clone());
-    let unread = ws.unread(run);
     let attention = ws.attention(run);
+    let run_marks = ws.run_marks(run, false);
     let meta = if run.status.is_live() {
         format!("{label} · turn {}", run.turn)
     } else {
@@ -1800,147 +1702,92 @@ fn phone_run_row(
         Some((line, tone)) => (line, t.tone(tone)),
         None => (meta, color),
     };
-    // What the run needs of the person says it first, as the sidebar
-    // does; a working run keeps its plugin's line.
+    // What the run needs of the person says it first; a working run
+    // keeps its plugin's line.
     let (meta, color) = match (&attention, attention.line()) {
         (Attention::Landed, _) => ("landed".to_owned(), t.dim),
         (Attention::Dropped, _) => ("dropped".to_owned(), t.dim),
         (Attention::Working { .. }, _) | (_, None) => (meta, color),
-        (attention, Some(line)) => (line, attention_color(attention, t)),
+        (attention, Some(line)) => (line, super::attention_color(attention, t)),
     };
-    let badge = note.as_ref().and_then(|note| {
-        Some((note.count.clone()?, t.tone(note.tone), note.icon))
-    });
-    div()
-        .id(SharedString::from(format!("phone-run-{}", run.id)))
-        .flex()
-        .items_center()
-        .gap(sp(3.))
-        .min_h(rems(3.5))
-        .px(sp(4.))
-        .border_b_1()
-        .border_color(t.border)
-        .cursor_pointer()
-        .when_some(attention_tint(&attention, t), |row, tint| row.bg(tint))
-        .child(attention_icon(&attention, run, false, t, IconSize::BASE))
-        .child(
-            div()
-                .flex_1()
-                .min_w(rems(0.))
-                .flex()
-                .flex_col()
-                .gap(sp(0.75))
-                .child(
-                    div()
-                        .truncate()
-                        .when(unread > 0, |title| {
-                            title.font_weight(weight::EMPHASIS)
-                        })
-                        .child(run.title.clone()),
-                )
-                .child(mono(meta, Type::MICRO, color).truncate()),
-        )
-        .when(unread > 0, |row| row.child(super::unread_count(unread, t)))
-        .when_some(badge.filter(|_| unread == 0), |row, (badge, tone, _)| {
-            row.child(mono(badge, Type::CAPTION, tone))
-        })
-        .on_click(
-            cx.listener(move |ws, _, _, cx| ws.navigate(route.clone(), cx)),
-        )
+    let badge = note
+        .as_ref()
+        .and_then(|note| Some((note.count.clone()?, t.tone(note.tone))));
+    let asks = Marks {
+        asks: run_marks.asks,
+        ..Marks::default()
+    };
+    phone_row(
+        format!("phone-run-{}", run.id),
+        mark(lead_state(&run_marks), t).into_any_element(),
+        run.title.clone(),
+        Some(
+            mono(meta, Type::CAPTION, color)
+                .truncate()
+                .into_any_element(),
+        ),
+        t,
+    )
+    .cursor_pointer()
+    .children(marks(asks, t))
+    .when_some(badge, |row, (badge, tone)| {
+        row.child(mono(badge, Type::CAPTION, tone).flex_shrink_0())
+    })
+    .on_click(cx.listener(move |ws, _, _, cx| ws.navigate(route.clone(), cx)))
 }
 
 fn phone_child_row(
     route: Option<Route>,
-    child: &crate::view::ChildRun,
+    child: &ChildRun,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> impl IntoElement {
     let (color, label) = status_look(&child.status, t);
-    let glyph = match child.kind {
-        ChildKind::SubAgent => Icon::SubAgent,
-        ChildKind::Fork => Icon::Fork,
-    };
-    div()
-        .id(SharedString::from(format!("phone-child-{}", child.id)))
-        .flex()
-        .items_center()
-        .gap(sp(3.))
-        .min_h(rems(3.5))
-        .pl(sp(11.))
-        .pr(sp(4.))
-        .border_b_1()
-        .border_color(t.border)
-        .child(icon(glyph, IconSize::COMPACT, t.blue))
-        .child(
-            div()
-                .flex_1()
-                .min_w(rems(0.))
-                .flex()
-                .flex_col()
-                .gap(sp(0.75))
-                .child(div().truncate().child(child.title.clone()))
-                .child(mono(label, Type::MICRO, color)),
+    phone_row(
+        format!("phone-child-{}", child.id),
+        mark(status_state(&child.status).unwrap_or(State::Idle), t)
+            .into_any_element(),
+        child.title.clone(),
+        Some(mono(label, Type::CAPTION, color).into_any_element()),
+        t,
+    )
+    .pl(sp(6.))
+    .when_some(route, |row, route| {
+        row.cursor_pointer().on_click(
+            cx.listener(move |ws, _, _, cx| ws.navigate(route.clone(), cx)),
         )
-        .when_some(route, |row, route| {
-            row.cursor_pointer().on_click(
-                cx.listener(move |ws, _, _, cx| ws.navigate(route.clone(), cx)),
-            )
-        })
+    })
 }
 
+/// The phone's tabs: plain words over a heavy rule, the one on screen
+/// in bold.
 pub fn phone_tab_bar(
     ws: &Workspace,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Div {
     let current = ws.route.tab();
-    div()
-        .h(rems(4.))
-        .flex_shrink_0()
-        .grid()
-        .grid_cols(4)
-        .chrome(Edge::Bottom, t)
-        .children(Tab::ALL.into_iter().map(|tab| {
-            let active = tab == current;
-            let color = if active { t.text } else { t.muted };
-            div()
-                .id(tab.label())
-                .flex()
-                .flex_col()
-                .items_center()
-                .justify_center()
-                .gap(sp(1.))
-                .typeset(Type::MICRO)
-                .text_color(color)
-                .cursor_pointer()
-                .child(icon(tab_icon(tab), IconSize::HUGE, color))
-                .child(tab.label())
-                .on_click(
-                    cx.listener(move |ws, _, _, cx| ws.switch_tab(tab, cx)),
-                )
-        }))
-}
-
-/// An agent's mark: its letter in a ring of its color, round where a
-/// repository's is square.
-fn agent_mark(name: &str, size: f32, t: &Theme) -> Div {
-    let letter = name
-        .chars()
-        .find(|c| c.is_alphanumeric())
-        .map_or("?".into(), |c| c.to_lowercase().to_string());
-    let color = t.mark(name);
-    div()
-        .size(rems(size / 16.))
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(radius::FULL)
-        .border_1()
-        .border_color(color.opacity(0.7))
-        .bg(color.opacity(0.12))
-        .text_color(color)
-        .typeset(Type::MICRO.sized(size * 0.55))
-        .font_weight(weight::STRONG)
-        .child(letter)
+    div().flex_shrink_0().px(sp(PHONE_MARGIN)).pb(sp(3.)).child(
+        div()
+            .flex()
+            .justify_between()
+            .border_t_2()
+            .border_color(t.rule)
+            .children(Tab::ALL.into_iter().map(|tab| {
+                let active = tab == current;
+                div()
+                    .id(tab.label())
+                    .min_h(rems(2.75))
+                    .flex()
+                    .items_center()
+                    .typeset(Type::BODY)
+                    .text_color(if active { t.bright } else { t.dim })
+                    .when(active, |tab| tab.font_weight(weight::STRONG))
+                    .cursor_pointer()
+                    .child(tab.label())
+                    .on_click(
+                        cx.listener(move |ws, _, _, cx| ws.switch_tab(tab, cx)),
+                    )
+            })),
+    )
 }

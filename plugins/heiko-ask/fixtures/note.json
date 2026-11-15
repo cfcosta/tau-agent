@@ -64,12 +64,37 @@
         },
         "call": "call_ask",
         "draft": {
-          "cursor": [0, 2, 0],
+          "cursor": [
+            0,
+            2,
+            0
+          ],
           "note_open": true,
-          "notes": ["", "Only when the run has waited a while.", ""],
-          "other": ["", "", ""],
-          "other_on": [false, false, false],
-          "picked": [[0], [0, 2], []],
+          "notes": [
+            "",
+            "Only when the run has waited a while.",
+            ""
+          ],
+          "other": [
+            "",
+            "",
+            ""
+          ],
+          "other_on": [
+            false,
+            false,
+            false
+          ],
+          "picked": [
+            [
+              0
+            ],
+            [
+              0,
+              2
+            ],
+            []
+          ],
           "tab": 1
         },
         "focus": {
@@ -148,13 +173,26 @@
                   }
                 ]
               ],
-              "widths": [1, 4]
+              "widths": [
+                1,
+                4
+              ]
             },
             {
-              "mono": false,
-              "piece": "toned",
-              "text": "Answer in the panel below.",
-              "tone": "info"
+              "children": [
+                {
+                  "count": null,
+                  "piece": "mark",
+                  "state": "asks"
+                },
+                {
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "waiting for you",
+                  "tone": "warn"
+                }
+              ],
+              "piece": "row"
             }
           ],
           "piece": "stack"
@@ -166,6 +204,30 @@
       "children": [
         {
           "children": [
+            {
+              "children": [
+                {
+                  "piece": "heading",
+                  "text": "heiko asks"
+                },
+                {
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "2 of 3",
+                  "tone": "neutral"
+                },
+                {
+                  "piece": "spacer"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "↑↓ move · space toggle · n note",
+                  "tone": "neutral"
+                }
+              ],
+              "piece": "row"
+            },
             {
               "children": [
                 {
@@ -182,7 +244,7 @@
                   "args": {
                     "to": 1
                   },
-                  "kind": "primary",
+                  "kind": "secondary",
                   "label": "✓ Surfaces ✎",
                   "piece": "button"
                 },
@@ -205,7 +267,7 @@
                     "to": 3
                   },
                   "kind": "secondary",
-                  "label": "Submit",
+                  "label": "submit",
                   "piece": "button"
                 },
                 {
@@ -223,97 +285,116 @@
             {
               "children": [
                 {
-                  "piece": "rich",
-                  "text": "**Where else should a pending question show up?**"
+                  "piece": "title",
+                  "subtitle": null,
+                  "text": "Where else should a pending question show up?"
                 },
                 {
-                  "children": [
-                    {
-                      "piece": "mono",
-                      "text": "  1"
-                    },
-                    {
-                      "action": "choose",
-                      "args": {
-                        "row": 0
+                  "head": [],
+                  "piece": "table",
+                  "rows": [
+                    [
+                      {
+                        "piece": "mono",
+                        "text": "  1"
                       },
-                      "kind": "primary",
-                      "label": "Run list badge",
-                      "piece": "button"
-                    },
-                    {
-                      "mono": false,
-                      "piece": "toned",
-                      "text": "An amber dot on the run in the sidebar until you answer.",
-                      "tone": "neutral"
-                    }
-                  ],
-                  "piece": "row"
-                },
-                {
-                  "children": [
-                    {
-                      "piece": "mono",
-                      "text": "  2"
-                    },
-                    {
-                      "action": "choose",
-                      "args": {
-                        "row": 1
+                      {
+                        "children": [
+                          {
+                            "action": "choose",
+                            "args": {
+                              "row": 0
+                            },
+                            "kind": "primary",
+                            "label": "Run list badge",
+                            "piece": "button"
+                          },
+                          {
+                            "mono": false,
+                            "piece": "toned",
+                            "text": "An amber dot on the run in the sidebar until you answer.",
+                            "tone": "neutral"
+                          }
+                        ],
+                        "piece": "stack"
+                      }
+                    ],
+                    [
+                      {
+                        "piece": "mono",
+                        "text": "  2"
                       },
-                      "kind": "secondary",
-                      "label": "Desktop notification",
-                      "piece": "button"
-                    },
-                    {
-                      "mono": false,
-                      "piece": "toned",
-                      "text": "Only when the window is not focused.",
-                      "tone": "neutral"
-                    }
-                  ],
-                  "piece": "row"
-                },
-                {
-                  "children": [
-                    {
-                      "piece": "mono",
-                      "text": "› 3"
-                    },
-                    {
-                      "action": "choose",
-                      "args": {
-                        "row": 2
+                      {
+                        "children": [
+                          {
+                            "action": "choose",
+                            "args": {
+                              "row": 1
+                            },
+                            "kind": "secondary",
+                            "label": "Desktop notification",
+                            "piece": "button"
+                          },
+                          {
+                            "mono": false,
+                            "piece": "toned",
+                            "text": "Only when the window is not focused.",
+                            "tone": "neutral"
+                          }
+                        ],
+                        "piece": "stack"
+                      }
+                    ],
+                    [
+                      {
+                        "piece": "mono",
+                        "text": "› 3"
                       },
-                      "kind": "primary",
-                      "label": "Parent run",
-                      "piece": "button"
-                    },
-                    {
-                      "mono": false,
-                      "piece": "toned",
-                      "text": "A child run's question surfaces on the run that spawned it.",
-                      "tone": "neutral"
-                    }
+                      {
+                        "children": [
+                          {
+                            "action": "choose",
+                            "args": {
+                              "row": 2
+                            },
+                            "kind": "primary",
+                            "label": "Parent run",
+                            "piece": "button"
+                          },
+                          {
+                            "mono": false,
+                            "piece": "toned",
+                            "text": "A child run's question surfaces on the run that spawned it.",
+                            "tone": "neutral"
+                          }
+                        ],
+                        "piece": "stack"
+                      }
+                    ],
+                    [
+                      {
+                        "piece": "mono",
+                        "text": "  4"
+                      },
+                      {
+                        "children": [
+                          {
+                            "id": "ask-other-retry-after-call_ask-1",
+                            "keep": true,
+                            "multiline": false,
+                            "piece": "input",
+                            "placeholder": "Your own answer…",
+                            "submit": "other-done"
+                          }
+                        ],
+                        "piece": "row"
+                      }
+                    ]
                   ],
-                  "piece": "row"
-                },
-                {
-                  "children": [
-                    {
-                      "piece": "mono",
-                      "text": "  4"
-                    },
-                    {
-                      "id": "ask-other-retry-after-call_ask-1",
-                      "keep": true,
-                      "multiline": false,
-                      "piece": "input",
-                      "placeholder": "Your own answer…",
-                      "submit": "other-done"
-                    }
-                  ],
-                  "piece": "row"
+                  "widths": [
+                    0.5,
+                    12
+                  ]
                 },
                 {
                   "focus": 2,
@@ -321,7 +402,7 @@
                   "keep": true,
                   "multiline": true,
                   "piece": "input",
-                  "placeholder": "Anything the agent should know about this answer…",
+                  "placeholder": "A note for the agent…",
                   "submit": "note-done"
                 }
               ],
@@ -330,34 +411,28 @@
             {
               "children": [
                 {
-                  "mono": true,
-                  "piece": "toned",
-                  "text": "↑↓ move · Space toggle · n note · ←→ questions",
-                  "tone": "neutral"
-                },
-                {
-                  "piece": "spacer"
-                },
-                {
-                  "action": "heiko.cancel",
+                  "action": "note-open",
                   "args": {},
-                  "kind": "danger",
-                  "label": "Cancel run",
+                  "kind": "secondary",
+                  "label": "edit note",
                   "piece": "button"
                 },
                 {
                   "action": "decline",
                   "args": {},
                   "kind": "secondary",
-                  "label": "Decline to answer",
+                  "label": "decline",
                   "piece": "button"
                 },
                 {
-                  "action": "note-open",
+                  "action": "heiko.cancel",
                   "args": {},
-                  "kind": "secondary",
-                  "label": "Edit note",
+                  "kind": "danger",
+                  "label": "cancel run",
                   "piece": "button"
+                },
+                {
+                  "piece": "spacer"
                 },
                 {
                   "action": "next",
@@ -370,7 +445,7 @@
               "piece": "row"
             }
           ],
-          "piece": "card"
+          "piece": "stack"
         }
       ],
       "focus": 2,
@@ -395,7 +470,9 @@
         "escape"
       ],
       "piece": "keys",
-      "through": ["escape"]
+      "through": [
+        "escape"
+      ]
     },
     "status": {
       "detail": null,

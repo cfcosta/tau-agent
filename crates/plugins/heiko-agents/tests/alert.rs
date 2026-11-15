@@ -148,7 +148,7 @@ fn alerts_follow_what_is_new_since_each_agent_was_last_seen(
                         }
                     }
                     if look.at_cap {
-                        parts.push("it spent its $1.00 for today".to_owned());
+                        parts.push("it reached today's allowance".to_owned());
                     }
                     if !parts.is_empty() {
                         tc.event("first sight with something waiting");
@@ -180,7 +180,7 @@ fn alerts_follow_what_is_new_since_each_agent_was_last_seen(
                         tc.event("reached the cap");
                         expected.push(alert(
                             format!("{name} reached its cap"),
-                            "It spent $1.00 today; its events wait for \
+                            "It reached today's allowance; its events wait for \
                              tomorrow or for you"
                                 .to_owned(),
                         ));

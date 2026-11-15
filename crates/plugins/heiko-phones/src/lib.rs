@@ -30,7 +30,7 @@ use heiko_ui_plugin::{
     ViewCx,
     points::{self, AtApp},
     services::names,
-    tree::{KeyValue, Kind, Node, Tone},
+    tree::{Kind, MarkState, Node, Tone},
 };
 
 pub const NAME: &str = "heiko-phones";
@@ -167,56 +167,74 @@ fn button(label: &str, act: &Act, kind: Kind) -> Node {
         args: json!(act),
         kind,
         icon: None,
+        size: Default::default(),
+    }
+}
+
+/// `rows` with a hairline between each two.
+fn ruled(rows: impl IntoIterator<Item = Node>) -> Vec<Node> {
+    let mut ruled = Vec::new();
+    for (at, row) in rows.into_iter().enumerate() {
+        if at > 0 {
+            ruled.push(Node::Rule);
+        }
+        ruled.push(row);
+    }
+    ruled
+}
+
+/// A section of the page: its title over its pieces.
+fn section(id: &str, title: impl Into<String>, children: Vec<Node>) -> Node {
+    Node::Section {
+        id: format!("phones-{id}"),
+        title: title.into(),
+        open: true,
+        children,
+    }
+}
+
+/// Small print in mono.
+fn small(text: impl Into<String>) -> Node {
+    Node::Toned {
+        text: text.into(),
+        tone: Tone::Neutral,
+        mono: true,
     }
 }
 
 /// The Phones page: "Allow phones", where heiko listens, the phones
-/// paired, and the card that pairs one.
+/// paired, and what pairs one.
 fn page(view: &mut ViewCx<'_, PhonesUi>) -> Node {
     let phones = &view.data;
-    let mut left = vec![Node::Card {
-        children: vec![Node::Switch {
-            label: "Allow phones".into(),
-            detail: Some(
-                "Off by default. Phones reach heiko only while this app is \
-                 open."
-                    .into(),
-            ),
-            on: phones.allowed,
-            action: ACT.into(),
-            args: json!(Act::Allow {
-                allow: !phones.allowed
-            }),
-        }],
+    let mut allow = vec![Node::Switch {
+        label: "Allow phones".into(),
+        detail: Some("Only while this app is open.".into()),
+        on: phones.allowed,
+        action: ACT.into(),
+        args: json!(Act::Allow {
+            allow: !phones.allowed
+        }),
     }];
-    if phones.allowed {
-        left.push(listen_on(phones));
-    }
     if let Some(error) = &phones.error {
-        left.push(Node::Toned {
+        allow.push(Node::Toned {
             text: error.clone(),
             tone: Tone::Bad,
             mono: false,
         });
     }
-    left.push(paired(phones));
-    let mut children = vec![
-        Node::Title {
-            text: "Phones".into(),
-            subtitle: Some(
-                "Reach heiko from your phone while this app runs: on your \
-                 network, or through your VPN when you are away."
-                    .into(),
-            ),
-        },
-        Node::stack(left),
-    ];
+    let mut page = vec![section("allow", "Phones", allow)];
     if phones.allowed {
-        children.push(pair_card(phones));
+        page.push(listen_on(phones));
     }
-    Node::stack(children)
+    page.push(paired(phones));
+    if phones.allowed {
+        page.push(pair(phones));
+    }
+    Node::stack(page)
 }
 
+/// Where heiko listens, and a ruled row for each address it could: the
+/// one it listens on ticked, the others a click away.
 fn listen_on(phones: &PhonesData) -> Node {
     let chosen = phones
         .listening
@@ -224,34 +242,36 @@ fn listen_on(phones: &PhonesData) -> Node {
         .and_then(|address| address.rsplit_once(':'))
         .map(|(host, _)| host);
     let addresses = phones.addresses.iter().map(|address| {
-        let label = format!("{} · {}", address.label, address.ip);
-        let kind = if chosen == Some(address.ip.as_str()) {
-            Kind::Primary
-        } else {
-            Kind::Secondary
-        };
-        button(
-            &label,
-            &Act::ListenOn {
-                ip: address.ip.clone(),
+        let on = chosen == Some(address.ip.as_str());
+        Node::row([
+            Node::Mark {
+                state: if on { MarkState::Met } else { MarkState::Idle },
+                count: None,
             },
-            kind,
-        )
+            if on {
+                Node::Rich {
+                    text: format!("**{}**", address.label),
+                }
+            } else {
+                button(
+                    &address.label,
+                    &Act::ListenOn {
+                        ip: address.ip.clone(),
+                    },
+                    Kind::Secondary,
+                )
+            },
+            Node::Mono {
+                text: address.ip.clone(),
+            },
+        ])
     });
-    Node::stack([
-        Node::Heading {
-            text: "Listen on".into(),
-        },
-        Node::row(addresses),
-        Node::Toned {
-            text: match &phones.listening {
-                Some(address) => format!("Listening on {address}."),
-                None => "Not listening.".into(),
-            },
-            tone: Tone::Neutral,
-            mono: false,
-        },
-    ])
+    let mut children = vec![small(match &phones.listening {
+        Some(address) => format!("listening on {address}"),
+        None => "not listening".into(),
+    })];
+    children.extend(ruled(addresses));
+    section("listen", "Listen on", children)
 }
 
 /// `2026-09-30T12:03:11Z` as `2026-09-30 12:03`.
@@ -261,62 +281,48 @@ fn when(stamp: &str) -> String {
         .map_or_else(|| stamp.to_owned(), |minute| minute.replace('T', " "))
 }
 
+/// The phones paired, a ruled row each: its name, when it paired and
+/// was last seen, and the way to revoke it.
 fn paired(phones: &PhonesData) -> Node {
-    let mut children = vec![Node::Heading {
-        text: "Paired phones".into(),
-    }];
-    if phones.paired.is_empty() {
-        children.push(Node::Empty {
-            text: "No phones yet.".into(),
-        });
-    }
-    for phone in &phones.paired {
+    let rows = phones.paired.iter().map(|phone| {
         let seen = phone.last_seen.as_deref().map_or_else(
             || "never connected".to_owned(),
             |seen| format!("last seen {}", when(seen)),
         );
-        children.push(Node::row([
-            Node::Icon {
-                name: "phone".into(),
-                tone: Tone::Neutral,
+        Node::row([
+            Node::Rich {
+                text: format!("**{}**", phone.name),
             },
-            Node::Status {
-                text: phone.name.clone(),
-                detail: Some(format!(
-                    "paired {} · {seen}",
-                    when(&phone.paired_at)
-                )),
-                tone: Tone::Neutral,
-            },
+            small(format!("paired {} · {seen}", when(&phone.paired_at))),
             Node::Spacer,
             button(
-                "Revoke",
+                "revoke",
                 &Act::Revoke {
                     id: phone.id.clone(),
                 },
                 Kind::Danger,
             ),
-        ]));
-    }
-    children.push(Node::Toned {
-        text: "Revoking a phone refuses its key at once and closes its \
-               connection."
-            .into(),
-        tone: Tone::Neutral,
-        mono: false,
+        ])
     });
-    Node::Card { children }
+    let mut children = ruled(rows);
+    if children.is_empty() {
+        children.push(Node::Empty {
+            text: "No phones yet.".into(),
+        });
+    }
+    let title = match phones.paired.len() {
+        0 => "Paired phones".to_owned(),
+        count => format!("Paired phones · {count}"),
+    };
+    section("paired", title, children)
 }
 
-fn pair_card(phones: &PhonesData) -> Node {
-    let mut children = vec![Node::Heading {
-        text: "Pair a phone".into(),
-    }];
+/// What pairs a phone: the way to show a code, or the code shown: the
+/// QR code beside the code in big print, then where it reaches the
+/// computer and the certificate, as ruled rows.
+fn pair(phones: &PhonesData) -> Node {
     let Some(code) = &phones.code else {
-        children.push(Node::text(
-            "Show a code, then scan it from heiko on your phone. It works \
-             once, for a few minutes.",
-        ));
+        let mut children = Vec::new();
         if phones.listening.is_some() {
             children.push(button(
                 "Show pairing code",
@@ -324,40 +330,42 @@ fn pair_card(phones: &PhonesData) -> Node {
                 Kind::Primary,
             ));
         }
-        return Node::Card { children };
+        return section("pair", "Pair a phone", children);
     };
-    let row = |key: &str, value: &str| KeyValue {
-        key: key.into(),
-        value: value.into(),
+    let detail = |key: &str, value: &str| {
+        Node::row([small(key), Node::Mono { text: value.into() }])
     };
-    children.extend([
-        Node::Qr {
-            text: code.text.clone(),
-            size: 200.,
-        },
-        Node::text("In heiko on your phone, tap Scan pairing code."),
-        Node::Rows {
-            rows: vec![
-                row("Address", &code.address),
-                row("Code", &code.secret),
-                row("Certificate", &code.certificate),
-            ],
-        },
+    let children = vec![
         Node::row([
-            Node::text("Expires"),
+            small("expires"),
             Node::Due {
                 id: "code-expires".into(),
                 at: code.expires,
             },
+            Node::Spacer,
+            button("hide code", &Act::HideCode, Kind::Secondary),
         ]),
+        Node::row([
+            Node::Qr {
+                text: code.text.clone(),
+                size: 200.,
+            },
+            Node::stack([
+                small("code"),
+                Node::Figure {
+                    text: code.secret.clone(),
+                },
+                Node::text("In heiko on your phone, tap Scan pairing code."),
+            ]),
+        ]),
+        Node::Rule,
+        detail("address", &code.address),
+        Node::Rule,
+        detail("certificate", &code.certificate),
+        Node::Rule,
         // Typing the address instead: the phone shows the whole
         // certificate, to compare with this.
-        Node::row(
-            code.lines
-                .iter()
-                .map(|line| Node::Mono { text: line.clone() }),
-        ),
-        button("Hide code", &Act::HideCode, Kind::Secondary),
-    ]);
-    Node::Card { children }
+        Node::stack(code.lines.iter().map(|line| small(line.clone()))),
+    ];
+    section("pair", "Pair a phone", children)
 }

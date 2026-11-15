@@ -3,9 +3,9 @@
 //! lines carry their old and new line numbers. `vcs_show` adds the
 //! author and parents.
 
+use heiko_ui_kit::diff::DiffKind;
 use serde::Deserialize;
 use serde_json::Value;
-use heiko_ui_kit::diff::DiffKind;
 
 use super::change_log::Change;
 use crate::{ChangeInfo, ChangeKind, FileChange, details};

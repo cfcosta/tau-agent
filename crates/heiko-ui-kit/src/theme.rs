@@ -123,8 +123,6 @@ pub struct Theme {
     pub term: TermLook,
     /// How code is colored, by what each part of it is.
     pub syntax: SyntaxLook,
-    /// Onboarding's look: the handshake screens.
-    pub setup: SetupLook,
     /// The colors things take by what they are: a running run, a cost,
     /// a tool. A palette's own hues, spread over the interface.
     pub roles: Roles,
@@ -225,87 +223,6 @@ impl Roles {
             _ if name.starts_with("mcp__") => self.mcp,
             _ if name.starts_with("memory") => self.memory,
             _ => self.tool_other,
-        }
-    }
-}
-
-/// How onboarding looks: a near-black ground with faint rings and a glow
-/// behind the handshake, light primary buttons, and dark tiles.
-#[derive(Debug, Clone)]
-pub struct SetupLook {
-    /// Behind everything.
-    pub ground: Hsla,
-    /// A service's tile in the handshake, and small icon tiles.
-    pub tile: Hsla,
-    /// Chips, secondary buttons, code cells.
-    pub surface: Hsla,
-    /// A chip's or cell's top: it falls to [`Self::surface`].
-    pub surface_top: Hsla,
-    /// Around chips and cards.
-    pub surface_border: Hsla,
-    /// Cards over the rings: see-through enough to show them.
-    pub glass: Hsla,
-    /// Between rows of a card.
-    pub divider: Hsla,
-    /// Behind a field inside a card.
-    pub field: Hsla,
-    /// A progress segment not reached yet.
-    pub track: Hsla,
-    /// The main action's fill, and the headline.
-    pub light: Hsla,
-    /// The main action's fill at its foot: it falls from
-    /// [`Self::light`] to this.
-    pub light_foot: Hsla,
-    /// Text on [`Self::light`].
-    pub on_light: Hsla,
-    /// Secondary text on chips and steps.
-    pub soft: Hsla,
-    /// Footnotes and the top bar's words.
-    pub faint: Hsla,
-    /// The labels of progress segments not reached yet.
-    pub idle: Hsla,
-    /// A service tile's edge when connected.
-    pub green_edge: Hsla,
-    /// A service tile's edge at the top of its breath, while heiko waits
-    /// on it.
-    pub waiting_edge: Hsla,
-    /// The code of a refusal, under a blocked handshake.
-    pub refusal: Hsla,
-    /// How strong the rings are, from the inside out.
-    pub ring_alphas: [f32; 5],
-    /// The rings' radii on a desktop, from the inside out; a phone
-    /// scales them by [`Self::compact_scale`].
-    pub ring_radii: [f32; 5],
-    pub compact_scale: f32,
-    /// How strong the glow behind the handshake is.
-    pub glow_alpha: f32,
-}
-
-impl SetupLook {
-    fn tokyo_night() -> Self {
-        Self {
-            ground: c(rgb(0x16161e)),
-            tile: c(rgb(0x1a1b26)),
-            surface: c(rgb(0x1f2335)),
-            surface_top: c(rgb(0x24283b)),
-            surface_border: c(rgb(0x292e42)),
-            glass: c(rgba(0x1a1b26d9)),
-            divider: c(rgb(0x292e42)),
-            field: c(rgb(0x16161e)),
-            track: c(rgb(0x292e42)),
-            light: c(rgb(0xc0caf5)),
-            light_foot: c(rgb(0xa9b1d6)),
-            on_light: c(rgb(0x16161e)),
-            soft: c(rgb(0xa9b1d6)),
-            faint: c(rgb(0x737aa2)),
-            idle: c(rgb(0x565f89)),
-            green_edge: c(rgb(0x41593a)),
-            waiting_edge: c(rgb(0x6e4b33)),
-            refusal: c(rgb(0x8c5a6a)),
-            ring_alphas: [0.16, 0.10, 0.07, 0.05, 0.035],
-            ring_radii: [150., 250., 360., 480., 610.],
-            compact_scale: 0.45,
-            glow_alpha: 0.10,
         }
     }
 }
@@ -512,7 +429,6 @@ impl Theme {
             ],
             term: TermLook::tokyo_night(),
             syntax: SyntaxLook::tokyo_night(),
-            setup: SetupLook::tokyo_night(),
             roles: Roles::tokyo_night(),
         }
     }

@@ -26,31 +26,64 @@ local QUESTION = {
 	no = "The goal does not hold yet, or nothing shown proves it.",
 }
 
--- heiko-goal's mark: its target, read as `tone`.
-local function target(tone)
-	return ui.icon("target", tone)
+-- heiko-goal's mark, in the goal's ink.
+local function target(ink)
+	return ui.kanji("的", ink)
 end
 
--- One of heiko-goal's notes: what happened, and the small print.
-local function note_tree(entry)
-	return ui.row({ target(entry.tone), ui.text(entry.text), ui.mono(entry.detail) })
+local function button(label, kind, what)
+	return ui.button(label, "act", { what = what }, kind)
 end
 
--- The person setting a goal: the condition, and the goal's limits while
--- it is the conversation's goal.
-local function goal_set(g, condition)
-	local children = { ui.row({ target("info"), ui.mono("/goal"), ui.rich(condition) }) }
-	if g ~= nil and g.condition == condition then
-		table.insert(
-			children,
-			ui.row({
-				ui.badge("up to " .. g.max_continuations .. " continuations", "neutral"),
-				ui.badge(goal.usd(g.budget) .. " budget", "neutral"),
-				ui.badge("checked by Jev", "neutral"),
-			})
-		)
+-- The checks as squares, oldest first, of whether each was met: a cross
+-- for one not met, a tick for the one that met it; then `last`, the
+-- square after them, when there is one.
+local function squares(checks, last)
+	local row = {}
+	for _, met in ipairs(checks) do
+		if met then
+			table.insert(row, ui.square("✓", "filled", "good"))
+		else
+			table.insert(row, ui.square("✕", "outlined", "bad"))
+		end
 	end
-	return ui.stack(children)
+	if last then
+		table.insert(row, last)
+	end
+	return row
+end
+
+-- One of heiko-goal's notes: the goal met or stopped under its mark with
+-- its checks, a check not met or not made in a line. `stopped` is
+-- whether the goal still stands stopped by this note, so it can go on
+-- from here.
+local function note_tree(entry, stopped)
+	if entry.kind == "met" then
+		return ui.row({ target("good"), ui.stack({ ui.heading("Goal met"), ui.row(squares(entry.checks or {})) }) })
+	elseif entry.kind == "stopped" then
+		local body = {
+			ui.heading("Goal stopped, not met"),
+			ui.row(squares(entry.checks or {}, ui.square("■", "filled", "bad"))),
+		}
+		if stopped then
+			table.insert(body, ui.row({ button("raise the limit", "primary", "keep_going"), button("clear", "secondary", "clear") }))
+		end
+		return ui.row({ target("bad"), ui.stack(body) })
+	elseif entry.kind == "failed" then
+		return ui.row({ ui.mark("failing"), ui.text(entry.text), ui.spacer(), ui.mono(entry.detail) })
+	end
+	return ui.row({ ui.square("✕", "outlined", "bad"), ui.text(entry.text), ui.spacer(), ui.mono(entry.detail) })
+end
+
+-- The person setting a goal: the condition, and how many times the goal
+-- may send the agent back while it is the conversation's goal.
+local function goal_set(g, condition)
+	local line = { ui.mono("/goal"), ui.rich(condition) }
+	if g ~= nil and g.condition == condition then
+		table.insert(line, ui.spacer())
+		table.insert(line, ui.stamp("up to " .. g.max_continuations .. " continuations", "neutral"))
+	end
+	return ui.row(line)
 end
 
 -- How a person's message heiko-goal knows draws: a `/goal` as the goal it
@@ -65,75 +98,76 @@ local function message_tree(said, state)
 	end
 	local first = string.match(said.text, "^[^\n]*")
 	first = string.gsub(string.sub(first, #goal.CONTINUATION_PREFIX + 1), "%.+$", "")
-	return note_tree({ tone = "warn", text = first, detail = "before_stop" })
+	return note_tree({ text = first, detail = "before_stop" }, false)
 end
 
-local function button(label, kind, what)
-	return ui.button(label, "act", { what = what }, kind)
+-- Whether each of the goal's checks was met, oldest first.
+local function met_of(g)
+	local out = {}
+	for _, check in ipairs(g.checks) do
+		table.insert(out, check.met == true)
+	end
+	return out
 end
 
--- Above the transcript while the conversation has a goal: the goal,
--- where it stands, why nothing checks it when nothing does, and its
--- buttons.
+local STATUS = { active = "not met", paused = "paused", met = "met", stopped = "stopped · not met" }
+
+-- Above the transcript while the conversation has a goal: the goal under
+-- its mark, each check a square, the continuations as ticks, why
+-- nothing checks it when nothing does, and its actions.
 local function banner(g, why)
 	local tone = goal.tone(g)
-	local actions
+	local title, actions, last
 	if g.status == "active" then
-		actions = {
-			button("Pause", "secondary", "pause"),
-			button("Edit", "secondary", "edit"),
-			button("Clear", "secondary", "clear"),
-		}
+		title = g.condition
+		last = ui.square(tostring(#g.checks + 1))
+		actions = { button("pause", "secondary", "pause"), button("edit", "secondary", "edit"), button("clear", "secondary", "clear") }
 	elseif g.status == "paused" then
-		actions = {
-			button("Resume", "primary", "keep_going"),
-			button("Edit", "secondary", "edit"),
-			button("Clear", "secondary", "clear"),
-		}
+		title = g.condition
+		last = ui.square(tostring(#g.checks + 1))
+		actions = { button("resume", "primary", "keep_going"), button("edit", "secondary", "edit"), button("clear", "secondary", "clear") }
 	elseif g.status == "met" then
-		actions = { button("New goal", "secondary", "edit"), button("Clear", "secondary", "clear") }
+		title = "Goal met"
+		actions = { button("new goal", "secondary", "edit"), button("clear", "secondary", "clear") }
 	else
+		title = "Goal stopped, not met"
+		last = ui.square("■", "filled", "bad")
 		actions = {
-			button("Keep going · +" .. goal.DEFAULT_CONTINUATIONS, "primary", "keep_going"),
-			button("Edit", "secondary", "edit"),
-			button("Clear", "secondary", "clear"),
+			button("raise the limit", "primary", "keep_going"),
+			button("edit", "secondary", "edit"),
+			button("clear", "secondary", "clear"),
 		}
 	end
-	local about = {
-		ui.row({ ui.badge("goal", tone), ui.text(g.condition) }),
-		ui.mono(goal.status_line(g)),
-	}
+	local checks = squares(met_of(g), last)
+	table.insert(checks, ui.spacer())
+	table.insert(checks, ui.ticks(g.continuations, g.max_continuations, tone == "bad" and "bad" or "good"))
+	table.insert(checks, ui.mono(g.continuations .. " of " .. g.max_continuations))
+	table.insert(actions, ui.spacer())
 	if why ~= nil then
-		table.insert(about, ui.status(why, nil, "warn"))
+		table.insert(actions, ui.toned(why, "warn"))
+	elseif g.error ~= nil then
+		table.insert(actions, ui.toned("the last check failed", "bad"))
 	end
-	local row = { target(tone), ui.stack(about) }
-	for _, action in ipairs(actions) do
-		table.insert(row, action)
+	local body
+	if title == g.condition then
+		body = { ui.row({ ui.heading(title), ui.spacer(), ui.toned(STATUS[g.status], tone) }) }
+	else
+		body = { ui.heading(title), ui.text(g.condition) }
 	end
-	return ui.row(row)
+	table.insert(body, ui.row(checks))
+	table.insert(body, ui.row(actions))
+	return ui.row({ target(g.status == "stopped" and "bad" or "good"), ui.stack(body) })
 end
 
-local STATUS = { active = "working toward it", paused = "paused", met = "met", stopped = "stopped · not met" }
-
 -- The goal's section of the inspector: the condition, where it stands,
--- its limits, and every check.
+-- its continuations, and every check.
 local function section(g, live)
-	local share = function(used, of)
-		if of > 0 then
-			return math.clamp(used / of, 0, 1)
-		end
-		return 1
-	end
 	local checks = {}
 	if live and g.status == "active" then
-		table.insert(checks, ui.row({ ui.icon("spinner", "info"), ui.text("working · checked when it stops") }))
+		table.insert(checks, { ui.mark("working"), ui.toned("working", "neutral"), ui.text(""), ui.text("") })
 	end
 	for at = #g.checks, 1, -1 do
 		local check = g.checks[at]
-		local verdict, tone = "not met", "warn"
-		if check.met then
-			verdict, tone = "met", "good"
-		end
 		local then_
 		if check.continuation ~= nil then
 			then_ = "sent back, " .. check.continuation .. " of " .. g.max_continuations
@@ -142,80 +176,56 @@ local function section(g, live)
 		else
 			then_ = "stopped here"
 		end
-		table.insert(
-			checks,
-			ui.row({
-				ui.mono("#" .. check.n),
-				ui.badge(verdict, tone),
-				ui.text(then_),
-				ui.mono("turn " .. check.turn .. " · p " .. string.format("%.2f", check.p)),
-			})
-		)
-	end
-	if #checks == 0 then
-		table.insert(checks, ui.empty("Not checked yet."))
-	end
-	local cost = 0
-	for _, check in ipairs(g.checks) do
-		cost += check.cost
+		table.insert(checks, {
+			check.met and ui.square("✓", "filled", "good") or ui.square("✕", "outlined", "bad"),
+			ui.text(then_),
+			ui.mono("turn " .. check.turn),
+			ui.mono("p " .. string.format("%.2f", check.p)),
+		})
 	end
 	local children = {
-		ui.row({ ui.heading("Goal"), ui.pill(STATUS[g.status], goal.tone(g)) }),
+		ui.row({ ui.heading("Goal"), ui.spacer(), ui.toned(STATUS[g.status], goal.tone(g)) }),
 		ui.rich(g.condition),
-		ui.text(
-			"Checked when the agent stops · met at p ≥ "
-				.. string.format("%.1f", goal.MET_AT)
-				.. " · up to "
-				.. g.max_continuations
-				.. " continuations and "
-				.. goal.usd(g.budget)
-		),
-		ui.heading("Limits"),
-		ui.progress(
-			share(g.continuations, g.max_continuations),
-			"Continuations · " .. g.continuations .. " / " .. g.max_continuations
-		),
-		ui.progress(share(g.spent, g.budget), "Cost · " .. goal.usd(g.spent) .. " / " .. goal.usd(g.budget)),
+		ui.row({
+			ui.toned("continuations", "neutral"),
+			ui.ticks(g.continuations, g.max_continuations, "good"),
+			ui.mono(g.continuations .. " of " .. g.max_continuations),
+		}),
 		ui.heading("Checks"),
-		ui.stack(checks),
 	}
-	if g.error ~= nil then
-		table.insert(children, ui.status(g.error, nil, "bad"))
+	if #checks == 0 then
+		table.insert(children, ui.empty("Not checked yet."))
+	else
+		table.insert(children, ui.table({}, checks, { widths = { 0.6, 4, 1.5, 1.5 } }))
 	end
-	table.insert(children, ui.rows({ { "checked by", "heiko-goal · Jev" }, { "Jev cost", string.format("$%.5f", cost) } }))
-	table.insert(
-		children,
-		ui.text(
-			"Jev reads the goal, the agent's last answer and its last tool results. When they fall short, the agent is sent back."
-		)
-	)
+	if g.error ~= nil then
+		table.insert(children, ui.row({ ui.mark("failing"), ui.text(g.error) }))
+	end
 	return ui.stack(children)
 end
 
--- The `/goal` popover: the command, what it does or what it needs, and
+-- The `/goal` popover: the command, what it needs when it lacks it, and
 -- an input for each limit.
 local function popover(jev)
-	local about = jev
-			and ui.text(
-				"The agent keeps going until this holds. Each time it would stop, heiko-goal asks Jev whether the goal is met; if not, the agent goes on."
-			)
-		or ui.status("Goals are checked with Jev: add a TypeSafe key on the Models screen first.", nil, "warn")
 	local limit = function(id, placeholder)
 		return ui.input(id, { placeholder = placeholder, submit = "heiko.submit" })
 	end
-	return ui.stack({
-		ui.row({ target("info"), ui.mono("/goal"), ui.mono("<condition>") }),
-		about,
-		ui.rule(),
+	local children = { ui.row({ ui.mono("/goal"), ui.mono("<condition>") }) }
+	if not jev then
+		table.insert(children, ui.row({ ui.mark("asks"), ui.text("Goals are checked with Jev: add a TypeSafe key (Models).") }))
+	end
+	table.insert(children, ui.rule())
+	table.insert(
+		children,
 		ui.row({
-			ui.text("Stop after"),
+			ui.toned("stop after", "neutral"),
 			limit(CONTINUATIONS, tostring(goal.DEFAULT_CONTINUATIONS)),
-			ui.text("continuations"),
-			ui.text("Budget $"),
+			ui.toned("continuations", "neutral"),
+			ui.toned("budget", "neutral"),
 			limit(BUDGET, string.format("%.2f", goal.DEFAULT_BUDGET)),
-		}),
-		ui.rich("`Enter` set the goal and start · `Esc` close"),
-	})
+		})
+	)
+	return ui.stack(children)
 end
 
 local NEEDS_JEV = "heiko-goal checks goals with Jev. Add a TypeSafe key on the Models screen, then "
@@ -451,8 +461,14 @@ return heiko.plugin({
 	-- Of a frozen copy: what `goal.state` would fill in reads as empty.
 	view = function(state)
 		local notes = {}
+		-- The newest note is where a stopped goal goes on from.
+		local newest = -1
+		for key in pairs(state.notes or {}) do
+			newest = math.max(newest, tonumber(string.sub(key, 2)) or -1)
+		end
+		local stopped = state.goal ~= nil and state.goal.status == "stopped"
 		for key, entry in pairs(state.notes or {}) do
-			notes[key] = note_tree(entry)
+			notes[key] = note_tree(entry, stopped and key == "g" .. newest)
 		end
 		local messages = {}
 		for text, said in pairs(state.said or {}) do

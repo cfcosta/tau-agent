@@ -507,14 +507,11 @@ pub fn sidebar(at: &AtRepo, view: &mut ViewCx<'_, McpUi>) -> Option<NavEntry> {
     let waiting = servers.pending.len();
     Some(
         NavEntry::new(
-            "MCP",
+            "MCP servers",
             Icon::Plug,
             Link::page("servers").param("repo", at.repo.clone()),
         )
-        .detail(match servers.servers.len() {
-            1 => "1 server".to_owned(),
-            n => format!("{n} servers"),
-        })
+        .detail(servers.servers.len().to_string())
         .badge((waiting > 0).then(|| (waiting.to_string(), Tone::Warn))),
     )
 }

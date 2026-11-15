@@ -109,10 +109,11 @@ function M.banner(repo, imports)
 		)
 	end
 	table.insert(buttons, ui.button("Not now", "act", act({ act = "not_now", repo = repo }), "secondary"))
-	return ui.card({
+	return ui.stack({
 		ui.heading("Claude Code and Codex know this repository"),
 		ui.text(text),
 		ui.row(buttons),
+		ui.rule(),
 	})
 end
 
@@ -241,12 +242,12 @@ local function head(imports)
 	local out = { ui.title(n == 0 and "No notes to keep" or (plural(n, "note", "notes") .. " to keep"), M.summary(imports)) }
 	local progress = imports.progress
 	if progress ~= nil and progress ~= json.null then
-		table.insert(out, ui.progress(progress.fraction, string.format("%s · %.0f%%", progress.line, progress.fraction * 100)))
 		table.insert(
 			out,
 			ui.row({
-				ui.text("New notes join this list as they come."),
-				ui.button("Stop", "act", act("stop"), "secondary"),
+				ui.ticks(math.floor(progress.fraction * 20 + 0.5), 20, "teal"),
+				ui.mono(string.format("%s · %.0f%%", progress.line, progress.fraction * 100)),
+				ui.button("stop", "act", act("stop"), "secondary"),
 			})
 		)
 	elseif M.any_found(imports) then
@@ -294,7 +295,6 @@ local function tabs(imports, on)
 		end
 	end
 	table.insert(row, ui.spacer())
-	table.insert(row, ui.icon("search", "neutral"))
 	table.insert(row, ui.input(M.SEARCH, { placeholder = "Search", keep = true }))
 	return ui.row(row)
 end

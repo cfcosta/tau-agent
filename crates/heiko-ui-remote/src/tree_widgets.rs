@@ -243,7 +243,7 @@ fn picture(
     cx: &mut App,
 ) -> AnyElement {
     use gpui::{Styled as _, StyledImage as _, prelude::FluentBuilder as _};
-    use heiko_ui_kit::theme::{Design as _, radius, sp};
+    use heiko_ui_kit::theme::{Design as _, sp};
 
     let id = format!("{}\u{0}{}", handle.plugin(), spec.key);
     let kept = widgets.borrow().pictures.get(&id).cloned();
@@ -277,14 +277,12 @@ fn picture(
             .into_any_element(),
         Picture::Waiting(..) => frame
             .min_h(rems(4.))
-            .rounded(radius::CARD)
-            .bg(t.raised)
+            .bg(t.card)
             .child(mono("Loading the image…", Type::CAPTION, t.dim))
             .into_any_element(),
         Picture::Failed(error) => frame
             .min_h(rems(4.))
-            .rounded(radius::CARD)
-            .bg(t.raised)
+            .bg(t.card)
             .p(sp(3.))
             .child(
                 gpui::div()

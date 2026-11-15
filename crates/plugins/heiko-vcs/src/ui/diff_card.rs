@@ -1,36 +1,34 @@
-//! The `vcs_diff` and `vcs_show` cards, as view trees (ADR 0045).
-//! Closed, a diff sums up its files and lines; a show, its subject.
-//! Open, a diff lists its files, each a section that opens to its
-//! hunks, and a show leads with the message, ids, author and parents,
-//! then lists its files the same way.
+//! The `vcs_diff` and `vcs_show` cards, as view trees (ADR 0045). A
+//! diff's header names its change and counts its files, and its body
+//! lists them, each a section that opens to its hunks as bands. A
+//! show's header is the change's id and first line; its body leads with
+//! the ids and state, then the message, author and parents, then its
+//! files, each on a row with the lines it adds and removes.
 
-use heiko_ui_plugin::tree::{KeyValue, Node, Tone};
+use heiko_ui_plugin::tree::{KeyValue, Node};
 
 use super::{
     Card,
-    bookmarks,
     change_diff::{ChangeDiff, FileDiff},
     change_log::Change,
-    kind_badge,
-    short_id,
-    subject,
+    file_rows,
+    first_line,
+    quiet,
 };
 
 /// A diff's header: which change, and how many files.
 pub fn files_summary(diff: &ChangeDiff) -> Node {
-    Node::row([
-        short_id(&diff.change),
-        Node::text("·"),
-        Node::text(diff.file_count()),
-    ])
+    Node::Mono {
+        text: format!("{} · {}", diff.change.short_id(), diff.file_count()),
+    }
 }
 
-/// A show's header: the change's type, subject and short id.
+/// A show's header: the change's short id and first line.
 pub fn commit_summary(diff: &ChangeDiff) -> Node {
     let change = &diff.change;
-    let mut row: Vec<Node> = kind_badge(change).into_iter().collect();
-    row.extend([Node::text(subject(change)), Node::Spacer, short_id(change)]);
-    Node::row(row)
+    Node::Mono {
+        text: format!("{} {}", change.short_id(), first_line(change)),
+    }
 }
 
 /// An open diff: its files.
@@ -55,39 +53,31 @@ pub(super) fn message(change: &Change) -> Vec<Node> {
         .unwrap_or_default()
 }
 
-/// An open show: the message, then the ids, author and parents, then
-/// the files.
-pub fn commit_body(card: &Card, diff: &ChangeDiff) -> Node {
+/// A show: the ids and state on a line, the message, the author and
+/// parents, then the files.
+pub fn commit_body(diff: &ChangeDiff) -> Node {
     let change = &diff.change;
     let info = &change.info;
-    let mut head: Vec<Node> = Vec::new();
-    if let Some(scope) = &change.scope {
-        head.push(Node::Mono {
-            text: scope.clone(),
-        });
-    }
-    head.extend(kind_badge(change));
-    head.extend(bookmarks(change));
-    head.push(Node::Spacer);
-    head.push(Node::Badge {
-        text: change.state().join(" · "),
-        tone: Tone::Neutral,
-    });
-    let mut column = vec![
-        Node::row(head),
-        Node::Heading {
-            text: subject(change),
-        },
+    let mono = |text: &str| Node::Mono { text: text.into() };
+    let mut ids = vec![
+        quiet("change"),
+        mono(change.short_id()),
+        quiet("commit"),
+        mono(&info.commit_id[..info.commit_id.len().min(7)]),
+        quiet(change.state().join(" · ")),
     ];
+    ids.extend(info.bookmarks.iter().map(|name| Node::Toned {
+        text: name.clone(),
+        tone: heiko_ui_plugin::tree::Tone::Good,
+        mono: true,
+    }));
+    let mut column = vec![Node::row(ids)];
     column.extend(message(change));
     let field = |key: &str, value: String| KeyValue {
         key: key.into(),
         value,
     };
-    let mut rows = vec![
-        field("change", info.change_id.clone()),
-        field("commit", info.commit_id.clone()),
-    ];
+    let mut rows = Vec::new();
     if let Some(author) = &diff.author {
         rows.push(field("author", author.name.clone()));
     }
@@ -96,14 +86,10 @@ pub fn commit_body(card: &Card, diff: &ChangeDiff) -> Node {
             .iter()
             .map(|parent| field("parent", parent_line(parent))),
     );
-    column.push(Node::Rows { rows });
-    if !diff.files.is_empty() {
-        column.push(Node::Rule);
-        column.push(Node::Heading {
-            text: format!("Files · {}", diff.file_count()),
-        });
+    if !rows.is_empty() {
+        column.push(Node::Rows { rows });
     }
-    column.push(file_list(card, &diff.files, diff.truncated, &|_| false));
+    column.extend(file_rows(&diff.files, diff.truncated, &|_| false));
     Node::stack(column)
 }
 
@@ -112,7 +98,7 @@ pub fn commit_body(card: &Card, diff: &ChangeDiff) -> Node {
 fn parent_line(parent: &Change) -> String {
     let mut words = vec![parent.short_id().to_owned()];
     words.extend(parent.info.bookmarks.iter().cloned());
-    words.push(subject(parent));
+    words.push(first_line(parent));
     words.join(" · ")
 }
 
@@ -169,9 +155,7 @@ pub fn file_list(
         });
     }
     if truncated {
-        list.push(Node::text(
-            "The diff was cut at 50 KB: files past the cut are not listed.",
-        ));
+        list.push(quiet("cut at 50 KB: files past the cut are not listed"));
     }
     Node::stack(list)
 }

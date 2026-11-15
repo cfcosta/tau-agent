@@ -13,7 +13,11 @@
     "transcript": false,
     "archive": false,
     "chats": false,
-    "files": ["skills", "package/skills", "data/skills"]
+    "files": [
+      "skills",
+      "package/skills",
+      "data/skills"
+    ]
   },
   "settings": null,
   "tools": [
@@ -28,7 +32,9 @@
             "type": "string"
           }
         },
-        "required": ["name"],
+        "required": [
+          "name"
+        ],
         "type": "object"
       },
       "card": false

@@ -1,5 +1,5 @@
 //! heiko-codemode's UI (ADR 0017): the `codemode` card, with the script,
-//! the calls it made, its output and what it cost; the store a run's
+//! the calls it made, each a tool's line, and its output; the store a run's
 //! scripts keep, in the inspector; and its line in the run's plugin
 //! list.
 //!
@@ -21,10 +21,8 @@
 
 use std::{collections::BTreeMap, io::Write};
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use heiko_agent::tool::RunId;
-use heiko_ui_kit::{format::fine_usd, theme};
+use heiko_ui_kit::theme;
 use heiko_ui_plugin::{
     CallData,
     CardMark,
@@ -37,8 +35,10 @@ use heiko_ui_plugin::{
     UiPlugin,
     ViewCx,
     points::{self, AtCard, AtRun, CardView},
-    tree::{KeyValue, Kind, Node, Tone},
+    tree::{KeyValue, Kind, MarkState, Node, Tone},
 };
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::{
     CallStatus,
@@ -476,13 +476,8 @@ pub fn first_line(code: &str) -> &str {
         .unwrap_or_default()
 }
 
-/// Reported Jev and inference cost, from finished details' `usage`.
-pub fn cost(details: &Value) -> f64 {
-    details["usage"]["cost"]["total"].as_f64().unwrap_or(0.0)
-}
-
-/// The header's line: `3 calls · 1.2 s · $0.0004`. While the script
-/// runs (no details yet), the calls so far and their reported cost.
+/// The header's line: `3 calls · 1.2 s`. While the script runs (no
+/// details yet), the calls so far.
 pub fn label(calls: &Calls, details: Option<&Value>) -> String {
     let n = calls.rows.len();
     let mut parts = vec![match (n, calls.complete) {
@@ -490,19 +485,8 @@ pub fn label(calls: &Calls, details: Option<&Value>) -> String {
         (n, true) => format!("{n} calls"),
         (n, false) => format!("{n}+ calls"),
     }];
-    if let Some(details) = details {
-        if let Some(ms) = details["wall_ms"].as_u64() {
-            parts.push(format!("{:.1} s", ms as f64 / 1000.0));
-        }
-        let cost = cost(details);
-        if cost > 0.0 {
-            parts.push(fine_usd(cost));
-        }
-    } else {
-        let cost: f64 = calls.rows.iter().filter_map(|row| row.cost).sum();
-        if cost > 0.0 {
-            parts.push(fine_usd(cost));
-        }
+    if let Some(ms) = details.and_then(|details| details["wall_ms"].as_u64()) {
+        parts.push(format!("{:.1} s", ms as f64 / 1000.0));
     }
     if calls.rows.iter().any(|row| row.usage_uncertain) {
         parts.push("reported partial · final usage unknown".to_owned());
@@ -537,7 +521,10 @@ impl UiPlugin for CodemodeUi {
         // servers' direct tools) comes first.
         heiko_ui_plugin::Declaration::new()
             .after(&["heiko-mcp"])
-            .seams(&[heiko_ui_plugin::Seam::Tools, heiko_ui_plugin::Seam::Start])
+            .seams(&[
+                heiko_ui_plugin::Seam::Tools,
+                heiko_ui_plugin::Seam::Start,
+            ])
             .services(&[heiko_jev::SERVICE])
     }
 
@@ -592,6 +579,7 @@ fn button(label: &str, action: &Action) -> Node {
         args: serde_json::to_value(action).unwrap_or(Value::Null),
         kind: Kind::Secondary,
         icon: None,
+        size: Default::default(),
     }
 }
 
@@ -607,7 +595,7 @@ fn mono(text: impl Into<String>) -> Node {
 }
 
 fn heading(text: impl Into<String>) -> Node {
-    Node::Heading { text: text.into() }
+    Node::Heading { text: text.into(), tone: Default::default() }
 }
 
 fn code(lang: &str, text: impl AsRef<str>) -> Node {
@@ -616,6 +604,19 @@ fn code(lang: &str, text: impl AsRef<str>) -> Node {
         text: text.as_ref().to_owned(),
         first_line: None,
     }
+}
+
+/// A part's name over a rule, with how many it holds at the end.
+fn part(name: &str, count: usize) -> [Node; 2] {
+    let quiet = |text: String| Node::Toned {
+        text,
+        tone: Tone::Neutral,
+        mono: true,
+    };
+    [
+        Node::row([quiet(name.into()), Node::Spacer, quiet(count.to_string())]),
+        Node::Rule,
+    ]
 }
 
 /// A line marked by an icon in its tone: an error, a verdict.
@@ -668,8 +669,9 @@ pub fn card(
     })
 }
 
-/// The card's body: the script, its calls, its output (each item a
-/// section that opens), why it failed and what it stored.
+/// The card's body: the script, its calls, each a tool's line, its
+/// output (each item a section that opens), why it failed and what it
+/// stored.
 pub fn body(
     call_id: &str,
     code: &str,
@@ -679,21 +681,23 @@ pub fn body(
 ) -> Node {
     let mut body = vec![self::code("luau", formatted(code))];
     if !calls.rows.is_empty() {
-        body.push(heading(format!("Calls · {}", calls.rows.len())));
+        body.extend(part("calls", calls.rows.len()));
         body.push(Node::Table {
             head: Vec::new(),
             rows: calls.rows.iter().map(call_row).collect(),
-            widths: vec![0.4, 2., 6., 1.4, 1.2],
+            widths: vec![0.4, 2., 6., 1.2],
         });
         if !calls.complete {
-            body.push(Node::text(
-                "More calls were made than the result lists.",
-            ));
+            body.push(Node::Toned {
+                text: "more calls were made than the result lists".into(),
+                tone: Tone::Neutral,
+                mono: true,
+            });
         }
     }
     let items = details.map(outline::items).unwrap_or_default();
     if !items.is_empty() {
-        body.push(heading("Output"));
+        body.extend(part("output", items.len()));
         body.push(outline::outline(call_id, &items));
     }
     if let Some(error) = failed {
@@ -718,8 +722,9 @@ pub fn body(
     Node::stack(body)
 }
 
-/// One call's row: how it went, the tool, its arguments with its error
-/// and plugins' verdicts under them, its cost and its time.
+/// One call's row, as a tool's line: the mark of how it went, the tool,
+/// its arguments with its error and plugins' verdicts under them, and
+/// its time.
 fn call_row(row: &Row) -> Vec<Node> {
     let blocked = row.marks.iter().find_map(|mark| match &mark.mark {
         CardMark::Blocked { reason } => Some((mark.plugin.clone(), reason)),
@@ -730,39 +735,34 @@ fn call_row(row: &Row) -> Vec<Node> {
         .iter()
         .find(|mark| mark.mark == CardMark::Flagged)
         .map(|mark| mark.plugin.clone());
-    let status = match row.status {
-        _ if blocked.is_some() => icon("blocked", Tone::Bad),
-        CallStatus::Running => icon("spinner", Tone::Info),
-        CallStatus::Ok => icon("check", Tone::Good),
-        CallStatus::Error => icon("blocked", Tone::Bad),
-        CallStatus::Cancelled => icon("close", Tone::Neutral),
+    let status = Node::Mark {
+        state: match row.status {
+            _ if blocked.is_some() => MarkState::Failing,
+            CallStatus::Running => MarkState::Working,
+            CallStatus::Ok => MarkState::Met,
+            CallStatus::Error => MarkState::Failing,
+            CallStatus::Cancelled => MarkState::Idle,
+        },
+        count: None,
     };
     let when = match (row.status, row.ms) {
         (CallStatus::Cancelled, _) => "cancelled".to_owned(),
         (_, Some(ms)) => format!("{ms} ms"),
         (_, None) => String::new(),
     };
-    let cost = row
-        .cost
-        .filter(|cost| *cost > 0.0)
-        .map(|cost| {
-            format!(
-                "{}{}",
-                fine_usd(cost),
-                if row.usage_uncertain {
-                    " reported partial"
-                } else {
-                    ""
-                }
-            )
-        })
-        .unwrap_or_default();
     let mut what = vec![mono(row.args.clone())];
     if let Some(error) = &row.error {
         what.push(marked("blocked", Tone::Bad, error.clone()));
     }
     if let Some(progress) = &row.progress {
         what.push(Node::text(progress.clone()));
+    }
+    if row.usage_uncertain {
+        what.push(Node::Toned {
+            text: "reported partial · final usage unknown".into(),
+            tone: Tone::Neutral,
+            mono: false,
+        });
     }
     if let Some((plugin, reason)) = blocked {
         what.push(marked(
@@ -782,8 +782,11 @@ fn call_row(row: &Row) -> Vec<Node> {
         status,
         mono(row.name.clone()),
         Node::stack(what),
-        Node::text(cost),
-        Node::text(when),
+        Node::Toned {
+            text: when,
+            tone: Tone::Neutral,
+            mono: true,
+        },
     ]
 }
 
@@ -1273,9 +1276,8 @@ pub fn trace_sections(
         sections.push((
             "Reported usage",
             format!(
-                "{} tokens · {}{}",
+                "{} tokens{}",
                 total_usage.total_tokens,
-                fine_usd(total_usage.cost.total),
                 if *complete {
                     ""
                 } else {

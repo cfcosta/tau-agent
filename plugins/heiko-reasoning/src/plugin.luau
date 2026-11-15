@@ -17,85 +17,82 @@ local function text_of(value)
 	return type(value) == "string" and value or ""
 end
 
--- The plugin's mark.
-local function plug(tone)
-	return ui.icon("plug", tone)
-end
+-- How many ticks a probability is drawn on.
+local TICKS = 20
 
-local function usd(cost)
-	return string.format("$%.4f", cost or 0)
-end
-
--- One level a row: its name, its probability, what it suits when
--- `suits`, and a badge on the one Jev found most likely.
-local function levels(choice, suits)
-	local head = { "Effort", "Probability" }
-	if suits then
-		table.insert(head, "Suits")
+-- The effort scale: one square a level, the one the run goes at outlined.
+local function scale(choice)
+	local squares = {}
+	for _, level in ipairs(choice.levels) do
+		local picked = level.effort == choice.runs_at
+		table.insert(squares, ui.square(level.effort, picked and "outlined" or "quiet", "warn"))
 	end
-	table.insert(head, "")
+	return ui.row(squares)
+end
+
+-- One level a row: its name, its probability as ticks, and what it suits.
+local function levels(choice)
 	local rows = {}
 	for _, level in ipairs(choice.levels) do
-		local row = { ui.mono(level.effort), ui.progress(level.p, string.format("%.2f", level.p)) }
-		if suits then
-			table.insert(row, ui.text(level.suits))
-		end
-		table.insert(row, level.effort == choice.effort and ui.badge("most likely", "info") or ui.text(""))
-		table.insert(rows, row)
+		table.insert(rows, {
+			ui.mono(level.effort),
+			ui.ticks(math.floor(level.p * TICKS + 0.5), TICKS, level.effort == choice.effort and "warn" or "neutral"),
+			ui.mono(string.format("%.2f", level.p)),
+			ui.text(level.suits),
+		})
 	end
-	return ui.table(head, rows)
+	return ui.table({ "Effort", "", "p", "Suits" }, rows, { widths = { 1, 2, 1, 5 } })
 end
 
--- The effort chart: the confidence against the threshold, then each
--- level's probability with what the level suits.
-local function chart(choice)
-	local verdict
+-- What became of the choice, as a stamp.
+local function verdict(choice)
 	if choice.kept_for_cache then
-		verdict = "is held back: it would resend " .. effort.tokens_text(choice.kept_for_cache) .. " tokens uncached"
+		return ui.stamp("held · " .. effort.tokens_text(choice.kept_for_cache) .. " cached", "warn")
 	elseif choice.confidence >= choice.threshold then
-		verdict = "is applied"
-	else
-		verdict = "is not applied"
+		return ui.stamp("applied", "good")
 	end
-	return ui.stack({
-		ui.rows({
-			{ "Confidence", string.format("%.2f", choice.confidence) },
-			{ "Threshold", string.format("%.2f", choice.threshold) },
-		}),
-		ui.text("So the choice " .. verdict .. "."),
-		ui.rule(),
-		ui.text("Probability of each effort level"),
-		levels(choice, true),
-	})
+	return ui.stamp("not applied", "neutral")
 end
 
--- One choice at full size: what it was for, then its chart.
+-- One choice at full size: what it was for, its scale, how sure Jev was
+-- against the threshold, then each level's probability.
 local function step(choice)
-	local what = "As the message came in"
+	local what = "message"
 	if choice.turn ~= nil then
-		what = choice.step == "user_turn" and ("Turn " .. choice.turn .. ", a message steered in")
-			or ("Turn " .. choice.turn .. ", between steps")
+		what = "turn " .. choice.turn .. (choice.step == "user_turn" and " · steered" or "")
 	end
-	local ran = choice.runs_at or "the model's default"
 	return ui.stack({
-		ui.row({ ui.mono(NAME), ui.text(what .. ": runs at " .. ran), ui.mono("Jev · " .. usd(choice.cost)) }),
-		chart(choice),
+		ui.row({
+			ui.heading("Reasoning: " .. (choice.runs_at or "default")),
+			ui.spacer(),
+			ui.mono(what),
+			verdict(choice),
+		}),
+		scale(choice),
+		ui.row({
+			ui.toned("confidence", "neutral"),
+			ui.ticks(math.floor(choice.confidence * TICKS + 0.5), TICKS, choice.confidence >= choice.threshold and "good" or "neutral", { math.floor(choice.threshold * TICKS + 0.5) }),
+			ui.mono(string.format("%.2f of %.2f", choice.confidence, choice.threshold)),
+		}),
+		levels(choice),
 	})
 end
 
--- A note in the transcript: the effort changed, or Jev could not score.
-local function note(key, entry, state)
-	local details = ui.link("Details", "luau-plugins", { plugin = "heiko-luau-plugins", params = { entry = NAME } })
+-- A note in the transcript: the effort the run goes at on its scale, or
+-- that Jev could not score.
+local function note(entry, state)
 	if entry.kind == "failed" then
-		return ui.row({ plug("bad"), ui.mono(NAME), ui.text(entry.message), ui.mono(entry.detail) })
+		return ui.row({ ui.mark("failing"), ui.text(entry.message), ui.spacer(), ui.mono(entry.detail) })
 	end
 	local choice = state.choices[entry.choice]
 	return ui.stack({
-		ui.row({ plug("info"), ui.mono(NAME), ui.rich(entry.text), ui.mono("Jev · " .. usd(choice.cost)), details }),
-		ui.section("note-" .. key, "Probability of each effort level", {
-			levels(choice, false),
-			ui.text(effort.verdict(choice, entry.outcome)),
-		}, { open = false }),
+		ui.row({
+			ui.heading("Reasoning: " .. (choice.runs_at or "default")),
+			ui.spacer(),
+			ui.mono(NAME),
+			ui.link("details", "luau-plugins", { plugin = "heiko-luau-plugins", params = { entry = NAME } }),
+		}),
+		scale(choice),
 	})
 end
 
@@ -274,12 +271,12 @@ return heiko.plugin({
 		local state = { choices = model.choices or {}, notes = model.notes or {}, status = model.status, starting = model.starting, plan = model.plan }
 		local notes = {}
 		for key, entry in pairs(state.notes) do
-			notes[key] = note(key, entry, state)
+			notes[key] = note(entry, state)
 		end
 		local starting = effort.starting_choice(state)
-		local page = { ui.heading("Reasoning effort"), ui.text("Each effort heiko-reasoning picked for this run, with how sure Jev was.") }
+		local page = {}
 		if #state.choices == 0 then
-			table.insert(page, ui.empty("heiko-reasoning has not chosen an effort in this run."))
+			table.insert(page, ui.empty("No effort picked in this run."))
 		end
 		for _, choice in ipairs(state.choices) do
 			table.insert(page, step(choice))

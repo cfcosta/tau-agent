@@ -328,7 +328,7 @@ fn an_agent_s_notes_questions_and_cap_notify_once() {
             (
                 Kind::Waiting,
                 "triage reached its cap",
-                "It spent $1.00 today; its events wait for tomorrow or for you"
+                "It reached today's allowance; its events wait for tomorrow or for you"
             ),
         ]
     );

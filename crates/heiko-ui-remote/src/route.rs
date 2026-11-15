@@ -7,10 +7,12 @@ use crate::{pairing::PairStep, setup::SetupStep};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
-    /// The run list. On a desktop, the sidebar is the list, so this shows
-    /// the current run.
+    /// Home. On a desktop, a new run's composer beside what happened
+    /// since the person last looked; on a phone, the list of runs.
     Home,
     Run(RunId),
+    /// A new run's composer: Home's on a desktop, a screen of its own
+    /// on a phone.
     NewRun,
     Compare {
         main: RunId,
@@ -109,7 +111,8 @@ impl Route {
     /// The screen's name in the title bar.
     pub fn title(&self) -> &'static str {
         match self {
-            Self::Home | Self::Run(_) => "Run",
+            Self::Home => "Home",
+            Self::Run(_) => "Run",
             Self::NewRun => "New run",
             Self::Compare { .. } => "Compare forks",
             Self::History => "History",

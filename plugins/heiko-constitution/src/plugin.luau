@@ -215,11 +215,33 @@ local function shown_of(about)
 	return checks.cut(checks.shown(fields, names), checks.SHOWN_CHARS)
 end
 
--- One of its notes: a check Jev could not answer, an answer held or
--- flagged.
+-- One of its notes: a check Jev could not answer, or an answer held,
+-- sent back with a square for each time it may go, or flagged.
 local function note_tree(note)
-	return ui.row({ ui.icon("blocked", note.tone), ui.mono(NAME), ui.text(note.text), ui.mono(note.detail) })
+	local held = note.held
+	if held == nil then
+		return ui.row({ ui.mark("failing"), ui.text(note.text), ui.spacer(), ui.mono(note.detail) })
+	end
+	local body = {
+		ui.row({
+			ui.heading(held.kind == "held" and "Held, sent back" or "Flagged for review"),
+			ui.spacer(),
+			ui.mono(NAME),
+		}),
+		ui.text(held.rule .. ": " .. held.text),
+	}
+	if held.hold and held.max_holds then
+		local squares = {}
+		for n = 1, held.max_holds do
+			table.insert(squares, ui.square(tostring(n), n <= held.hold and "outlined" or "quiet", "yellow"))
+		end
+		table.insert(body, ui.row(squares))
+	end
+	return ui.row({ ui.kanji("返", "yellow"), ui.stack(body) })
 end
+
+-- How many ticks a score's strip has.
+local TICKS = 20
 
 -- The rule `rule` on the repository's page.
 local function rule_link(label, repo, rule)
@@ -236,21 +258,25 @@ local function call_tree(call, repo)
 		return {
 			badge = ui.row({
 				ui.mono(verdict.rule .. " " .. checks.two(verdict.score)),
-				rule_link("Review", repo, verdict.rule),
+				rule_link("review", repo, verdict.rule),
 			}),
 			mark = "flagged",
 		}
 	elseif verdict then
-		local meter = "p(violation) " .. checks.two(verdict.score)
-		if verdict.review and verdict.block then
-			meter ..= " · review " .. checks.two(verdict.review) .. " · block " .. checks.two(verdict.block)
+		local marked = {}
+		for _, at in ipairs({ verdict.review or false, verdict.block or false }) do
+			if at then
+				table.insert(marked, math.clamp(math.floor(at * TICKS + 0.5), 0, TICKS - 1))
+			end
 		end
+		local body = { ui.row({ ui.heading("Blocked by rule " .. verdict.rule), ui.spacer(), rule_link("rule", repo, verdict.rule) }) }
+		if verdict.text then
+			table.insert(body, ui.text(verdict.text))
+		end
+		table.insert(body, ui.row({ ui.toned("p(violation)", "neutral"), ui.spacer(), ui.toned(checks.two(verdict.score), "bad", true) }))
+		table.insert(body, ui.ticks(math.floor(verdict.score * TICKS + 0.5), TICKS, "bad", marked))
 		return {
-			body = ui.row({
-				ui.badge(NAME, "bad"),
-				rule_link("Rule " .. verdict.rule, repo, verdict.rule),
-				ui.progress(verdict.score, meter),
-			}),
+			body = ui.row({ ui.kanji("止", "bad"), ui.stack(body) }),
 			mark = "blocked",
 			reason = verdict.reason,
 		}
@@ -291,14 +317,10 @@ local function inspector(state)
 			{ "blocked", with_rules(stats.blocked) },
 			{ "flagged", with_rules(stats.flagged) },
 			{ "held", held },
-			{ "Jev cost", checks.usd(stats.cost) },
 		}),
-		ui.text(
-			"Only the fields the model wrote are checked, such as edit.newText or exec_command.cmd. Tool output never goes to Jev."
-		),
 	}
 	if #stats.flagged > 0 and not state.live then
-		table.insert(section, rule_link("Review the flagged call", state.repo, stats.flagged[1]))
+		table.insert(section, rule_link("review the flagged call", state.repo, stats.flagged[1]))
 	end
 	return ui.stack(section)
 end

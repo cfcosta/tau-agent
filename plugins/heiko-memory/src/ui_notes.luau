@@ -1,5 +1,5 @@
 -- The notes, as their pages show them (heiko-memory's `ui::page`): a
--- search, a link for each kind of note, and the notes in a table. A note
+-- search, a link for each kind of note, and the notes in ruled rows. A note
 -- opens in place of the list, with a small map of its links and the links
 -- themselves under it. What a run recalled and saved, in its transcript.
 --
@@ -217,24 +217,23 @@ local function links_of(n)
 	return n .. " links"
 end
 
--- A note in the list: its title, opening it, and id over the start of
--- its text; its kind; how linked it is; when it was edited.
+-- A note in the list: its id, opening it; its title on a slip; its
+-- kind; the start of its text; how linked it is; when it was edited.
 local function row(book, n)
 	local linked = #n.links + #backlinks(book, n.id)
 	return {
-		ui.stack({
-			ui.row({ note_link(n.title, n.id), ui.mono(n.id) }),
-			ui.text((string.gsub(snippet(n), "`", ""))),
-		}),
-		ui.badge(n.kind, M.kind_tone(n.kind)),
-		ui.text(links_of(linked)),
-		ui.text(n.edited),
+		note_link(n.id, n.id),
+		ui.slip(n.title, "teal"),
+		ui.toned(n.kind, M.kind_tone(n.kind), true),
+		ui.text((string.gsub(snippet(n), "`", ""))),
+		ui.mono(links_of(linked)),
+		ui.mono(n.edited),
 	}
 end
 
 -- The list: `top`, the pieces above it (a banner, or what the person's
 -- notes are); the search, the kinds and `button`, the way to import; then
--- a row for each note that matches both `query` and `kind`.
+-- a ruled row for each note that matches both `query` and `kind`.
 function M.list_tree(book, top, query, kind, button)
 	query = string.lower(query or "")
 	local children = {}
@@ -242,8 +241,8 @@ function M.list_tree(book, top, query, kind, button)
 		table.insert(children, piece)
 	end
 	local bar = {
-		ui.icon("search", "neutral"),
 		ui.input(M.SEARCH, { placeholder = "Search notes", keep = true }),
+		ui.spacer(),
 	}
 	local function kind_piece(each, name, count)
 		local label = name .. " " .. count
@@ -278,21 +277,21 @@ function M.list_tree(book, top, query, kind, button)
 	if #rows == 0 then
 		table.insert(children, ui.empty(#book == 0 and "No notes yet." or "No notes match."))
 	else
-		table.insert(children, ui.table({ "Note", "Kind", "Links", "Edited" }, rows, { widths = { 6, 1.3, 1, 1.5 } }))
+		table.insert(children, ui.table({}, rows, { widths = { 1, 4, 0.8, 6, 1, 1.5 } }))
 	end
 	return ui.stack(children)
 end
 
 -- What the person's notes are, over their list.
 function M.yours()
-	return ui.title("Your notes", "What runs learned about you and how you work. Every repository's runs see these.")
+	return ui.title("Your notes")
 end
 
 -- A row for each of `links`: the note, opening it, and why.
 local function link_rows(links)
 	local out = {}
 	for _, link in ipairs(links) do
-		table.insert(out, ui.stack({ note_link(link.note.title, link.note.id), ui.text("why: " .. link.why) }))
+		table.insert(out, ui.row({ note_link(link.note.title, link.note.id), ui.toned("why: " .. link.why, "neutral") }))
 	end
 	return out
 end
@@ -357,17 +356,17 @@ end
 -- files it is about, and its links out and in.
 function M.note_tree(book, n)
 	local children = {
-		ui.row({ ui.icon("back", "neutral"), kind_link("All notes", nil) }),
+		kind_link("all notes", nil),
 		ui.mono(n.id .. " · " .. n.written_by .. " · edited " .. n.edited),
 		ui.title(n.title),
 		ui.markdown(table.concat(n.body, "\n\n")),
 	}
 	if #n.paths > 0 then
-		local badges = {}
+		local paths = {}
 		for _, p in ipairs(n.paths) do
-			table.insert(badges, ui.badge(p, "neutral"))
+			table.insert(paths, ui.stamp(p, "neutral"))
 		end
-		table.insert(children, ui.row(badges))
+		table.insert(children, ui.row(paths))
 	end
 	for _, piece in ipairs(neighborhood(book, n)) do
 		table.insert(children, piece)
@@ -392,50 +391,48 @@ end
 -- The notes page's search input.
 M.SEARCH = "search"
 
--- What the user's scope's ids start with.
-local USER = "user:"
+-- How many notes, in words.
+local function notes_of(n)
+	return n == 1 and "1 note" or (n .. " notes")
+end
 
 -- One of memory's marks in a transcript, of a log entry: the notes a run
--- started with, each opening its page; what it saved; what failed. Nil
--- for what shows none (a stale mark). `repo` is the run's.
-function M.mark(entry, repo)
-	local text, tone, notes
+-- started with, each on a slip; what it saved, on dashed ones; what
+-- failed. Nil for what shows none (a stale mark).
+function M.mark(entry)
+	local title
+	local slips = {}
 	if entry.kind == "recalled" then
-		local n = #entry.notes
-		text = n == 1 and "recalled 1 note for this task" or ("recalled " .. n .. " notes for this task")
-		tone, notes = "neutral", entry.notes
+		title = "Recalled " .. notes_of(#entry.notes)
+		for _, recalled in ipairs(entry.notes) do
+			table.insert(slips, ui.slip(recalled.title, "teal"))
+		end
 	elseif entry.kind == "saved" then
-		local n = #entry.calls
-		text = n == 1 and "saved 1 note" or ("saved " .. n .. " notes")
-		tone = "good"
+		title = "Saved " .. notes_of(#entry.calls)
+		for _, call in ipairs(entry.calls) do
+			local saved = call.details
+			if saved and (saved.title or saved.id) then
+				table.insert(slips, ui.slip(saved.title or saved.id, "teal", true))
+			end
+		end
 	elseif entry.kind == "error" then
-		text, tone = entry.message, "bad"
+		return ui.row({ ui.mark("failing"), ui.text(entry.message), ui.spacer(), ui.mono("heiko-memory") })
 	else
 		return nil
 	end
-	local children = { ui.row({ ui.icon("memory", tone), ui.status("heiko-memory", text, tone) }) }
-	if notes and #notes > 0 then
-		local links = {}
-		for _, recalled in ipairs(notes) do
-			local id = recalled.id
-			if string.sub(id, 1, #USER) == USER then
-				-- The user's notes are a page of the app's.
-				table.insert(links, ui.link(recalled.title, "notes", { params = { note = string.sub(id, #USER + 1) } }))
-			else
-				table.insert(links, ui.link(recalled.title, "notes", { params = { repo = repo, note = id } }))
-			end
-		end
-		table.insert(children, ui.row(links))
+	local body = { ui.row({ ui.heading(title), ui.spacer(), ui.mono("heiko-memory") }) }
+	if #slips > 0 then
+		table.insert(body, ui.stack(slips))
 	end
-	return ui.stack(children)
+	return ui.row({ ui.kanji("憶", "teal"), ui.stack(body) })
 end
 
 -- The marks of a run's `log`, by key: `m0`, `m1`, … for those that show.
-function M.marks(log, repo)
+function M.marks(log)
 	local out = {}
 	local n = 0
 	for _, entry in ipairs(log or {}) do
-		local piece = M.mark(entry, repo)
+		local piece = M.mark(entry)
 		if piece then
 			out["m" .. n] = piece
 			n += 1

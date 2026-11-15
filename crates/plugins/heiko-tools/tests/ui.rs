@@ -9,7 +9,6 @@
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 use hegel::generators as gs;
-use serde_json::json;
 use heiko_agent::tool::RunId;
 use heiko_tools::{
     artifact_grant::ArtifactRecord,
@@ -44,6 +43,7 @@ use heiko_ui_plugin::{
     testing::FakeRun,
     tree::Node,
 };
+use serde_json::json;
 
 /// A result's diff is read as heiko-ui-kit reads any diff (its property
 /// is `a_whole_file_diff_gives_back_both_sides`): a successful call's
@@ -230,22 +230,14 @@ fn a_read_numbers_its_lines(tc: hegel::TestCase) {
     let read = ReadView::of(&data).unwrap();
     assert_eq!(read.first, first);
     assert_eq!(read.lines, lines);
-    // The whole file is its line count; a part, its first and last
-    // line of the total (a part with no lines names its first).
-    let expected = if first == 1 && returned == total {
-        if total == 1 {
-            "1 line".to_owned()
-        } else {
-            format!("{total} lines")
-        }
+    // Its first and last line of the total (a read with no lines names
+    // its first).
+    let last = if returned == 0 {
+        first
     } else {
-        let last = if returned == 0 {
-            first
-        } else {
-            first + returned - 1
-        };
-        format!("{first}–{last} of {total}")
+        first + returned - 1
     };
+    let expected = format!("lines {first}–{last} of {total}");
     assert_eq!(read.label(), expected);
 }
 
@@ -265,7 +257,7 @@ fn a_read_without_text_has_no_lines() {
     assert_eq!(of(json!({"kind": "image"}), false), None);
     assert_eq!(of(json!({}), true), None);
     // An older result, without the counts, reads as the whole file.
-    assert_eq!(of(json!({}), false).unwrap().label(), "1 line");
+    assert_eq!(of(json!({}), false).unwrap().label(), "lines 1–1 of 1");
 }
 
 /// A command's terminal is its chunks joined in order while it runs, and

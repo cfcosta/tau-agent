@@ -39,12 +39,7 @@
             {
               "children": [
                 {
-                  "name": "clock",
-                  "piece": "icon",
-                  "tone": "neutral"
-                },
-                {
-                  "piece": "text",
+                  "piece": "heading",
                   "text": "recheck-415"
                 },
                 {
@@ -60,9 +55,8 @@
                   "args": {
                     "name": "recheck-415"
                   },
-                  "icon": "close",
                   "kind": "secondary",
-                  "label": "",
+                  "label": "cancel",
                   "piece": "button"
                 }
               ],
@@ -80,12 +74,7 @@
             {
               "children": [
                 {
-                  "name": "clock",
-                  "piece": "icon",
-                  "tone": "neutral"
-                },
-                {
-                  "piece": "text",
+                  "piece": "heading",
                   "text": "release-notes"
                 },
                 {
@@ -101,9 +90,8 @@
                   "args": {
                     "name": "release-notes"
                   },
-                  "icon": "close",
                   "kind": "secondary",
-                  "label": "",
+                  "label": "cancel",
                   "piece": "button"
                 }
               ],
@@ -125,24 +113,23 @@
           {
             "children": [
               {
+                "piece": "figure",
+                "text": "14:00"
+              },
+              {
                 "children": [
                   {
                     "children": [
                       {
-                        "name": "clock",
-                        "piece": "icon",
-                        "tone": "info"
-                      },
-                      {
-                        "piece": "text",
-                        "text": "Scheduled · look-at-415"
+                        "piece": "heading",
+                        "text": "look-at-415"
                       },
                       {
                         "piece": "spacer"
                       },
                       {
                         "piece": "mono",
-                        "text": "2026-10-12 14:00"
+                        "text": "2026-10-12"
                       }
                     ],
                     "piece": "row"
@@ -155,10 +142,10 @@
                 "piece": "stack"
               }
             ],
-            "piece": "stack"
+            "piece": "row"
           }
         ],
-        "piece": "card"
+        "piece": "stack"
       }
     }
   }

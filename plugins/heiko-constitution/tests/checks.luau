@@ -168,6 +168,8 @@ t.case("a final answer that breaks a rule goes back until the cap", function()
 	t.equal(has(held.message, "rule R6"), true, held.message)
 	t.equal(r:before_stop(stop("Done. cargo test: 12 passed.")), nil)
 	t.equal(r.state.notes.c0.detail, "before_stop · continuation 1 / 3")
+	local held_note = r.state.notes.c0.held
+	t.equal({ held_note.kind, held_note.rule, held_note.hold, held_note.max_holds }, { "held", "R6", 1, 3 })
 	t.equal(r.state.stats.held, { "R6" })
 	-- The message it sent back draws as nothing: its note says it.
 	t.equal(r:view().messages[held.message], heiko.ui.stack({}))
@@ -473,12 +475,15 @@ t.case("a verdict marks its call, and every call shows its scores", function()
 	local view = heiko.test.load().view(state, {})
 	t.equal(view.calls.c1.mark, "blocked")
 	t.equal(view.calls.c1.reason, "Rule R1 forbids it")
+	-- Under a blocked one: the mark, the rule, and Jev's score on a strip.
+	local body = json.encode(view.calls.c1.body)
+	t.equal(has(body, "止") and has(body, "Blocked by rule R1") and has(body, "No deletes.") and has(body, "0.95"), true, body)
 	t.equal(view.calls.c2.mark, "flagged")
 	t.equal(state.calls.c2.scores, { { rule = "R2", score = 0.55 } })
 	-- A flagged call's badge names the rule, its score and a way to review
 	-- it on the repository's page.
 	local badge = json.encode(view.calls.c2.badge)
-	t.equal(has(badge, "R2 0.55") and has(badge, "Review") and has(badge, "heiko-agent"), true, badge)
+	t.equal(has(badge, "R2 0.55") and has(badge, "review") and has(badge, "heiko-agent"), true, badge)
 	-- A passed one shows each score, quietly.
 	t.equal(view.calls.c3.badge, heiko.ui.mono("R2 0.05 · R5 0.10"))
 	t.equal(view.calls.c3.mark, nil)

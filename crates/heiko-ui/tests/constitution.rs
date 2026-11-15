@@ -246,7 +246,12 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     assert_eq!(kept(&host)["rules"], 1);
     assert_eq!(kept(&host)["nav"]["detail"], "1 rules");
     let drawn = page(&host);
-    assert!(drawn.contains("Checks write.content"), "{drawn}");
+    assert!(
+        drawn.contains(
+            r#"{"piece":"toned","text":"checks","tone":"neutral","mono":true},{"piece":"mono","text":"write.content"}"#
+        ),
+        "{drawn}"
+    );
 
     let mut view = host
         .block_on(host.start("write a.txt", &ModelChoice::default(), REPO))
@@ -274,7 +279,8 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     // The page counts the run.
     let drawn = page(&host);
     assert!(
-        drawn.contains("Across 1 run") && drawn.contains("1 blocked"),
+        drawn.contains(r#""text":"1 run""#)
+            && drawn.contains(r#""text":"1 blocked""#),
         "{drawn}"
     );
 
@@ -285,7 +291,10 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     page_act(&host, "save", json!({}));
     let drawn = page(&host);
     assert!(
-        drawn.contains("No unwrap, ever.") && drawn.contains("block 0.85"),
+        drawn.contains("No unwrap, ever.")
+            && drawn.contains(
+                r#"{"piece":"toned","text":"block","tone":"neutral","mono":true},{"piece":"toned","text":"0.85","tone":"bad","mono":true}"#
+            ),
         "{drawn}"
     );
     assert_eq!(kept(&host)["rules"], 1);
@@ -383,8 +392,12 @@ fn a_broken_constitution_can_be_removed_and_settings_are_saved() {
     );
     let drawn = page(&host);
     assert!(
-        drawn.contains("Calls it could not check are refused")
-            && drawn.contains("Up to 5;"),
+        // What it could not check is refused: the choice in force is
+        // the primary; and five answers may go back, a square each.
+        drawn.contains(
+            r#""label":"refuse","action":"luau-repo/heiko-constitution/settings","args":{"blocks_unchecked":true,"max_holds":5},"kind":"primary""#
+        ) && drawn.contains(r#"{"piece":"square","label":"5","style":"outlined","tone":"warn"}"#)
+            && !drawn.contains(r#"{"piece":"square","label":"6","#),
         "{drawn}"
     );
 }

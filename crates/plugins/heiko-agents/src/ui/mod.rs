@@ -122,6 +122,7 @@ pub(crate) fn act_button(
         args: serde_json::to_value(act).unwrap_or(Value::Null),
         kind,
         icon: None,
+        size: Default::default(),
     }
 }
 
@@ -138,6 +139,7 @@ pub(crate) fn button(
         args,
         kind,
         icon: None,
+        size: Default::default(),
     }
 }
 
@@ -513,12 +515,19 @@ impl UiPlugin for AgentsUi {
 /// Where an agent stands, on its row's end: what it left the person
 /// first, then whether it works or is paused, else when it wakes next.
 fn row_end(agent: &Agent) -> Option<Node> {
-    let pill = |text: String, tone| Node::Pill { text, tone };
+    let mark = |state, count| Node::Mark { state, count };
     let waits = agent.waits_on_you();
     Some(match agent.status {
-        _ if waits > 0 => pill(format!("{waits} need you"), tree::Tone::Info),
-        Status::Working => pill("working".into(), tree::Tone::Good),
-        Status::Paused => pill("paused".into(), tree::Tone::Warn),
+        _ if waits > 0 => mark(
+            tree::MarkState::Asks,
+            Some(u32::try_from(waits).unwrap_or(u32::MAX)),
+        ),
+        Status::Working => mark(tree::MarkState::Working, None),
+        Status::Paused => Node::Toned {
+            text: "paused".into(),
+            tone: tree::Tone::Warn,
+            mono: true,
+        },
         _ => Node::Due {
             id: format!("next-{}", agent.name),
             at: agent.next()? * 1000,
@@ -617,20 +626,56 @@ pub(crate) fn tone(status: &Status) -> Tone {
     }
 }
 
-/// The tone of an agent's state, as a tree's pieces read it.
-pub(crate) fn tree_tone(status: &Status) -> tree::Tone {
-    match status {
-        Status::Working => tree::Tone::Info,
-        Status::Waiting => tree::Tone::Neutral,
-        Status::Paused | Status::AtCap => tree::Tone::Warn,
-        Status::Broken { .. } => tree::Tone::Bad,
+/// The mark of an agent's state.
+pub(crate) fn state_mark(status: &Status) -> tree::Node {
+    tree::Node::Mark {
+        state: match status {
+            Status::Working => tree::MarkState::Working,
+            Status::Waiting | Status::Paused => tree::MarkState::Idle,
+            Status::AtCap => tree::MarkState::Limit,
+            Status::Broken { .. } => tree::MarkState::Failing,
+        },
+        count: None,
     }
 }
 
-/// An agent's state on a pill: `working`, `at its cap`.
-pub(crate) fn status_pill(status: &Status) -> tree::Node {
-    tree::Node::Pill {
-        text: status.label().to_owned(),
-        tone: tree_tone(status),
+/// `n events`, said as a count.
+pub(crate) fn events(count: usize) -> String {
+    match count {
+        0 => "no events".to_owned(),
+        1 => "1 event".to_owned(),
+        n => format!("{n} events"),
     }
+}
+
+/// How many ticks a day's allowance is drawn with.
+const ALLOWANCE_TICKS: u32 = 25;
+
+/// How much of the day's allowance `agent` used: the share as a
+/// percentage, over a strip of ticks, red once it is all used.
+pub(crate) fn allowance(agent: &Agent) -> [tree::Node; 2] {
+    let share = agent.spent_share();
+    let lit = (share * ALLOWANCE_TICKS as f32).round() as u32;
+    [
+        tree::Node::row([
+            tree::Node::Mono {
+                text: format!("{:.0}%", share * 100.),
+            },
+            tree::Node::Toned {
+                text: "of today's allowance".into(),
+                tone: tree::Tone::Neutral,
+                mono: false,
+            },
+        ]),
+        tree::Node::Ticks {
+            lit: if share > 0. { lit.max(1) } else { 0 },
+            total: ALLOWANCE_TICKS,
+            tone: if agent.status == Status::AtCap {
+                tree::Ink::Bad
+            } else {
+                tree::Ink::Info
+            },
+            marked: vec![],
+        },
+    ]
 }

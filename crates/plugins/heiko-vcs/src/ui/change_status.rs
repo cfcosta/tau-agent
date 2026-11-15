@@ -56,12 +56,12 @@ impl ChangeStatus {
         })
     }
 
-    /// `4 files`, or `empty` when `@` changes nothing.
+    /// `4 files changed`, or `clean` when `@` changes nothing.
     pub fn summary(&self) -> String {
         match self.files.len() {
-            0 => "empty".into(),
-            1 => "1 file".into(),
-            count => format!("{count} files"),
+            0 => "clean".into(),
+            1 => "1 file changed".into(),
+            count => format!("{count} files changed"),
         }
     }
 
@@ -145,7 +145,7 @@ new file mode 100644
             .collect();
         // run.sh changed only its mode: no hunks, still listed.
         assert_eq!(files, [("src/a.rs", 1), ("src/b.rs", 1), ("run.sh", 0)]);
-        assert_eq!(status.summary(), "3 files");
+        assert_eq!(status.summary(), "3 files changed");
         assert_eq!(
             status.counts(),
             [(ChangeKind::Added, 1), (ChangeKind::Modified, 2)]
@@ -165,7 +165,7 @@ new file mode 100644
         }))
         .unwrap();
         assert!(status.files.is_empty());
-        assert_eq!(status.summary(), "empty");
+        assert_eq!(status.summary(), "clean");
         assert!(status.counts().is_empty());
     }
 }

@@ -23,12 +23,22 @@
         },
         "call": "call_sweep",
         "draft": {
-          "cursor": [0],
+          "cursor": [
+            0
+          ],
           "note_open": false,
-          "notes": [""],
-          "other": [""],
-          "other_on": [false],
-          "picked": [[]],
+          "notes": [
+            ""
+          ],
+          "other": [
+            ""
+          ],
+          "other_on": [
+            false
+          ],
+          "picked": [
+            []
+          ],
           "tab": 0
         },
         "focus": {
@@ -69,13 +79,26 @@
                   }
                 ]
               ],
-              "widths": [1, 4]
+              "widths": [
+                1,
+                4
+              ]
             },
             {
-              "mono": false,
-              "piece": "toned",
-              "text": "Answer in the panel below.",
-              "tone": "info"
+              "children": [
+                {
+                  "count": null,
+                  "piece": "mark",
+                  "state": "asks"
+                },
+                {
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "waiting for you",
+                  "tone": "warn"
+                }
+              ],
+              "piece": "row"
             }
           ],
           "piece": "stack"
@@ -90,11 +113,35 @@
             {
               "children": [
                 {
+                  "piece": "heading",
+                  "text": "heiko asks"
+                },
+                {
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "1 of 1",
+                  "tone": "neutral"
+                },
+                {
+                  "piece": "spacer"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "↑↓ move · n note",
+                  "tone": "neutral"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "children": [
+                {
                   "action": "go",
                   "args": {
                     "to": 0
                   },
-                  "kind": "primary",
+                  "kind": "secondary",
                   "label": "Workspaces",
                   "piece": "button"
                 },
@@ -108,7 +155,7 @@
                     "to": 1
                   },
                   "kind": "secondary",
-                  "label": "Submit",
+                  "label": "submit",
                   "piece": "button"
                 },
                 {
@@ -126,73 +173,90 @@
             {
               "children": [
                 {
-                  "piece": "rich",
-                  "text": "**Delete the 3 workspaces with no run, or keep them?**"
+                  "piece": "title",
+                  "subtitle": null,
+                  "text": "Delete the 3 workspaces with no run, or keep them?"
                 },
                 {
-                  "children": [
-                    {
-                      "piece": "mono",
-                      "text": "› 1"
-                    },
-                    {
-                      "action": "choose",
-                      "args": {
-                        "row": 0
+                  "head": [],
+                  "piece": "table",
+                  "rows": [
+                    [
+                      {
+                        "piece": "mono",
+                        "text": "› 1"
                       },
-                      "kind": "secondary",
-                      "label": "Delete them",
-                      "piece": "button"
-                    },
-                    {
-                      "mono": false,
-                      "piece": "toned",
-                      "text": "No run uses them.",
-                      "tone": "neutral"
-                    }
-                  ],
-                  "piece": "row"
-                },
-                {
-                  "children": [
-                    {
-                      "piece": "mono",
-                      "text": "  2"
-                    },
-                    {
-                      "action": "choose",
-                      "args": {
-                        "row": 1
+                      {
+                        "children": [
+                          {
+                            "action": "choose",
+                            "args": {
+                              "row": 0
+                            },
+                            "kind": "primary",
+                            "label": "Delete them",
+                            "piece": "button"
+                          },
+                          {
+                            "mono": false,
+                            "piece": "toned",
+                            "text": "No run uses them.",
+                            "tone": "neutral"
+                          }
+                        ],
+                        "piece": "stack"
+                      }
+                    ],
+                    [
+                      {
+                        "piece": "mono",
+                        "text": "  2"
                       },
-                      "kind": "secondary",
-                      "label": "Keep them",
-                      "piece": "button"
-                    },
-                    {
-                      "mono": false,
-                      "piece": "toned",
-                      "text": "Look at them first.",
-                      "tone": "neutral"
-                    }
+                      {
+                        "children": [
+                          {
+                            "action": "choose",
+                            "args": {
+                              "row": 1
+                            },
+                            "kind": "secondary",
+                            "label": "Keep them",
+                            "piece": "button"
+                          },
+                          {
+                            "mono": false,
+                            "piece": "toned",
+                            "text": "Look at them first.",
+                            "tone": "neutral"
+                          }
+                        ],
+                        "piece": "stack"
+                      }
+                    ],
+                    [
+                      {
+                        "piece": "mono",
+                        "text": "  3"
+                      },
+                      {
+                        "children": [
+                          {
+                            "id": "ask-other-sweep-workspaces-call_sweep-0",
+                            "keep": true,
+                            "multiline": false,
+                            "piece": "input",
+                            "placeholder": "Your own answer…",
+                            "submit": "other-done"
+                          }
+                        ],
+                        "piece": "row"
+                      }
+                    ]
                   ],
-                  "piece": "row"
-                },
-                {
-                  "children": [
-                    {
-                      "piece": "mono",
-                      "text": "  3"
-                    },
-                    {
-                      "id": "ask-other-sweep-workspaces-call_sweep-0",
-                      "keep": true,
-                      "multiline": false,
-                      "piece": "input",
-                      "placeholder": "Your own answer…",
-                      "submit": "other-done"
-                    }
-                  ],
-                  "piece": "row"
+                  "widths": [
+                    0.5,
+                    12
+                  ]
                 }
               ],
               "piece": "stack"
@@ -200,34 +264,28 @@
             {
               "children": [
                 {
-                  "mono": true,
-                  "piece": "toned",
-                  "text": "↑↓ move · Enter choose · n note · ←→ questions",
-                  "tone": "neutral"
-                },
-                {
-                  "piece": "spacer"
-                },
-                {
-                  "action": "heiko.cancel",
+                  "action": "note-open",
                   "args": {},
-                  "kind": "danger",
-                  "label": "Cancel run",
+                  "kind": "secondary",
+                  "label": "add a note",
                   "piece": "button"
                 },
                 {
                   "action": "decline",
                   "args": {},
                   "kind": "secondary",
-                  "label": "Decline to answer",
+                  "label": "decline",
                   "piece": "button"
                 },
                 {
-                  "action": "note-open",
+                  "action": "heiko.cancel",
                   "args": {},
-                  "kind": "secondary",
-                  "label": "Add note",
+                  "kind": "danger",
+                  "label": "cancel run",
                   "piece": "button"
+                },
+                {
+                  "piece": "spacer"
                 },
                 {
                   "action": "next",
@@ -240,7 +298,7 @@
               "piece": "row"
             }
           ],
-          "piece": "card"
+          "piece": "stack"
         }
       ],
       "focus": 1,
@@ -265,7 +323,9 @@
         "escape"
       ],
       "piece": "keys",
-      "through": ["escape"]
+      "through": [
+        "escape"
+      ]
     },
     "status": {
       "detail": null,

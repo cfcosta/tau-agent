@@ -169,7 +169,7 @@ local function write_call(args, env, request)
 		error(why, 0)
 	end
 	local prefix = scope_name == "user" and USER or ""
-	return render.render_written(written, prefix), { id = prefix .. written.id, action = written.action, redacted = written.redacted }
+	return render.render_written(written, prefix), { id = prefix .. written.id, title = written.redacted == 0 and draft.title or nil, action = written.action, redacted = written.redacted }
 end
 
 local function search_call(args, _env)
@@ -591,7 +591,7 @@ local plugin = heiko.plugin({
 		local status = ui_notes.status(state.notes)
 		return {
 			status = status and ui.status(status) or nil,
-			notes = ui_notes.marks(state.log, env.run.repo),
+			notes = ui_notes.marks(state.log),
 		}
 	end,
 

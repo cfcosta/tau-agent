@@ -11,8 +11,22 @@ local issues = require("issues")
 local beads = require("beads")
 local time = require("time")
 
-local STEP_MARK = { pending = "○", in_progress = "◐", done = "●" }
 local TONE = { [0] = "bad", [1] = "warn", [2] = "info", [3] = "neutral", [4] = "neutral" }
+
+-- A priority on a square, outlined in its tone; the last two are quiet.
+local function priority(issue)
+	local tone = TONE[issue.priority]
+	return ui.square("P" .. issue.priority, tone ~= "neutral" and "outlined" or "quiet", tone)
+end
+
+-- A done-when criterion, or a step, as a square: ticked once done, else
+-- `label`, outlined while it is the one worked on.
+local function check(done, label, current)
+	if done then
+		return ui.square("✓", "filled", "good")
+	end
+	return ui.square(label or "", current and "outlined" or "quiet", "info")
+end
 
 -- What a run is told of the issues, as it starts.
 local PROMPT = [[This repository keeps issues for its runs, with the todo_* tools. Before choosing what to work on, ask todo_ready; claim the issue you work on with todo_claim, and check its "done when" criteria as you meet them. When you find work outside the issue, file it with todo_create rather than drift into it. Close what you finish with todo_close and the reason; what you leave open goes back for the next run when yours ends. Keep your own plan with todo_steps. To hand an issue to another chat, ask with todo_dispatch: the person allows it.]]
@@ -338,7 +352,7 @@ local function change_card(input, model, env)
 	if not result.undo then
 		return line
 	end
-	return ui.row({ line, ui.button("Undo", "undo", result.undo, "secondary") })
+	return ui.row({ line, ui.button("undo", "undo", result.undo, "secondary") })
 end
 
 -- A read's card: the issues it found.
@@ -675,9 +689,9 @@ end
 -- One card of the board.
 local function card(all, issue, column, params)
 	local head = ui.row({
-		ui.badge("P" .. issue.priority, TONE[issue.priority]),
+		priority(issue),
 		issue_link(issue, params),
-		ui.pill(issue.type),
+		ui.toned(issue.type, "neutral", true),
 	})
 	local lines = { head, ui.text(issue.title) }
 	if #(issue.labels or {}) > 0 then
@@ -693,10 +707,10 @@ local function card(all, issue, column, params)
 	end
 	local done, total = graph.checked(issue)
 	if total > 0 then
-		table.insert(lines, ui.progress(done / total, done .. "/" .. total))
+		table.insert(lines, ui.row({ ui.ticks(done, total, "good"), ui.mono(done .. "/" .. total) }))
 	end
 	if column == "ready" then
-		table.insert(lines, ui.button("Start a run", "start", { issue = issue.id }, "primary"))
+		table.insert(lines, ui.button("start a run", "start", { issue = issue.id }, "secondary"))
 	end
 	return { id = issue.id, children = lines }
 end
@@ -718,7 +732,7 @@ local function header(params, ready)
 	for _, name in ipairs({ "board", "list", "graph", "beads" }) do
 		local label = name:sub(1, 1):upper() .. name:sub(2)
 		if name == view then
-			table.insert(links, ui.badge(label, "info"))
+			table.insert(links, ui.rich("**" .. label .. "**"))
 		else
 			table.insert(links, ui.link(label, "board", { params = to({ view = name }) }))
 		end
@@ -740,7 +754,7 @@ local function header(params, ready)
 	if params.label then
 		table.insert(links, ui.link("✓ label:" .. params.label, "board", { params = to({ label = false }) }))
 	end
-	return ui.row({ ui.heading("Todo"), ui.badge(ready .. " ready", "good"), table.unpack(links) })
+	return ui.row({ ui.title("Todo"), ui.stamp(ready .. " ready", "good"), ui.spacer(), table.unpack(links) })
 end
 
 local function board_view(all, at, params)
@@ -775,7 +789,7 @@ end
 -- An issue's panel: its run, description, criteria, links and actions.
 local function panel(all, issue, at)
 	local out = {
-		ui.row({ ui.badge("P" .. issue.priority, TONE[issue.priority]), ui.mono(issue.id), ui.pill(issue.type), ui.pill(issue.status) }),
+		ui.row({ priority(issue), ui.mono(issue.id), ui.toned(issue.type, "neutral", true), ui.stamp(issue.status, "neutral") }),
 		ui.heading(issue.title),
 	}
 	if issue.claim then
@@ -788,8 +802,10 @@ local function panel(all, issue, at)
 		local rows = {}
 		for n, criterion in ipairs(issue.criteria) do
 			table.insert(rows, ui.row({
-				ui.button(criterion.done and "☑" or "☐", "check", { id = issue.id, at = n, done = not criterion.done }),
+				check(criterion.done),
 				ui.text(criterion.text),
+				ui.spacer(),
+				ui.button(criterion.done and "undo" or "done", "check", { id = issue.id, at = n, done = not criterion.done }),
 			}))
 		end
 		table.insert(out, ui.section("criteria-" .. issue.id, "Done when", rows, { open = true }))
@@ -817,15 +833,15 @@ local function panel(all, issue, at)
 	table.insert(out, ui.section("comments-" .. issue.id, "Comments", comments, { open = true }))
 	local actions = {}
 	if issue.status == "closed" then
-		table.insert(actions, ui.button("Reopen", "reopen", { id = issue.id }))
+		table.insert(actions, ui.button("reopen", "reopen", { id = issue.id }))
 	else
 		if not issue.claim then
 			table.insert(actions, ui.button("Start a run", "start", { issue = issue.id }, "primary"))
 		end
-		table.insert(actions, ui.button("Close", "ask", { kind = "close", issue = issue.id }))
-		table.insert(actions, ui.button("Defer", "defer", { id = issue.id }))
+		table.insert(actions, ui.button("close", "ask", { kind = "close", issue = issue.id }))
+		table.insert(actions, ui.button("defer", "defer", { id = issue.id }))
 		if issue.claim then
-			table.insert(actions, ui.button("Let go", "let_go", { id = issue.id }))
+			table.insert(actions, ui.button("let go", "let_go", { id = issue.id }))
 		end
 	end
 	table.insert(out, ui.row(actions))
@@ -888,7 +904,7 @@ local function graph_view(all, at, params)
 		local to = table.clone(params)
 		to.repo, to.page, to.issue = nil, nil, nil
 		to.epic = id
-		table.insert(picks, id == epic and ui.badge(id, "info") or ui.link(id, "board", { params = to }))
+		table.insert(picks, id == epic and ui.rich("**" .. id .. "**") or ui.link(id, "board", { params = to }))
 	end
 	local members = graph.children(all, epic)
 	local member = {}
@@ -965,7 +981,11 @@ local function graph_view(all, at, params)
 	local done, total = graph.progress(all, epic)
 	return ui.stack({
 		ui.row(picks),
-		ui.row({ ui.heading(all[epic].title), ui.badge(done .. "/" .. total, "info") }),
+		ui.row({
+			ui.heading(all[epic].title),
+			ui.ticks(done, math.max(total, 1), "good"),
+			ui.mono(done .. "/" .. total),
+		}),
 		ui.graph(nodes, edges, 16),
 	})
 end
@@ -1002,10 +1022,9 @@ local function board_page(params, model, env)
 	local body
 	if view == "beads" then
 		body = ui.stack({
-			ui.text("The issues in beads' JSONL, for git or beads' own tools."),
+			ui.heading("Export"),
 			ui.code("json", beads.export(all)),
 			ui.heading("Import"),
-			ui.text("Paste beads' JSONL: each issue goes in, in place of one with its id."),
 			ui.input("import", { placeholder = "beads' JSONL", multiline = true, submit = "import" }),
 		})
 	elseif view == "list" then
@@ -1019,7 +1038,7 @@ local function board_page(params, model, env)
 	if params.issue and all[params.issue] then
 		local back = table.clone(params)
 		back.issue, back.repo, back.page = nil, nil, nil
-		table.insert(parts, ui.link("‹ Back", "board", { params = back }))
+		table.insert(parts, ui.link("back", "board", { params = back }))
 		table.insert(parts, panel(all, all[params.issue], at))
 	else
 		table.insert(parts, body)
@@ -1236,16 +1255,17 @@ local actions = {
 local function step_lines(list)
 	local lines = {}
 	for at, step in ipairs(list) do
-		local line = STEP_MARK[step.status] .. " " .. step.text
+		local line = step.text
 		if step.issue then
 			line = line .. " → " .. step.issue
 		end
-		local toned = ui.toned(line, step.status == "in_progress" and "info" or "neutral")
+		local current = step.status == "in_progress"
+		local row = { check(step.status == "done", tostring(at), current), current and ui.text(line) or ui.toned(line, "neutral") }
 		if step.status ~= "done" and not step.issue then
-			table.insert(lines, ui.row({ toned, ui.button("Make an issue", "promote", { at = at }) }))
-		else
-			table.insert(lines, toned)
+			table.insert(row, ui.spacer())
+			table.insert(row, ui.button("make an issue", "promote", { at = at }))
 		end
+		table.insert(lines, ui.row(row))
 	end
 	return lines
 end
@@ -1314,7 +1334,7 @@ local function band(model)
 			if criterion.done then
 				done += 1
 			end
-			table.insert(lines, ui.toned((criterion.done and "☑ " or "☐ ") .. criterion.text, criterion.done and "good" or "neutral"))
+			table.insert(lines, ui.row({ check(criterion.done), ui.toned(criterion.text, criterion.done and "good" or "neutral") }))
 		end
 		head = id .. " · " .. held_issue.title .. (total > 0 and (", " .. done .. "/" .. total) or "")
 		if #held_issue.found > 0 then

@@ -40,7 +40,10 @@
             "type": "string"
           }
         },
-        "required": ["name", "note"],
+        "required": [
+          "name",
+          "note"
+        ],
         "type": "object"
       },
       "card": false
@@ -65,7 +68,9 @@
             "type": "string"
           }
         },
-        "required": ["name"],
+        "required": [
+          "name"
+        ],
         "type": "object"
       },
       "card": false
@@ -93,7 +98,9 @@
     "setup": false,
     "models": false
   },
-  "actions": ["cancel"],
+  "actions": [
+    "cancel"
+  ],
   "events": [],
   "fills": [],
   "compaction": null,

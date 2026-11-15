@@ -1,18 +1,55 @@
 //! Landing a finished run (ADR 0009, 0014): a chat lands on the main
 //! chat it forked. The controls the compare screen, the fork's card in
-//! its parent's chat and the landing card at the end of the run's own
+//! its parent's chat and the landing note at the end of the run's own
 //! chat share.
 
-use gpui::{Context, SharedString, div, prelude::*, rems};
-use heiko_ui_plugin::points::{self, AtChanges};
+use gpui::{Context, Div, Hsla, SharedString, div, prelude::*, relative, rems};
 
 use crate::{
     assets::Icon,
-    theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
-    ui::{self, Material as _, components::ButtonKind},
+    route::Route,
+    theme::{Design as _, IconSize, Theme, Type, sp},
+    ui::{self, BlockSize},
     view::{Origin, RunView},
     workspace::{LandingState, Workspace},
 };
+
+/// How wide a graph's line is, in rems: 3 px.
+pub(super) const LINE: f32 = 0.1875;
+/// A change's square on a graph's line, in rems: 12 px.
+pub(super) const SQUARE: f32 = 0.75;
+
+/// A note at the end of a chat: under a rule in `color`, its title in
+/// the display face, and `meta` at the title's right. Callers add what
+/// it holds.
+pub(super) fn note(
+    title: impl Into<SharedString>,
+    meta: Option<Div>,
+    color: Hsla,
+    t: &Theme,
+) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .pt(sp(2.5))
+        .border_t_2()
+        .border_color(color)
+        .child(
+            div()
+                .flex()
+                .items_baseline()
+                .gap(sp(3.))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(rems(0.))
+                        .typeset(Type::SECTION.sized(17.))
+                        .text_color(t.bright)
+                        .child(title.into()),
+                )
+                .children(meta.map(|meta| meta.flex_shrink_0())),
+        )
+}
 
 /// Where `run` lands, as its buttons name it: its parent's title for a
 /// fork. None for a sub-agent, which lands as it returns, and for a
@@ -27,61 +64,140 @@ pub fn target(ws: &Workspace, run: &RunView) -> Option<String> {
     }
 }
 
-/// The landing card at the end of `run`'s own chat, while a landing is
-/// open: what would land, as `vcs_log` draws it, and Land or Cancel.
+/// The landing note at the end of `run`'s own chat: what would land,
+/// and Land or Cancel.
 pub fn card(
     ws: &Workspace,
     run: &RunView,
     t: &Theme,
     cx: &mut Context<Workspace>,
-) -> Option<gpui::Div> {
+) -> Option<Div> {
     let target = target(ws, run)?;
     let body = controls(ws, run, t, cx)?;
     Some(
-        div()
-            .flex()
-            .flex_col()
-            .border_1()
-            .border_color(t.accent_border)
-            .rounded(radius::BOX)
-            .raised(t)
-            .overflow_hidden()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(sp(2.))
-                    .min_h(rems(2.5))
-                    .px(sp(3.))
-                    .child(ui::icon(Icon::Land, IconSize::COMPACT, t.accent))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(rems(0.))
-                            .truncate()
-                            .typeset(Type::SMALL)
-                            .font_weight(weight::STRONG)
-                            .child(format!("Land {} on {target}", run.title)),
-                    ),
-            )
-            .child(
-                body.px(sp(3.))
-                    .py(sp(2.5))
-                    .border_t_1()
-                    .border_color(t.border),
-            ),
+        note(format!("Land {} on {target}", run.title), None, t.blue, t)
+            .child(body.mt(sp(2.5))),
     )
 }
 
-/// Landing a finished run: a button, then the preview (what would land,
-/// and what would conflict), then Land or Cancel. A fork can be dropped
-/// instead.
+/// Where the fork's line meets its parent's, as a share of the
+/// diagram's width.
+const MEET: f32 = 0.62;
+/// How far down the diagram each line is, in rems.
+const PARENT_Y: f32 = 1.25;
+const FORK_Y: f32 = 2.875;
+/// The most squares the fork's line has room for.
+const SQUARES: usize = 8;
+
+/// The parent's line, and the fork's line joining it with its changes
+/// as squares: at a square when the landing is clean, at a cross when
+/// it conflicts in `conflicts`.
+fn diagram(
+    parent: &str,
+    fork: &str,
+    changes: usize,
+    conflicts: &[String],
+    t: &Theme,
+) -> Div {
+    let (parent_color, fork_color) = (t.blue, t.offset);
+    let label = |text: String, top: f32, color: Hsla| {
+        ui::mono(text, Type::MICRO, color)
+            .absolute()
+            .left_0()
+            .top(rems(top))
+            .whitespace_nowrap()
+    };
+    let shown = changes.min(SQUARES);
+    let squares = (1..=shown).map(move |n| {
+        div()
+            .absolute()
+            .left(relative(MEET * n as f32 / (shown + 1) as f32))
+            .top(rems(FORK_Y - (SQUARE - LINE) / 2.))
+            .size(rems(SQUARE))
+            .bg(fork_color)
+    });
+    // Centered on where the riser meets the parent's line.
+    let meet = div()
+        .absolute()
+        .left(relative(MEET))
+        .top(rems(PARENT_Y + LINE / 2. - 0.5))
+        .ml(rems(LINE / 2. - 0.5))
+        .size(rems(1.))
+        .flex()
+        .items_center()
+        .justify_center();
+    let meet = if conflicts.is_empty() {
+        meet.child(div().size(rems(SQUARE)).bg(parent_color))
+    } else {
+        meet.child(ui::icon(Icon::Close, IconSize::HUGE, t.bright))
+    };
+    div()
+        .relative()
+        .w_full()
+        .h(rems(4.5))
+        .overflow_hidden()
+        .child(label(parent.to_owned(), 0., parent_color))
+        .child(
+            div()
+                .absolute()
+                .left_0()
+                .right_0()
+                .top(rems(PARENT_Y))
+                .h(rems(LINE))
+                .bg(parent_color),
+        )
+        .child(
+            div()
+                .absolute()
+                .left_0()
+                .w(relative(MEET))
+                .top(rems(FORK_Y))
+                .h(rems(LINE))
+                .bg(fork_color),
+        )
+        .child(
+            div()
+                .absolute()
+                .left(relative(MEET))
+                .top(rems(PARENT_Y + LINE))
+                .w(rems(LINE))
+                .h(rems(FORK_Y - PARENT_Y))
+                .bg(fork_color),
+        )
+        .children(squares)
+        .child(meet)
+        .child(label(
+            match changes {
+                1 => format!("{fork} · 1 change"),
+                n => format!("{fork} · {n} changes"),
+            },
+            FORK_Y + 0.5,
+            fork_color,
+        ))
+        .when(!conflicts.is_empty(), |diagram| {
+            diagram.child(
+                ui::mono(
+                    format!("conflict in {}", super::queue::short(conflicts)),
+                    Type::MICRO,
+                    t.dim,
+                )
+                .absolute()
+                .left(relative(MEET))
+                .top(rems(PARENT_Y + 0.75))
+                .ml(sp(4.))
+                .whitespace_nowrap(),
+            )
+        })
+}
+
+/// Landing a finished run: Land and Drop, then the preview (what would
+/// land, and what would conflict) with Land or Cancel.
 pub fn controls(
     ws: &Workspace,
     run: &RunView,
     t: &Theme,
     cx: &mut Context<Workspace>,
-) -> Option<gpui::Div> {
+) -> Option<Div> {
     let parent = target(ws, run)?;
     if run.status.is_live() {
         return None;
@@ -101,165 +217,182 @@ pub fn controls(
                 || parent.main_conflicts.is_some()
         });
     let id = run.id.clone();
-    let button = |label: String, kind: ButtonKind, key: &str| {
+    let keyed =
+        |key: &str| div().id(SharedString::from(format!("{key}-{}", run.id)));
+    let link =
+        |label: String, key: &str| keyed(key).child(ui::link_action(label, t));
+    let danger = |label: String, key: &str| {
+        keyed(key).child(ui::link_action(label, t).border_color(t.red))
+    };
+    let primary = |label: String, key: &str| {
+        keyed(key).child(ui::primary_block(label, BlockSize::Small, t))
+    };
+    let actions = || {
         div()
-            .id(SharedString::from(format!("{key}-{}", run.id)))
-            .child(ui::button(label, kind, t))
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(sp(3.5))
+            .typeset(Type::SMALL)
     };
-    let caption = |text: String, color| {
-        div().typeset(Type::CAPTION).text_color(color).child(text)
-    };
+    let line = |text: String, color| ui::text(text, Type::SMALL, color);
     let body = match ws.landing(&run.id) {
         None => {
             let drop_id = id.clone();
-            div()
-                .flex()
-                .gap(sp(2.))
-                .child(
-                    button(
-                        format!("Land on {parent}"),
-                        ButtonKind::Primary,
-                        "land",
-                    )
-                    .on_click(cx.listener(
-                        move |ws, _, _, cx| ws.preview_landing(&id, cx),
-                    )),
-                )
-                .child(
-                    button(
-                        "Drop this fork".into(),
-                        ButtonKind::Secondary,
-                        "drop",
-                    )
-                    .on_click(cx.listener(
-                        move |ws, _, _, cx| ws.ask_drop(&drop_id, cx),
-                    )),
-                )
+            actions()
+                .child(link(format!("land on {parent}"), "land").on_click(
+                    cx.listener(move |ws, _, _, cx| {
+                        ws.preview_landing(&id, cx)
+                    }),
+                ))
+                .child(danger("drop this fork".into(), "drop").on_click(
+                    cx.listener(move |ws, _, _, cx| ws.ask_drop(&drop_id, cx)),
+                ))
         }
         Some(LandingState::ConfirmDrop) => {
             let (drop_id, cancel_id) = (id.clone(), id.clone());
             div()
                 .flex()
                 .flex_col()
-                .gap(sp(2.))
-                .child(caption(
+                .gap(sp(2.5))
+                .child(line(
                     format!(
-                        "Drop {}? Its own changes are abandoned and it \
-                         closes. The operation log still has them.",
+                        "Drop {}? Its changes are abandoned and it closes. \
+                         The operation log still has them.",
                         run.title
                     ),
                     t.text_soft,
                 ))
                 .child(
-                    div()
-                        .flex()
-                        .gap(sp(2.))
-                        .child(
-                            button(
-                                "Drop".into(),
-                                ButtonKind::Primary,
-                                "confirm-drop",
-                            )
-                            .on_click(cx.listener(
-                                move |ws, _, _, cx| ws.drop_child(&drop_id, cx),
-                            )),
-                        )
-                        .child(
-                            button(
-                                "Cancel".into(),
-                                ButtonKind::Secondary,
-                                "cancel-drop",
-                            )
-                            .on_click(cx.listener(
-                                move |ws, _, _, cx| {
-                                    ws.cancel_landing(&cancel_id, cx)
-                                },
-                            )),
-                        ),
+                    actions()
+                        .child(danger("drop".into(), "confirm-drop").on_click(
+                            cx.listener(move |ws, _, _, cx| {
+                                ws.drop_child(&drop_id, cx)
+                            }),
+                        ))
+                        .child(link("cancel".into(), "cancel-drop").on_click(
+                            cx.listener(move |ws, _, _, cx| {
+                                ws.cancel_landing(&cancel_id, cx)
+                            }),
+                        )),
                 )
         }
-        Some(LandingState::Dropping) => caption("Dropping…".into(), t.dim),
+        Some(LandingState::Dropping) => line("Dropping…".into(), t.dim),
         Some(LandingState::Previewing) => {
-            caption("Checking what would land…".into(), t.dim)
+            line("Checking what would land…".into(), t.dim)
         }
         Some(LandingState::Landing) => {
-            caption(format!("Landing on {parent}…"), t.dim)
+            line(format!("Landing on {parent}…"), t.dim)
         }
         Some(LandingState::Preview(Err(error))) => div()
             .flex()
             .flex_col()
-            .gap(sp(2.))
-            .child(caption(error.clone(), t.red))
-            .child(
-                button("Close".into(), ButtonKind::Secondary, "cancel-land")
-                    .on_click(cx.listener(move |ws, _, _, cx| {
-                        ws.cancel_landing(&id, cx)
-                    })),
-            ),
+            .gap(sp(2.5))
+            .child(line(error.clone(), t.red))
+            .child(actions().child(
+                link("close".into(), "cancel-land").on_click(
+                    cx.listener(move |ws, _, _, cx| ws.cancel_landing(&id, cx)),
+                ),
+            )),
         Some(LandingState::Preview(Ok(preview))) => {
             let changes = &preview.changes;
-            let summary = match changes.len() {
-                0 => format!("Nothing to land: {parent} has all of it."),
-                1 => format!(
-                    "1 change lands on {parent}, on top of its latest change."
-                ),
-                n => format!(
-                    "{n} changes land on {parent}, on top of its latest change."
-                ),
+            let conflicts = &preview.conflicts;
+            let summary = match (changes.len(), waits) {
+                (0, _) => format!("Nothing to land: {parent} has all of it."),
+                (_, true) => {
+                    format!("{parent} is busy; this lands after its turn.")
+                }
+                (1, false) => {
+                    format!("1 change lands on top of {parent}'s latest.")
+                }
+                (n, false) => {
+                    format!("{n} changes land on top of {parent}'s latest.")
+                }
             };
+            let rows = changes.iter().map(|change| {
+                let id = &change.change_id[..change.change_id.len().min(8)];
+                let title = change.description.lines().next().unwrap_or("");
+                div()
+                    .flex()
+                    .items_baseline()
+                    .gap(sp(3.5))
+                    .py(sp(1.5))
+                    .border_b_1()
+                    .border_color(t.hairline)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(rems(0.))
+                            .truncate()
+                            .child(title.to_owned()),
+                    )
+                    .when(change.conflict, |row| {
+                        row.child(
+                            ui::text("conflict", Type::SMALL, t.red)
+                                .flex_shrink_0(),
+                        )
+                    })
+                    .child(
+                        ui::mono(id.to_owned(), Type::SMALL, t.change)
+                            .flex_shrink_0(),
+                    )
+            });
+            // The compare screen is where its link would go.
+            let compare = run
+                .origin
+                .parent()
+                .filter(|_| !matches!(ws.route, Route::Compare { .. }))
+                .map(|main| Route::Compare {
+                    main: main.clone(),
+                    fork: run.id.clone(),
+                });
             let (land_id, cancel_id) = (id.clone(), id.clone());
             div()
                 .flex()
                 .flex_col()
                 .gap(sp(2.))
-                .child(caption(summary, t.text_soft))
                 .when(!changes.is_empty(), |column| {
-                    let at = AtChanges {
-                        run: run.info(),
-                        changes: changes.clone(),
-                    };
-                    column.child(ui::card(t).p(sp(3.)).children(ws.drawn(
-                        points::CHANGES,
-                        &at,
-                        cx,
-                    )))
+                    column
+                        .child(diagram(
+                            &parent,
+                            &run.title,
+                            changes.len(),
+                            conflicts,
+                            t,
+                        ))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .border_t_1()
+                                .border_color(t.hairline)
+                                .children(rows),
+                        )
                 })
-                .when(waits, |column| {
-                    column.child(caption(
+                .child(line(summary, t.text_soft))
+                .when(!conflicts.is_empty(), |column| {
+                    column.child(line(
                         format!(
-                            "{parent} is busy: this chat joins its landing \
-                             queue and lands after {parent}'s turn, checked \
-                             again then."
-                        ),
-                        t.text_soft,
-                    ))
-                })
-                .when(!preview.conflicts.is_empty(), |column| {
-                    column.child(caption(
-                        format!(
-                            "Conflicts in {}. Landing starts {parent}'s next \
-                             turn to resolve them and commit the result.",
-                            preview.conflicts.join(", ")
+                            "Landing starts {parent}'s next turn to resolve \
+                             {}.",
+                            conflicts.join(", ")
                         ),
                         t.red,
                     ))
                 })
                 .child(
-                    div()
-                        .flex()
-                        .gap(sp(2.))
+                    actions()
+                        .pt(sp(1.))
                         .when(!changes.is_empty(), |row| {
                             row.child(
-                                button(
-                                    match (waits, preview.conflicts.is_empty())
-                                    {
-                                        (true, _) => "Queue to land".into(),
-                                        (false, true) => "Land".into(),
+                                primary(
+                                    match (waits, conflicts.is_empty()) {
+                                        (true, _) => "queue to land".into(),
+                                        (false, true) => "land".into(),
                                         (false, false) => {
-                                            "Land and resolve".into()
+                                            "land and resolve".into()
                                         }
                                     },
-                                    ButtonKind::Primary,
                                     "confirm-land",
                                 )
                                 .on_click(
@@ -269,18 +402,21 @@ pub fn controls(
                                 ),
                             )
                         })
-                        .child(
-                            button(
-                                "Cancel".into(),
-                                ButtonKind::Secondary,
-                                "cancel-land",
+                        .child(link("cancel".into(), "cancel-land").on_click(
+                            cx.listener(move |ws, _, _, cx| {
+                                ws.cancel_landing(&cancel_id, cx)
+                            }),
+                        ))
+                        .when_some(compare, |row, route| {
+                            row.child(
+                                link("compare".into(), "compare-land")
+                                    .on_click(cx.listener(
+                                        move |ws, _, _, cx| {
+                                            ws.navigate(route.clone(), cx)
+                                        },
+                                    )),
                             )
-                            .on_click(cx.listener(
-                                move |ws, _, _, cx| {
-                                    ws.cancel_landing(&cancel_id, cx)
-                                },
-                            )),
-                        ),
+                        }),
                 )
         }
     };

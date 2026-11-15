@@ -57,7 +57,6 @@ use crate::{
         Theme,
         Type,
         control,
-        radius,
         sp,
         theme,
         weight,
@@ -451,6 +450,10 @@ pub enum PickerTarget {
     Default(String),
 }
 
+/// What the composer says while its message starts a run.
+const NEW_RUN_PLACEHOLDER: &str =
+    "Describe a change, paste an issue, or @ a file";
+
 /// How long a plugin's note stays over the composer.
 const COMPOSER_NOTE_FOR: Duration = Duration::from_secs(4);
 
@@ -583,10 +586,10 @@ pub struct Workspace {
     pub(crate) first_task: Entity<TextInput>,
     pub(crate) pr_title: Entity<TextInput>,
     pub(crate) reviewers: Entity<TextInput>,
-    /// The repository new runs start in: the one the sidebar last
-    /// selected.
+    /// The repository new runs start in, and whose tree the sidebar
+    /// shows: the one last chosen on its rail, or the last screen's.
     pub(crate) repo: Option<String>,
-    /// The repositories the sidebar shows open.
+    /// The repositories a phone's list shows open.
     pub(crate) open_repos: HashSet<String>,
     /// Repositories that list all their runs, not only the newest.
     pub(crate) all_runs: HashSet<String>,
@@ -598,11 +601,11 @@ pub struct Workspace {
     /// The agents whose rows show what is under them: their last line
     /// and their sub-agents at work (ADR 0037).
     pub(crate) open_agents: HashSet<String>,
-    /// The repository row under the pointer, which shows its actions.
+    /// The repository whose name, at the head of its tree, is under
+    /// the pointer: it shows the way to its menu.
     pub(crate) hovered_repo: Option<String>,
     /// The repository whose menu is open.
     pub(crate) repo_menu: Option<String>,
-    pub(crate) sidebar_filter: Entity<TextInput>,
     /// Why an onboarding step was opened from the app, if it was: once
     /// that is done, go back rather than on through onboarding.
     pub(crate) setup_goal: Option<SetupGoal>,
@@ -716,7 +719,7 @@ impl Workspace {
     ) -> Self {
         let plugin_requests = crate::plugins::Requests::default();
         let composer = cx.new(|cx| {
-            TextInput::new("Start a new run", cx)
+            TextInput::new(NEW_RUN_PLACEHOLDER, cx)
                 .multiline()
                 .takes_images()
         });
@@ -756,8 +759,6 @@ impl Workspace {
             cx.new(|cx| TextInput::new("Title", cx).keep_on_submit());
         let reviewers =
             cx.new(|cx| TextInput::new("@reviewer", cx).keep_on_submit());
-        let sidebar_filter =
-            cx.new(|cx| TextInput::new("Filter repositories and runs", cx));
         let subscriptions = vec![
             cx.subscribe_in(
                 &composer,
@@ -784,7 +785,6 @@ impl Workspace {
             // Onboarding's loops pause while the window is in the
             // background.
             cx.observe_window_activation(window, |_, _, cx| cx.notify()),
-            cx.observe(&sidebar_filter, |_, _, cx| cx.notify()),
             cx.subscribe_in(
                 &search,
                 window,
@@ -884,7 +884,6 @@ impl Workspace {
             open_agents: HashSet::new(),
             hovered_repo: None,
             repo_menu: None,
-            sidebar_filter,
             setup_goal: None,
             setup_finished: false,
             setup_motion: Default::default(),
@@ -953,6 +952,21 @@ impl Workspace {
     /// The run the composer and inspector act on.
     pub fn current(&self) -> Option<&RunView> {
         self.current.as_ref().and_then(|id| self.run(id))
+    }
+
+    /// The run on screen: the current one, on its own screens. Home
+    /// and a new run's screen show none, and what is written there
+    /// starts a run.
+    pub(crate) fn shown_run(&self) -> Option<&RunView> {
+        self.current()
+            .filter(|_| !matches!(self.route, Route::Home | Route::NewRun))
+    }
+
+    /// Whether the screen is Home, as a desktop draws it: a new run's
+    /// composer, and what happened since the person last looked. A
+    /// phone's Home is its list of runs.
+    pub(crate) fn at_home(&self) -> bool {
+        !self.compact() && matches!(self.route, Route::Home | Route::NewRun)
     }
 
     pub fn route(&self) -> &Route {
@@ -1616,7 +1630,7 @@ impl Workspace {
         self.navigate(Route::NewRun, cx);
         self.composer.update(cx, |input, cx| {
             input.clear(cx);
-            input.set_placeholder("Describe the task for a new run");
+            input.set_placeholder(NEW_RUN_PLACEHOLDER);
         });
         self.composer.read(cx).focus_handle(cx).focus(window, cx);
     }
@@ -1837,8 +1851,8 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Option<DrawnPane> {
         let run = self
-            .current()
-            .filter(|_| matches!(self.route, Route::Home | Route::Run(_)))?;
+            .shown_run()
+            .filter(|_| matches!(self.route, Route::Run(_)))?;
         let id = run.id.clone();
         let at = heiko_ui_plugin::points::AtRun { run: run.info() };
         let pane = self
@@ -1913,7 +1927,9 @@ impl Workspace {
             turn.clamp(1, Self::last_fork_turn(run).max(1)),
         );
         let model = self.default_of(run);
-        if !matches!(self.route, Route::Run(_) | Route::Home) {
+        // The fork is written on a run's screen: the one open, else
+        // the run's own.
+        if !matches!(self.route, Route::Run(_)) {
             self.navigate(Route::Run(id.clone()), cx);
         }
         self.fork_model = model;
@@ -2042,7 +2058,7 @@ impl Workspace {
             cx.notify();
             return;
         }
-        match self.current().filter(|_| self.route != Route::NewRun) {
+        match self.shown_run() {
             Some(run) => {
                 let run = run.id.clone();
                 self.say_with(&run, text, images, cx);
@@ -2193,8 +2209,7 @@ impl Workspace {
     /// run.
     pub(crate) fn continues_chat(&self) -> bool {
         self.forking.is_none()
-            && self.route != Route::NewRun
-            && self.current().is_some_and(|run| !run.status.is_live())
+            && self.shown_run().is_some_and(|run| !run.status.is_live())
     }
 
     pub(crate) fn submit_from_button(&mut self, cx: &mut Context<Self>) {
@@ -2227,7 +2242,6 @@ impl Workspace {
     fn mark_open_seen(&mut self) {
         let open = match &self.route {
             Route::Run(id) => Some(id.clone()),
-            Route::Home => self.current.clone(),
             _ => None,
         };
         if let Some(run) = open.and_then(|id| self.run(&id)) {
@@ -2305,7 +2319,7 @@ impl Workspace {
     }
 
     fn sync_placeholder(&mut self, cx: &mut Context<Self>) {
-        let live = self.route != Route::NewRun && self.is_live();
+        let live = self.is_live();
         let forking = self.forking.is_some();
         let continues = self.continues_chat();
         self.composer.update(cx, |input, _| {
@@ -2316,13 +2330,14 @@ impl Workspace {
             } else if continues {
                 "Reply to go on with this run"
             } else {
-                "Start a new run"
+                NEW_RUN_PLACEHOLDER
             })
         });
     }
 
+    /// Whether the run on screen is going.
     fn is_live(&self) -> bool {
-        self.current().is_some_and(|run| run.status.is_live())
+        self.shown_run().is_some_and(|run| run.status.is_live())
     }
 
     // Onboarding.

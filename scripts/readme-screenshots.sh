@@ -26,6 +26,7 @@ oxipng=$(echo "$tools" | grep -- '-oxipng-' | head -1)/bin/oxipng
 # that adds its card at start needs `--steps 0`, or the demo's script
 # pushes the card out of view; `--finished` opens the run done.
 shots='
+home               home              7
 run                run               7
 crew               crew              7
 land               land              7

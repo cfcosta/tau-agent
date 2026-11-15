@@ -25,10 +25,31 @@ local function permissions()
 	return ui.table({ "Permission", "Level" }, rows)
 end
 
+-- A line with a state's mark before it: `working`, `met`, `failing`.
+local function marked(state, piece)
+	return ui.row({ ui.mark(state), piece })
+end
+
+-- What happens on GitHub, in order: numbered, ruled rows under a head.
+local function on_github()
+	local rows = {}
+	for n, line in ipairs({
+		"Enter the code heiko shows",
+		"Pick the repositories heiko may use",
+		"Approve heiko's app",
+	}) do
+		table.insert(rows, ui.row({ ui.square(n), ui.text(line) }))
+		table.insert(rows, ui.rule())
+	end
+	return ui.section("on-github", "On GitHub", rows, { open = true })
+end
+
 -- The code to enter, where, and the ways on.
 local function waiting(code)
 	return {
-		ui.title(code.code, code.url .. " · code expires in " .. code.expires .. " · only on the repositories you pick"),
+		ui.figure(code.code),
+		ui.mono(code.url .. " · expires in " .. code.expires),
+		on_github(),
 		ui.row({
 			ui.button("Copy code and open GitHub", "heiko.copy", { text = code.code, url = "https://" .. code.url }, "primary"),
 			ui.button("I have approved it", "check", {}, "secondary"),
@@ -48,9 +69,9 @@ local function token_form(state)
 		ui.secret(github.SECRET, { placeholder = "github_pat_…" }),
 	}
 	if state.state == "checking" then
-		table.insert(children, ui.status("Checking the token…", nil, "info"))
+		table.insert(children, marked("working", ui.text("Checking the token…")))
 	elseif state.state == "failed" then
-		table.insert(children, ui.toned(state.error, "bad"))
+		table.insert(children, marked("failing", ui.toned(state.error, "bad")))
 	end
 	table.insert(children, ui.row({ ui.button("Back to the device code", "token_form", { open = false }, "secondary") }))
 	return children
@@ -58,7 +79,8 @@ end
 
 -- The sign-in as it stands: a way to start it, the code to enter, the
 -- token form, or who is signed in. `done` is the setup step's way on,
--- once signed in.
+-- once signed in; the step also says what happens on GitHub before the
+-- sign-in starts, where the Models screen says it in a line.
 function sign_in.form(state, token, done)
 	if token and state.state ~= "signed_in" then
 		return ui.stack(token_form(state))
@@ -66,15 +88,16 @@ function sign_in.form(state, token, done)
 	local children
 	if state.state == "signed_out" then
 		children = {
-			ui.text("GitHub shows a code; enter it on GitHub and approve heiko's app for the repositories you want."),
+			done and on_github()
+				or ui.text("GitHub shows a code; enter it on GitHub and approve heiko's app for the repositories you want."),
 			ui.row({ ui.button("Sign in with GitHub", "sign_in", {}, "primary"), token_link() }),
 		}
 	elseif state.state == "starting" then
-		children = { ui.status("Asking GitHub for a code…", nil, "info") }
+		children = { marked("working", ui.text("Asking GitHub for a code…")) }
 	elseif state.state == "waiting" then
 		children = waiting(state.code)
 	elseif state.state == "checking" then
-		children = { ui.status("Checking…", nil, "info") }
+		children = { marked("working", ui.text("Checking…")) }
 	elseif state.state == "signed_in" then
 		local buttons = {}
 		if done then
@@ -89,10 +112,10 @@ function sign_in.form(state, token, done)
 				"secondary"
 			)
 		)
-		children = { ui.status("Signed in as @" .. state.user, nil, "good"), ui.row(buttons) }
+		children = { marked("met", ui.text("Signed in as @" .. state.user)), ui.row(buttons) }
 	else
 		children = {
-			ui.toned(state.error or "", "bad"),
+			marked("failing", ui.toned(state.error or "", "bad")),
 			ui.row({ ui.button("Try again", "sign_in", {}, "primary"), token_link() }),
 		}
 	end

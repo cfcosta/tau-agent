@@ -28,78 +28,91 @@
       "n0": {
         "children": [
           {
-            "children": [
-              {
-                "piece": "badge",
-                "text": "Heads up",
-                "tone": "warn"
-              },
-              {
-                "piece": "text",
-                "text": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
-              }
-            ],
-            "piece": "row"
+            "piece": "kanji",
+            "text": "報",
+            "tone": "cyan"
           },
           {
             "children": [
               {
-                "piece": "rich",
-                "text": "**Queued chats now raise the pill**"
-              },
-              {
-                "items": [
+                "children": [
                   {
-                    "piece": "text",
-                    "text": "A fork waiting in the queue counts as needing you, even though it asks for no decision."
+                    "piece": "heading",
+                    "text": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
                   },
                   {
-                    "piece": "text",
-                    "text": "The pill can read “2 need you” while every chat is only waiting to start."
+                    "piece": "spacer"
                   },
                   {
-                    "piece": "text",
-                    "text": "Running a queued chat, or removing it, lowers the count again."
-                  },
-                  {
-                    "piece": "text",
-                    "text": "The change is in the sidebar's attention states, not in the chats themselves."
+                    "label": "Heads up",
+                    "piece": "stamp",
+                    "tone": "cyan"
                   }
                 ],
-                "piece": "list"
+                "piece": "row"
+              },
+              {
+                "children": [
+                  {
+                    "piece": "rich",
+                    "text": "**Queued chats now raise the pill**"
+                  },
+                  {
+                    "items": [
+                      {
+                        "piece": "text",
+                        "text": "A fork waiting in the queue counts as needing you, even though it asks for no decision."
+                      },
+                      {
+                        "piece": "text",
+                        "text": "The pill can read “2 need you” while every chat is only waiting to start."
+                      },
+                      {
+                        "piece": "text",
+                        "text": "Running a queued chat, or removing it, lowers the count again."
+                      },
+                      {
+                        "piece": "text",
+                        "text": "The change is in the sidebar's attention states, not in the chats themselves."
+                      }
+                    ],
+                    "piece": "list"
+                  }
+                ],
+                "piece": "stack"
+              },
+              {
+                "children": [
+                  {
+                    "action": "answer",
+                    "args": {
+                      "answer": "knew",
+                      "key": "n0",
+                      "line": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
+                    },
+                    "kind": "primary",
+                    "label": "knew this already",
+                    "piece": "button"
+                  },
+                  {
+                    "action": "answer",
+                    "args": {
+                      "answer": "chatted",
+                      "key": "n0",
+                      "line": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
+                    },
+                    "kind": "secondary",
+                    "label": "chat about it",
+                    "piece": "button"
+                  }
+                ],
+                "piece": "row"
               }
             ],
             "piece": "stack"
-          },
-          {
-            "children": [
-              {
-                "action": "answer",
-                "args": {
-                  "answer": "knew",
-                  "key": "n0",
-                  "line": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
-                },
-                "kind": "secondary",
-                "label": "Knew this already",
-                "piece": "button"
-              },
-              {
-                "action": "answer",
-                "args": {
-                  "answer": "chatted",
-                  "key": "n0",
-                  "line": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
-                },
-                "kind": "secondary",
-                "label": "Chat about it",
-                "piece": "button"
-              }
-            ],
-            "piece": "row"
           }
         ],
-        "piece": "stack"
+        "piece": "row"
       }
     },
     "status": {

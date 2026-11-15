@@ -28,25 +28,40 @@
       "n0": {
         "children": [
           {
-            "children": [
-              {
-                "piece": "badge",
-                "text": "Heads up",
-                "tone": "neutral"
-              },
-              {
-                "piece": "text",
-                "text": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
-              }
-            ],
-            "piece": "row"
+            "piece": "kanji",
+            "text": "報",
+            "tone": "neutral"
           },
           {
-            "piece": "text",
-            "text": "You knew this."
+            "children": [
+              {
+                "children": [
+                  {
+                    "piece": "heading",
+                    "text": "The agent now counts queued forks in the “N need you” pill, so the pill can show a number when nothing needs a decision."
+                  },
+                  {
+                    "piece": "spacer"
+                  },
+                  {
+                    "label": "Heads up",
+                    "piece": "stamp",
+                    "tone": "neutral"
+                  }
+                ],
+                "piece": "row"
+              },
+              {
+                "mono": false,
+                "piece": "toned",
+                "text": "You knew this.",
+                "tone": "neutral"
+              }
+            ],
+            "piece": "stack"
           }
         ],
-        "piece": "stack"
+        "piece": "row"
       }
     },
     "status": {

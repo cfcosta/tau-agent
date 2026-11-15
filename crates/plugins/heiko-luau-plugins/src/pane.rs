@@ -154,6 +154,7 @@ pub fn bound(piece: &Value, current: &Value, fields: &str) -> Node {
                     args: json!({ "key": key, "value": next }),
                     kind: if on { Kind::Primary } else { Kind::Secondary },
                     icon: None,
+                    size: Default::default(),
                 }
             }))
         }
@@ -330,6 +331,7 @@ fn secrets_card(entry: &str, declaration: &Declaration) -> Option<Node> {
     }
     let mut children = vec![Node::Heading {
         text: "Secrets".into(),
+        tone: Default::default(),
     }];
     for name in &declaration.uses.secrets {
         children.push(Node::Rich {

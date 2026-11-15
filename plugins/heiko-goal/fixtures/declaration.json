@@ -60,11 +60,6 @@
             {
               "children": [
                 {
-                  "name": "target",
-                  "piece": "icon",
-                  "tone": "info"
-                },
-                {
                   "piece": "mono",
                   "text": "/goal"
                 },
@@ -76,17 +71,15 @@
               "piece": "row"
             },
             {
-              "piece": "text",
-              "text": "The agent keeps going until this holds. Each time it would stop, heiko-goal asks Jev whether the goal is met; if not, the agent goes on."
-            },
-            {
               "piece": "rule"
             },
             {
               "children": [
                 {
-                  "piece": "text",
-                  "text": "Stop after"
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "stop after",
+                  "tone": "neutral"
                 },
                 {
                   "id": "goal-continuations",
@@ -97,12 +90,16 @@
                   "submit": "heiko.submit"
                 },
                 {
-                  "piece": "text",
-                  "text": "continuations"
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "continuations",
+                  "tone": "neutral"
                 },
                 {
-                  "piece": "text",
-                  "text": "Budget $"
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "budget",
+                  "tone": "neutral"
                 },
                 {
                   "id": "goal-budget",
@@ -114,10 +111,6 @@
                 }
               ],
               "piece": "row"
-            },
-            {
-              "piece": "rich",
-              "text": "`Enter` set the goal and start · `Esc` close"
             }
           ],
           "piece": "stack"
@@ -127,11 +120,6 @@
             {
               "children": [
                 {
-                  "name": "target",
-                  "piece": "icon",
-                  "tone": "info"
-                },
-                {
                   "piece": "mono",
                   "text": "/goal"
                 },
@@ -143,10 +131,18 @@
               "piece": "row"
             },
             {
-              "detail": null,
-              "piece": "status",
-              "text": "Goals are checked with Jev: add a TypeSafe key on the Models screen first.",
-              "tone": "warn"
+              "children": [
+                {
+                  "count": null,
+                  "piece": "mark",
+                  "state": "asks"
+                },
+                {
+                  "piece": "text",
+                  "text": "Goals are checked with Jev: add a TypeSafe key (Models)."
+                }
+              ],
+              "piece": "row"
             },
             {
               "piece": "rule"
@@ -154,8 +150,10 @@
             {
               "children": [
                 {
-                  "piece": "text",
-                  "text": "Stop after"
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "stop after",
+                  "tone": "neutral"
                 },
                 {
                   "id": "goal-continuations",
@@ -166,12 +164,16 @@
                   "submit": "heiko.submit"
                 },
                 {
-                  "piece": "text",
-                  "text": "continuations"
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "continuations",
+                  "tone": "neutral"
                 },
                 {
-                  "piece": "text",
-                  "text": "Budget $"
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "budget",
+                  "tone": "neutral"
                 },
                 {
                   "id": "goal-budget",
@@ -183,10 +185,6 @@
                 }
               ],
               "piece": "row"
-            },
-            {
-              "piece": "rich",
-              "text": "`Enter` set the goal and start · `Esc` close"
             }
           ],
           "piece": "stack"

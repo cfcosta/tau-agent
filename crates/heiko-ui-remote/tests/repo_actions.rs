@@ -65,6 +65,7 @@ fn action(at: &points::AtRepo, _: &mut ViewCx<'_, Tidy>) -> Option<Node> {
         args: serde_json::json!({ "tidy": at.repo }),
         kind: Kind::Secondary,
         icon: None,
+        size: Default::default(),
     })
 }
 

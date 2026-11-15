@@ -220,6 +220,7 @@ fn button(label: &str, action: &str, args: Value) -> Node {
         args,
         kind: Kind::Secondary,
         icon: None,
+        size: Default::default(),
     }
 }
 

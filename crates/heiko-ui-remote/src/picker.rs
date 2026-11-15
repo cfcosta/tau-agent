@@ -12,6 +12,7 @@ use gpui::{
     Window,
     div,
     prelude::*,
+    px,
     rems,
 };
 
@@ -19,7 +20,7 @@ use crate::{
     assets::Icon,
     models::{Effort, ModelChoice, ModelOption},
     route::Route,
-    theme::{Design as _, IconSize, Theme, Type, control, radius, sp},
+    theme::{Design as _, IconSize, Theme, Type, control, sp},
     ui::{self, ButtonKind, Material as _},
     view::RunView,
     workspace::{Dialog, PickerTarget, Workspace, WorkspaceEvent},
@@ -74,7 +75,7 @@ impl Workspace {
         if self.forking.is_some() {
             return None;
         }
-        match self.current().filter(|_| self.route != Route::NewRun) {
+        match self.shown_run() {
             Some(run) => Some(PickerTarget::Run(run.id.clone())),
             None => Some(PickerTarget::Next),
         }
@@ -223,7 +224,8 @@ impl Workspace {
 
     // Views.
 
-    /// A chip that shows a picker's choice and opens it.
+    /// A picker's choice, as two underlined words that open it: the
+    /// model, and its effort.
     pub(crate) fn model_chip(
         &self,
         target: PickerTarget,
@@ -231,24 +233,26 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let choice = self.choice_for(&target);
-        let open = self.picker.as_ref() == Some(&target);
         let id = SharedString::from(format!("model-chip-{target:?}"));
+        let word = |text: String, color| {
+            div()
+                .flex_shrink_0()
+                .border_b_1()
+                .border_color(t.slate)
+                .text_color(color)
+                .child(text)
+        };
         div()
             .id(id)
             .flex()
             .items_center()
-            .gap(sp(1.5))
+            .gap(sp(2.))
             .flex_shrink_0()
-            .h(control::SMALL)
-            .px(sp(2.))
-            .rounded(radius::BOX)
-            .when(open, |chip| chip.bg(t.raised))
+            .min_h(control::SMALL)
             .cursor_pointer()
-            .hover(|style| style.bg(t.raised))
-            .typeset(Type::CAPTION)
-            .child(div().text_color(t.roles.model).child(choice.model.clone()))
-            .child(div().text_color(t.dim).child("·"))
-            .child(div().text_color(t.dim).child(choice.effort.label()))
+            .hover(|style| style.opacity(0.85))
+            .child(word(choice.model.clone(), t.blue))
+            .child(word(choice.effort.label().to_owned(), t.text))
             .on_click(cx.listener(move |ws, _, window, cx| {
                 if ws.picker.as_ref() == Some(&target) {
                     ws.close_picker(cx);
@@ -312,11 +316,11 @@ impl Workspace {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(radius::CONTROL)
                 .typeset(if phone { Type::SMALL } else { Type::CAPTION })
                 .cursor_pointer()
-                .text_color(if on { t.text } else { t.muted })
-                .when(on, |segment| segment.key(t))
+                .text_color(t.muted)
+                // The one picked is printed over the offset.
+                .when(on, |segment| segment.printed(2., t))
                 .child(if effort == Effort::Auto {
                     "Auto"
                 } else {
@@ -333,16 +337,10 @@ impl Workspace {
             .gap(sp(2.))
             .px(sp(3.5))
             .py(sp(2.5))
-            .bg(t.card)
             .border_t_1()
-            .border_color(t.border)
+            .border_color(t.hairline)
             .typeset(Type::CAPTION)
             .text_color(t.muted)
-            .child(ui::icon(
-                Icon::Chat,
-                IconSize::COMPACT,
-                if signed_in { t.green } else { t.dim },
-            ))
             .child(div().flex_1().min_w(rems(0.)).child(ui::prose(
                 &format!(
                     "{} · coder's default is `{}`",
@@ -366,8 +364,8 @@ impl Workspace {
             .flex_col()
             .overflow_hidden()
             .raised(t)
-            .border_1()
             .border_color(t.border_strong)
+            .lifted(t)
             // Clicks inside the panel stay in it.
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                 cx.stop_propagation()
@@ -379,9 +377,8 @@ impl Workspace {
                     .gap(sp(2.))
                     .h(control::LARGE)
                     .px(sp(3.5))
-                    .border_b_1()
-                    .border_color(t.border)
-                    .child(ui::icon(Icon::Search, IconSize::BASE, t.dim))
+                    .border_b_2()
+                    .border_color(t.rule)
                     .child(self.model_search.clone())
                     .child(ui::mono(
                         format!("on your {}", models.access.label),
@@ -418,7 +415,7 @@ impl Workspace {
                     .px(sp(3.5))
                     .py(sp(3.))
                     .border_t_1()
-                    .border_color(t.border)
+                    .border_color(t.hairline)
                     .child(
                         div()
                             .flex()
@@ -445,10 +442,7 @@ impl Workspace {
                         div()
                             .grid()
                             .grid_cols(columns)
-                            .gap(sp(1.))
-                            .p(sp(1.))
-                            .rounded(radius::BOX)
-                            .well(t)
+                            .gap(sp(1.5))
                             .children(efforts),
                     )
                     .when(choice.effort == Effort::Auto, |section| {
@@ -480,7 +474,7 @@ impl Workspace {
                 .flex_col()
                 .justify_end()
                 .child(
-                    panel.w_full().rounded_t(radius::SHEET).child(
+                    panel.w_full().child(
                         div().px(sp(4.)).pb(sp(5.)).pt(sp(2.)).child(
                             div()
                                 .id("picker-done")
@@ -505,7 +499,14 @@ impl Workspace {
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(panel.w(rems(28.75)).rounded(radius::CARD)),
+                .child(panel.w(rems(28.75))),
+            // On Home, under the words that open it, in the screen's
+            // first column.
+            PickerTarget::Next if self.at_home() => div()
+                .absolute()
+                .left(self.width - self.screen_width() + px(52. * self.zoom))
+                .top(rems(19.5))
+                .child(panel.w(rems(26.875))),
             // Above the composer, by its send button.
             PickerTarget::Next | PickerTarget::Run(_) | PickerTarget::Fork => {
                 div()
@@ -520,7 +521,7 @@ impl Workspace {
                             96.
                         }) / 16.,
                     ))
-                    .child(panel.w(rems(28.75)).rounded(radius::CARD))
+                    .child(panel.w(rems(28.75)))
             }
         };
         backdrop.child(placed).into_any_element()

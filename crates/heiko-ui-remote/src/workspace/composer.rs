@@ -41,37 +41,152 @@ impl Workspace {
                 t,
             ))
         } else {
-            // Inside the field, at its end: a square that sends. The
-            // field's placeholder says what sending does.
-            send.child(
+            // The one printed block of the chat. The field's placeholder
+            // says what sending does.
+            send.child(ui::primary_block(
+                if self.forking.is_some() {
+                    "Fork"
+                } else {
+                    "Send"
+                },
+                ui::BlockSize::Medium,
+                t,
+            ))
+        };
+        // What is attached, a ruled row each: an image shows itself, a
+        // file its name.
+        let attached: Vec<_> = self
+            .attachments
+            .iter()
+            .enumerate()
+            .map(|(n, file)| {
+                let picture = match &file.content {
+                    crate::attach::Attached::Image { shown, .. } => Some(
+                        gpui::img(shown.clone())
+                            .h(rems(2.25))
+                            .max_w(rems(4.))
+                            .object_fit(gpui::ObjectFit::Cover),
+                    ),
+                    crate::attach::Attached::Text(_) => None,
+                };
                 div()
-                    .size(rems(2.))
                     .flex()
                     .items_center()
-                    .justify_center()
-                    .rounded(radius::BOX)
-                    .bg(t.roles.primary)
-                    .cursor_pointer()
-                    .hover(|button| button.opacity(0.9))
-                    .child(ui::icon(
-                        if self.forking.is_some() {
-                            Icon::Fork
-                        } else {
-                            Icon::Send
-                        },
-                        IconSize::BASE,
-                        t.roles.on_primary,
-                    )),
-            )
+                    .gap(sp(3.5))
+                    .py(sp(2.5))
+                    .border_b_1()
+                    .border_color(t.hairline)
+                    .children(picture)
+                    .child(
+                        ui::mono(file.name.clone(), Type::SMALL, t.text)
+                            .flex_1()
+                            .min_w(rems(0.))
+                            .truncate(),
+                    )
+                    .child(
+                        div()
+                            .id(("detach", n))
+                            .typeset(Type::SMALL)
+                            .child(ui::link_action("remove", t))
+                            .on_click(cx.listener(move |ws, _, _, cx| {
+                                ws.remove_attachment(n, cx)
+                            })),
+                    )
+            })
+            .collect();
+        let field = if compact {
+            // On a phone: stop, the field in an outline, and send.
+            div()
+                .flex()
+                // A taller field keeps the buttons by its last line.
+                .items_end()
+                .gap(sp(2.5))
+                .when(live, |row| {
+                    row.child(
+                        ui::square_button(
+                            "phone-cancel",
+                            Icon::Stop,
+                            t.red,
+                            Some(t.red_border),
+                            t,
+                        )
+                        .on_click(cx.listener(|ws, _, _, cx| ws.cancel(cx))),
+                    )
+                })
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .items_end()
+                        .gap(sp(2.5))
+                        .min_h(control::LARGE)
+                        .px(sp(3.5))
+                        .py(sp(2.))
+                        .well(t)
+                        .child(
+                            // As tall as a line of the field, so it lines
+                            // up with the first line of text.
+                            div()
+                                .id("attach")
+                                .h(control::SMALL)
+                                .flex()
+                                .items_center()
+                                .cursor_pointer()
+                                .child(ui::icon(
+                                    Icon::Paperclip,
+                                    IconSize::BASE,
+                                    t.muted,
+                                ))
+                                .on_click(cx.listener(|ws, _, _, cx| {
+                                    ws.pick_attachments(cx)
+                                })),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(rems(0.))
+                                .py(sp(0.75))
+                                .child(self.composer.clone()),
+                        ),
+                )
+                .child(send)
+        } else {
+            // On a desktop: the message in large type, then who it goes
+            // to, what else the field takes, and Send.
+            div()
+                .flex()
+                .flex_col()
+                .gap(sp(2.5))
+                .child(
+                    div()
+                        .typeset(Type::LEAD.sized(19.).leading(1.4))
+                        .py(sp(1.))
+                        .child(self.composer.clone()),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(sp(2.))
+                        .when_some(self.composer_target(), |row, target| {
+                            row.child(div().text_color(t.dim).child("with"))
+                                .child(self.model_chip(target, t, cx))
+                        })
+                        .child(div().flex_1())
+                        .child(
+                            div()
+                                .id("attach")
+                                .cursor_pointer()
+                                .child(ui::mono("@ file", Type::CAPTION, t.dim))
+                                .on_click(cx.listener(|ws, _, _, cx| {
+                                    ws.pick_attachments(cx)
+                                })),
+                        )
+                        .child(ui::mono("· / command", Type::CAPTION, t.dim))
+                        .child(div().pl(sp(2.)).child(send)),
+                )
         };
 
-        // On a desktop the button sits inside the field; on a phone,
-        // beside it.
-        let (inside, beside) = if compact {
-            (None, Some(send))
-        } else {
-            (Some(send), None)
-        };
         div()
             .relative()
             .flex_shrink_0()
@@ -90,54 +205,19 @@ impl Workspace {
             .children(self.slash_popover(compact, t, cx))
             .px(sp(if compact { 3. } else { 6. }))
             .pt(sp(if compact { 2.5 } else { 3. }))
-            .pb(sp(if compact { 4.5 } else { 5.5 }))
+            .pb(sp(if compact { 4.5 } else { 6. }))
             .when(compact, |bar| bar.chrome(ui::Edge::Bottom, t))
             // On a desktop, the transcript's column.
             .when(!compact, |bar| bar.w_full().max_w(rems(50.5)).mx_auto())
-            .when_some(self.composer_target().filter(|_| compact), |bar, target| {
-                bar.child(div().flex().child(self.model_chip(target, t, cx)))
-            })
+            .when_some(
+                self.composer_target().filter(|_| compact),
+                |bar, target| {
+                    bar.child(
+                        div().flex().child(self.model_chip(target, t, cx)),
+                    )
+                },
+            )
             .when_some(self.fork_banner(t, cx), |bar, banner| bar.child(banner))
-            .when(!self.attachments.is_empty(), |bar| {
-                bar.child(
-                    div().flex().flex_wrap().gap(sp(1.5)).children(
-                        self.attachments.iter().enumerate().map(|(n, file)| {
-                            // An image shows itself; a file, its name.
-                            let glyph = match &file.content {
-                                crate::attach::Attached::Image { shown, .. } => gpui::img(shown.clone())
-                                    .h(rems(2.5))
-                                    .max_w(rems(5.))
-                                    .rounded(radius::SMALL)
-                                    .object_fit(gpui::ObjectFit::Cover)
-                                    .into_any_element(),
-                                crate::attach::Attached::Text(_) => {
-                                    ui::icon(Icon::Paperclip, IconSize::SMALL, t.muted).into_any_element()
-                                }
-                            };
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(sp(1.5))
-                                .px(sp(2.))
-                                .py(sp(1.))
-                                .rounded(radius::CONTROL)
-                                .key(t)
-                                .typeset(Type::CAPTION)
-                                .child(glyph)
-                                .child(file.name.clone())
-                                .child(
-                                    div()
-                                        .id(("detach", n))
-                                        .cursor_pointer()
-                                        .child(ui::icon(Icon::Close, IconSize::SMALL, t.dim))
-                                        .on_click(cx.listener(move |ws, _, _, cx| {
-                                            ws.remove_attachment(n, cx)
-                                        })),
-                                )
-                        }),
-                    ),
-                )
-            })
             .when_some(self.composer_note(), |bar, text| {
                 bar.child(
                     div()
@@ -145,32 +225,25 @@ impl Workspace {
                         .flex()
                         .items_center()
                         .gap(sp(2.))
-                        .px(sp(3.))
-                        .py(sp(1.75))
-                        .rounded(radius::CONTROL)
-                        .bg(t.green_soft)
-                        .border_1()
-                        .border_color(t.green.opacity(0.4))
                         .typeset(Type::CAPTION)
-                        .child(ui::icon(Icon::Check, IconSize::COMPACT, t.green))
-                        .child(div().flex_1().truncate().text_color(t.text_soft).child(text.to_owned())),
+                        .child(ui::mark(crate::assets::State::Met, t))
+                        .child(
+                            div()
+                                .flex_1()
+                                .truncate()
+                                .text_color(t.text_soft)
+                                .child(text.to_owned()),
+                        ),
                 )
             })
             .when_some(queued, |bar, text| {
                 bar.child(
                     div()
                         .flex()
-                        .items_center()
-                        .gap(sp(2.))
-                        .px(sp(3.))
-                        .py(sp(1.75))
-                        .rounded(radius::CONTROL)
-                        .bg(t.blue_soft)
-                        .border_1()
-                        .border_color(t.blue_border)
+                        .items_baseline()
+                        .gap(sp(2.5))
                         .typeset(Type::CAPTION)
-                        .child(ui::icon(Icon::Chevron, IconSize::COMPACT, t.blue))
-                        .child(div().text_color(t.blue).child("Steer queued"))
+                        .child(ui::mono("steer queued", Type::CAPTION, t.blue))
                         .child(
                             div()
                                 .flex_1()
@@ -183,68 +256,16 @@ impl Workspace {
                 )
             })
             .child(
+                // A heavy rule, not a box, sets the composer off from
+                // the transcript.
                 div()
                     .flex()
-                    // A taller field keeps the buttons by its last line.
-                    .items_end()
-                    .gap(sp(2.5))
-                    .when(compact && live, |row| {
-                        row.child(
-                            ui::square_button(
-                                "phone-cancel",
-                                Icon::Stop,
-                                t.red,
-                                Some(t.red_border),
-                                t,
-                            )
-                            .on_click(cx.listener(|ws, _, _, cx| ws.cancel(cx))),
-                        )
+                    .flex_col()
+                    .when(!compact, |block| {
+                        block.pt(sp(2.)).border_t_2().border_color(t.rule)
                     })
-                    .child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .items_end()
-                            .gap(sp(2.5))
-                            .min_h(control::LARGE)
-                            .px(sp(3.5))
-                            .py(sp(if compact { 2. } else { 1.5 }))
-                            .when(compact, |field| field.well(t))
-                            .when(!compact, |field| field.bg(t.panel).pr(sp(1.5)))
-                            .border_1()
-                            .border_color(t.border_strong)
-                            .rounded(if compact { radius::FULL } else { radius::TILE })
-                            .child({
-                                    // As tall as the chip, so it lines up
-                                    // with the first line of text.
-                                    div()
-                                        .id("attach")
-                                        .h(control::SMALL)
-                                        .flex()
-                                        .items_center()
-                                        .cursor_pointer()
-                                        .child(ui::icon(Icon::Paperclip, IconSize::BASE, t.muted))
-                                        .on_click(cx.listener(|ws, _, _, cx| {
-                                            ws.pick_attachments(cx)
-                                        }))
-                            })
-                            // Its first line level with the chip beside it.
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w(rems(0.))
-                                    .py(sp(0.75))
-                                    .child(self.composer.clone()),
-                            )
-                            .when_some(
-                                self.composer_target().filter(|_| !compact),
-                                |field, target| {
-                                    field.child(self.model_chip(target, t, cx))
-                                },
-                            )
-                            .children(inside),
-                    )
-                    .children(beside),
+                    .children(attached)
+                    .child(div().pt(sp(if compact { 2. } else { 1.5 })).child(field)),
             )
     }
 
@@ -265,12 +286,7 @@ impl Workspace {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(radius::TAG)
-                .when(on, |button| {
-                    button
-                        .cursor_pointer()
-                        .hover(|style| style.bg(gpui::white().opacity(0.06)))
-                })
+                .when(on, |button| button.cursor_pointer())
                 .child(ui::icon(
                     glyph,
                     IconSize::COMPACT,
@@ -285,15 +301,9 @@ impl Workspace {
                 .flex()
                 .items_center()
                 .gap(sp(2.))
-                .px(sp(3.))
-                .py(sp(1.25))
-                .rounded(radius::CONTROL)
-                .bg(t.blue_soft)
-                .border_1()
-                .border_color(t.blue_border)
+                .pb(sp(1.5))
                 .typeset(Type::CAPTION)
-                .child(ui::icon(Icon::Fork, IconSize::COMPACT, t.blue))
-                .child(div().text_color(t.blue).child("Fork"))
+                .child(ui::mono("fork", Type::CAPTION, t.blue))
                 .child(
                     div()
                         .text_color(t.text_soft)
@@ -306,25 +316,13 @@ impl Workspace {
                     t.text,
                 ))
                 .child(step("fork-later", Icon::Chevron, 1, *turn < last))
-                .child(div().text_color(t.text_soft).child("on"))
+                .child(div().text_color(t.text_soft).child("with"))
                 .child(self.model_chip(PickerTarget::Fork, t, cx))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(rems(0.))
-                        .truncate()
-                        .text_color(t.muted)
-                        .child(
-                            "The fork gets this turn's conversation and code.",
-                        ),
-                )
+                .child(div().flex_1())
                 .child(
                     div()
                         .id("fork-cancel")
-                        .text_color(t.blue)
-                        .cursor_pointer()
-                        .hover(|style| style.underline())
-                        .child("Cancel")
+                        .child(ui::link_action("cancel", t))
                         .on_click(
                             cx.listener(|ws, _, _, cx| ws.cancel_fork(cx)),
                         ),

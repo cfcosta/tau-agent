@@ -137,24 +137,18 @@
           {
             "children": [
               {
-                "name": "plug",
-                "piece": "icon",
-                "tone": "info"
+                "piece": "heading",
+                "text": "Reasoning: medium"
+              },
+              {
+                "piece": "spacer"
               },
               {
                 "piece": "mono",
                 "text": "heiko-reasoning"
               },
               {
-                "piece": "rich",
-                "text": "picked **medium** reasoning for this message"
-              },
-              {
-                "piece": "mono",
-                "text": "Jev · $0.0000"
-              },
-              {
-                "label": "Details",
+                "label": "details",
                 "piece": "link",
                 "to": {
                   "page": "luau-plugins",
@@ -170,96 +164,37 @@
           {
             "children": [
               {
-                "head": ["Effort", "Probability", ""],
-                "piece": "table",
-                "rows": [
-                  [
-                    {
-                      "piece": "mono",
-                      "text": "none"
-                    },
-                    {
-                      "label": "0.01",
-                      "piece": "progress",
-                      "share": 0.01
-                    },
-                    {
-                      "piece": "text",
-                      "text": ""
-                    }
-                  ],
-                  [
-                    {
-                      "piece": "mono",
-                      "text": "low"
-                    },
-                    {
-                      "label": "0.03",
-                      "piece": "progress",
-                      "share": 0.03
-                    },
-                    {
-                      "piece": "text",
-                      "text": ""
-                    }
-                  ],
-                  [
-                    {
-                      "piece": "mono",
-                      "text": "medium"
-                    },
-                    {
-                      "label": "0.90",
-                      "piece": "progress",
-                      "share": 0.9
-                    },
-                    {
-                      "piece": "badge",
-                      "text": "most likely",
-                      "tone": "info"
-                    }
-                  ],
-                  [
-                    {
-                      "piece": "mono",
-                      "text": "high"
-                    },
-                    {
-                      "label": "0.05",
-                      "piece": "progress",
-                      "share": 0.05
-                    },
-                    {
-                      "piece": "text",
-                      "text": ""
-                    }
-                  ],
-                  [
-                    {
-                      "piece": "mono",
-                      "text": "xhigh"
-                    },
-                    {
-                      "label": "0.01",
-                      "piece": "progress",
-                      "share": 0.01
-                    },
-                    {
-                      "piece": "text",
-                      "text": ""
-                    }
-                  ]
-                ]
+                "label": "none",
+                "piece": "square",
+                "style": "quiet",
+                "tone": "warn"
               },
               {
-                "piece": "text",
-                "text": "Confidence 0.90 is above 0.70, so this message runs at medium."
+                "label": "low",
+                "piece": "square",
+                "style": "quiet",
+                "tone": "warn"
+              },
+              {
+                "label": "medium",
+                "piece": "square",
+                "style": "outlined",
+                "tone": "warn"
+              },
+              {
+                "label": "high",
+                "piece": "square",
+                "style": "quiet",
+                "tone": "warn"
+              },
+              {
+                "label": "xhigh",
+                "piece": "square",
+                "style": "quiet",
+                "tone": "warn"
               }
             ],
-            "id": "note-n0",
-            "open": false,
-            "piece": "section",
-            "title": "Probability of each effort level"
+            "piece": "row"
           }
         ],
         "piece": "stack"
@@ -269,24 +204,18 @@
           {
             "children": [
               {
-                "name": "plug",
-                "piece": "icon",
-                "tone": "info"
+                "piece": "heading",
+                "text": "Reasoning: medium"
+              },
+              {
+                "piece": "spacer"
               },
               {
                 "piece": "mono",
                 "text": "heiko-reasoning"
               },
               {
-                "piece": "rich",
-                "text": "kept **medium** reasoning for this message"
-              },
-              {
-                "piece": "mono",
-                "text": "Jev · $0.0000"
-              },
-              {
-                "label": "Details",
+                "label": "details",
                 "piece": "link",
                 "to": {
                   "page": "luau-plugins",
@@ -302,96 +231,37 @@
           {
             "children": [
               {
-                "head": ["Effort", "Probability", ""],
-                "piece": "table",
-                "rows": [
-                  [
-                    {
-                      "piece": "mono",
-                      "text": "none"
-                    },
-                    {
-                      "label": "0.01",
-                      "piece": "progress",
-                      "share": 0.01
-                    },
-                    {
-                      "piece": "text",
-                      "text": ""
-                    }
-                  ],
-                  [
-                    {
-                      "piece": "mono",
-                      "text": "low"
-                    },
-                    {
-                      "label": "0.03",
-                      "piece": "progress",
-                      "share": 0.03
-                    },
-                    {
-                      "piece": "text",
-                      "text": ""
-                    }
-                  ],
-                  [
-                    {
-                      "piece": "mono",
-                      "text": "medium"
-                    },
-                    {
-                      "label": "0.11",
-                      "piece": "progress",
-                      "share": 0.11
-                    },
-                    {
-                      "piece": "text",
-                      "text": ""
-                    }
-                  ],
-                  [
-                    {
-                      "piece": "mono",
-                      "text": "high"
-                    },
-                    {
-                      "label": "0.81",
-                      "piece": "progress",
-                      "share": 0.81
-                    },
-                    {
-                      "piece": "badge",
-                      "text": "most likely",
-                      "tone": "info"
-                    }
-                  ],
-                  [
-                    {
-                      "piece": "mono",
-                      "text": "xhigh"
-                    },
-                    {
-                      "label": "0.04",
-                      "piece": "progress",
-                      "share": 0.04
-                    },
-                    {
-                      "piece": "text",
-                      "text": ""
-                    }
-                  ]
-                ]
+                "label": "none",
+                "piece": "square",
+                "style": "quiet",
+                "tone": "warn"
               },
               {
-                "piece": "text",
-                "text": "Confidence 0.81 is above 0.70, but this message stays at medium: switching to high would resend 48k tokens uncached."
+                "label": "low",
+                "piece": "square",
+                "style": "quiet",
+                "tone": "warn"
+              },
+              {
+                "label": "medium",
+                "piece": "square",
+                "style": "outlined",
+                "tone": "warn"
+              },
+              {
+                "label": "high",
+                "piece": "square",
+                "style": "quiet",
+                "tone": "warn"
+              },
+              {
+                "label": "xhigh",
+                "piece": "square",
+                "style": "quiet",
+                "tone": "warn"
               }
             ],
-            "id": "note-n1",
-            "open": false,
-            "piece": "section",
-            "title": "Probability of each effort level"
+            "piece": "row"
           }
         ],
         "piece": "stack"
@@ -400,28 +270,24 @@
     "page": {
       "children": [
         {
-          "piece": "heading",
-          "text": "Reasoning effort"
-        },
-        {
-          "piece": "text",
-          "text": "Each effort heiko-reasoning picked for this run, with how sure Jev was."
-        },
-        {
           "children": [
             {
               "children": [
                 {
-                  "piece": "mono",
-                  "text": "heiko-reasoning"
+                  "piece": "heading",
+                  "text": "Reasoning: medium"
                 },
                 {
-                  "piece": "text",
-                  "text": "As the message came in: runs at medium"
+                  "piece": "spacer"
                 },
                 {
                   "piece": "mono",
-                  "text": "Jev · $0.0000"
+                  "text": "message"
+                },
+                {
+                  "label": "applied",
+                  "piece": "stamp",
+                  "tone": "good"
                 }
               ],
               "piece": "row"
@@ -429,133 +295,183 @@
             {
               "children": [
                 {
-                  "piece": "rows",
-                  "rows": [
-                    {
-                      "key": "Confidence",
-                      "value": "0.90"
-                    },
-                    {
-                      "key": "Threshold",
-                      "value": "0.70"
-                    }
-                  ]
+                  "label": "none",
+                  "piece": "square",
+                  "style": "quiet",
+                  "tone": "warn"
                 },
                 {
-                  "piece": "text",
-                  "text": "So the choice is applied."
+                  "label": "low",
+                  "piece": "square",
+                  "style": "quiet",
+                  "tone": "warn"
                 },
                 {
-                  "piece": "rule"
+                  "label": "medium",
+                  "piece": "square",
+                  "style": "outlined",
+                  "tone": "warn"
                 },
                 {
-                  "piece": "text",
-                  "text": "Probability of each effort level"
+                  "label": "high",
+                  "piece": "square",
+                  "style": "quiet",
+                  "tone": "warn"
                 },
                 {
-                  "head": ["Effort", "Probability", "Suits", ""],
-                  "piece": "table",
-                  "rows": [
-                    [
-                      {
-                        "piece": "mono",
-                        "text": "none"
-                      },
-                      {
-                        "label": "0.01",
-                        "piece": "progress",
-                        "share": 0.01
-                      },
-                      {
-                        "piece": "text",
-                        "text": "answers that need no thought: thanks, greetings, restating what was just said"
-                      },
-                      {
-                        "piece": "text",
-                        "text": ""
-                      }
-                    ],
-                    [
-                      {
-                        "piece": "mono",
-                        "text": "low"
-                      },
-                      {
-                        "label": "0.03",
-                        "piece": "progress",
-                        "share": 0.03
-                      },
-                      {
-                        "piece": "text",
-                        "text": "a small, clear edit in one place, or a tool step whose next move is obvious"
-                      },
-                      {
-                        "piece": "text",
-                        "text": ""
-                      }
-                    ],
-                    [
-                      {
-                        "piece": "mono",
-                        "text": "medium"
-                      },
-                      {
-                        "label": "0.90",
-                        "piece": "progress",
-                        "share": 0.9
-                      },
-                      {
-                        "piece": "text",
-                        "text": "routine code across a few files, following patterns already there, or reading results to pick the next step"
-                      },
-                      {
-                        "piece": "badge",
-                        "text": "most likely",
-                        "tone": "info"
-                      }
-                    ],
-                    [
-                      {
-                        "piece": "mono",
-                        "text": "high"
-                      },
-                      {
-                        "label": "0.05",
-                        "piece": "progress",
-                        "share": 0.05
-                      },
-                      {
-                        "piece": "text",
-                        "text": "bugs to track down, failures whose cause is not obvious, refactors and designs across many files"
-                      },
-                      {
-                        "piece": "text",
-                        "text": ""
-                      }
-                    ],
-                    [
-                      {
-                        "piece": "mono",
-                        "text": "xhigh"
-                      },
-                      {
-                        "label": "0.01",
-                        "piece": "progress",
-                        "share": 0.01
-                      },
-                      {
-                        "piece": "text",
-                        "text": "audits, proofs, subtle concurrency, invariants or security, where a mistake is costly and hard to see"
-                      },
-                      {
-                        "piece": "text",
-                        "text": ""
-                      }
-                    ]
-                  ]
+                  "label": "xhigh",
+                  "piece": "square",
+                  "style": "quiet",
+                  "tone": "warn"
                 }
               ],
-              "piece": "stack"
+              "piece": "row"
+            },
+            {
+              "children": [
+                {
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "confidence",
+                  "tone": "neutral"
+                },
+                {
+                  "lit": 18,
+                  "marked": [
+                    14
+                  ],
+                  "piece": "ticks",
+                  "tone": "good",
+                  "total": 20
+                },
+                {
+                  "piece": "mono",
+                  "text": "0.90 of 0.70"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "head": [
+                "Effort",
+                "",
+                "p",
+                "Suits"
+              ],
+              "piece": "table",
+              "rows": [
+                [
+                  {
+                    "piece": "mono",
+                    "text": "none"
+                  },
+                  {
+                    "lit": 0,
+                    "marked": [],
+                    "piece": "ticks",
+                    "tone": "neutral",
+                    "total": 20
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.01"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "answers that need no thought: thanks, greetings, restating what was just said"
+                  }
+                ],
+                [
+                  {
+                    "piece": "mono",
+                    "text": "low"
+                  },
+                  {
+                    "lit": 1,
+                    "marked": [],
+                    "piece": "ticks",
+                    "tone": "neutral",
+                    "total": 20
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.03"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "a small, clear edit in one place, or a tool step whose next move is obvious"
+                  }
+                ],
+                [
+                  {
+                    "piece": "mono",
+                    "text": "medium"
+                  },
+                  {
+                    "lit": 18,
+                    "marked": [],
+                    "piece": "ticks",
+                    "tone": "warn",
+                    "total": 20
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.90"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "routine code across a few files, following patterns already there, or reading results to pick the next step"
+                  }
+                ],
+                [
+                  {
+                    "piece": "mono",
+                    "text": "high"
+                  },
+                  {
+                    "lit": 1,
+                    "marked": [],
+                    "piece": "ticks",
+                    "tone": "neutral",
+                    "total": 20
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.05"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "bugs to track down, failures whose cause is not obvious, refactors and designs across many files"
+                  }
+                ],
+                [
+                  {
+                    "piece": "mono",
+                    "text": "xhigh"
+                  },
+                  {
+                    "lit": 0,
+                    "marked": [],
+                    "piece": "ticks",
+                    "tone": "neutral",
+                    "total": 20
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.01"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "audits, proofs, subtle concurrency, invariants or security, where a mistake is costly and hard to see"
+                  }
+                ]
+              ],
+              "widths": [
+                1,
+                2,
+                1,
+                5
+              ]
             }
           ],
           "piece": "stack"
@@ -565,16 +481,20 @@
             {
               "children": [
                 {
-                  "piece": "mono",
-                  "text": "heiko-reasoning"
+                  "piece": "heading",
+                  "text": "Reasoning: medium"
                 },
                 {
-                  "piece": "text",
-                  "text": "As the message came in: runs at medium"
+                  "piece": "spacer"
                 },
                 {
                   "piece": "mono",
-                  "text": "Jev · $0.0000"
+                  "text": "message"
+                },
+                {
+                  "label": "held · 48k cached",
+                  "piece": "stamp",
+                  "tone": "warn"
                 }
               ],
               "piece": "row"
@@ -582,133 +502,183 @@
             {
               "children": [
                 {
-                  "piece": "rows",
-                  "rows": [
-                    {
-                      "key": "Confidence",
-                      "value": "0.81"
-                    },
-                    {
-                      "key": "Threshold",
-                      "value": "0.70"
-                    }
-                  ]
+                  "label": "none",
+                  "piece": "square",
+                  "style": "quiet",
+                  "tone": "warn"
                 },
                 {
-                  "piece": "text",
-                  "text": "So the choice is held back: it would resend 48k tokens uncached."
+                  "label": "low",
+                  "piece": "square",
+                  "style": "quiet",
+                  "tone": "warn"
                 },
                 {
-                  "piece": "rule"
+                  "label": "medium",
+                  "piece": "square",
+                  "style": "outlined",
+                  "tone": "warn"
                 },
                 {
-                  "piece": "text",
-                  "text": "Probability of each effort level"
+                  "label": "high",
+                  "piece": "square",
+                  "style": "quiet",
+                  "tone": "warn"
                 },
                 {
-                  "head": ["Effort", "Probability", "Suits", ""],
-                  "piece": "table",
-                  "rows": [
-                    [
-                      {
-                        "piece": "mono",
-                        "text": "none"
-                      },
-                      {
-                        "label": "0.01",
-                        "piece": "progress",
-                        "share": 0.01
-                      },
-                      {
-                        "piece": "text",
-                        "text": "answers that need no thought: thanks, greetings, restating what was just said"
-                      },
-                      {
-                        "piece": "text",
-                        "text": ""
-                      }
-                    ],
-                    [
-                      {
-                        "piece": "mono",
-                        "text": "low"
-                      },
-                      {
-                        "label": "0.03",
-                        "piece": "progress",
-                        "share": 0.03
-                      },
-                      {
-                        "piece": "text",
-                        "text": "a small, clear edit in one place, or a tool step whose next move is obvious"
-                      },
-                      {
-                        "piece": "text",
-                        "text": ""
-                      }
-                    ],
-                    [
-                      {
-                        "piece": "mono",
-                        "text": "medium"
-                      },
-                      {
-                        "label": "0.11",
-                        "piece": "progress",
-                        "share": 0.11
-                      },
-                      {
-                        "piece": "text",
-                        "text": "routine code across a few files, following patterns already there, or reading results to pick the next step"
-                      },
-                      {
-                        "piece": "text",
-                        "text": ""
-                      }
-                    ],
-                    [
-                      {
-                        "piece": "mono",
-                        "text": "high"
-                      },
-                      {
-                        "label": "0.81",
-                        "piece": "progress",
-                        "share": 0.81
-                      },
-                      {
-                        "piece": "text",
-                        "text": "bugs to track down, failures whose cause is not obvious, refactors and designs across many files"
-                      },
-                      {
-                        "piece": "badge",
-                        "text": "most likely",
-                        "tone": "info"
-                      }
-                    ],
-                    [
-                      {
-                        "piece": "mono",
-                        "text": "xhigh"
-                      },
-                      {
-                        "label": "0.04",
-                        "piece": "progress",
-                        "share": 0.04
-                      },
-                      {
-                        "piece": "text",
-                        "text": "audits, proofs, subtle concurrency, invariants or security, where a mistake is costly and hard to see"
-                      },
-                      {
-                        "piece": "text",
-                        "text": ""
-                      }
-                    ]
-                  ]
+                  "label": "xhigh",
+                  "piece": "square",
+                  "style": "quiet",
+                  "tone": "warn"
                 }
               ],
-              "piece": "stack"
+              "piece": "row"
+            },
+            {
+              "children": [
+                {
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "confidence",
+                  "tone": "neutral"
+                },
+                {
+                  "lit": 16,
+                  "marked": [
+                    14
+                  ],
+                  "piece": "ticks",
+                  "tone": "good",
+                  "total": 20
+                },
+                {
+                  "piece": "mono",
+                  "text": "0.81 of 0.70"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "head": [
+                "Effort",
+                "",
+                "p",
+                "Suits"
+              ],
+              "piece": "table",
+              "rows": [
+                [
+                  {
+                    "piece": "mono",
+                    "text": "none"
+                  },
+                  {
+                    "lit": 0,
+                    "marked": [],
+                    "piece": "ticks",
+                    "tone": "neutral",
+                    "total": 20
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.01"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "answers that need no thought: thanks, greetings, restating what was just said"
+                  }
+                ],
+                [
+                  {
+                    "piece": "mono",
+                    "text": "low"
+                  },
+                  {
+                    "lit": 1,
+                    "marked": [],
+                    "piece": "ticks",
+                    "tone": "neutral",
+                    "total": 20
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.03"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "a small, clear edit in one place, or a tool step whose next move is obvious"
+                  }
+                ],
+                [
+                  {
+                    "piece": "mono",
+                    "text": "medium"
+                  },
+                  {
+                    "lit": 2,
+                    "marked": [],
+                    "piece": "ticks",
+                    "tone": "neutral",
+                    "total": 20
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.11"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "routine code across a few files, following patterns already there, or reading results to pick the next step"
+                  }
+                ],
+                [
+                  {
+                    "piece": "mono",
+                    "text": "high"
+                  },
+                  {
+                    "lit": 16,
+                    "marked": [],
+                    "piece": "ticks",
+                    "tone": "warn",
+                    "total": 20
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.81"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "bugs to track down, failures whose cause is not obvious, refactors and designs across many files"
+                  }
+                ],
+                [
+                  {
+                    "piece": "mono",
+                    "text": "xhigh"
+                  },
+                  {
+                    "lit": 1,
+                    "marked": [],
+                    "piece": "ticks",
+                    "tone": "neutral",
+                    "total": 20
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.04"
+                  },
+                  {
+                    "piece": "text",
+                    "text": "audits, proofs, subtle concurrency, invariants or security, where a mistake is costly and hard to see"
+                  }
+                ]
+              ],
+              "widths": [
+                1,
+                2,
+                1,
+                5
+              ]
             }
           ],
           "piece": "stack"
@@ -725,16 +695,20 @@
         {
           "children": [
             {
-              "piece": "mono",
-              "text": "heiko-reasoning"
+              "piece": "heading",
+              "text": "Reasoning: medium"
             },
             {
-              "piece": "text",
-              "text": "As the message came in: runs at medium"
+              "piece": "spacer"
             },
             {
               "piece": "mono",
-              "text": "Jev · $0.0000"
+              "text": "message"
+            },
+            {
+              "label": "held · 48k cached",
+              "piece": "stamp",
+              "tone": "warn"
             }
           ],
           "piece": "row"
@@ -742,133 +716,183 @@
         {
           "children": [
             {
-              "piece": "rows",
-              "rows": [
-                {
-                  "key": "Confidence",
-                  "value": "0.81"
-                },
-                {
-                  "key": "Threshold",
-                  "value": "0.70"
-                }
-              ]
+              "label": "none",
+              "piece": "square",
+              "style": "quiet",
+              "tone": "warn"
             },
             {
-              "piece": "text",
-              "text": "So the choice is held back: it would resend 48k tokens uncached."
+              "label": "low",
+              "piece": "square",
+              "style": "quiet",
+              "tone": "warn"
             },
             {
-              "piece": "rule"
+              "label": "medium",
+              "piece": "square",
+              "style": "outlined",
+              "tone": "warn"
             },
             {
-              "piece": "text",
-              "text": "Probability of each effort level"
+              "label": "high",
+              "piece": "square",
+              "style": "quiet",
+              "tone": "warn"
             },
             {
-              "head": ["Effort", "Probability", "Suits", ""],
-              "piece": "table",
-              "rows": [
-                [
-                  {
-                    "piece": "mono",
-                    "text": "none"
-                  },
-                  {
-                    "label": "0.01",
-                    "piece": "progress",
-                    "share": 0.01
-                  },
-                  {
-                    "piece": "text",
-                    "text": "answers that need no thought: thanks, greetings, restating what was just said"
-                  },
-                  {
-                    "piece": "text",
-                    "text": ""
-                  }
-                ],
-                [
-                  {
-                    "piece": "mono",
-                    "text": "low"
-                  },
-                  {
-                    "label": "0.03",
-                    "piece": "progress",
-                    "share": 0.03
-                  },
-                  {
-                    "piece": "text",
-                    "text": "a small, clear edit in one place, or a tool step whose next move is obvious"
-                  },
-                  {
-                    "piece": "text",
-                    "text": ""
-                  }
-                ],
-                [
-                  {
-                    "piece": "mono",
-                    "text": "medium"
-                  },
-                  {
-                    "label": "0.11",
-                    "piece": "progress",
-                    "share": 0.11
-                  },
-                  {
-                    "piece": "text",
-                    "text": "routine code across a few files, following patterns already there, or reading results to pick the next step"
-                  },
-                  {
-                    "piece": "text",
-                    "text": ""
-                  }
-                ],
-                [
-                  {
-                    "piece": "mono",
-                    "text": "high"
-                  },
-                  {
-                    "label": "0.81",
-                    "piece": "progress",
-                    "share": 0.81
-                  },
-                  {
-                    "piece": "text",
-                    "text": "bugs to track down, failures whose cause is not obvious, refactors and designs across many files"
-                  },
-                  {
-                    "piece": "badge",
-                    "text": "most likely",
-                    "tone": "info"
-                  }
-                ],
-                [
-                  {
-                    "piece": "mono",
-                    "text": "xhigh"
-                  },
-                  {
-                    "label": "0.04",
-                    "piece": "progress",
-                    "share": 0.04
-                  },
-                  {
-                    "piece": "text",
-                    "text": "audits, proofs, subtle concurrency, invariants or security, where a mistake is costly and hard to see"
-                  },
-                  {
-                    "piece": "text",
-                    "text": ""
-                  }
-                ]
-              ]
+              "label": "xhigh",
+              "piece": "square",
+              "style": "quiet",
+              "tone": "warn"
             }
           ],
-          "piece": "stack"
+          "piece": "row"
+        },
+        {
+          "children": [
+            {
+              "mono": false,
+              "piece": "toned",
+              "text": "confidence",
+              "tone": "neutral"
+            },
+            {
+              "lit": 16,
+              "marked": [
+                14
+              ],
+              "piece": "ticks",
+              "tone": "good",
+              "total": 20
+            },
+            {
+              "piece": "mono",
+              "text": "0.81 of 0.70"
+            }
+          ],
+          "piece": "row"
+        },
+        {
+          "head": [
+            "Effort",
+            "",
+            "p",
+            "Suits"
+          ],
+          "piece": "table",
+          "rows": [
+            [
+              {
+                "piece": "mono",
+                "text": "none"
+              },
+              {
+                "lit": 0,
+                "marked": [],
+                "piece": "ticks",
+                "tone": "neutral",
+                "total": 20
+              },
+              {
+                "piece": "mono",
+                "text": "0.01"
+              },
+              {
+                "piece": "text",
+                "text": "answers that need no thought: thanks, greetings, restating what was just said"
+              }
+            ],
+            [
+              {
+                "piece": "mono",
+                "text": "low"
+              },
+              {
+                "lit": 1,
+                "marked": [],
+                "piece": "ticks",
+                "tone": "neutral",
+                "total": 20
+              },
+              {
+                "piece": "mono",
+                "text": "0.03"
+              },
+              {
+                "piece": "text",
+                "text": "a small, clear edit in one place, or a tool step whose next move is obvious"
+              }
+            ],
+            [
+              {
+                "piece": "mono",
+                "text": "medium"
+              },
+              {
+                "lit": 2,
+                "marked": [],
+                "piece": "ticks",
+                "tone": "neutral",
+                "total": 20
+              },
+              {
+                "piece": "mono",
+                "text": "0.11"
+              },
+              {
+                "piece": "text",
+                "text": "routine code across a few files, following patterns already there, or reading results to pick the next step"
+              }
+            ],
+            [
+              {
+                "piece": "mono",
+                "text": "high"
+              },
+              {
+                "lit": 16,
+                "marked": [],
+                "piece": "ticks",
+                "tone": "warn",
+                "total": 20
+              },
+              {
+                "piece": "mono",
+                "text": "0.81"
+              },
+              {
+                "piece": "text",
+                "text": "bugs to track down, failures whose cause is not obvious, refactors and designs across many files"
+              }
+            ],
+            [
+              {
+                "piece": "mono",
+                "text": "xhigh"
+              },
+              {
+                "lit": 1,
+                "marked": [],
+                "piece": "ticks",
+                "tone": "neutral",
+                "total": 20
+              },
+              {
+                "piece": "mono",
+                "text": "0.04"
+              },
+              {
+                "piece": "text",
+                "text": "audits, proofs, subtle concurrency, invariants or security, where a mistake is costly and hard to see"
+              }
+            ]
+          ],
+          "widths": [
+            1,
+            2,
+            1,
+            5
+          ]
         }
       ],
       "piece": "stack"

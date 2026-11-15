@@ -64,12 +64,32 @@
         },
         "call": "call_ask",
         "draft": {
-          "cursor": [0, 0, 0],
+          "cursor": [
+            0,
+            0,
+            0
+          ],
           "note_open": false,
-          "notes": ["", "", ""],
-          "other": ["", "", ""],
-          "other_on": [false, false, false],
-          "picked": [[], [], []],
+          "notes": [
+            "",
+            "",
+            ""
+          ],
+          "other": [
+            "",
+            "",
+            ""
+          ],
+          "other_on": [
+            false,
+            false,
+            false
+          ],
+          "picked": [
+            [],
+            [],
+            []
+          ],
           "tab": 0
         },
         "focus": {
@@ -148,13 +168,26 @@
                   }
                 ]
               ],
-              "widths": [1, 4]
+              "widths": [
+                1,
+                4
+              ]
             },
             {
-              "mono": false,
-              "piece": "toned",
-              "text": "Answer in the panel below.",
-              "tone": "info"
+              "children": [
+                {
+                  "count": null,
+                  "piece": "mark",
+                  "state": "asks"
+                },
+                {
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "waiting for you",
+                  "tone": "warn"
+                }
+              ],
+              "piece": "row"
             }
           ],
           "piece": "stack"
@@ -169,11 +202,35 @@
             {
               "children": [
                 {
+                  "piece": "heading",
+                  "text": "heiko asks"
+                },
+                {
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "1 of 3",
+                  "tone": "neutral"
+                },
+                {
+                  "piece": "spacer"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "↑↓ move · n note",
+                  "tone": "neutral"
+                }
+              ],
+              "piece": "row"
+            },
+            {
+              "children": [
+                {
                   "action": "go",
                   "args": {
                     "to": 0
                   },
-                  "kind": "primary",
+                  "kind": "secondary",
                   "label": "Waiting",
                   "piece": "button"
                 },
@@ -205,7 +262,7 @@
                     "to": 3
                   },
                   "kind": "secondary",
-                  "label": "Submit",
+                  "label": "submit",
                   "piece": "button"
                 },
                 {
@@ -223,79 +280,98 @@
             {
               "children": [
                 {
-                  "piece": "rich",
-                  "text": "**How should the ask tool wait for your answer?**"
+                  "piece": "title",
+                  "subtitle": null,
+                  "text": "How should the ask tool wait for your answer?"
                 },
                 {
-                  "children": [
-                    {
-                      "piece": "mono",
-                      "text": "› 1"
-                    },
-                    {
-                      "action": "choose",
-                      "args": {
-                        "row": 0
+                  "head": [],
+                  "piece": "table",
+                  "rows": [
+                    [
+                      {
+                        "piece": "mono",
+                        "text": "› 1"
                       },
-                      "kind": "secondary",
-                      "label": "Hold the call open (Recommended)",
-                      "piece": "button"
-                    }
-                  ],
-                  "piece": "row"
-                },
-                {
-                  "children": [
-                    {
-                      "piece": "mono",
-                      "text": "  2"
-                    },
-                    {
-                      "action": "choose",
-                      "args": {
-                        "row": 1
+                      {
+                        "children": [
+                          {
+                            "action": "choose",
+                            "args": {
+                              "row": 0
+                            },
+                            "kind": "primary",
+                            "label": "Hold the call open (Recommended)",
+                            "piece": "button"
+                          }
+                        ],
+                        "piece": "stack"
+                      }
+                    ],
+                    [
+                      {
+                        "piece": "mono",
+                        "text": "  2"
                       },
-                      "kind": "secondary",
-                      "label": "End the turn",
-                      "piece": "button"
-                    }
-                  ],
-                  "piece": "row"
-                },
-                {
-                  "children": [
-                    {
-                      "piece": "mono",
-                      "text": "  3"
-                    },
-                    {
-                      "action": "choose",
-                      "args": {
-                        "row": 2
+                      {
+                        "children": [
+                          {
+                            "action": "choose",
+                            "args": {
+                              "row": 1
+                            },
+                            "kind": "secondary",
+                            "label": "End the turn",
+                            "piece": "button"
+                          }
+                        ],
+                        "piece": "stack"
+                      }
+                    ],
+                    [
+                      {
+                        "piece": "mono",
+                        "text": "  3"
                       },
-                      "kind": "secondary",
-                      "label": "Hold, then time out",
-                      "piece": "button"
-                    }
+                      {
+                        "children": [
+                          {
+                            "action": "choose",
+                            "args": {
+                              "row": 2
+                            },
+                            "kind": "secondary",
+                            "label": "Hold, then time out",
+                            "piece": "button"
+                          }
+                        ],
+                        "piece": "stack"
+                      }
+                    ],
+                    [
+                      {
+                        "piece": "mono",
+                        "text": "  4"
+                      },
+                      {
+                        "children": [
+                          {
+                            "id": "ask-other-retry-after-call_ask-0",
+                            "keep": true,
+                            "multiline": false,
+                            "piece": "input",
+                            "placeholder": "Your own answer…",
+                            "submit": "other-done"
+                          }
+                        ],
+                        "piece": "row"
+                      }
+                    ]
                   ],
-                  "piece": "row"
-                },
-                {
-                  "children": [
-                    {
-                      "piece": "mono",
-                      "text": "  4"
-                    },
-                    {
-                      "id": "ask-other-retry-after-call_ask-0",
-                      "keep": true,
-                      "multiline": false,
-                      "piece": "input",
-                      "placeholder": "Your own answer…",
-                      "submit": "other-done"
-                    }
-                  ],
-                  "piece": "row"
+                  "widths": [
+                    0.5,
+                    12
+                  ]
                 },
                 {
                   "children": [
@@ -312,7 +388,7 @@
                       "text": "let (tx, rx) = oneshot::channel();\nself.pending.insert(ctx.call_id, tx);\nselect! {\n    a = rx => Ok(a?),\n    _ = ctx.cancel => Err(Cancelled),\n}"
                     }
                   ],
-                  "piece": "card"
+                  "piece": "stack"
                 }
               ],
               "piece": "stack"
@@ -320,34 +396,28 @@
             {
               "children": [
                 {
-                  "mono": true,
-                  "piece": "toned",
-                  "text": "↑↓ move · Enter choose · n note · ←→ questions",
-                  "tone": "neutral"
-                },
-                {
-                  "piece": "spacer"
-                },
-                {
-                  "action": "heiko.cancel",
+                  "action": "note-open",
                   "args": {},
-                  "kind": "danger",
-                  "label": "Cancel run",
+                  "kind": "secondary",
+                  "label": "add a note",
                   "piece": "button"
                 },
                 {
                   "action": "decline",
                   "args": {},
                   "kind": "secondary",
-                  "label": "Decline to answer",
+                  "label": "decline",
                   "piece": "button"
                 },
                 {
-                  "action": "note-open",
+                  "action": "heiko.cancel",
                   "args": {},
-                  "kind": "secondary",
-                  "label": "Add note",
+                  "kind": "danger",
+                  "label": "cancel run",
                   "piece": "button"
+                },
+                {
+                  "piece": "spacer"
                 },
                 {
                   "action": "next",
@@ -360,7 +430,7 @@
               "piece": "row"
             }
           ],
-          "piece": "card"
+          "piece": "stack"
         }
       ],
       "focus": 1,
@@ -385,7 +455,9 @@
         "escape"
       ],
       "piece": "keys",
-      "through": ["escape"]
+      "through": [
+        "escape"
+      ]
     },
     "status": {
       "detail": null,

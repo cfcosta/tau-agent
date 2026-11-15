@@ -628,15 +628,21 @@ function ui.row(children)
 	return { piece = "row", children = pieces(children) }
 end
 
-local KINDS = { primary = true, secondary = true, danger = true }
+local KINDS = { primary = true, secondary = true, danger = true, hot = true }
+local SIZES = { small = true, medium = true, large = true }
 
 -- A button that carries out the plugin's `actions[action]` with `args`;
--- `kind` is primary, secondary (the default) or danger. `icon`, one of
--- heiko's icons by name, goes before the label, or alone with an empty one.
-function ui.button(label, action, args, kind, icon)
+-- `kind` is primary, secondary (the default), danger or hot: one that
+-- needs the person. `icon`, one of heiko's icons by name, goes before the
+-- label, or alone with an empty one. `size` is a primary button's:
+-- small (the default), medium or large.
+function ui.button(label, action, args, kind, icon, size)
 	kind = kind or "secondary"
 	if not KINDS[kind] then
-		error("a button's kind is primary, secondary or danger, not " .. tostring(kind), 2)
+		error("a button's kind is primary, secondary, danger or hot, not " .. tostring(kind), 2)
+	end
+	if size ~= nil and not SIZES[size] then
+		error("a button's size is small, medium or large, not " .. tostring(size), 2)
 	end
 	return {
 		piece = "button",
@@ -645,6 +651,7 @@ function ui.button(label, action, args, kind, icon)
 		args = args or {},
 		kind = kind,
 		icon = icon and tostring(icon) or nil,
+		size = size,
 	}
 end
 
@@ -662,10 +669,6 @@ function ui.switch(label, detail, on, action, args)
 	}
 end
 
-function ui.heading(text)
-	return { piece = "heading", text = tostring(text) }
-end
-
 -- Markdown, drawn as a model's reply is.
 function ui.markdown(text)
 	return { piece = "markdown", text = tostring(text) }
@@ -678,6 +681,165 @@ end
 
 function ui.pill(text, of)
 	return { piece = "pill", text = tostring(text), tone = tone(of) }
+end
+
+-- The color a mark, a stamp, a square, a slip or a heading is printed
+-- in: a tone, or one of the palette's other colors.
+local INKS = {
+	neutral = true,
+	good = true,
+	warn = true,
+	bad = true,
+	info = true,
+	teal = true,
+	cyan = true,
+	purple = true,
+	yellow = true,
+	bright = true,
+}
+
+local INK_NAMES = "neutral, good, warn, bad, info, teal, cyan, purple, yellow or bright"
+
+local function ink(value)
+	if value == nil then
+		return "neutral"
+	end
+	if not INKS[value] then
+		error("a color is " .. INK_NAMES .. ", not " .. tostring(value), 3)
+	end
+	return value
+end
+
+-- A small label over a group, in the color `of` when given.
+function ui.heading(text, of)
+	return { piece = "heading", text = tostring(text), tone = of ~= nil and ink(of) or nil }
+end
+
+-- Where a click goes: `opts.page` of this plugin, or of `opts.plugin`,
+-- with `opts.params`; nothing without a page.
+local function target(opts)
+	if opts == nil or opts.page == nil then
+		return nil
+	end
+	local params = {}
+	for key, value in pairs(opts.params or {}) do
+		params[tostring(key)] = tostring(value)
+	end
+	return { plugin = opts.plugin and tostring(opts.plugin) or json.null, page = tostring(opts.page), params = params }
+end
+
+-- A section's head, which does not fold: its title over a rule.
+-- `opts.meta` is small print at its right; `opts.actions` are pieces
+-- after it, such as buttons.
+function ui.header(title, opts)
+	opts = opts or {}
+	return {
+		piece = "header",
+		title = tostring(title),
+		meta = opts.meta and tostring(opts.meta) or json.null,
+		actions = pieces(opts.actions),
+	}
+end
+
+-- One line of code, parts of it marked: a line a search found, and
+-- where. `spans` are `{ from, to }`, the first and last byte of each
+-- part, from 1, as `string.find` gives them.
+function ui.marked(text, spans)
+	local out = array({})
+	for _, span in ipairs(spans or {}) do
+		local from = math.max(1, math.floor(tonumber(span[1]) or 1))
+		local to = math.max(0, math.floor(tonumber(span[2]) or 0))
+		table.insert(out, { from, to })
+	end
+	return { piece = "marked", text = tostring(text), spans = out }
+end
+
+-- Pieces one under the other on the darker plane: a result.
+function ui.band(children)
+	return { piece = "band", children = pieces(children) }
+end
+
+-- Pieces one under the other, a line down the left joining the squares
+-- they start with: the steps of a change, a queue.
+function ui.rail(children)
+	return { piece = "rail", children = pieces(children) }
+end
+
+-- A quantity as `total` square ticks, the first `lit` in the color
+-- `of`; `marked` are the places, from 0, of ticks drawn white, as
+-- thresholds on the strip.
+function ui.ticks(lit, total, of, marked)
+	local out = array({})
+	for _, at in ipairs(marked or {}) do
+		table.insert(out, math.max(0, math.floor(tonumber(at) or 0)))
+	end
+	total = math.max(1, math.floor(tonumber(total) or 1))
+	return {
+		piece = "ticks",
+		lit = math.max(0, math.min(total, math.floor(tonumber(lit) or 0))),
+		total = total,
+		tone = ink(of),
+		marked = out,
+	}
+end
+
+local STATES = { working = true, asks = true, failing = true, met = true, limit = true, cap = true, idle = true }
+
+-- The small mark of a state: working, asks, failing, met, limit, cap or
+-- idle. With a `count` above one, the count goes before it.
+function ui.mark(state, count)
+	if not STATES[state] then
+		error("a mark is working, asks, failing, met, limit, cap or idle, not " .. tostring(state), 2)
+	end
+	return {
+		piece = "mark",
+		state = state,
+		count = count and math.max(0, math.floor(tonumber(count) or 0)) or json.null,
+	}
+end
+
+-- A word or two in mono, outlined in the color `of`: `exit 0`, `queued`.
+function ui.stamp(label, of)
+	return { piece = "stamp", label = tostring(label), tone = ink(of) }
+end
+
+local SQUARES = { quiet = true, outlined = true, filled = true }
+
+-- A small square holding a number or a letter: a step, a check, a place
+-- in a queue. `style` is quiet (the default: not reached yet), outlined
+-- or filled, in the color `of`. With `action`, a click carries out the
+-- plugin's `actions[action]` with `args`: a segment, a toggle.
+function ui.square(label, style, of, action, args)
+	style = style or "quiet"
+	if not SQUARES[style] then
+		error("a square is quiet, outlined or filled, not " .. tostring(style), 2)
+	end
+	return {
+		piece = "square",
+		label = tostring(label),
+		style = style,
+		tone = ink(of),
+		action = action and tostring(action) or nil,
+		args = action and (args or {}) or nil,
+	}
+end
+
+-- A note or an id on a label outlined in the color `of`; `dashed` for
+-- one proposed, not kept yet. With `opts.page`, a click opens that page
+-- of this plugin, or of `opts.plugin`, with `opts.params`.
+function ui.slip(text, of, dashed, opts)
+	return { piece = "slip", text = tostring(text), tone = ink(of), dashed = dashed == true, to = target(opts) }
+end
+
+-- A big number or time, in the display face.
+function ui.figure(text)
+	return { piece = "figure", text = tostring(text) }
+end
+
+-- A large glyph in the display face, in the color `of`: the mark beside
+-- a note.
+function ui.kanji(text, of)
+	return { piece = "kanji", text = tostring(text), tone = ink(of) }
 end
 
 -- A header over rows; each row is a list of pieces or strings.
@@ -780,7 +942,7 @@ function ui.keys(id, keys, action, children, opts)
 	}
 end
 
--- Pieces in a frame.
+-- Pieces in a group of their own, under a hairline.
 function ui.card(children)
 	return { piece = "card", children = pieces(children) }
 end
@@ -802,7 +964,8 @@ function ui.modal(title, children, opts)
 	}
 end
 
--- A unified diff, colored as `path`'s language when given.
+-- A unified diff, its lines numbered, colored as `path`'s language when
+-- given.
 function ui.diff(text, path)
 	return { piece = "diff", text = tostring(text), path = path and tostring(path) or json.null }
 end

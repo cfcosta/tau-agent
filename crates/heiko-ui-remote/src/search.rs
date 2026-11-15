@@ -15,9 +15,9 @@ use gpui::{
 use heiko_agent::tool::RunId;
 
 use crate::{
-    assets::Icon,
+    assets::{Icon, State},
     route::Route,
-    theme::{IconSize, Theme, Type, radius, sp},
+    theme::{Design as _, IconSize, Theme, Type, sp, weight},
     ui,
     ui::Material as _,
     view::Origin,
@@ -224,12 +224,7 @@ impl Workspace {
         self.searching = false;
         match pick {
             Pick::Run(run) => self.navigate(Route::Run(run), cx),
-            Pick::Repo(repo) => {
-                if !self.is_repo_open(&repo) {
-                    self.toggle_repo_open(&repo, cx);
-                }
-                self.repo = Some(repo);
-            }
+            Pick::Repo(repo) => self.choose_repo(&repo, cx),
             Pick::NewRunIn(repo) => self.new_run_in(&repo, window, cx),
             Pick::Screen(route) => self.navigate(route, cx),
             Pick::AddRepo => self.pick_repos(cx),
@@ -249,7 +244,9 @@ impl Workspace {
         }
     }
 
-    /// The palette, over the app.
+    /// The palette, over the app: what is typed beside its title, over
+    /// a heavy rule, then the matches, the first printed as the one
+    /// Enter opens.
     pub(crate) fn search_view(
         &self,
         t: &Theme,
@@ -262,18 +259,55 @@ impl Workspace {
             .enumerate()
             .map(|(n, hit)| {
                 let pick = hit.pick.clone();
+                let first = n == 0;
+                // A conversation leads with where it stands; anything
+                // else with what it is.
+                let lead = match &hit.pick {
+                    Pick::Run(run) => {
+                        let state = self
+                            .run(run)
+                            .and_then(|run| {
+                                self.run_marks(run, false)
+                                    .shown()
+                                    .into_iter()
+                                    .next()
+                            })
+                            .map_or(State::Idle, |(_, state)| state);
+                        ui::mark(state, t).into_any_element()
+                    }
+                    _ => ui::icon(
+                        hit.glyph,
+                        IconSize::COMPACT,
+                        if first { t.roles.on_primary } else { t.dim },
+                    )
+                    .into_any_element(),
+                };
                 div()
                     .id(SharedString::from(format!("hit-{n}")))
                     .flex()
                     .items_center()
-                    .gap(sp(2.5))
-                    .h(rems(2.25))
-                    .px(sp(3.))
-                    .rounded(radius::CONTROL)
+                    .gap(sp(4.))
+                    .h(rems(3.))
+                    .px(sp(3.5))
                     .cursor_pointer()
-                    .when(n == 0, |row| row.pressed(t))
-                    .hover(|style| style.bg(t.selected))
-                    .child(ui::icon(hit.glyph, IconSize::BASE, t.muted))
+                    .typeset(Type::LEAD)
+                    .map(|row| {
+                        if first {
+                            row.printed(4., t).font_weight(weight::STRONG)
+                        } else {
+                            row.border_b_1()
+                                .border_color(t.hairline)
+                                .hover(|style| style.text_color(t.bright))
+                        }
+                    })
+                    .child(
+                        div()
+                            .w(rems(0.875))
+                            .flex_shrink_0()
+                            .flex()
+                            .justify_center()
+                            .child(lead),
+                    )
                     .child(
                         div()
                             .flex_1()
@@ -281,7 +315,11 @@ impl Workspace {
                             .truncate()
                             .child(hit.label),
                     )
-                    .child(ui::text(hit.detail, Type::CAPTION, t.dim))
+                    .child(ui::mono(
+                        hit.detail,
+                        Type::CAPTION,
+                        if first { t.roles.on_primary } else { t.dim },
+                    ))
                     .on_click(cx.listener(move |ws, _, window, cx| {
                         ws.pick(pick.clone(), window, cx)
                     }))
@@ -295,7 +333,7 @@ impl Workspace {
             .flex()
             .justify_center()
             .items_start()
-            .pt(sp(20.))
+            .pt(sp(30.))
             .px(sp(4.))
             .bg(t.scrim)
             .occlude()
@@ -306,34 +344,49 @@ impl Workspace {
                     .max_w_full()
                     .flex()
                     .flex_col()
-                    .gap(sp(1.))
-                    .p(sp(2.))
-                    .raised(t)
+                    .px(sp(5.5))
+                    .pt(sp(4.5))
+                    .pb(sp(5.5))
+                    .bg(t.bg)
                     .border_1()
-                    .border_color(t.border_strong)
-                    .rounded(radius::CARD)
+                    .border_color(t.rule)
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap(sp(2.))
-                            .px(sp(2.))
-                            .child(ui::icon(
-                                Icon::Search,
-                                IconSize::BASE,
-                                t.dim,
-                            ))
-                            .child(div().flex_1().child(ui::field(
-                                &self.search,
-                                false,
-                                t,
-                            ))),
+                            .gap(sp(4.5))
+                            .pb(sp(2.5))
+                            .border_b_2()
+                            .border_color(t.rule)
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .typeset(Type::PAGE_TITLE)
+                                    .text_color(t.bright)
+                                    .child("Search"),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(rems(0.))
+                                    .typeset(Type::HEADLINE)
+                                    .text_color(t.bright)
+                                    .child(self.search.clone()),
+                            )
+                            .child(
+                                ui::mono(
+                                    "↑↓ move · ↵ open · esc",
+                                    Type::CAPTION,
+                                    t.dim,
+                                )
+                                .flex_shrink_0(),
+                            ),
                     )
+                    .child(div().h(sp(1.5)).flex_shrink_0())
                     .children(rows)
                     .when(empty, |list| {
                         list.child(
                             div()
-                                .px(sp(3.))
                                 .py(sp(3.))
                                 .text_color(t.muted)
                                 .child("Nothing matches."),

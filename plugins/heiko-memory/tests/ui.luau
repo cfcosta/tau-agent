@@ -322,14 +322,14 @@ t.property("the view notes what memory did", function(draw)
 			table.insert(log, { kind = "marked", notes = { "a" }, why = "it changed" })
 		elseif kind == 1 then
 			table.insert(log, { kind = "recalled", notes = { { id = "n-1", title = "a" } } })
-			table.insert(expected, "recalled 1 note for this task")
+			table.insert(expected, "Recalled 1 note")
 		elseif kind == 2 then
 			local calls = {}
 			for _ = 1, n do
 				table.insert(calls, { tool = "memory_write" })
 			end
 			table.insert(log, { kind = "saved", calls = calls })
-			table.insert(expected, n == 1 and "saved 1 note" or ("saved " .. n .. " notes"))
+			table.insert(expected, n == 1 and "Saved 1 note" or ("Saved " .. n .. " notes"))
 		else
 			table.insert(log, { kind = "error", message = "offline" })
 			table.insert(expected, "offline")
@@ -342,7 +342,7 @@ t.property("the view notes what memory did", function(draw)
 	for i = 0, #expected - 1 do
 		local mark = view.notes["m" .. i]
 		t.equal(mark ~= nil, true, "mark m" .. i)
-		table.insert(said, find(mark, "status").detail)
+		table.insert(said, (find(mark, "heading") or find(mark, "text")).text)
 	end
 	t.equal(view.notes["m" .. #expected], nil)
 	t.equal(said, expected)
@@ -353,17 +353,21 @@ t.property("the view notes what memory did", function(draw)
 	end
 end)
 
-t.case("a recalled note links to its page: the repository's, or the person's", function()
+t.case("a recalled note is on a slip, a saved one on a dashed slip", function()
 	local run = run_with({
 		state = {
 			log = { { kind = "recalled", notes = { { id = "retry", title = "Retries" }, { id = "user:terse", title = "Terse" } } } },
 		},
 	})
 	local mark = run:view().notes.m0
-	local here = find(mark, "link", "Retries")
-	t.equal(here.to.params, { repo = "shop", note = "retry" })
-	local yours = find(mark, "link", "Terse")
-	t.equal(yours.to.params, { note = "terse" })
+	t.equal(find(mark, "kanji").text, "憶")
+	t.equal(find(mark, "slip", "Retries").dashed, false)
+	t.equal(find(mark, "slip", "Terse") ~= nil, true, "the person's note")
+
+	local saving = run_with({
+		state = { log = { { kind = "saved", calls = { { tool = "memory_write", details = { id = "retry", title = "Retries" } } } } } },
+	})
+	t.equal(find(saving:view().notes.m0, "slip", "Retries").dashed, true)
 end)
 
 t.case("a run starts with how many notes its repository has", function()
@@ -380,7 +384,7 @@ t.case("a repository's notes page lists, filters, searches and opens its notes",
 	write(run, fact("cache keys", { type = "gotcha", links = { { to = "lanes-drain", type = "refines", why = "it says when" } } }))
 	local page = run:page("notes", { repo = "shop" })
 	local list = find(page, "table")
-	t.equal(list.head, { "Note", "Kind", "Links", "Edited" })
+	t.equal(list.head, {})
 	t.equal(#list.rows, 2)
 	t.equal(find(page, "link", "Facts 1") ~= nil, true, "a link to the facts")
 	t.equal(find(page, "link", "Gotchas 1") ~= nil, true, "a link to the gotchas")
@@ -391,7 +395,9 @@ t.case("a repository's notes page lists, filters, searches and opens its notes",
 
 	-- A link out and a backlink both count.
 	for _, r in ipairs(list.rows) do
-		t.equal(r[3].text, "1 link")
+		t.equal(r[1].piece, "link")
+		t.equal(r[2].piece, "slip")
+		t.equal(r[5].text, "1 link")
 	end
 
 	local gotchas = run:page("notes", { repo = "shop", kind = "gotcha" })
@@ -407,7 +413,7 @@ t.case("a repository's notes page lists, filters, searches and opens its notes",
 	local open = run:page("notes", { repo = "shop", note = "lanes-drain" })
 	t.equal(find(open, "title").text, "lanes drain")
 	t.equal(shows(open, "lanes-drain · fact by the agent · edited just now"), true, "who wrote it, and when")
-	t.equal(find(open, "badge").text, "src/lane.rs")
+	t.equal(find(open, "stamp").label, "src/lane.rs")
 	t.equal(shows(open, "Backlinks · 1"), true, "its backlink")
 	t.equal(shows(open, "why: it says when"), true, "why it links")
 	local graph = find(open, "graph")

@@ -1,15 +1,15 @@
 //! What heiko-direnv draws: the question that takes the composer's place,
-//! the cards above a run's transcript while its environment loads or
+//! the lines above a run's transcript while its environment loads or
 //! after it failed, and the repository menu's toggle. Each is a view
 //! tree (ADR 0045): the loading card's clock is a ticker the interface
 //! keeps, from when the load started.
 
-use serde_json::Value;
 use heiko_ui_plugin::{
     ViewCx,
     points::{AtRepo, AtRun},
-    tree::{Kind, Node, Tone},
+    tree::{Kind, MarkState, Node, Tone},
 };
+use serde_json::Value;
 
 use super::DirenvUi;
 use crate::{Act, Record};
@@ -17,14 +17,6 @@ use crate::{Act, Record};
 /// Every button's and switch's action: carry out the [`Act`] its
 /// arguments hold.
 const ACT: &str = "act";
-
-/// An icon of heiko's, by name.
-fn icon(name: &str, tone: Tone) -> Node {
-    Node::Icon {
-        name: name.into(),
-        tone,
-    }
-}
 
 /// A button that asks the host half for `act`.
 fn button(label: &str, kind: Kind, act: &Act) -> Node {
@@ -34,6 +26,7 @@ fn button(label: &str, kind: Kind, act: &Act) -> Node {
         args: args(act),
         kind,
         icon: None,
+        size: Default::default(),
     }
 }
 
@@ -64,38 +57,43 @@ pub fn question(at: &AtRun, view: &mut ViewCx<'_, DirenvUi>) -> Option<Node> {
     Some(question_tree(&repo, &envrc))
 }
 
-/// The question's tree: what loads, the `.envrc` as direnv runs it (with
-/// bash), and the two answers.
+/// The question's tree: its title, the `.envrc` as direnv runs it (with
+/// bash) on a flat band under the file's name, and the two answers:
+/// loading it is the block, running without it a link.
 pub fn question_tree(repo: &str, envrc: &str) -> Node {
     let decide = |load| Act::Decide {
         repo: repo.to_owned(),
         load,
     };
-    Node::Card {
-        children: vec![Node::stack([
-            Node::row([
-                icon("terminal", Tone::Info),
-                Node::Heading {
-                    text: format!("Load {repo}'s .envrc for agent commands?"),
-                },
-            ]),
-            Node::text(
-                "The repository sets up its tools with direnv. With it, \
-                 commands run in that environment in main and in every \
-                 chat, as they would in your shell. heiko asks once; you \
-                 can change it on the repository's menu.",
-            ),
+    Node::stack([
+        Node::row([
+            Node::Title {
+                text: format!("Load {repo}'s .envrc?"),
+                subtitle: None,
+            },
+            Node::Spacer,
+            Node::Toned {
+                text: "heiko-direnv · asked once".into(),
+                tone: Tone::Neutral,
+                mono: true,
+            },
+        ]),
+        Node::Rule,
+        Node::stack([
+            Node::Mono {
+                text: ".envrc".into(),
+            },
             Node::Code {
                 lang: Some("bash".into()),
                 text: envrc.trim_end().to_owned(),
                 first_line: None,
             },
-            Node::row([
-                button("Load it", Kind::Primary, &decide(true)),
-                button("Run without it", Kind::Secondary, &decide(false)),
-            ]),
-        ])],
-    }
+        ]),
+        Node::row([
+            button("load it", Kind::Primary, &decide(true)),
+            button("run without it", Kind::Secondary, &decide(false)),
+        ]),
+    ])
 }
 
 /// Above a run's transcript: its environment loading, while it runs, or
@@ -106,55 +104,58 @@ pub fn card(at: &AtRun, view: &mut ViewCx<'_, DirenvUi>) -> Option<Node> {
     card_tree(&now, at.run.live, &run)
 }
 
-/// The card's tree for where `run`'s environment stands: loading, while
-/// the run is live, with a clock from when it started, or failed, with
-/// what direnv said and a way to try again; nothing otherwise.
+/// The tree for where `run`'s environment stands: loading, while the run
+/// is live, with a clock from when it started, or failed, with what
+/// direnv said and a way to try again; nothing otherwise.
 pub fn card_tree(now: &Record, live: bool, run: &str) -> Option<Node> {
+    let mark = |state| Node::Mark { state, count: None };
     match now {
-        Record::Loading { since } if live => Some(Node::Card {
-            children: vec![Node::row([
-                icon("clock", Tone::Info),
-                Node::text("Loading the repository's environment · .envrc ·"),
-                Node::Ticker {
-                    id: format!("envrc-loading-{run}"),
-                    since: i64::try_from(*since).unwrap_or(i64::MAX),
-                    until: None,
-                },
-                Node::Spacer,
-                Node::text("commands wait for it"),
-            ])],
-        }),
+        Record::Loading { since } if live => Some(Node::row([
+            mark(MarkState::Working),
+            Node::text("Loading .envrc"),
+            Node::Ticker {
+                id: format!("envrc-loading-{run}"),
+                since: i64::try_from(*since).unwrap_or(i64::MAX),
+                until: None,
+            },
+            Node::Spacer,
+            Node::Toned {
+                text: "commands wait for it".into(),
+                tone: Tone::Neutral,
+                mono: false,
+            },
+        ])),
         Record::Failed { status, output } => Some(Node::Card {
-            children: vec![Node::stack([
+            children: vec![
                 Node::row([
-                    icon("warning", Tone::Bad),
-                    Node::Heading {
-                        text: "The repository's environment did not load"
-                            .into(),
+                    mark(MarkState::Failing),
+                    Node::Rich {
+                        text: "**.envrc did not load**".into(),
                     },
-                    Node::Spacer,
                     Node::Badge {
                         text: status.clone(),
                         tone: Tone::Bad,
                     },
-                ]),
-                Node::Code {
-                    lang: None,
-                    text: output.clone(),
-                    first_line: None,
-                },
-                Node::row([
-                    Node::text("Commands run without it until it loads."),
                     Node::Spacer,
                     button(
-                        "Try again",
+                        "try again",
                         Kind::Secondary,
                         &Act::Reload {
                             run: run.to_owned(),
                         },
                     ),
                 ]),
-            ])],
+                Node::Code {
+                    lang: None,
+                    text: output.clone(),
+                    first_line: None,
+                },
+                Node::Toned {
+                    text: "commands run without it".into(),
+                    tone: Tone::Neutral,
+                    mono: false,
+                },
+            ],
         }),
         _ => None,
     }
@@ -179,12 +180,13 @@ pub fn menu_entry(
 pub fn menu_tree(repo: &str, direnv: bool, on: bool) -> Node {
     const LABEL: &str = "Load .envrc for agent commands";
     if !direnv {
-        return Node::row([
-            icon("terminal", Tone::Neutral),
-            Node::stack([
-                Node::text(LABEL),
-                Node::text("direnv is not installed"),
-            ]),
+        return Node::stack([
+            Node::text(LABEL),
+            Node::Toned {
+                text: "direnv is not installed".into(),
+                tone: Tone::Neutral,
+                mono: false,
+            },
         ]);
     }
     Node::Switch {
@@ -235,14 +237,15 @@ pub fn settings_tree(
             match why {
                 Some(why) => Node::stack([
                     Node::Mono { text: repo.clone() },
-                    Node::text(why),
+                    Node::Toned {
+                        text: why.into(),
+                        tone: Tone::Neutral,
+                        mono: false,
+                    },
                 ]),
                 None => Node::Switch {
                     label: repo.clone(),
-                    detail: Some(
-                        "Agent commands run in its .envrc's environment."
-                            .into(),
-                    ),
+                    detail: Some("Load its .envrc for agent commands.".into()),
                     on: *on,
                     action: ACT.into(),
                     args: args(&Act::Decide {
@@ -265,7 +268,7 @@ pub fn settings_tree(
         }
         children.push(row);
     }
-    Node::Card { children }
+    Node::Stack { children }
 }
 
 #[cfg(test)]

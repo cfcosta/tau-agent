@@ -145,12 +145,7 @@ return heiko.plugin({
 			window = 0,
 		},
 		view = function(settings, model, env)
-			return ui.stack({
-				ui.toggle("idle", "Compact idle chats"),
-				ui.text(
-					"A long chat left idle is summarized shortly before its prompt cache lapses, while the summary still reads it from cache: your next message then starts from the summary instead of resending everything uncached."
-				),
-			})
+			return ui.stack({ ui.toggle("idle", "Compact idle chats") })
 		end,
 	},
 	-- The effort the run starts at, which its summaries ask at.

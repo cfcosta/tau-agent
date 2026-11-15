@@ -94,7 +94,7 @@ local function demo_states()
 				results_dropped = 3,
 				calls_dropped = 0,
 				reduction_ratio = 0.53,
-				detail = "7 calls judged in 1 Jev request · 3 results cut, 0 calls dropped · −53% · Jev read 18k tokens of history, whole · $0.0011",
+				detail = "7 calls judged in 1 Jev request · 3 results cut, 0 calls dropped · −53% · Jev read 18k tokens of history, whole",
 				window = 272000,
 			},
 		},

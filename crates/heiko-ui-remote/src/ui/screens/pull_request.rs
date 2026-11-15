@@ -1,33 +1,34 @@
 //! A pull request from a finished run: the draft to check and send, then
 //! the opened pull request.
 
-use gpui::{AnyElement, Context, Div, div, prelude::*, relative, rems};
+use gpui::{AnyElement, Context, Div, div, prelude::*, rems};
 use heiko_agent::tool::RunId;
 
 use crate::{
     assets::Icon,
     pull_request::{Checks, PrState, PullRequest},
     route::Route,
-    theme::{Design as _, IconSize, MONO, Theme, Type, radius, sp, weight},
+    theme::{Design as _, Theme, Tone, Type, sp},
     ui::{
-        Material as _,
+        BlockSize,
+        State,
         components::{
             ButtonKind,
             big_button,
             checkbox,
-            label,
-            lead,
-            logo,
+            link_action,
+            mark,
             notice,
-            panel,
             phone_bar,
             phone_body,
+            primary_block,
+            section_header,
+            stamp,
             title,
         },
-        heading,
-        icon,
         mono,
         prose,
+        text,
     },
     workspace::Workspace,
 };
@@ -55,7 +56,7 @@ pub fn render(
             ))
             .into_any_element(),
         Some(pr) if pr.is_open() => opened(ws, run, pr, compact, t, cx),
-        Some(pr) if compact => phone_draft(ws, run, pr, t, cx),
+        Some(pr) if compact => phone_draft(run, pr, t, cx),
         Some(pr) => draft(ws, run, pr, t, cx),
     };
     if compact {
@@ -79,71 +80,141 @@ pub fn render(
         .flex()
         .flex_col()
         .typeset(Type::BODY)
-        .child(top_bar(ws, run, t, cx))
         .child(body)
         .into_any_element()
 }
 
-/// Where you are: the workspace, the run, the pull request.
-fn top_bar(
+/// The screen's head: its title in the display face over the heavy
+/// rule, and at its right the run it comes from, which goes back to it.
+fn head(
     ws: &Workspace,
     run: &RunId,
+    heading: &'static str,
+    tests: Option<&str>,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Div {
-    let run_title = ws.run(run).map(|run| run.title.clone());
     let back = run.clone();
-    div()
-        .h(rems(2.75))
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .gap(sp(3.))
-        .px(sp(4.))
-        .chrome(crate::ui::Edge::Top, t)
-        .border_b_1()
-        .border_color(t.border)
-        .child(logo(t, 26.))
-        .child(div().text_color(t.muted).child(ws.name.clone()))
-        .children(run_title.map(|title| {
+    let from =
+        ws.run(run).map(|view| {
+            let turns = match view.turn {
+                1 => "· 1 turn".to_owned(),
+                n => format!("· {n} turns"),
+            };
             div()
                 .flex()
-                .items_center()
-                .gap(sp(3.))
-                .child(div().text_color(t.dim).child("/"))
+                .items_baseline()
+                .flex_shrink_0()
+                .gap(sp(1.5))
+                .typeset(Type::SMALL)
+                .text_color(t.dim)
                 .child(
                     div()
                         .id("pr-run")
-                        .text_color(t.muted)
-                        .cursor_pointer()
-                        .hover(|style| style.text_color(t.text))
-                        .child(title)
+                        .child(link_action(view.title.clone(), t))
                         .on_click(cx.listener(move |ws, _, _, cx| {
                             ws.navigate(Route::Run(back.clone()), cx)
                         })),
                 )
-        }))
-        .child(div().text_color(t.dim).child("/"))
-        .child(div().font_weight(weight::EMPHASIS).child("Pull request"))
+                .child(turns)
+                .children(tests.map(|tests| {
+                    div().flex().gap(sp(1.5)).child("·").child(
+                        div().text_color(t.green).child(tests.to_owned()),
+                    )
+                }))
+        });
+    div()
+        .flex()
+        .items_baseline()
+        .gap(sp(3.))
+        .pb(sp(2.5))
+        .border_b_2()
+        .border_color(t.rule)
+        .child(
+            div()
+                .flex_1()
+                .min_w(rems(0.))
+                .typeset(Type::PAGE_TITLE.sized(26.))
+                .text_color(t.bright)
+                .child(heading),
+        )
+        .children(from)
 }
 
-fn branch_chip(name: &str, t: &Theme) -> Div {
-    crate::ui::chip(Some(Icon::Fork), name.to_owned(), Type::SMALL, t.text, t)
+/// A branch's name, in mono, underlined.
+fn branch(name: &str, color: gpui::Hsla, t: &Theme) -> Div {
+    mono(name.to_owned(), Type::LEAD, color)
+        .flex_shrink_0()
+        .border_b_1()
+        .border_color(t.slate)
 }
 
-fn commit_counts(added: u32, removed: u32, t: &Theme) -> Div {
-    mono(
-        format!("+{added} \u{2212}{removed}"),
-        Type::CAPTION,
-        t.green,
-    )
-    .flex_shrink_0()
+/// A field's name, in small muted print over it.
+fn field_label(name: &'static str, t: &Theme) -> Div {
+    text(name, Type::CAPTION, t.dim)
+}
+
+/// A commit between hairlines: its title and line counts.
+fn commit_row(
+    title: &str,
+    added: u32,
+    removed: u32,
+    style: Type,
+    t: &Theme,
+) -> Div {
+    div()
+        .flex()
+        .items_baseline()
+        .gap(sp(2.5))
+        .py(sp(2.75))
+        .border_b_1()
+        .border_color(t.hairline)
+        .child(
+            div()
+                .flex_1()
+                .min_w(rems(0.))
+                .typeset(style)
+                .child(title.to_owned()),
+        )
+        .child(mono(format!("+{added}"), Type::SMALL, t.green).flex_shrink_0())
+        .child(
+            mono(format!("\u{2212}{removed}"), Type::SMALL, t.red)
+                .flex_shrink_0(),
+        )
+}
+
+/// Whether the head merges into `base`: its mark and words.
+fn merge(pr: &PullRequest, t: &Theme) -> Div {
+    let (state, words, color) = if pr.mergeable {
+        (
+            State::Met,
+            format!("no conflicts with {}", pr.base),
+            t.green,
+        )
+    } else {
+        (State::Failing, format!("conflicts with {}", pr.base), t.red)
+    };
+    div()
+        .flex()
+        .items_center()
+        .flex_shrink_0()
+        .gap(sp(2.))
+        .child(mark(state, t))
+        .child(text(words, Type::SMALL, color))
 }
 
 fn create_label(pr: &PullRequest) -> &'static str {
     match pr.state {
         PrState::Creating => "Creating…",
         _ => "Create pull request",
+    }
+}
+
+/// Why creating it failed, if it did.
+fn failure(pr: &PullRequest) -> Option<String> {
+    match &pr.state {
+        PrState::Failed(error) => Some(error.clone()),
+        _ => None,
     }
 }
 
@@ -154,94 +225,56 @@ fn draft(
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
-    let merge = if pr.mergeable {
-        div()
-            .flex()
-            .items_center()
-            .gap(sp(1.5))
-            .text_color(t.green)
-            .child(icon(Icon::Check, IconSize::BASE, t.green))
-            .child(format!("No conflicts with {}", pr.base))
-    } else {
-        div()
-            .flex()
-            .items_center()
-            .gap(sp(1.5))
-            .text_color(t.red)
-            .child(icon(Icon::Warning, IconSize::BASE, t.red))
-            .child(format!("Conflicts with {}", pr.base))
-    };
     let left = div()
         .flex_1()
         .min_w(rems(0.))
         .flex()
         .flex_col()
-        .gap(sp(5.))
-        .px(sp(10.))
-        .py(sp(8.))
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(sp(2.))
-                .child(title("Open a pull request", Type::DISPLAY))
-                .child(lead(&pr.summary, Type::LEAD, t)),
-        )
+        .child(head(
+            ws,
+            run,
+            "Open a pull request",
+            pr.tests.as_deref(),
+            t,
+            cx,
+        ))
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap(sp(2.5))
-                .typeset(Type::SMALL)
-                .child(branch_chip(&pr.head, t))
-                .child(icon(Icon::Arrow, IconSize::BASE, t.dim))
-                .child(branch_chip(&pr.base, t))
-                .child(merge),
+                .gap(sp(3.))
+                .mt(sp(5.))
+                .child(branch(&pr.head, t.text, t))
+                .child(mono("\u{2192}", Type::LEAD, t.dim))
+                .child(branch(&pr.base, t.green, t))
+                .child(div().flex_1())
+                .child(merge(pr, t)),
         )
+        .child(field_label("Title", t).mt(sp(6.5)))
         .child(
             div()
-                .flex()
-                .flex_col()
-                .gap(sp(2.))
-                .child(label("Title", t))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .h(rems(2.75))
-                        .px(sp(3.))
-                        .rounded(radius::BOX)
-                        .border_1()
-                        .border_color(t.border_strong)
-                        .well(t)
-                        .child(ws.pr_title.clone()),
-                ),
+                .pt(sp(1.5))
+                .pb(sp(2.5))
+                .border_b_1()
+                .border_color(t.slate)
+                .typeset(Type::HEADLINE.sized(24.))
+                .text_color(t.bright)
+                .child(ws.pr_title.clone()),
         )
+        .child(field_label("Description, written from the run", t).mt(sp(6.5)))
         .child(
             div()
+                .id("pr-description")
                 .flex_1()
-                .min_h(rems(0.))
-                .flex()
-                .flex_col()
-                .gap(sp(2.))
-                .child(label("Description, written from the run", t))
-                .child(
-                    div()
-                        .id("pr-description")
-                        .flex_1()
-                        .min_h(rems(13.75))
-                        .overflow_y_scroll()
-                        .p(sp(3.))
-                        .rounded(radius::BOX)
-                        .border_1()
-                        .border_color(t.border_strong)
-                        .well(t)
-                        .font_family(MONO)
-                        .typeset(Type::CODE)
-                        .line_height(relative(1.6))
-                        .text_color(t.text_soft)
-                        .child(pr.body.clone()),
-                ),
+                .min_h(rems(13.75))
+                .overflow_y_scroll()
+                .mt(sp(2.))
+                .py(sp(3.5))
+                .border_y_1()
+                .border_color(t.hairline)
+                .typeset(Type::CODE.leading(1.6))
+                .text_color(t.text_soft)
+                .child(pr.body.clone()),
         );
 
     let options = [
@@ -253,7 +286,7 @@ fn draft(
         ),
     ]
     .into_iter()
-    .map(|(is_draft, checked, text)| {
+    .map(|(is_draft, checked, words)| {
         let run = run.clone();
         div()
             .id(if is_draft {
@@ -263,131 +296,83 @@ fn draft(
             })
             .flex()
             .items_center()
-            .gap(sp(2.5))
-            .min_h(rems(2.25))
+            .gap(sp(3.))
+            .py(sp(2.5))
+            .border_b_1()
+            .border_color(t.hairline)
             .cursor_pointer()
-            .child(checkbox(checked, false, t))
-            .child(text)
+            .child(checkbox(checked, true, t))
+            .child(words)
             .on_click(cx.listener(move |ws, _, _, cx| {
                 ws.toggle_pr_option(&run, is_draft, cx)
             }))
     });
     let create = run.clone();
     let right = div()
-        .w(rems(23.75))
+        .w(rems(23.))
         .flex_shrink_0()
         .flex()
         .flex_col()
-        .gap(sp(5.5))
-        .px(sp(6.))
-        .py(sp(8.))
-        .chrome(crate::ui::Edge::Right, t)
-        .border_l_1()
-        .border_color(t.border)
+        .child(
+            section_header(
+                "Commits",
+                Some(pr.commits.len().to_string().into()),
+                t,
+            )
+            .pt(sp(1.5)),
+        )
+        .children(pr.commits.iter().map(|commit| {
+            commit_row(
+                &commit.title,
+                commit.added,
+                commit.removed,
+                Type::BODY,
+                t,
+            )
+        }))
+        .child(section_header("Options", None, t).mt(sp(9.5)))
+        .children(options)
+        .child(section_header("Reviewers", None, t).mt(sp(9.5)))
         .child(
             div()
-                .flex()
-                .flex_col()
-                .gap(sp(2.5))
-                .child(heading("Commits", t))
-                .children(pr.commits.iter().map(|commit| {
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(sp(2.5))
-                        .px(sp(3.))
-                        .py(sp(2.5))
-                        .rounded(radius::BOX)
-                        .border_1()
-                        .border_color(t.border)
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w(rems(0.))
-                                .typeset(Type::SMALL)
-                                .child(commit.title.clone()),
-                        )
-                        .child(commit_counts(commit.added, commit.removed, t))
-                }))
-                .child(
-                    div()
-                        .typeset(Type::CAPTION)
-                        .line_height(relative(1.5))
-                        .child(prose(
-                            "The run's turns are squashed into these commits by \
-                             the change descriptions the model wrote with \
-                             `vcs_commit`.",
-                            t.dim,
-                            t,
-                        )),
-                ),
+                .py(sp(3.))
+                .border_b_1()
+                .border_color(t.hairline)
+                .typeset(Type::TITLE)
+                .child(ws.reviewers.clone()),
         )
+        .child(div().flex_1().min_h(sp(6.)))
+        .children(failure(pr).map(|error| {
+            notice(Icon::Warning, error, t.red, Type::SMALL, t).mb(sp(4.))
+        }))
         .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(sp(2.5))
-                .child(heading("Options", t))
-                .children(options)
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(sp(1.5))
-                        .child(label("Reviewers", t))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .h(rems(2.5))
-                                .px(sp(3.))
-                                .rounded(radius::BOX)
-                                .border_1()
-                                .border_color(t.border_strong)
-                                .well(t)
-                                .typeset(Type::SMALL)
-                                .child(ws.reviewers.clone()),
-                        ),
-                ),
-        )
-        .child(div().flex_1())
-        .when_some(
-            match &pr.state {
-                PrState::Failed(error) => Some(error.clone()),
-                _ => None,
-            },
-            |col, error| col.child(notice(Icon::Warning, error, t.red, Type::SMALL, t)),
-        )
-        .child(
-            div()
-                .id("create-pr")
-                .child(big_button(create_label(pr), Some(Icon::PullRequest), ButtonKind::Primary, t))
-                .on_click(cx.listener(move |ws, _, _, cx| {
-                    ws.create_pull_request(&create, cx)
-                })),
+            div().flex().justify_end().child(
+                div()
+                    .id("create-pr")
+                    .child(primary_block(create_label(pr), BlockSize::Large, t))
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        ws.create_pull_request(&create, cx)
+                    })),
+            ),
         );
     div()
         .flex_1()
         .min_h(rems(0.))
         .flex()
+        .gap(sp(13.))
+        .px(sp(11.))
+        .py(sp(8.5))
         .child(left)
         .child(right)
         .into_any_element()
 }
 
 fn phone_draft(
-    _ws: &Workspace,
     run: &RunId,
     pr: &PullRequest,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
-    let status = match (&pr.tests, pr.mergeable) {
-        (Some(tests), true) => format!("No conflicts · {tests}"),
-        (None, true) => "No conflicts".to_owned(),
-        (_, false) => format!("Conflicts with {}", pr.base),
-    };
-    let tone = if pr.mergeable { t.green } else { t.red };
     let toggle = run.clone();
     let create = run.clone();
     phone_body("pr-body")
@@ -406,52 +391,46 @@ fn phone_draft(
         .child(
             div()
                 .flex()
+                .flex_wrap()
                 .items_center()
                 .gap(sp(2.))
-                .typeset(Type::BODY)
-                .text_color(tone)
-                .child(icon(
-                    if pr.mergeable {
-                        Icon::Check
-                    } else {
-                        Icon::Warning
-                    },
-                    IconSize::BASE,
-                    tone,
-                ))
-                .child(status),
+                .child(merge(pr, t))
+                .children(pr.tests.as_ref().filter(|_| pr.mergeable).map(
+                    |tests| text(format!("· {tests}"), Type::SMALL, t.green),
+                )),
         )
-        .child(panel(4., t).gap(sp(2.5)).children(pr.commits.iter().map(
-            |commit| {
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(sp(2.))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(rems(0.))
-                            .typeset(Type::BODY)
-                            .child(commit.title.clone()),
-                    )
-                    .child(commit_counts(commit.added, commit.removed, t))
-            },
-        )))
         .child(
             div()
                 .flex()
                 .flex_col()
-                .gap(sp(1.5))
-                .child(label("Description", t))
+                .child(section_header(
+                    "Commits",
+                    Some(pr.commits.len().to_string().into()),
+                    t,
+                ))
+                .children(pr.commits.iter().map(|commit| {
+                    commit_row(
+                        &commit.title,
+                        commit.added,
+                        commit.removed,
+                        Type::BODY,
+                        t,
+                    )
+                })),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(sp(2.))
+                .child(field_label("Description", t))
                 .child(
                     div()
-                        .p(sp(3.))
-                        .rounded(radius::BOX)
-                        .border_1()
-                        .border_color(t.border_strong)
-                        .raised(t)
+                        .py(sp(3.))
+                        .border_y_1()
+                        .border_color(t.hairline)
                         .typeset(Type::SMALL)
-                        .line_height(relative(1.55))
+                        .leading(1.55)
                         .child(prose(&pr.short_body(), t.text_soft, t)),
                 ),
         )
@@ -460,7 +439,7 @@ fn phone_draft(
                 .id("phone-pr-draft")
                 .flex()
                 .items_center()
-                .gap(sp(2.5))
+                .gap(sp(3.))
                 .min_h(rems(2.75))
                 .cursor_pointer()
                 .child(checkbox(pr.draft, true, t))
@@ -470,21 +449,17 @@ fn phone_draft(
                 })),
         )
         .child(div().flex_1())
-        .when_some(
-            match &pr.state {
-                PrState::Failed(error) => Some(error.clone()),
-                _ => None,
-            },
-            |col, error| {
-                col.child(notice(Icon::Warning, error, t.red, Type::BODY, t))
-            },
+        .children(
+            failure(pr).map(|error| {
+                notice(Icon::Warning, error, t.red, Type::BODY, t)
+            }),
         )
         .child(
             div()
                 .id("phone-create-pr")
                 .child(big_button(
                     create_label(pr),
-                    Some(Icon::PullRequest),
+                    None,
                     ButtonKind::Primary,
                     t,
                 ))
@@ -512,139 +487,132 @@ fn opened(
         return div().into_any_element();
     };
     let forge = ws.catalog.forge_name().to_owned();
-    let (glyph, checks_text, checks_color) = match checks {
+    let (state, checks_text, checks_color) = match checks {
         Checks::Running => (
-            Icon::Spinner,
-            format!("Checks are running on {forge}"),
-            t.accent,
+            State::Working,
+            format!("checks are running on {forge}"),
+            t.green,
         ),
         Checks::Passed => {
-            (Icon::Check, format!("Checks passed on {forge}"), t.green)
+            (State::Met, format!("checks passed on {forge}"), t.green)
         }
         Checks::Failed => {
-            (Icon::Warning, format!("Checks failed on {forge}"), t.red)
+            (State::Failing, format!("checks failed on {forge}"), t.red)
         }
         Checks::None => (
-            Icon::Info,
-            "No checks run on this repository".to_owned(),
-            t.muted,
+            State::Idle,
+            "no checks run on this repository".to_owned(),
+            t.dim,
         ),
     };
     let url = url.clone();
     let back = run.clone();
     let content = div()
         .w_full()
-        .when(!compact, |col| col.max_w(rems(38.75)))
+        .when(!compact, |col| col.max_w(rems(42.)))
         .flex()
         .flex_col()
-        .gap(sp(5.5))
+        .gap(sp(5.))
+        .child(if compact {
+            title("Pull request opened", Type::HEADLINE)
+        } else {
+            head(ws, run, "Pull request opened", pr.tests.as_deref(), t, cx)
+        })
         .child(
             div()
                 .flex()
-                .items_center()
-                .gap(sp(3.))
-                .child(
-                    div()
-                        .size(rems(2.5))
-                        .flex_shrink_0()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(radius::FULL)
-                        .bg(t.green.opacity(0.14))
-                        .child(icon(Icon::PullRequest, IconSize::HUGE, t.green)),
-                )
-                .child(title("Pull request opened", if compact { Type::HEADLINE } else { Type::DISPLAY }, )),
-        )
-        .child(
-            panel(5., t)
-                .gap(sp(3.))
+                .flex_col()
+                .gap(sp(2.5))
                 .child(
                     div()
                         .flex()
                         .items_center()
-                        .gap(sp(2.))
+                        .gap(sp(3.))
                         .child(
                             div()
-                                .flex_1()
-                                .font_weight(weight::STRONG)
+                                .min_w(rems(0.))
+                                .typeset(Type::HEADLINE.sized(if compact {
+                                    18.
+                                } else {
+                                    24.
+                                }))
+                                .text_color(t.bright)
                                 .child(pr.title.clone()),
                         )
                         .when(pr.draft, |row| {
-                            row.child(
-                                div()
-                                    .px(sp(2.))
-                                    .py(sp(0.5))
-                                    .rounded(radius::LARGE)
-                                    .border_1()
-                                    .border_color(t.border_strong)
-                                    .typeset(Type::CAPTION)
-                                    .text_color(t.muted)
-                                    .child("Draft"),
-                            )
+                            row.child(stamp("Draft", Tone::Quiet, t))
                         }),
                 )
-                .child(mono(
-                    format!(
-                        "{}#{number} · {} \u{2192} {}",
-                        pr.repo, pr.head, pr.base
-                    ),
-                    Type::SMALL,
-                    t.text_soft,
-                ))
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap(sp(2.))
+                        .child(mono(
+                            format!("{}#{number}", pr.repo),
+                            Type::SMALL,
+                            t.text_soft,
+                        ))
+                        .child(branch(&pr.head, t.text, t).typeset(Type::CODE))
+                        .child(mono("\u{2192}", Type::SMALL, t.dim))
+                        .child(
+                            branch(&pr.base, t.green, t).typeset(Type::CODE),
+                        ),
+                )
                 .child(
                     div()
                         .flex()
                         .items_center()
                         .gap(sp(2.))
-                        .typeset(Type::SMALL)
-                        .text_color(checks_color)
-                        .child(icon(glyph, IconSize::BASE, checks_color))
-                        .child(checks_text),
+                        .py(sp(2.75))
+                        .border_y_1()
+                        .border_color(t.hairline)
+                        .child(mark(state, t))
+                        .child(text(checks_text, Type::SMALL, checks_color)),
                 ),
         )
+        .child(div().typeset(Type::SMALL).leading(1.55).child(prose(
+            &if pr.keep_pushing {
+                format!(
+                    "New turns on this run are pushed to `{}` and update \
+                         the pull request.",
+                    pr.head
+                )
+            } else {
+                format!(
+                    "`{}` stays as it is: later turns on this run are \
+                         not pushed.",
+                    pr.head
+                )
+            },
+            t.muted,
+            t,
+        )))
         .child(
             div()
                 .flex()
                 .flex_wrap()
-                .gap(sp(2.5))
+                .items_center()
+                .gap(sp(4.5))
                 .child(
                     div()
                         .id("view-pr")
-                        .child(big_button(format!("View on {forge}"), Some(Icon::Arrow), ButtonKind::Primary, t))
+                        .child(primary_block(
+                            format!("View on {forge}"),
+                            BlockSize::Large,
+                            t,
+                        ))
                         .on_click(move |_, _, cx| cx.open_url(&url)),
                 )
                 .child(
                     div()
                         .id("back-to-run")
-                        .child(big_button("Back to the run", None, ButtonKind::Secondary, t))
+                        .child(link_action("back to the run", t))
                         .on_click(cx.listener(move |ws, _, _, cx| {
                             ws.navigate(Route::Run(back.clone()), cx)
                         })),
                 ),
-        )
-        .child(
-            div()
-                .typeset(Type::SMALL)
-                .line_height(relative(1.55))
-                .child(prose(
-                    &if pr.keep_pushing {
-                        format!(
-                            "New turns on this run are pushed to `{}` and update \
-                             the pull request. Review comments can come back to \
-                             the run as steering messages.",
-                            pr.head
-                        )
-                    } else {
-                        format!(
-                            "`{}` stays as it is: later turns on this run are \
-                             not pushed.",
-                            pr.head
-                        )
-                    },
-                    t.muted,
-                    t,
-                )),
         );
     if compact {
         return content.into_any_element();
@@ -653,10 +621,9 @@ fn opened(
         .flex_1()
         .min_h(rems(0.))
         .flex()
-        .justify_center()
         .items_start()
-        .px(sp(6.))
-        .py(sp(20.))
+        .px(sp(11.))
+        .py(sp(8.5))
         .child(content)
         .into_any_element()
 }

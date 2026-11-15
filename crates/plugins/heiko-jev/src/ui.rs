@@ -2,8 +2,6 @@
 //! Jev did this session, and where the key goes: a section of the
 //! Models screen and a page of its own, which other plugins link to.
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use heiko_ui_plugin::{
     Declaration,
     Link,
@@ -12,10 +10,12 @@ use heiko_ui_plugin::{
     UiPlugin,
     ViewCx,
     points::{self, AtApp},
-    tree::{Kind, Node, Tone},
+    tree::{Kind, MarkState, Node, Tone},
 };
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-use crate::{NAME, PRICE_PER_MILLION_INPUT, SYSTEM_ONE_URL};
+use crate::{NAME, SYSTEM_ONE_URL};
 
 /// What heiko-jev knows across repositories.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -147,19 +147,13 @@ fn section(_: &AtApp, view: &mut ViewCx<'_, JevUi>) -> Option<Node> {
 
 /// The key's own page, which plugins that ask Jev link to.
 fn page(view: &mut ViewCx<'_, JevUi>) -> Node {
-    Node::stack([
-        Node::text(
-            "Jev, TypeSafe's model, picks efforts on auto, prunes the \
-             context, checks each repository's rules and decides when a \
-             /goal holds. The key stays in heiko's config directory, readable \
-             only by you.",
-        ),
-        Node::Card {
-            children: key_card(view.data),
-        },
-    ])
+    Node::Card {
+        children: key_card(view.data),
+    }
 }
 
+/// Whether a key is saved and what Jev does with it, the way to remove
+/// it, and what Jev did this session or the field that saves a key.
 fn key_card(data: &Data) -> Vec<Node> {
     let line = if data.keyed {
         "Saved · picks efforts on auto, prunes the context, checks each \
@@ -169,34 +163,37 @@ fn key_card(data: &Data) -> Vec<Node> {
          goals are not checked"
     };
     let mut head = vec![
-        Node::Icon {
-            name: "blocked".into(),
-            tone: if data.keyed {
-                Tone::Good
+        Node::Mark {
+            state: if data.keyed {
+                MarkState::Met
             } else {
-                Tone::Neutral
+                MarkState::Idle
             },
+            count: None,
         },
-        Node::Stack {
-            children: vec![
-                Node::Heading {
-                    text: "TypeSafe (Jev)".into(),
-                },
-                Node::text(line),
-            ],
+        Node::Rich {
+            text: "**TypeSafe (Jev)**".into(),
         },
         Node::Spacer,
     ];
     if data.keyed {
         head.push(Node::Button {
-            label: "Remove".into(),
+            label: "remove".into(),
             action: FORGET.into(),
             args: Value::Null,
-            kind: Kind::Secondary,
+            kind: Kind::Danger,
             icon: None,
+            size: Default::default(),
         });
     }
-    let mut children = vec![Node::row(head)];
+    let mut children = vec![
+        Node::row(head),
+        Node::Toned {
+            text: line.into(),
+            tone: Tone::Neutral,
+            mono: false,
+        },
+    ];
     match (&data.stats, data.keyed) {
         (Some(stats), true) => children.push(Node::Mono {
             text: stats_line(stats),
@@ -216,15 +213,11 @@ fn key_card(data: &Data) -> Vec<Node> {
 }
 
 /// What Jev did this session, in a line: `jev-1.13 · 3 requests · 1.2k
-/// tokens · $0.0001 · p50 210 ms`.
+/// input tokens · p50 210 ms`.
 pub fn stats_line(stats: &Stats) -> String {
     let mut line = format!(
-        "{} · {} requests · {} input tokens · ${:.4} at ${PRICE_PER_MILLION_INPUT} / M · p50 {} ms",
-        stats.model,
-        stats.requests,
-        stats.input_tokens,
-        stats.spent,
-        stats.latency_p50_ms,
+        "{} · {} requests · {} input tokens · p50 {} ms",
+        stats.model, stats.requests, stats.input_tokens, stats.latency_p50_ms,
     );
     if stats.failed > 0 {
         line.push_str(&format!(" · {} failed", stats.failed));

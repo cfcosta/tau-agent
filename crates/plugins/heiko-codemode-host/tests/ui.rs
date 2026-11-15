@@ -873,9 +873,8 @@ fn live_rows_are_the_stored_rows(tc: hegel::TestCase) {
         timeless(&ui::calls(CALL, &in_order).rows),
         timeless(&stored.rows)
     );
-    // Jev's cost shows while it runs, as it will once it ended.
-    let jev_cost: f64 = live.rows.iter().filter_map(|row| row.cost).sum();
-    assert_eq!(jev_cost > 0.0, ui::label(&live, None).contains('$'));
+    // The header counts the calls; what they cost is never shown.
+    assert!(!ui::label(&live, None).contains('$'));
 
     // The call ends: the card draws from its result, as from history.
     data.result = Some(CallResult {
@@ -1209,7 +1208,7 @@ fn the_card_shows_the_script_as_it_goes() {
     });
     data.end();
     let (label, failed, folds, _) = draw(&at_card("codemode", data)).unwrap();
-    assert_eq!(label.as_deref(), Some("0 calls · 1.5 s · $0.0004"));
+    assert_eq!(label.as_deref(), Some("0 calls · 1.5 s"));
     assert_eq!(failed.as_deref(), Some("codemode:2: boom"));
     assert!(folds);
 }

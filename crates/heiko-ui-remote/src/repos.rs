@@ -1,6 +1,7 @@
-//! Repositories in the workspace: which one is selected and which are
-//! open in the sidebar, their runs, and adding and removing them. Each
-//! repository has its own runs, memory and constitution.
+//! Repositories in the workspace: which one is selected, whose tree
+//! the sidebar shows, which are open in a phone's list, their runs, and
+//! adding and removing them. Each repository has its own runs, memory
+//! and constitution.
 
 use std::sync::LazyLock;
 
@@ -80,6 +81,20 @@ impl TreeRow<'_> {
     }
 }
 
+/// What the sidebar's tree is of: the tile chosen on its rail, or what
+/// the screen is about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TreeOf {
+    /// One of the person's repositories, or heiko's own for plugins:
+    /// its chats and what plugins keep for it.
+    Repo(String),
+    /// A repository of a kind a plugin makes, by name: an agent's
+    /// conversation and what is under it (ADR 0037).
+    Agent(String),
+    /// A kind's own pages: the list of its repositories, the agents.
+    Kind(&'static str, RepoKind),
+}
+
 static NO_REPO: LazyLock<Repo> = LazyLock::new(Repo::default);
 
 impl Workspace {
@@ -100,6 +115,63 @@ impl Workspace {
             .as_deref()
             .filter(|name| self.catalog.is_listed(name))
             .or_else(|| self.catalog.listed().next().map(|repo| &*repo.name))
+    }
+
+    /// What the sidebar's tree shows. A kind's page shows its
+    /// repositories; a screen about a repository or one of its runs
+    /// shows that repository's; any other shows the selected one's.
+    pub fn tree_of(&self) -> Option<TreeOf> {
+        let kinds: Vec<(&'static str, RepoKind)> = self
+            .repo_kinds()
+            .into_iter()
+            .filter(|(_, kind)| kind.place == KindPlace::Section)
+            .collect();
+        for (plugin, kind) in &kinds {
+            let on_page = std::iter::once(&kind.page)
+                .chain(kind.new.as_ref())
+                .any(|link| {
+                    self.kind_route(plugin, link).as_ref() == Some(&self.route)
+                });
+            if on_page {
+                return Some(TreeOf::Kind(*plugin, kind.clone()));
+            }
+        }
+        let about = self.route.repo().map(str::to_owned).or_else(|| {
+            let run = self.run(self.route.run()?)?;
+            Some(self.repo_of(run).to_owned())
+        });
+        let name = about
+            .filter(|name| self.catalog.repo(name).is_some())
+            .or_else(|| self.selected_repo().map(str::to_owned))?;
+        let own = self.catalog.repo(&name)?.kind.as_deref();
+        let agent = own
+            .is_some_and(|own| kinds.iter().any(|(_, kind)| kind.kind == own));
+        Some(if agent {
+            TreeOf::Agent(name)
+        } else {
+            TreeOf::Repo(name)
+        })
+    }
+
+    /// Chooses a repository on the sidebar's rail: its tree shows, and
+    /// new runs start in it. A screen about another repository gives
+    /// way to Home.
+    pub fn choose_repo(&mut self, name: &str, cx: &mut Context<Self>) {
+        self.repo = Some(name.to_owned());
+        self.repo_menu = None;
+        if self.open_repos.insert(name.to_owned()) {
+            self.emit_open_repos(cx);
+        }
+        if self.tree_of() != Some(TreeOf::Repo(name.to_owned())) {
+            self.navigate(Route::Home, cx);
+        }
+        cx.notify();
+    }
+
+    /// The chats of the repository `name`, whatever its kind, as the
+    /// sidebar's tree lists them.
+    pub fn rows_named(&self, name: &str) -> Option<RepoRows<'_>> {
+        self.rows_of(self.catalog.repo(name)?, true, "")
     }
 
     /// `repo`'s main chat while nothing was said in it: a new run there

@@ -33,12 +33,21 @@
     },
     "notes": {
       "g0": {
+        "checks": [
+          false
+        ],
         "detail": "check 1 · turn 6 · p 0.20 · continuing 1 of 10",
+        "kind": "not_met",
         "text": "the goal is not met yet",
         "tone": "warn"
       },
       "g1": {
+        "checks": [
+          false,
+          true
+        ],
         "detail": "check 2 · turn 9 · p 0.96 · the run stops",
+        "kind": "met",
         "text": "the goal is met",
         "tone": "good"
       }
@@ -64,50 +73,79 @@
     "banner": {
       "children": [
         {
-          "name": "target",
-          "piece": "icon",
+          "piece": "kanji",
+          "text": "的",
           "tone": "good"
         },
         {
           "children": [
             {
+              "piece": "heading",
+              "text": "Goal met"
+            },
+            {
+              "piece": "text",
+              "text": "Every mutant in retry.rs is caught"
+            },
+            {
               "children": [
                 {
-                  "piece": "badge",
-                  "text": "goal",
+                  "label": "✕",
+                  "piece": "square",
+                  "style": "outlined",
+                  "tone": "bad"
+                },
+                {
+                  "label": "✓",
+                  "piece": "square",
+                  "style": "filled",
                   "tone": "good"
                 },
                 {
-                  "piece": "text",
-                  "text": "Every mutant in retry.rs is caught"
+                  "piece": "spacer"
+                },
+                {
+                  "lit": 1,
+                  "marked": [],
+                  "piece": "ticks",
+                  "tone": "good",
+                  "total": 10
+                },
+                {
+                  "piece": "mono",
+                  "text": "1 of 10"
                 }
               ],
               "piece": "row"
             },
             {
-              "piece": "mono",
-              "text": "met at check 2 · 1 continuations · $0.240"
+              "children": [
+                {
+                  "action": "act",
+                  "args": {
+                    "what": "edit"
+                  },
+                  "kind": "secondary",
+                  "label": "new goal",
+                  "piece": "button"
+                },
+                {
+                  "action": "act",
+                  "args": {
+                    "what": "clear"
+                  },
+                  "kind": "secondary",
+                  "label": "clear",
+                  "piece": "button"
+                },
+                {
+                  "piece": "spacer"
+                }
+              ],
+              "piece": "row"
             }
           ],
           "piece": "stack"
-        },
-        {
-          "action": "act",
-          "args": {
-            "what": "edit"
-          },
-          "kind": "secondary",
-          "label": "New goal",
-          "piece": "button"
-        },
-        {
-          "action": "act",
-          "args": {
-            "what": "clear"
-          },
-          "kind": "secondary",
-          "label": "Clear",
-          "piece": "button"
         }
       ],
       "piece": "row"
@@ -121,7 +159,11 @@
               "text": "Goal"
             },
             {
-              "piece": "pill",
+              "piece": "spacer"
+            },
+            {
+              "mono": false,
+              "piece": "toned",
               "text": "met",
               "tone": "good"
             }
@@ -133,92 +175,82 @@
           "text": "Every mutant in retry.rs is caught"
         },
         {
-          "piece": "text",
-          "text": "Checked when the agent stops · met at p ≥ 0.7 · up to 10 continuations and $2.00"
-        },
-        {
-          "piece": "heading",
-          "text": "Limits"
-        },
-        {
-          "label": "Continuations · 1 / 10",
-          "piece": "progress",
-          "share": 0.1
-        },
-        {
-          "label": "Cost · $0.240 / $2.00",
-          "piece": "progress",
-          "share": 0.120016548
+          "children": [
+            {
+              "mono": false,
+              "piece": "toned",
+              "text": "continuations",
+              "tone": "neutral"
+            },
+            {
+              "lit": 1,
+              "marked": [],
+              "piece": "ticks",
+              "tone": "good",
+              "total": 10
+            },
+            {
+              "piece": "mono",
+              "text": "1 of 10"
+            }
+          ],
+          "piece": "row"
         },
         {
           "piece": "heading",
           "text": "Checks"
         },
         {
-          "children": [
-            {
-              "children": [
-                {
-                  "piece": "mono",
-                  "text": "#2"
-                },
-                {
-                  "piece": "badge",
-                  "text": "met",
-                  "tone": "good"
-                },
-                {
-                  "piece": "text",
-                  "text": "the run stopped"
-                },
-                {
-                  "piece": "mono",
-                  "text": "turn 9 · p 0.96"
-                }
-              ],
-              "piece": "row"
-            },
-            {
-              "children": [
-                {
-                  "piece": "mono",
-                  "text": "#1"
-                },
-                {
-                  "piece": "badge",
-                  "text": "not met",
-                  "tone": "warn"
-                },
-                {
-                  "piece": "text",
-                  "text": "sent back, 1 of 10"
-                },
-                {
-                  "piece": "mono",
-                  "text": "turn 6 · p 0.20"
-                }
-              ],
-              "piece": "row"
-            }
-          ],
-          "piece": "stack"
-        },
-        {
-          "piece": "rows",
+          "head": [],
+          "piece": "table",
           "rows": [
-            {
-              "key": "checked by",
-              "value": "heiko-goal · Jev"
-            },
-            {
-              "key": "Jev cost",
-              "value": "$0.00003"
-            }
+            [
+              {
+                "label": "✓",
+                "piece": "square",
+                "style": "filled",
+                "tone": "good"
+              },
+              {
+                "piece": "text",
+                "text": "the run stopped"
+              },
+              {
+                "piece": "mono",
+                "text": "turn 9"
+              },
+              {
+                "piece": "mono",
+                "text": "p 0.96"
+              }
+            ],
+            [
+              {
+                "label": "✕",
+                "piece": "square",
+                "style": "outlined",
+                "tone": "bad"
+              },
+              {
+                "piece": "text",
+                "text": "sent back, 1 of 10"
+              },
+              {
+                "piece": "mono",
+                "text": "turn 6"
+              },
+              {
+                "piece": "mono",
+                "text": "p 0.20"
+              }
+            ]
+          ],
+          "widths": [
+            0.6,
+            4,
+            1.5,
+            1.5
           ]
-        },
-        {
-          "piece": "text",
-          "text": "Jev reads the goal, the agent's last answer and its last tool results. When they fall short, the agent is sent back."
         }
       ],
       "piece": "stack"
@@ -227,88 +259,44 @@
       "/goal Every mutant in retry.rs is caught": {
         "children": [
           {
-            "children": [
-              {
-                "name": "target",
-                "piece": "icon",
-                "tone": "info"
-              },
-              {
-                "piece": "mono",
-                "text": "/goal"
-              },
-              {
-                "piece": "rich",
-                "text": "Every mutant in retry.rs is caught"
-              }
-            ],
-            "piece": "row"
+            "piece": "mono",
+            "text": "/goal"
           },
           {
-            "children": [
-              {
-                "piece": "badge",
-                "text": "up to 10 continuations",
-                "tone": "neutral"
-              },
-              {
-                "piece": "badge",
-                "text": "$2.00 budget",
-                "tone": "neutral"
-              },
-              {
-                "piece": "badge",
-                "text": "checked by Jev",
-                "tone": "neutral"
-              }
-            ],
-            "piece": "row"
+            "piece": "rich",
+            "text": "Every mutant in retry.rs is caught"
+          },
+          {
+            "piece": "spacer"
+          },
+          {
+            "label": "up to 10 continuations",
+            "piece": "stamp",
+            "tone": "neutral"
           }
         ],
-        "piece": "stack"
+        "piece": "row"
       },
       "/goal Every mutant in retry.rs is caught\n\nThis is your goal. Keep working until it holds. Each time you stop, heiko-goal checks it against your last answer and your recent tool results, and sends you back if it does not hold yet, so run what proves it before you stop.": {
         "children": [
           {
-            "children": [
-              {
-                "name": "target",
-                "piece": "icon",
-                "tone": "info"
-              },
-              {
-                "piece": "mono",
-                "text": "/goal"
-              },
-              {
-                "piece": "rich",
-                "text": "Every mutant in retry.rs is caught"
-              }
-            ],
-            "piece": "row"
+            "piece": "mono",
+            "text": "/goal"
           },
           {
-            "children": [
-              {
-                "piece": "badge",
-                "text": "up to 10 continuations",
-                "tone": "neutral"
-              },
-              {
-                "piece": "badge",
-                "text": "$2.00 budget",
-                "tone": "neutral"
-              },
-              {
-                "piece": "badge",
-                "text": "checked by Jev",
-                "tone": "neutral"
-              }
-            ],
-            "piece": "row"
+            "piece": "rich",
+            "text": "Every mutant in retry.rs is caught"
+          },
+          {
+            "piece": "spacer"
+          },
+          {
+            "label": "up to 10 continuations",
+            "piece": "stamp",
+            "tone": "neutral"
           }
         ],
-        "piece": "stack"
+        "piece": "row"
       },
       "heiko-goal: the goal is not met yet (check 1, probability 0.20).\nGoal: Every mutant in retry.rs is caught\n\nKeep working toward it, and run what proves it. Continuation 1 of 10.": {
         "children": [],
@@ -319,13 +307,17 @@
       "g0": {
         "children": [
           {
-            "name": "target",
-            "piece": "icon",
-            "tone": "warn"
+            "label": "✕",
+            "piece": "square",
+            "style": "outlined",
+            "tone": "bad"
           },
           {
             "piece": "text",
             "text": "the goal is not met yet"
+          },
+          {
+            "piece": "spacer"
           },
           {
             "piece": "mono",
@@ -337,17 +329,35 @@
       "g1": {
         "children": [
           {
-            "name": "target",
-            "piece": "icon",
+            "piece": "kanji",
+            "text": "的",
             "tone": "good"
           },
           {
-            "piece": "text",
-            "text": "the goal is met"
-          },
-          {
-            "piece": "mono",
-            "text": "check 2 · turn 9 · p 0.96 · the run stops"
+            "children": [
+              {
+                "piece": "heading",
+                "text": "Goal met"
+              },
+              {
+                "children": [
+                  {
+                    "label": "✕",
+                    "piece": "square",
+                    "style": "outlined",
+                    "tone": "bad"
+                  },
+                  {
+                    "label": "✓",
+                    "piece": "square",
+                    "style": "filled",
+                    "tone": "good"
+                  }
+                ],
+                "piece": "row"
+              }
+            ],
+            "piece": "stack"
           }
         ],
         "piece": "row"
@@ -357,7 +367,7 @@
       "count": "met",
       "icon": "target",
       "line": "goal met · Every mutant in retry.rs is caught",
-      "phone_line": "goal · met at check 2 · 1 continuations · $0.240",
+      "phone_line": "goal · met at check 2 · 1 continuations",
       "tone": "good"
     },
     "status": {

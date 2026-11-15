@@ -3,11 +3,11 @@
 //! agent keeps them as its repository's copy, in heiko's data, where the
 //! agent cannot change them. A view tree (ADR 0045).
 
-use serde_json::Value;
 use heiko_ui_plugin::{
     ViewCx,
-    tree::{Kind, Node},
+    tree::{Ink, Kind, Node},
 };
+use serde_json::Value;
 
 use super::{AgentsUi, SETTINGS, button};
 use crate::Settings;
@@ -28,19 +28,25 @@ pub(super) fn render(view: &mut ViewCx<'_, AgentsUi>) -> Node {
 }
 
 /// The pane's tree: a row of choices for each setting, the one chosen
-/// marked.
+/// outlined.
 pub fn pane(settings: &Settings) -> Node {
     let choice = |label: String, on: bool, next: Settings| {
+        if on {
+            return Node::Stamp {
+                label,
+                tone: Ink::Bright,
+            };
+        }
         button(
             &label,
-            if on { Kind::Primary } else { Kind::Secondary },
+            Kind::Secondary,
             SETTINGS,
             serde_json::to_value(next).unwrap_or(Value::Null),
         )
     };
     let row = |name: &str, caption: &str, choices: Vec<Node>| {
         Node::stack([
-            Node::Heading { text: name.into() },
+            Node::Heading { text: name.into(), tone: Default::default() },
             Node::text(caption),
             Node::Row { children: choices },
         ])
@@ -101,11 +107,7 @@ pub fn pane(settings: &Settings) -> Node {
         .collect();
     Node::Card {
         children: vec![
-            row(
-                "Model",
-                "What its turns run on. A small model keeps it cheap.",
-                models,
-            ),
+            row("Model", "What its turns run on.", models),
             Node::Rule,
             row("Effort", "How hard each turn thinks.", efforts),
             Node::Rule,

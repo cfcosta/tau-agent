@@ -9,7 +9,7 @@
       "page": [
         {
           "piece": "empty",
-          "text": "heiko-fast-compaction has not pruned the context of this run yet."
+          "text": "Nothing pruned in this run yet."
         }
       ],
       "status": {
@@ -57,7 +57,7 @@
       "page": [
         {
           "piece": "empty",
-          "text": "heiko-fast-compaction has not pruned the context of this run yet."
+          "text": "Nothing pruned in this run yet."
         }
       ],
       "status": {
@@ -245,7 +245,7 @@
           "after": 81000,
           "before": 172000,
           "calls_dropped": 0,
-          "detail": "7 calls judged in 1 Jev request · 3 results cut, 0 calls dropped · −53% · Jev read 18k tokens of history, whole · $0.0011",
+          "detail": "7 calls judged in 1 Jev request · 3 results cut, 0 calls dropped · −53% · Jev read 18k tokens of history, whole",
           "reduction_ratio": 0.53,
           "results_dropped": 3,
           "window": 272000
@@ -256,8 +256,8 @@
       "calls": {
         "c3": {
           "badge": {
-            "piece": "badge",
-            "text": "result dropped",
+            "label": "result dropped",
+            "piece": "stamp",
             "tone": "neutral"
           },
           "dropped": "result"
@@ -274,16 +274,16 @@
         },
         "c8": {
           "badge": {
-            "piece": "badge",
-            "text": "result dropped",
+            "label": "result dropped",
+            "piece": "stamp",
             "tone": "neutral"
           },
           "dropped": "result"
         },
         "c9": {
           "badge": {
-            "piece": "badge",
-            "text": "result dropped",
+            "label": "result dropped",
+            "piece": "stamp",
             "tone": "neutral"
           },
           "dropped": "result"
@@ -293,10 +293,13 @@
         "children": [
           {
             "piece": "text",
-            "text": "8 kept by heiko-fast-compaction."
+            "text": "8 kept by heiko-fast-compaction"
           },
           {
-            "label": "Ledger",
+            "piece": "spacer"
+          },
+          {
+            "label": "ledger",
             "piece": "link",
             "to": {
               "page": "luau-plugins",
@@ -315,20 +318,18 @@
             {
               "children": [
                 {
-                  "name": "plug",
-                  "piece": "icon",
-                  "tone": "info"
+                  "piece": "heading",
+                  "text": "Pruned 91k tokens"
+                },
+                {
+                  "piece": "spacer"
                 },
                 {
                   "piece": "mono",
                   "text": "heiko-fast-compaction"
                 },
                 {
-                  "piece": "text",
-                  "text": "pruned 91k tokens: 172k to 81k"
-                },
-                {
-                  "label": "Ledger",
+                  "label": "ledger",
                   "piece": "link",
                   "to": {
                     "page": "luau-plugins",
@@ -342,12 +343,57 @@
               "piece": "row"
             },
             {
-              "piece": "mono",
-              "text": "7 calls judged in 1 Jev request · 3 results cut, 0 calls dropped · −53% · Jev read 18k tokens of history, whole · $0.0011"
-            },
-            {
-              "piece": "text",
-              "text": "The next request resends the pruned transcript once, then turns are deltas again."
+              "head": [],
+              "piece": "table",
+              "rows": [
+                [
+                  {
+                    "mono": false,
+                    "piece": "toned",
+                    "text": "before",
+                    "tone": "neutral"
+                  },
+                  {
+                    "lit": 25,
+                    "marked": [
+                      24
+                    ],
+                    "piece": "ticks",
+                    "tone": "neutral",
+                    "total": 40
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "172k"
+                  }
+                ],
+                [
+                  {
+                    "mono": false,
+                    "piece": "toned",
+                    "text": "after",
+                    "tone": "neutral"
+                  },
+                  {
+                    "lit": 12,
+                    "marked": [
+                      24
+                    ],
+                    "piece": "ticks",
+                    "tone": "info",
+                    "total": 40
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "81k"
+                  }
+                ]
+              ],
+              "widths": [
+                1,
+                8,
+                1
+              ]
             }
           ],
           "piece": "stack"
@@ -355,53 +401,152 @@
       },
       "page": [
         {
-          "piece": "heading",
-          "text": "Pruned 91k tokens of this run's tool history"
-        },
-        {
-          "piece": "text",
-          "text": "7 calls judged in 1 Jev request · 3 results cut, 0 calls dropped · −53% · Jev read 18k tokens of history, whole · $0.0011. Decisions only escalate: keep, then drop the result, then drop the call. Forks inherit this ledger."
-        },
-        {
-          "label": "Before · 172k",
-          "piece": "progress",
-          "share": 0.6323529411764706
-        },
-        {
-          "label": "After · 81k",
-          "piece": "progress",
-          "share": 0.2977941176470588
-        },
-        {
-          "piece": "text",
-          "text": "Window 272k. Pruning starts at 60%."
+          "children": [
+            {
+              "piece": "title",
+              "subtitle": null,
+              "text": "Pruned 91k tokens of this run's tool history"
+            },
+            {
+              "piece": "spacer"
+            },
+            {
+              "piece": "mono",
+              "text": "heiko-fast-compaction"
+            }
+          ],
+          "piece": "row"
         },
         {
           "piece": "rule"
         },
         {
+          "mono": false,
+          "piece": "toned",
+          "text": "7 calls judged in 1 Jev request · 3 results cut, 0 calls dropped · −53% · Jev read 18k tokens of history, whole",
+          "tone": "neutral"
+        },
+        {
+          "head": [],
+          "piece": "table",
+          "rows": [
+            [
+              {
+                "mono": false,
+                "piece": "toned",
+                "text": "before",
+                "tone": "neutral"
+              },
+              {
+                "lit": 25,
+                "marked": [
+                  24
+                ],
+                "piece": "ticks",
+                "tone": "neutral",
+                "total": 40
+              },
+              {
+                "piece": "mono",
+                "text": "172k"
+              }
+            ],
+            [
+              {
+                "mono": false,
+                "piece": "toned",
+                "text": "after",
+                "tone": "neutral"
+              },
+              {
+                "lit": 12,
+                "marked": [
+                  24
+                ],
+                "piece": "ticks",
+                "tone": "info",
+                "total": 40
+              },
+              {
+                "piece": "mono",
+                "text": "81k"
+              }
+            ]
+          ],
+          "widths": [
+            1,
+            8,
+            1
+          ]
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "piece": "figure",
+                  "text": "4"
+                },
+                {
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "pinned",
+                  "tone": "neutral"
+                }
+              ],
+              "piece": "stack"
+            },
+            {
+              "children": [
+                {
+                  "piece": "figure",
+                  "text": "4"
+                },
+                {
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "kept",
+                  "tone": "neutral"
+                }
+              ],
+              "piece": "stack"
+            },
+            {
+              "children": [
+                {
+                  "piece": "figure",
+                  "text": "3"
+                },
+                {
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "result dropped",
+                  "tone": "neutral"
+                }
+              ],
+              "piece": "stack"
+            },
+            {
+              "children": [
+                {
+                  "piece": "figure",
+                  "text": "0"
+                },
+                {
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "call dropped",
+                  "tone": "neutral"
+                }
+              ],
+              "piece": "stack"
+            }
+          ],
+          "piece": "row"
+        },
+        {
           "piece": "rows",
           "rows": [
-            {
-              "key": "plugin",
-              "value": "heiko-fast-compaction"
-            },
-            {
-              "key": "pinned",
-              "value": "4"
-            },
-            {
-              "key": "kept",
-              "value": "4"
-            },
-            {
-              "key": "result dropped",
-              "value": "3"
-            },
-            {
-              "key": "call dropped",
-              "value": "0"
-            },
             {
               "key": "next request",
               "value": "1 full resend"
@@ -413,11 +558,29 @@
           ]
         },
         {
-          "piece": "heading",
-          "text": "Ledger"
+          "children": [
+            {
+              "piece": "heading",
+              "text": "Ledger"
+            },
+            {
+              "mono": true,
+              "piece": "toned",
+              "text": "11",
+              "tone": "neutral"
+            }
+          ],
+          "piece": "row"
         },
         {
-          "head": ["Tool", "Input", "Size", "Still matters", "Verbatim", "Decision"],
+          "head": [
+            "tool",
+            "input",
+            "size",
+            "still matters",
+            "verbatim",
+            "decision"
+          ],
           "piece": "table",
           "rows": [
             [
@@ -434,17 +597,33 @@
                 "text": "40"
               },
               {
-                "piece": "mono",
-                "text": "·"
-              },
-              {
-                "piece": "mono",
-                "text": "·"
-              },
-              {
-                "piece": "badge",
-                "text": "pinned",
+                "mono": true,
+                "piece": "toned",
+                "text": "·",
                 "tone": "neutral"
+              },
+              {
+                "mono": true,
+                "piece": "toned",
+                "text": "·",
+                "tone": "neutral"
+              },
+              {
+                "children": [
+                  {
+                    "label": "",
+                    "piece": "square",
+                    "style": "filled",
+                    "tone": "bright"
+                  },
+                  {
+                    "mono": true,
+                    "piece": "toned",
+                    "text": "pinned",
+                    "tone": "neutral"
+                  }
+                ],
+                "piece": "row"
               }
             ],
             [
@@ -461,17 +640,33 @@
                 "text": "90"
               },
               {
-                "piece": "mono",
-                "text": "·"
-              },
-              {
-                "piece": "mono",
-                "text": "·"
-              },
-              {
-                "piece": "badge",
-                "text": "pinned",
+                "mono": true,
+                "piece": "toned",
+                "text": "·",
                 "tone": "neutral"
+              },
+              {
+                "mono": true,
+                "piece": "toned",
+                "text": "·",
+                "tone": "neutral"
+              },
+              {
+                "children": [
+                  {
+                    "label": "",
+                    "piece": "square",
+                    "style": "filled",
+                    "tone": "bright"
+                  },
+                  {
+                    "mono": true,
+                    "piece": "toned",
+                    "text": "pinned",
+                    "tone": "neutral"
+                  }
+                ],
+                "piece": "row"
               }
             ],
             [
@@ -488,17 +683,53 @@
                 "text": "120"
               },
               {
-                "piece": "mono",
-                "text": "0.64"
+                "children": [
+                  {
+                    "lit": 6,
+                    "marked": [],
+                    "piece": "ticks",
+                    "tone": "info",
+                    "total": 10
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.64"
+                  }
+                ],
+                "piece": "row"
               },
               {
-                "piece": "mono",
-                "text": "0.22"
+                "children": [
+                  {
+                    "lit": 2,
+                    "marked": [],
+                    "piece": "ticks",
+                    "tone": "info",
+                    "total": 10
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.22"
+                  }
+                ],
+                "piece": "row"
               },
               {
-                "piece": "badge",
-                "text": "keep",
-                "tone": "neutral"
+                "children": [
+                  {
+                    "label": "",
+                    "piece": "square",
+                    "style": "quiet",
+                    "tone": "neutral"
+                  },
+                  {
+                    "mono": true,
+                    "piece": "toned",
+                    "text": "keep",
+                    "tone": "neutral"
+                  }
+                ],
+                "piece": "row"
               }
             ],
             [
@@ -515,17 +746,53 @@
                 "text": "3k"
               },
               {
-                "piece": "mono",
-                "text": "0.71"
+                "children": [
+                  {
+                    "lit": 7,
+                    "marked": [],
+                    "piece": "ticks",
+                    "tone": "info",
+                    "total": 10
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.71"
+                  }
+                ],
+                "piece": "row"
               },
               {
-                "piece": "mono",
-                "text": "0.18"
+                "children": [
+                  {
+                    "lit": 2,
+                    "marked": [],
+                    "piece": "ticks",
+                    "tone": "info",
+                    "total": 10
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.18"
+                  }
+                ],
+                "piece": "row"
               },
               {
-                "piece": "badge",
-                "text": "drop result",
-                "tone": "info"
+                "children": [
+                  {
+                    "label": "",
+                    "piece": "square",
+                    "style": "filled",
+                    "tone": "info"
+                  },
+                  {
+                    "mono": true,
+                    "piece": "toned",
+                    "text": "drop result",
+                    "tone": "info"
+                  }
+                ],
+                "piece": "row"
               }
             ],
             [
@@ -542,17 +809,33 @@
                 "text": "210"
               },
               {
-                "piece": "mono",
-                "text": "·"
-              },
-              {
-                "piece": "mono",
-                "text": "·"
-              },
-              {
-                "piece": "badge",
-                "text": "pinned",
+                "mono": true,
+                "piece": "toned",
+                "text": "·",
                 "tone": "neutral"
+              },
+              {
+                "mono": true,
+                "piece": "toned",
+                "text": "·",
+                "tone": "neutral"
+              },
+              {
+                "children": [
+                  {
+                    "label": "",
+                    "piece": "square",
+                    "style": "filled",
+                    "tone": "bright"
+                  },
+                  {
+                    "mono": true,
+                    "piece": "toned",
+                    "text": "pinned",
+                    "tone": "neutral"
+                  }
+                ],
+                "piece": "row"
               }
             ],
             [
@@ -569,17 +852,53 @@
                 "text": "640"
               },
               {
-                "piece": "mono",
-                "text": "0.94"
+                "children": [
+                  {
+                    "lit": 9,
+                    "marked": [],
+                    "piece": "ticks",
+                    "tone": "info",
+                    "total": 10
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.94"
+                  }
+                ],
+                "piece": "row"
               },
               {
-                "piece": "mono",
-                "text": "0.88"
+                "children": [
+                  {
+                    "lit": 9,
+                    "marked": [],
+                    "piece": "ticks",
+                    "tone": "info",
+                    "total": 10
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.88"
+                  }
+                ],
+                "piece": "row"
               },
               {
-                "piece": "badge",
-                "text": "keep",
-                "tone": "neutral"
+                "children": [
+                  {
+                    "label": "",
+                    "piece": "square",
+                    "style": "quiet",
+                    "tone": "neutral"
+                  },
+                  {
+                    "mono": true,
+                    "piece": "toned",
+                    "text": "keep",
+                    "tone": "neutral"
+                  }
+                ],
+                "piece": "row"
               }
             ],
             [
@@ -596,17 +915,33 @@
                 "text": "1k"
               },
               {
-                "piece": "mono",
-                "text": "·"
-              },
-              {
-                "piece": "mono",
-                "text": "·"
-              },
-              {
-                "piece": "badge",
-                "text": "pinned",
+                "mono": true,
+                "piece": "toned",
+                "text": "·",
                 "tone": "neutral"
+              },
+              {
+                "mono": true,
+                "piece": "toned",
+                "text": "·",
+                "tone": "neutral"
+              },
+              {
+                "children": [
+                  {
+                    "label": "",
+                    "piece": "square",
+                    "style": "filled",
+                    "tone": "bright"
+                  },
+                  {
+                    "mono": true,
+                    "piece": "toned",
+                    "text": "pinned",
+                    "tone": "neutral"
+                  }
+                ],
+                "piece": "row"
               }
             ],
             [
@@ -623,17 +958,53 @@
                 "text": "20"
               },
               {
-                "piece": "mono",
-                "text": "0.18"
+                "children": [
+                  {
+                    "lit": 2,
+                    "marked": [],
+                    "piece": "ticks",
+                    "tone": "info",
+                    "total": 10
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.18"
+                  }
+                ],
+                "piece": "row"
               },
               {
-                "piece": "mono",
-                "text": "0.04"
+                "children": [
+                  {
+                    "lit": 0,
+                    "marked": [],
+                    "piece": "ticks",
+                    "tone": "info",
+                    "total": 10
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.04"
+                  }
+                ],
+                "piece": "row"
               },
               {
-                "piece": "badge",
-                "text": "keep",
-                "tone": "neutral"
+                "children": [
+                  {
+                    "label": "",
+                    "piece": "square",
+                    "style": "quiet",
+                    "tone": "neutral"
+                  },
+                  {
+                    "mono": true,
+                    "piece": "toned",
+                    "text": "keep",
+                    "tone": "neutral"
+                  }
+                ],
+                "piece": "row"
               }
             ],
             [
@@ -650,17 +1021,53 @@
                 "text": "1k"
               },
               {
-                "piece": "mono",
-                "text": "0.62"
+                "children": [
+                  {
+                    "lit": 6,
+                    "marked": [],
+                    "piece": "ticks",
+                    "tone": "info",
+                    "total": 10
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.62"
+                  }
+                ],
+                "piece": "row"
               },
               {
-                "piece": "mono",
-                "text": "0.03"
+                "children": [
+                  {
+                    "lit": 0,
+                    "marked": [],
+                    "piece": "ticks",
+                    "tone": "info",
+                    "total": 10
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.03"
+                  }
+                ],
+                "piece": "row"
               },
               {
-                "piece": "badge",
-                "text": "keep",
-                "tone": "neutral"
+                "children": [
+                  {
+                    "label": "",
+                    "piece": "square",
+                    "style": "quiet",
+                    "tone": "neutral"
+                  },
+                  {
+                    "mono": true,
+                    "piece": "toned",
+                    "text": "keep",
+                    "tone": "neutral"
+                  }
+                ],
+                "piece": "row"
               }
             ],
             [
@@ -677,17 +1084,53 @@
                 "text": "7k"
               },
               {
-                "piece": "mono",
-                "text": "0.52"
+                "children": [
+                  {
+                    "lit": 5,
+                    "marked": [],
+                    "piece": "ticks",
+                    "tone": "info",
+                    "total": 10
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.52"
+                  }
+                ],
+                "piece": "row"
               },
               {
-                "piece": "mono",
-                "text": "0.09"
+                "children": [
+                  {
+                    "lit": 1,
+                    "marked": [],
+                    "piece": "ticks",
+                    "tone": "info",
+                    "total": 10
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.09"
+                  }
+                ],
+                "piece": "row"
               },
               {
-                "piece": "badge",
-                "text": "drop result",
-                "tone": "info"
+                "children": [
+                  {
+                    "label": "",
+                    "piece": "square",
+                    "style": "filled",
+                    "tone": "info"
+                  },
+                  {
+                    "mono": true,
+                    "piece": "toned",
+                    "text": "drop result",
+                    "tone": "info"
+                  }
+                ],
+                "piece": "row"
               }
             ],
             [
@@ -704,19 +1147,63 @@
                 "text": "5k"
               },
               {
-                "piece": "mono",
-                "text": "0.58"
+                "children": [
+                  {
+                    "lit": 6,
+                    "marked": [],
+                    "piece": "ticks",
+                    "tone": "info",
+                    "total": 10
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.58"
+                  }
+                ],
+                "piece": "row"
               },
               {
-                "piece": "mono",
-                "text": "0.11"
+                "children": [
+                  {
+                    "lit": 1,
+                    "marked": [],
+                    "piece": "ticks",
+                    "tone": "info",
+                    "total": 10
+                  },
+                  {
+                    "piece": "mono",
+                    "text": "0.11"
+                  }
+                ],
+                "piece": "row"
               },
               {
-                "piece": "badge",
-                "text": "drop result",
-                "tone": "info"
+                "children": [
+                  {
+                    "label": "",
+                    "piece": "square",
+                    "style": "filled",
+                    "tone": "info"
+                  },
+                  {
+                    "mono": true,
+                    "piece": "toned",
+                    "text": "drop result",
+                    "tone": "info"
+                  }
+                ],
+                "piece": "row"
               }
             ]
+          ],
+          "widths": [
+            1.5,
+            5,
+            0.8,
+            2,
+            2,
+            1.5
           ]
         }
       ],

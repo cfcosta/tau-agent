@@ -618,7 +618,11 @@ pub fn status_mark(text: impl Into<SharedString>, color: Hsla) -> Div {
 /// A stamp: a word or two in mono, outlined in its tone over a hard
 /// offset. `exit 0`, `queued`, `Draft`.
 pub fn stamp(label: impl Into<SharedString>, tone: Tone, t: &Theme) -> Div {
-    let color = t.tone(tone);
+    stamp_in(label, t.tone(tone), t)
+}
+
+/// A [`stamp`] in a `color` of its own.
+pub fn stamp_in(label: impl Into<SharedString>, color: Hsla, t: &Theme) -> Div {
     mono(label, Type::CAPTION, color)
         .flex_shrink_0()
         .px(sp(2.))
@@ -663,8 +667,14 @@ pub fn square(
         .font_weight(weight::EMPHASIS)
 }
 
-fn slip_in(content: AnyElement, tone: Tone, dashed: bool, t: &Theme) -> Div {
-    let color = t.tone(tone);
+/// A [`slip`] in a `color` of its own; `dashed` for one proposed, not
+/// kept yet.
+pub fn slip_in(
+    content: impl IntoElement,
+    color: Hsla,
+    dashed: bool,
+    t: &Theme,
+) -> Div {
     // A row, so the slip is as wide as what it holds and no wider.
     div().flex().child(
         div()
@@ -685,12 +695,12 @@ fn slip_in(content: AnyElement, tone: Tone, dashed: bool, t: &Theme) -> Div {
 /// A slip: a note or an id on a label outlined in its tone, over a
 /// hard offset in a darker shade of the same color.
 pub fn slip(content: impl IntoElement, tone: Tone, t: &Theme) -> Div {
-    slip_in(content.into_any_element(), tone, false, t)
+    slip_in(content, t.tone(tone), false, t)
 }
 
 /// A [`slip`] with a dashed outline: one proposed, not kept yet.
 pub fn dashed_slip(content: impl IntoElement, tone: Tone, t: &Theme) -> Div {
-    slip_in(content.into_any_element(), tone, true, t)
+    slip_in(content, t.tone(tone), true, t)
 }
 
 /// A name in mono, underlined as a word the person can change, with an
@@ -789,6 +799,15 @@ pub fn marked_ticks(
     tick_strip(lit, total, 10., color, t.hairline, &marked)
 }
 
+/// A strip of ticks, each in its own color: a whole in its parts.
+pub fn colored_ticks(colors: &[Hsla], _: &Theme) -> Div {
+    div().flex().w_full().gap(rems(0.1875)).children(
+        colors.iter().map(|color| {
+            div().flex_1().min_w(rems(0.)).h(rems(0.625)).bg(*color)
+        }),
+    )
+}
+
 /// A share as ticks `height` px tall: `share` of them in `fill`, the
 /// rest in `track`. Any share above none lights a tick.
 pub fn bar(share: f32, height: f32, fill: Hsla, track: Hsla) -> Div {
@@ -820,6 +839,45 @@ pub fn panel(steps: f32, t: &Theme) -> Div {
         .py(sp(steps))
         .border_t_1()
         .border_color(t.hairline)
+}
+
+/// The flat darker plane a result sits on: what it holds one under the
+/// other, padded.
+pub fn band(t: &Theme) -> Div {
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap(sp(2.))
+        .px(sp(3.5))
+        .py(sp(2.25))
+        .bg(t.card)
+}
+
+/// Rows one under the other, a line down the left joining the squares
+/// they start with: the steps of a change, a queue. Each row starts
+/// with a [`square`] at its top.
+pub fn rail(rows: Vec<AnyElement>, t: &Theme) -> Div {
+    let last = rows.len().saturating_sub(1);
+    div().flex().flex_col().gap(sp(3.)).children(
+        rows.into_iter().enumerate().map(|(n, row)| {
+            div()
+                .relative()
+                .when(n < last, |joined| {
+                    // From under this row's square to the next row's.
+                    joined.child(
+                        div()
+                            .absolute()
+                            .top(rems(1.5))
+                            .bottom(sp(-3.))
+                            .left(rems(0.65625))
+                            .w(rems(0.1875))
+                            .bg(t.hairline),
+                    )
+                })
+                .child(row)
+        }),
+    )
 }
 
 /// A 56 px glyph in a square outlined in its color over a hard offset,
@@ -1102,7 +1160,8 @@ pub fn any(element: impl IntoElement) -> AnyElement {
 }
 
 /// A table from a model's reply: a header row in small muted print
-/// over a rule, rows split by hairlines, each cell lined up as its
+/// over a rule (left out with its rule when `head` is empty), rows
+/// split by hairlines, each cell lined up as its
 /// column says. Columns share the width; long cells wrap.
 pub fn table(
     align: &[crate::markdown::Align],
@@ -1157,7 +1216,7 @@ pub fn weighted_table(
         .flex_col()
         .w_full()
         .typeset(Type::SMALL)
-        .child(row(head, true))
+        .when(!head.is_empty(), |table| table.child(row(head, true)))
         .children(rows.into_iter().map(|cells| row(cells, false)))
 }
 
@@ -1239,6 +1298,63 @@ pub fn numbered_code_block(
                 Type::MICRO,
                 t.dim,
             ))
+        }))
+}
+
+/// One line of code in the mono face, the byte ranges in `marked` on a
+/// flat blue ground: a line a search found, and where. It does not
+/// wrap.
+pub fn marked_line(
+    text: &str,
+    marked: &[std::ops::Range<usize>],
+    t: &Theme,
+) -> Div {
+    let run = |len: usize, on: bool| gpui::TextRun {
+        len,
+        font: gpui::font(crate::theme::MONO),
+        color: if on { t.bright } else { t.text_soft },
+        background_color: on.then_some(t.accent_border),
+        underline: None,
+        strikethrough: None,
+    };
+    // A range's end moved back to where a character starts.
+    let floor = |mut at: usize| {
+        at = at.min(text.len());
+        while !text.is_char_boundary(at) {
+            at -= 1;
+        }
+        at
+    };
+    let mut ranges: Vec<(usize, usize)> = marked
+        .iter()
+        .map(|range| (floor(range.start), floor(range.end)))
+        .collect();
+    ranges.sort_unstable();
+    let mut runs = Vec::new();
+    let mut at = 0;
+    for (start, end) in ranges {
+        let start = start.max(at);
+        if start >= end {
+            continue;
+        }
+        if start > at {
+            runs.push(run(start - at, false));
+        }
+        runs.push(run(end - start, true));
+        at = end;
+    }
+    if at < text.len() {
+        runs.push(run(text.len() - at, false));
+    }
+    div()
+        .typeset(Type::CAPTION.mono())
+        .text_color(t.text_soft)
+        .whitespace_nowrap()
+        .overflow_hidden()
+        .child(crate::select::selectable(if runs.is_empty() {
+            gpui::StyledText::new(text.to_owned())
+        } else {
+            gpui::StyledText::new(text.to_owned()).with_runs(runs)
         }))
 }
 

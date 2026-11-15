@@ -45,7 +45,7 @@ use heiko_ui_plugin::{
         SetupRepo,
         SetupView,
     },
-    tree::{Kind, Node, Tab, Tone, draft_key},
+    tree::{Ink, Kind, MarkState, Node, SquareLook, Tab, Tone, draft_key},
 };
 
 use crate::{
@@ -335,6 +335,21 @@ pub(crate) fn rewrite(node: Node, f: &mut dyn FnMut(Node) -> Node) -> Node {
         Node::Card { children } => Node::Card {
             children: each(children, f),
         },
+        Node::Band { children } => Node::Band {
+            children: each(children, f),
+        },
+        Node::Rail { children } => Node::Rail {
+            children: each(children, f),
+        },
+        Node::Header {
+            title,
+            meta,
+            actions,
+        } => Node::Header {
+            title,
+            meta,
+            actions: each(actions, f),
+        },
         Node::Keys {
             id,
             keys,
@@ -440,6 +455,17 @@ fn own_links(node: Node, plugin: &str) -> Node {
     };
     rewrite(node, &mut |node| match node {
         Node::Link { label, to } => Node::Link { label, to: own(to) },
+        Node::Slip {
+            text,
+            tone,
+            dashed,
+            to,
+        } => Node::Slip {
+            text,
+            tone,
+            dashed,
+            to: to.map(own),
+        },
         Node::Graph {
             height,
             nodes,
@@ -485,6 +511,17 @@ pub fn embed_repo(piece: &Value, plugin: &str, repo: &str) -> Node {
     };
     rewrite(embed_as(piece, plugin, LUAU_REPO), &mut |node| match node {
         Node::Link { label, to } => Node::Link { label, to: own(to) },
+        Node::Slip {
+            text,
+            tone,
+            dashed,
+            to,
+        } => Node::Slip {
+            text,
+            tone,
+            dashed,
+            to: to.map(own),
+        },
         Node::Graph {
             height,
             nodes,
@@ -610,12 +647,27 @@ fn embed_as(piece: &Value, plugin: &str, mark: &str) -> Node {
             args,
             kind,
             icon,
+            size,
         } => Node::Button {
             label,
             action: act(action),
             args,
             kind,
             icon,
+            size,
+        },
+        Node::Square {
+            label,
+            style,
+            tone,
+            action,
+            args,
+        } => Node::Square {
+            label,
+            style,
+            tone,
+            action: action.map(act),
+            args,
         },
         Node::Switch {
             label,
@@ -748,14 +800,12 @@ fn open_own(plugin: &str, action: &str, args: &Value, handle: &Handle) -> bool {
 fn allow_card(ask: &crate::Ask, at: &AtCard) -> Node {
     use crate::Outcome;
     let mut children = vec![Node::row([
-        Node::Icon {
-            name: "shield".into(),
-            tone: Tone::Warn,
-        },
+        mark(MarkState::Asks),
         Node::Title {
             text: ask.title.clone(),
-            subtitle: Some(ask.plugin.clone()),
+            subtitle: None,
         },
+        small(ask.plugin.clone()),
     ])];
     if !ask.text.is_empty() {
         children.push(Node::Rich {
@@ -772,6 +822,7 @@ fn allow_card(ask: &crate::Ask, at: &AtCard) -> Node {
                     args: answer(true),
                     kind: Kind::Primary,
                     icon: None,
+                    size: Default::default(),
                 },
                 Node::Button {
                     label: "Deny".into(),
@@ -779,6 +830,7 @@ fn allow_card(ask: &crate::Ask, at: &AtCard) -> Node {
                     args: answer(false),
                     kind: Kind::Secondary,
                     icon: None,
+                    size: Default::default(),
                 },
             ]));
             None
@@ -1176,15 +1228,7 @@ impl UiPlugin for LuauPluginsUi {
                 let (plugin, note) = view.state?.notes.get(&at.key)?.clone();
                 Some(Node::Card {
                     children: vec![
-                        Node::row([
-                            Node::Icon {
-                                name: "plug".into(),
-                                tone: Tone::Info,
-                            },
-                            Node::Mono {
-                                text: plugin.clone(),
-                            },
-                        ]),
+                        small(plugin.clone()),
                         embed(&note, &plugin),
                     ],
                 })
@@ -1826,58 +1870,99 @@ fn page_action(handle: &Handle, action: &str, args: &Value) {
     }
 }
 
-/// Every plugin of the plugins repository, the way to write one, and the
-/// chats there.
+/// A state's mark.
+fn mark(state: MarkState) -> Node {
+    Node::Mark { state, count: None }
+}
+
+/// Small print in mono.
+fn small(text: impl Into<String>) -> Node {
+    toned(text, Tone::Neutral)
+}
+
+/// A line in mono, in `tone`.
+fn toned(text: impl Into<String>, tone: Tone) -> Node {
+    Node::Toned {
+        text: text.into(),
+        tone,
+        mono: true,
+    }
+}
+
+/// `rows` with a hairline between each two.
+fn ruled(rows: impl IntoIterator<Item = Node>) -> Vec<Node> {
+    let mut ruled = Vec::new();
+    for (at, row) in rows.into_iter().enumerate() {
+        if at > 0 {
+            ruled.push(Node::Rule);
+        }
+        ruled.push(row);
+    }
+    ruled
+}
+
+/// Every plugin of the plugins repository as a ruled row, how many stand
+/// each way, the way to write one, and the chats there.
 fn overview(view: &ViewCx<'_, LuauPluginsUi>) -> Node {
     let overview = view.data;
-    let mut page = vec![
-        Node::row([
-            Node::Icon {
-                name: "plug".into(),
-                tone: Tone::Info,
-            },
-            Node::Title {
-                text: "Your plugins".into(),
-                subtitle: Some(crate::REPO.into()),
-            },
-            Node::Spacer,
-            Node::Button {
-                label: "Write a plugin".into(),
-                action: WRITE.into(),
-                args: Value::Null,
-                kind: Kind::Primary,
-                icon: None,
-            },
-        ]),
-        Node::Rich {
-            text: format!(
-                "Type `/{COMMAND}` and what it should do in any chat, and \
-                 heiko writes one here. A version is active once it lands \
-                 and its tests pass."
-            ),
-        },
-    ];
+    let mut head = vec![small(crate::REPO)];
+    if !overview.plugins.is_empty() {
+        head.extend(counts(overview));
+    }
+    head.push(Node::Spacer);
+    head.push(Node::Button {
+        label: "Write a plugin".into(),
+        action: WRITE.into(),
+        args: Value::Null,
+        kind: Kind::Primary,
+        icon: None,
+        size: Default::default(),
+    });
+    let mut plugins = vec![Node::Row { children: head }];
     if let Some(error) = &overview.error {
-        page.push(Node::Status {
+        plugins.push(Node::Status {
             text: error.clone(),
             detail: None,
             tone: Tone::Bad,
         });
     }
     if overview.plugins.is_empty() {
-        page.push(Node::Empty {
+        plugins.push(Node::Empty {
             text: "No plugins yet.".into(),
         });
+    } else if view.compact {
+        plugins.push(Node::Rule);
+        plugins.extend(ruled(overview.plugins.iter().map(|entry| {
+            let [name, does, needs] = plugin_row(entry);
+            Node::stack([name, does, needs])
+        })));
     } else {
-        page.push(counts(overview));
-        page.extend(overview.plugins.iter().map(plugin_card));
+        // Three columns: the plugin and where it stands, what it does and
+        // when it runs, and what it waits on.
+        plugins.push(Node::Table {
+            head: vec![],
+            rows: overview
+                .plugins
+                .iter()
+                .map(|entry| plugin_row(entry).to_vec())
+                .collect(),
+            widths: vec![1., 1.5, 1.5],
+        });
     }
-    page.push(chats(view));
-    Node::stack(page)
+    Node::stack([
+        Node::Section {
+            id: "plugins-yours".into(),
+            title: "Your plugins".into(),
+            open: true,
+            children: plugins,
+        },
+        chats(view),
+    ])
 }
 
-/// How many plugins there are, and how many stand each way.
-fn counts(overview: &Overview) -> Node {
+/// How many plugins there are, and how many stand each way, each count
+/// in its tone.
+fn counts(overview: &Overview) -> Vec<Node> {
     let count = |of: fn(&Standing) -> bool| {
         overview
             .plugins
@@ -1905,39 +1990,71 @@ fn counts(overview: &Overview) -> Node {
             Tone::Bad,
         ),
     ];
-    let mut pills = vec![Node::Pill {
-        text: if all == 1 {
-            "1 plugin".to_owned()
-        } else {
-            format!("{all} plugins")
-        },
-        tone: Tone::Neutral,
-    }];
-    pills.extend(tones.into_iter().filter(|(n, ..)| *n > 0).map(
-        |(n, label, tone)| Node::Pill {
-            text: format!("{n} {label}"),
-            tone,
-        },
-    ));
-    Node::row(pills)
+    let mut counts = vec![small(if all == 1 {
+        "1 plugin".to_owned()
+    } else {
+        format!("{all} plugins")
+    })];
+    counts.extend(
+        tones
+            .into_iter()
+            .filter(|(n, ..)| *n > 0)
+            .map(|(n, label, tone)| toned(format!("{n} {label}"), tone)),
+    );
+    counts
 }
 
-/// Where `standing` leaves a plugin, in words and a tone.
-fn standing_label(standing: &Standing) -> (&'static str, Tone) {
+/// Where `standing` leaves a plugin: its mark, and in words and a tone.
+fn standing_label(standing: &Standing) -> (MarkState, &'static str, Tone) {
     match standing {
-        Standing::Active => ("active", Tone::Good),
-        Standing::Waiting { .. } => ("waiting for you", Tone::Warn),
-        Standing::Failing => ("tests failing", Tone::Bad),
-        Standing::Broken { .. } => ("does not load", Tone::Bad),
+        Standing::Active => (MarkState::Met, "active", Tone::Good),
+        Standing::Waiting { .. } => {
+            (MarkState::Asks, "waiting for you", Tone::Warn)
+        }
+        Standing::Failing => (MarkState::Failing, "tests failing", Tone::Bad),
+        Standing::Broken { .. } => {
+            (MarkState::Failing, "does not load", Tone::Bad)
+        }
     }
 }
 
-/// How many of `entry`'s tests pass, when it has any.
-fn tests_line(entry: &Entry) -> Option<String> {
-    (!entry.tests.is_empty()).then(|| {
-        let passed = entry.tests.iter().filter(|test| test.passed).count();
-        format!("{passed} of {} tests pass", entry.tests.len())
-    })
+/// Where `entry` stands: its state's mark, and the word for it.
+fn standing_row(entry: &Entry) -> Node {
+    let (state, label, tone) = standing_label(&entry.standing);
+    Node::row([mark(state), toned(label, tone)])
+}
+
+/// The most tests drawn as a square each; more are only counted.
+const TEST_SQUARES: usize = 12;
+
+/// `entry`'s tests, when it has any: a small square each, green for one
+/// that passes and red for one that fails, then how many pass.
+fn tests_row(entry: &Entry) -> Option<Node> {
+    if entry.tests.is_empty() {
+        return None;
+    }
+    let passed = entry.tests.iter().filter(|test| test.passed).count();
+    let mut row: Vec<Node> = if entry.tests.len() <= TEST_SQUARES {
+        entry
+            .tests
+            .iter()
+            .map(|test| Node::Square {
+                label: if test.passed { "✓" } else { "×" }.into(),
+                style: if test.passed {
+                    SquareLook::Filled
+                } else {
+                    SquareLook::Outlined
+                },
+                tone: if test.passed { Ink::Good } else { Ink::Bad },
+                action: None,
+                args: Default::default(),
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    row.push(small(format!("{passed} of {}", entry.tests.len())));
+    Some(Node::Row { children: row })
 }
 
 /// Where a plugin's declaration says it steps into a run.
@@ -2151,75 +2268,86 @@ fn allow(plugin: &str, grown: &[String]) -> Node {
         args: json!({ "plugin": plugin, "grown": grown }),
         kind: Kind::Primary,
         icon: None,
+        size: Default::default(),
     }
 }
 
-/// Tags, one per thing said, side by side.
-fn tags(words: Vec<String>) -> Node {
-    Node::row(words.into_iter().map(|text| Node::Pill {
-        text,
-        tone: Tone::Neutral,
+/// Stamps, one per thing said, side by side.
+fn stamps(words: Vec<String>) -> Node {
+    Node::row(words.into_iter().map(|label| Node::Stamp {
+        label,
+        tone: Ink::Neutral,
     }))
 }
 
-/// One plugin on the page of all of them: its name, which opens its own
-/// page, where it stands, where it steps in, and what it needs.
-fn plugin_card(entry: &Entry) -> Node {
-    let (label, tone) = standing_label(&entry.standing);
-    let mut head = vec![
-        Node::Link {
-            label: entry.name.clone(),
-            to: entry_link(&entry.name),
+/// One plugin on the page of all of them, as a row's three cells: its
+/// name, where it stands and its tests; what it does and when it runs;
+/// and what it waits on, with Allow for one that waits on the person,
+/// and the way to its own page.
+fn plugin_row(entry: &Entry) -> [Node; 3] {
+    let mut name = vec![
+        Node::Title {
+            text: entry.name.clone(),
+            subtitle: None,
         },
-        Node::Badge {
-            text: label.into(),
-            tone,
-        },
+        standing_row(entry),
     ];
-    if let Some(line) = tests_line(entry) {
-        head.push(Node::Spacer);
-        head.push(Node::Mono { text: line });
-    }
-    let mut body = vec![Node::row(head)];
+    name.extend(tests_row(entry));
+
+    let mut does = Vec::new();
     if !entry.description.is_empty() {
-        body.push(Node::text(entry.description.clone()));
-    }
-    if !entry.version.is_empty() {
-        body.push(Node::text(format!("Version {}", entry.version)));
+        does.push(Node::text(entry.description.clone()));
     }
     if let Some(declaration) = &entry.declaration {
         let seams = steps_in(declaration);
         if !seams.is_empty() {
-            body.push(tags(seams));
+            does.push(stamps(seams));
         }
     }
+    if !entry.version.is_empty() {
+        does.push(small(format!("version {}", entry.version)));
+    }
+
+    let mut needs = vec![Node::row([
+        Node::Spacer,
+        Node::Link {
+            label: "open".into(),
+            to: entry_link(&entry.name),
+        },
+    ])];
     match &entry.standing {
-        Standing::Waiting { grown } => body.push(Node::row([
-            Node::Rich {
-                text: format!("It wants to use {}.", grown.join(", ")),
-            },
-            Node::Spacer,
-            allow(&entry.name, grown),
-        ])),
-        Standing::Broken { error } => body.push(Node::Code {
+        Standing::Waiting { grown } => {
+            needs.push(Node::Rich {
+                text: format!("Wants {}.", grown.join(", ")),
+            });
+            needs.push(allow(&entry.name, grown));
+        }
+        Standing::Broken { error } => needs.push(Node::Code {
             lang: None,
             text: error.clone(),
             first_line: None,
         }),
         _ => {}
     }
-    let failing: Vec<_> =
-        entry.tests.iter().filter(|test| !test.passed).collect();
-    if !failing.is_empty() {
-        body.push(failing_tests(&failing));
-    }
+    needs.extend(
+        entry
+            .tests
+            .iter()
+            .filter(|test| !test.passed)
+            .flat_map(test_lines),
+    );
     if entry.keeps_earlier {
-        body.push(Node::text(
-            "Runs keep the version before until this one is fixed or \
-             allowed.",
-        ));
+        needs.push(Node::Toned {
+            text: "runs keep the version before".into(),
+            tone: Tone::Neutral,
+            mono: false,
+        });
     }
-    Node::Card { children: body }
+    [
+        Node::Stack { children: name },
+        Node::Stack { children: does },
+        Node::Stack { children: needs },
+    ]
 }
 
 /// A test's line: its file and name, and why it failed, if it did.
@@ -2228,22 +2356,9 @@ fn test_lines(test: &TestResult) -> Vec<Node> {
         text: format!("{} · {}", test.file, test.name),
     }];
     if let Some(error) = &test.error {
-        lines.push(Node::Status {
-            text: error.clone(),
-            detail: None,
-            tone: Tone::Bad,
-        });
+        lines.push(toned(error.clone(), Tone::Bad));
     }
     lines
-}
-
-/// Tests that fail, each with why.
-fn failing_tests(failing: &[&TestResult]) -> Node {
-    let mut lines = vec![Node::Heading {
-        text: "Failing tests".into(),
-    }];
-    lines.extend(failing.iter().flat_map(|test| test_lines(test)));
-    Node::stack(lines)
 }
 
 /// One plugin's own page: where it stands, Allow when it waits, where it
@@ -2271,14 +2386,6 @@ fn plugin_page(entry: &str, view: &mut ViewCx<'_, LuauPluginsUi>) -> Node {
     if let Some(page) = found.app.as_ref().and_then(|app| app.page.as_ref()) {
         return embed_as(page, &found.name, LUAU_APP);
     }
-    let (label, tone) = standing_label(&found.standing);
-    let mut standing = vec![Node::Badge {
-        text: label.into(),
-        tone,
-    }];
-    if let Some(line) = tests_line(&found) {
-        standing.push(Node::Mono { text: line });
-    }
     let mut page = vec![
         back,
         Node::Title {
@@ -2286,33 +2393,25 @@ fn plugin_page(entry: &str, view: &mut ViewCx<'_, LuauPluginsUi>) -> Node {
             subtitle: (!found.description.is_empty())
                 .then(|| found.description.clone()),
         },
-        Node::row(standing),
+        standing_row(&found),
     ];
+    page.extend(tests_row(&found));
     match &found.standing {
         Standing::Waiting { grown } => {
             let mut words = vec![Node::Rich {
-                text: format!(
-                    "Its new version wants to use {}.",
-                    grown.join(", ")
-                ),
+                text: format!("Its new version wants {}.", grown.join(", ")),
             }];
             if found.keeps_earlier {
-                words.push(Node::text(
-                    "Runs keep the version before until you allow it.",
-                ));
+                words.push(Node::Toned {
+                    text: "runs keep the version before".into(),
+                    tone: Tone::Neutral,
+                    mono: false,
+                });
             }
-            page.push(Node::Card {
-                children: vec![Node::row([
-                    Node::stack(words),
-                    Node::Spacer,
-                    allow(&found.name, grown),
-                ])],
-            });
+            words.push(allow(&found.name, grown));
+            page.push(Node::Card { children: words });
         }
         Standing::Broken { error } => {
-            page.push(Node::Heading {
-                text: "It does not load".into(),
-            });
             page.push(Node::Code {
                 lang: None,
                 text: error.clone(),
@@ -2320,31 +2419,35 @@ fn plugin_page(entry: &str, view: &mut ViewCx<'_, LuauPluginsUi>) -> Node {
             });
         }
         Standing::Failing if found.keeps_earlier => {
-            page.push(Node::text(
-                "Runs keep the version before until its tests pass.",
-            ));
+            page.push(Node::Toned {
+                text: "runs keep the version before".into(),
+                tone: Tone::Neutral,
+                mono: false,
+            });
         }
         _ => {}
     }
 
     if let Some(declaration) = &found.declaration {
         let seams = steps_in(declaration);
-        page.extend(section(
+        page.push(section(
+            entry,
             "Where it steps in",
-            if seams.is_empty() {
-                Node::text("Only in the interface.")
+            vec![if seams.is_empty() {
+                small("only in the interface")
             } else {
-                tags(seams)
-            },
+                stamps(seams)
+            }],
         ));
         let reach = reaches(&declaration.uses);
-        page.extend(section(
+        page.push(section(
+            entry,
             "What it may reach",
-            if reach.is_empty() {
-                Node::text("Nothing beyond the run it is in.")
+            vec![if reach.is_empty() {
+                small("nothing beyond the run it is in")
             } else {
-                tags(reach)
-            },
+                Node::row(reach.into_iter().map(|text| Node::Mono { text }))
+            }],
         ));
     }
     // What its view puts on its page, from the newest run that drew one;
@@ -2355,32 +2458,30 @@ fn plugin_page(entry: &str, view: &mut ViewCx<'_, LuauPluginsUi>) -> Node {
         } else {
             format!("In {}", run.title)
         };
-        page.extend(section(&title, embed_as(&drawn, entry, LUAU_PAGE)));
+        page.push(section(
+            entry,
+            &title,
+            vec![embed_as(&drawn, entry, LUAU_PAGE)],
+        ));
     }
-    page.extend(section(
+    page.push(section(
+        entry,
         "Tests",
         if found.tests.is_empty() {
-            Node::text("It has none yet.")
+            vec![Node::Empty {
+                text: "It has none yet.".into(),
+            }]
         } else {
-            Node::Card {
-                children: found
-                    .tests
-                    .iter()
-                    .map(|test| {
-                        let mut line = vec![Node::Icon {
-                            name: if test.passed { "check" } else { "close" }
-                                .into(),
-                            tone: if test.passed {
-                                Tone::Good
-                            } else {
-                                Tone::Bad
-                            },
-                        }];
-                        line.push(Node::stack(test_lines(test)));
-                        Node::row(line)
-                    })
-                    .collect(),
-            }
+            ruled(found.tests.iter().map(|test| {
+                Node::row([
+                    mark(if test.passed {
+                        MarkState::Met
+                    } else {
+                        MarkState::Failing
+                    }),
+                    Node::stack(test_lines(test)),
+                ])
+            }))
         },
     ));
     let has_settings = found
@@ -2388,29 +2489,28 @@ fn plugin_page(entry: &str, view: &mut ViewCx<'_, LuauPluginsUi>) -> Node {
         .as_ref()
         .is_some_and(|declaration| declaration.settings.is_some());
     if has_settings {
-        page.push(Node::Heading {
-            text: "Settings".into(),
-        });
-        page.extend(scopes(entry, view));
-        page.push(crate::pane::render(view));
+        page.push(section(
+            entry,
+            "Settings",
+            vec![scopes(entry, view), Node::Rule, crate::pane::render(view)],
+        ));
     }
     Node::stack(page)
 }
 
-/// A section of a plugin's page: its heading over `body`.
-fn section(title: &str, body: Node) -> [Node; 2] {
-    [
-        Node::Heading {
-            text: title.to_owned(),
-        },
-        body,
-    ]
+/// A section of `entry`'s page: its title over `children`.
+fn section(entry: &str, title: &str, children: Vec<Node>) -> Node {
+    Node::Section {
+        id: format!("plugin-{entry}-{title}"),
+        title: title.to_owned(),
+        open: true,
+        children,
+    }
 }
 
-/// Everywhere and each of the person's repositories, the one shown
-/// marked: the scope `entry`'s settings show (ADR 0029), and what it
-/// means.
-fn scopes(entry: &str, view: &ViewCx<'_, LuauPluginsUi>) -> [Node; 2] {
+/// "Applies to", then everywhere and each of the person's repositories,
+/// the one shown outlined: the scope `entry`'s settings show (ADR 0029).
+fn scopes(entry: &str, view: &ViewCx<'_, LuauPluginsUi>) -> Node {
     let scope = view.scope().map(str::to_owned);
     let options = std::iter::once(None).chain(
         view.repos()
@@ -2418,12 +2518,13 @@ fn scopes(entry: &str, view: &ViewCx<'_, LuauPluginsUi>) -> [Node; 2] {
             .filter(|name| *name != crate::REPO)
             .map(|name| Some(name.to_owned())),
     );
-    let switch = Node::row(options.map(|option| {
-        let label = option.clone().unwrap_or_else(|| "Everywhere".into());
+    let mut row = vec![Node::text("Applies to"), Node::Spacer];
+    row.extend(options.map(|option| {
+        let label = option.clone().unwrap_or_else(|| "everywhere".into());
         if option == scope {
-            return Node::Pill {
-                text: label,
-                tone: Tone::Info,
+            return Node::Stamp {
+                label,
+                tone: Ink::Bright,
             };
         }
         let to = match &option {
@@ -2432,14 +2533,11 @@ fn scopes(entry: &str, view: &ViewCx<'_, LuauPluginsUi>) -> [Node; 2] {
         };
         Node::Link { label, to }
     }));
-    let means = match &scope {
-        Some(repo) => format!("Runs in {repo} use these."),
-        None => "Every repository without its own copy uses these.".to_owned(),
-    };
-    [switch, Node::text(means)]
+    Node::Row { children: row }
 }
 
-/// The chats writing plugins, newest first, each opening its run.
+/// The chats writing plugins, newest first, a ruled row each, opening
+/// its run.
 fn chats(view: &ViewCx<'_, LuauPluginsUi>) -> Node {
     let runs: Vec<RunInfo> = view
         .runs()
@@ -2447,30 +2545,42 @@ fn chats(view: &ViewCx<'_, LuauPluginsUi>) -> Node {
         .map(|(run, _)| run)
         .filter(|run| run.repo == crate::REPO && !run.title.is_empty())
         .collect();
-    let mut list = vec![Node::Heading {
-        text: "Chats".into(),
-    }];
-    if runs.is_empty() {
-        list.push(Node::text("None yet."));
-    }
-    list.extend(runs.into_iter().map(|run| {
+    let title = match runs.len() {
+        0 => "Chats".to_owned(),
+        count => format!("Chats · {count}"),
+    };
+    let mut list = ruled(runs.into_iter().map(|run| {
         Node::row([
-            Node::Status {
-                text: run.title.clone(),
-                detail: None,
-                tone: if run.live { Tone::Good } else { Tone::Neutral },
+            mark(if run.live {
+                MarkState::Working
+            } else {
+                MarkState::Idle
+            }),
+            Node::Rich {
+                text: format!("**{}**", run.title),
             },
             Node::Spacer,
             Node::Button {
-                label: "Open".into(),
+                label: "open".into(),
                 action: OPEN_RUN.into(),
                 args: json!({ "run": run.id.0.to_string() }),
                 kind: Kind::Secondary,
                 icon: None,
+                size: Default::default(),
             },
         ])
     }));
-    Node::stack(list)
+    if list.is_empty() {
+        list.push(Node::Empty {
+            text: "None yet.".into(),
+        });
+    }
+    Node::Section {
+        id: "plugins-chats".into(),
+        title,
+        open: true,
+        children: list,
+    }
 }
 
 /// `/plugin <what>`: a chat in the plugins repository, with the skill

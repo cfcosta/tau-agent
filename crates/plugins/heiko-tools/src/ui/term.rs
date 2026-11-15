@@ -1,8 +1,8 @@
 //! A command's terminal, from the `term` details of its updates and
 //! result (`docs/reference/tools.md`, "exec_command and write_stdin").
 
-use serde_json::Value;
 use heiko_ui_plugin::CallData;
+use serde_json::Value;
 
 /// The size tool output runs at, which a command's terminal has until
 /// its result says otherwise: 120 columns by 40 rows.

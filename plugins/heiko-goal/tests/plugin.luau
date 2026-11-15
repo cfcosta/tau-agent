@@ -81,6 +81,10 @@ t.case("a goal stops when out of continuations or budget", function()
 	t.equal(r.state.goal.status, "stopped")
 	t.equal(r.state.goal.exhausted, "continuations")
 	t.equal(r.state.notes.g2.text, "stopped the goal: out of continuations, and it is not met")
+	-- The note it stopped at draws the goal's mark, and the way on.
+	local stopped = json.encode(r:view().notes.g2)
+	t.equal(string.find(stopped, "Goal stopped, not met", 1, true) ~= nil, true, stopped)
+	t.equal(string.find(stopped, "raise the limit", 1, true) ~= nil, true, stopped)
 
 	-- Out of budget: each turn costs $0.25 of $0.30.
 	local b = run({ jev = jev({ 0.1 }) })
@@ -193,10 +197,10 @@ t.property("the banner's buttons follow the goal", function(draw)
 	local r = run({ state = state, jev = jev({ 0.5 }) })
 	local banner = json.encode(r:view().banner)
 	local labels = {
-		active = { "Pause", "Edit", "Clear" },
-		paused = { "Resume", "Edit", "Clear" },
-		met = { "New goal", "Clear" },
-		stopped = { "Keep going · +10", "Edit", "Clear" },
+		active = { "pause", "edit", "clear" },
+		paused = { "resume", "edit", "clear" },
+		met = { "new goal", "clear" },
+		stopped = { "raise the limit", "edit", "clear" },
 	}
 	for _, label in ipairs(labels[status]) do
 		t.equal(string.find(banner, '"label":"' .. label .. '"', 1, true) ~= nil, true, label)

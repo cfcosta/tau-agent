@@ -124,7 +124,7 @@
                   "text": "1. Should the person edit a document in place?"
                 }
               ],
-              "piece": "card"
+              "piece": "stack"
             },
             {
               "action": "open",
@@ -134,7 +134,7 @@
                 "revision": 2
               },
               "kind": "secondary",
-              "label": "Open on the canvas",
+              "label": "open on the canvas",
               "piece": "button"
             }
           ],
@@ -171,7 +171,7 @@
                 "revision": 1
               },
               "kind": "secondary",
-              "label": "Open on the canvas",
+              "label": "open on the canvas",
               "piece": "button"
             }
           ],
@@ -213,7 +213,7 @@
                   "text": "1. Should the person edit a document in place?"
                 }
               ],
-              "piece": "card"
+              "piece": "stack"
             },
             {
               "action": "open",
@@ -223,7 +223,7 @@
                 "revision": 1
               },
               "kind": "secondary",
-              "label": "Open on the canvas",
+              "label": "open on the canvas",
               "piece": "button"
             }
           ],
@@ -242,15 +242,8 @@
           {
             "children": [
               {
-                "action": "pick",
-                "args": {
-                  "fresh": 3,
-                  "item": 1,
-                  "revision": 1
-                },
-                "kind": "primary",
-                "label": "Image · Retry latency",
-                "piece": "button"
+                "piece": "rich",
+                "text": "**Retry latency**"
               },
               {
                 "action": "pick",
@@ -260,7 +253,7 @@
                   "revision": 2
                 },
                 "kind": "secondary",
-                "label": "Document · Canvas plan",
+                "label": "Canvas plan",
                 "piece": "button"
               }
             ],
@@ -283,7 +276,7 @@
                 "piece": "image"
               },
               {
-                "piece": "text",
+                "piece": "heading",
                 "text": "p50 and p99 latency per attempt, before and after the backoff change"
               },
               {

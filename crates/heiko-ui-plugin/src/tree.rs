@@ -26,22 +26,25 @@ use serde_json::{Map, Value};
 use heiko_ui_kit::{
     assets::Icon,
     components::{
+        BlockSize,
         ButtonKind,
+        SquareStyle,
+        State,
         button,
-        dot,
         empty,
         field,
         heading,
         icon,
+        link,
         mono,
         qr_code,
         rule,
+        section_header,
         stamp,
-        status_mark,
         text_link,
     },
     prose::{markdown, rich},
-    theme::{self, Design as _, IconSize, Theme, Type, radius, sp},
+    theme::{self, Design as _, IconSize, Theme, Type, sp},
 };
 
 use crate::Link;
@@ -87,16 +90,146 @@ pub enum Kind {
     #[default]
     Secondary,
     Danger,
+    /// One that needs the person: a small block in the offset print.
+    Hot,
 }
 
 impl From<Kind> for ButtonKind {
     fn from(kind: Kind) -> Self {
         match kind {
-            Kind::Primary => ButtonKind::Primary,
+            Kind::Primary | Kind::Hot => ButtonKind::Primary,
             Kind::Secondary => ButtonKind::Secondary,
             Kind::Danger => ButtonKind::Danger,
         }
     }
+}
+
+/// How big a primary [`Node::Button`] is, by name on the wire.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum ButtonSize {
+    /// In a header or a list.
+    #[default]
+    Small,
+    /// Beside a composer.
+    Medium,
+    /// A screen's main action.
+    Large,
+}
+
+impl From<ButtonSize> for BlockSize {
+    fn from(size: ButtonSize) -> Self {
+        match size {
+            ButtonSize::Small => BlockSize::Small,
+            ButtonSize::Medium => BlockSize::Medium,
+            ButtonSize::Large => BlockSize::Large,
+        }
+    }
+}
+
+/// Whether a value is what a builder leaves out, and so is not written.
+fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
+}
+
+/// The color a mark, a stamp, a square or a slip is printed in, by name
+/// on the wire: one of the tones, or one of the palette's other colors.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum Ink {
+    #[default]
+    Neutral,
+    Good,
+    Warn,
+    Bad,
+    Info,
+    Teal,
+    Cyan,
+    Purple,
+    Yellow,
+    Bright,
+}
+
+impl Ink {
+    /// The tone it is, when it is one.
+    fn tone(self) -> Option<theme::Tone> {
+        Some(match self {
+            Ink::Neutral => theme::Tone::Quiet,
+            Ink::Good => theme::Tone::Good,
+            Ink::Warn => theme::Tone::Warn,
+            Ink::Bad => theme::Tone::Danger,
+            Ink::Info => theme::Tone::Info,
+            Ink::Teal | Ink::Cyan | Ink::Purple | Ink::Yellow | Ink::Bright => {
+                return None;
+            }
+        })
+    }
+
+    /// The color a stamp or a slip is outlined in: its tone's, or its
+    /// own.
+    fn outline(self, t: &Theme) -> gpui::Hsla {
+        self.tone().map_or_else(|| self.color(t), |tone| t.tone(tone))
+    }
+
+    /// Its color; neutral is the dim of small print.
+    fn color(self, t: &Theme) -> gpui::Hsla {
+        match self {
+            Ink::Neutral => t.dim,
+            Ink::Teal => t.roles.memory,
+            Ink::Cyan => t.roles.agent,
+            Ink::Purple => t.change,
+            Ink::Yellow => t.roles.cost,
+            Ink::Bright => t.bright,
+            Ink::Good => t.tone(theme::Tone::Good),
+            Ink::Warn => t.tone(theme::Tone::Warn),
+            Ink::Bad => t.tone(theme::Tone::Danger),
+            Ink::Info => t.tone(theme::Tone::Info),
+        }
+    }
+}
+
+/// The state a [`Node::Mark`] shows, by name on the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MarkState {
+    Working,
+    Asks,
+    Failing,
+    Met,
+    Limit,
+    Cap,
+    Idle,
+}
+
+impl From<MarkState> for State {
+    fn from(state: MarkState) -> Self {
+        match state {
+            MarkState::Working => State::Working,
+            MarkState::Asks => State::Asks,
+            MarkState::Failing => State::Failing,
+            MarkState::Met => State::Met,
+            MarkState::Limit => State::Limit,
+            MarkState::Cap => State::Cap,
+            MarkState::Idle => State::Idle,
+        }
+    }
+}
+
+/// How a [`Node::Square`] is drawn, by name on the wire: not reached yet,
+/// outlined in its color, or filled with it.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum SquareLook {
+    #[default]
+    Quiet,
+    Outlined,
+    Filled,
 }
 
 /// A line of [`Node::Rows`].
@@ -120,8 +253,20 @@ pub enum Node {
     Mono {
         text: String,
     },
+    /// A small label over a group, in `tone` when given.
     Heading {
         text: String,
+        #[serde(default, skip_serializing_if = "is_default")]
+        tone: Ink,
+    },
+    /// A section's head, which does not fold: its title over the heavy
+    /// rule, `meta` in small print at the right, then `actions`.
+    Header {
+        title: String,
+        #[serde(default)]
+        meta: Option<String>,
+        #[serde(default, deserialize_with = "nodes")]
+        actions: Vec<Node>,
     },
     /// Markdown, as a model's reply draws: paragraphs, lists, code,
     /// tables, links that open in the browser.
@@ -139,13 +284,13 @@ pub enum Node {
         #[serde(default)]
         tone: Tone,
     },
-    /// A filled label: a count, a state.
+    /// A word or two in a tone, with no frame: a count, a state.
     Pill {
         text: String,
         #[serde(default)]
         tone: Tone,
     },
-    /// A dot, a line and small print: a plugin's status.
+    /// A mark, a line and small print: a plugin's status.
     Status {
         text: String,
         #[serde(default)]
@@ -178,7 +323,7 @@ pub enum Node {
         #[serde(default, deserialize_with = "nodes")]
         items: Vec<Node>,
     },
-    /// A bar `share` of the way full, from 0 to 1.
+    /// A strip of ticks `share` of the way lit, from 0 to 1.
     Progress {
         #[serde(default)]
         share: f64,
@@ -220,8 +365,20 @@ pub enum Node {
     },
     /// A line across.
     Rule,
-    /// Pieces in a card: a framed group.
+    /// Pieces in a group of their own, under a hairline.
     Card {
+        #[serde(default, deserialize_with = "nodes")]
+        children: Vec<Node>,
+    },
+    /// Pieces one under the other on the flat darker plane, padded: a
+    /// result.
+    Band {
+        #[serde(default, deserialize_with = "nodes")]
+        children: Vec<Node>,
+    },
+    /// Pieces one under the other, a line down the left joining the
+    /// squares they start with: the steps of a change, a queue.
+    Rail {
         #[serde(default, deserialize_with = "nodes")]
         children: Vec<Node>,
     },
@@ -326,11 +483,20 @@ pub enum Node {
         key: String,
         fetch: Value,
     },
-    /// A unified diff, its lines colored as `path`'s language when known.
+    /// A unified diff, each line after its number in its version of the
+    /// file, colored as `path`'s language when known.
     Diff {
         text: String,
         #[serde(default)]
         path: Option<String>,
+    },
+    /// One line of code, the `spans` of it on a flat blue ground: a line
+    /// a search found, and where. A span is the first and last byte it
+    /// covers, counted from 1.
+    Marked {
+        text: String,
+        #[serde(default)]
+        spans: Vec<(u32, u32)>,
     },
     /// What a program drew on a terminal of `cols` by `rows`, as the bytes
     /// it wrote (or a replay of them); `live` while it is still writing.
@@ -406,6 +572,7 @@ pub enum Node {
     },
     /// A button that asks the plugin to carry out `action` with `args`.
     /// With no label and an icon, a small square around the icon.
+    /// `size` is a primary button's.
     Button {
         label: String,
         action: String,
@@ -415,6 +582,8 @@ pub enum Node {
         kind: Kind,
         #[serde(default)]
         icon: Option<String>,
+        #[serde(default, skip_serializing_if = "is_default")]
+        size: ButtonSize,
     },
     /// Text that opens a page.
     Link {
@@ -435,6 +604,67 @@ pub enum Node {
     Field {
         #[serde(flatten)]
         rest: Map<String, Value>,
+    },
+    /// A quantity: `total` square ticks, the first `lit` of them in
+    /// `tone`, those at the indexes in `marked` (from 0) white, as
+    /// thresholds on the strip.
+    Ticks {
+        #[serde(default)]
+        lit: u32,
+        total: u32,
+        #[serde(default)]
+        tone: Ink,
+        #[serde(default)]
+        marked: Vec<u32>,
+    },
+    /// The small mark of a state; with a `count` above one, the count
+    /// before it.
+    Mark {
+        state: MarkState,
+        #[serde(default)]
+        count: Option<u32>,
+    },
+    /// A word or two in mono, outlined in `tone`: `exit 0`, `queued`.
+    Stamp {
+        label: String,
+        #[serde(default)]
+        tone: Ink,
+    },
+    /// A small square holding a number or a letter: a step, a check, a
+    /// place in a queue. With an `action`, the plugin's own, a click
+    /// carries it out with `args`: a segment, a toggle.
+    Square {
+        label: String,
+        #[serde(default)]
+        style: SquareLook,
+        #[serde(default)]
+        tone: Ink,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        action: Option<String>,
+        #[serde(default, skip_serializing_if = "Value::is_null")]
+        args: Value,
+    },
+    /// A note or an id on a label outlined in `tone`; `dashed` for one
+    /// proposed, not kept yet. With `to`, a click opens that page.
+    Slip {
+        text: String,
+        #[serde(default)]
+        tone: Ink,
+        #[serde(default)]
+        dashed: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to: Option<Link>,
+    },
+    /// A big number or time, in the display face.
+    Figure {
+        text: String,
+    },
+    /// A large glyph in the display face, in `tone`: the mark beside a
+    /// note.
+    Kanji {
+        text: String,
+        #[serde(default)]
+        tone: Ink,
     },
     /// A piece that did not read, and why.
     #[serde(skip_deserializing)]
@@ -509,11 +739,9 @@ impl gpui::Render for DraggedCard {
             .w(gpui::px(BOARD_COLUMN))
             .px(sp(3.))
             .py(sp(2.5))
-            .rounded(radius::CARD)
             .bg(bg)
-            .border_1()
+            .border_2()
             .border_color(border)
-            .shadow_lg()
             .text_color(text)
             .typeset(Type::SMALL)
             .truncate()
@@ -529,7 +757,7 @@ fn card_title(children: &[Node]) -> String {
             Node::Text { text }
             | Node::Rich { text }
             | Node::Mono { text }
-            | Node::Heading { text }
+            | Node::Heading { text, .. }
             | Node::Title { text, .. } => Some(text.clone()),
             Node::Row { children } | Node::Stack { children } => {
                 Some(card_title(children)).filter(|title| !title.is_empty())
@@ -913,15 +1141,17 @@ impl<'a> Draw<'a> {
                             title: card_title(&card.children),
                             colors: (t.panel, t.border_strong, t.text),
                         };
-                        heiko_ui_kit::components::card(t)
+                        div()
                             .id(SharedString::from(format!("{at}:card")))
                             .debug_selector(selector("board-card", &card.id))
                             .w_full()
                             .flex()
                             .flex_col()
                             .gap(sp(1.5))
-                            .px(sp(3.))
                             .py(sp(2.5))
+                            .border_b_1()
+                            .border_color(t.hairline)
+                            .overflow_hidden()
                             .children(self.children(
                                 &card.children,
                                 depth + 1,
@@ -969,18 +1199,19 @@ impl<'a> Draw<'a> {
                     .min_w(gpui::px(BOARD_COLUMN))
                     .flex()
                     .flex_col()
-                    .gap(sp(2.))
-                    .p(sp(2.))
-                    .rounded(radius::CARD)
-                    .bg(t.raised)
+                    .px(sp(2.))
+                    // Seen only while a card is dragged over it.
                     .border_1()
-                    .border_color(t.border)
+                    .border_color(gpui::transparent_black())
                     .child(
                         div()
                             .flex()
-                            .items_center()
+                            .items_baseline()
                             .gap(sp(2.))
-                            .px(sp(1.))
+                            .py(sp(2.))
+                            .border_b_2()
+                            .border_color(t.rule)
+                            .text_color(t.bright)
                             .child(
                                 div()
                                     .typeset(Type::SMALL)
@@ -1010,12 +1241,12 @@ impl<'a> Draw<'a> {
             .w_full()
             .flex()
             .items_start()
-            .gap(sp(3.))
+            .gap(sp(4.))
             .children(drawn)
             .into_any_element()
     }
 
-    /// A graph: its edges painted under its nodes, each node a dot with
+    /// A graph: its edges painted under its nodes, each node a square with
     /// its label, opening its page when it has one.
     fn graph(
         &self,
@@ -1087,7 +1318,6 @@ impl<'a> Draw<'a> {
                         .child(
                             div()
                                 .size(rems(size / 16.))
-                                .rounded(rems((size / 2.) / 16.))
                                 .bg(color)
                                 .border_2()
                                 .border_color(t.panel),
@@ -1146,7 +1376,12 @@ impl<'a> Draw<'a> {
             | Node::Badge { .. }
             | Node::Pill { .. }
             | Node::Button { .. }
-            | Node::Link { .. } => div().flex().child(drawn).into_any_element(),
+            | Node::Link { .. }
+            | Node::Mark { .. }
+            | Node::Stamp { .. }
+            | Node::Square { .. } => {
+                div().flex().child(drawn).into_any_element()
+            }
             _ => drawn,
         }
     }
@@ -1176,7 +1411,32 @@ impl<'a> Draw<'a> {
                 mono(text.clone(), Type::CAPTION, t.text_soft)
                     .into_any_element()
             }
-            Node::Heading { text } => heading(text, t).into_any_element(),
+            Node::Heading { text, tone } => heading(text, t)
+                .text_color(tone.color(t))
+                .into_any_element(),
+            Node::Header {
+                title,
+                meta,
+                actions,
+            } => {
+                let actions = self.children(actions, depth, path, cx);
+                section_header(
+                    title.clone(),
+                    meta.clone().map(SharedString::from),
+                    t,
+                )
+                .when(!actions.is_empty(), |head| {
+                    head.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .flex_shrink_0()
+                            .gap(sp(3.))
+                            .children(actions),
+                    )
+                })
+                .into_any_element()
+            }
             Node::Markdown { text } => div()
                 .typeset(Type::SMALL)
                 .child(markdown(path, text, t.text_soft, t))
@@ -1199,13 +1459,27 @@ impl<'a> Draw<'a> {
                     Tone::Neutral => t.text_soft,
                     tone => t.tone((*tone).into()),
                 };
-                status_mark(text.clone(), color).into_any_element()
+                mono(text.clone(), Type::CAPTION, color)
+                    .flex_shrink_0()
+                    .whitespace_nowrap()
+                    .into_any_element()
             }
             Node::Status { text, detail, tone } => div()
                 .flex()
                 .items_center()
                 .gap(sp(2.))
-                .child(dot(t.tone((*tone).into()), 7.))
+                .child(match tone {
+                    Tone::Good => status_state(State::Met, t),
+                    Tone::Warn => status_state(State::Asks, t),
+                    Tone::Bad => status_state(State::Failing, t),
+                    Tone::Neutral => status_state(State::Idle, t),
+                    // Nothing to act on: a flat square in the tone.
+                    Tone::Info => div()
+                        .size(sp(2.))
+                        .flex_shrink_0()
+                        .bg(t.tone((*tone).into()))
+                        .into_any_element(),
+                })
                 .child(
                     div()
                         .typeset(Type::SMALL)
@@ -1292,7 +1566,10 @@ impl<'a> Draw<'a> {
                 )
                 .into_any_element(),
             Node::Progress { share, label } => {
-                let share = share.clamp(0., 1.) as f32;
+                let share = share.clamp(0., 1.);
+                let lit = (share * PROGRESS_TICKS as f64).round() as usize;
+                // Any share above none lights a tick.
+                let lit = if share > 0. { lit.max(1) } else { 0 };
                 div()
                     .flex()
                     .flex_col()
@@ -1300,20 +1577,12 @@ impl<'a> Draw<'a> {
                     .when_some(label.clone(), |column, label| {
                         column.child(mono(label, Type::CAPTION, t.dim))
                     })
-                    .child(
-                        div()
-                            .w_full()
-                            .h(rems(0.375))
-                            .rounded(radius::SMALL)
-                            .bg(t.raised)
-                            .child(
-                                div()
-                                    .h_full()
-                                    .w(relative(share))
-                                    .rounded(radius::SMALL)
-                                    .bg(t.accent),
-                            ),
-                    )
+                    .child(heiko_ui_kit::components::ticks(
+                        lit,
+                        PROGRESS_TICKS,
+                        t.accent,
+                        t,
+                    ))
                     .into_any_element()
             }
             Node::Code {
@@ -1365,13 +1634,18 @@ impl<'a> Draw<'a> {
                 .into_any_element(),
             Node::Rule => rule(t).into_any_element(),
             Node::Card { children } => heiko_ui_kit::components::card(t)
-                .flex()
-                .flex_col()
                 .gap(sp(2.))
-                .px(sp(3.5))
                 .py(sp(3.))
                 .children(self.children(children, depth, path, cx))
                 .into_any_element(),
+            Node::Band { children } => heiko_ui_kit::components::band(t)
+                .children(self.children(children, depth, path, cx))
+                .into_any_element(),
+            Node::Rail { children } => heiko_ui_kit::components::rail(
+                self.children(children, depth, path, cx),
+                t,
+            )
+            .into_any_element(),
             Node::Switch {
                 label,
                 detail,
@@ -1421,27 +1695,11 @@ impl<'a> Draw<'a> {
                     .and_then(|ui| ui.get(&key))
                     .and_then(Value::as_bool)
                     .unwrap_or(*open);
-                let head = div()
+                let turn: &'static str = if open { "hide" } else { "show" };
+                let head = section_header(title.clone(), Some(turn.into()), t)
                     .id(SharedString::from(format!("{path}:section")))
                     .debug_selector(selector("section", title))
-                    .flex()
-                    .items_center()
-                    .gap(sp(2.))
                     .cursor_pointer()
-                    .child(icon(
-                        if open { Icon::Down } else { Icon::Chevron },
-                        IconSize::TINY,
-                        t.dim,
-                    ))
-                    // Plain small text, not a heading: a title is often
-                    // data, which capitals make hard to read.
-                    .child(
-                        div()
-                            .min_w(rems(0.))
-                            .typeset(Type::SMALL)
-                            .text_color(t.text_soft)
-                            .child(title.clone()),
-                    )
                     .when_some(
                         self.click(Act::Ui {
                             key,
@@ -1452,7 +1710,7 @@ impl<'a> Draw<'a> {
                 div()
                     .flex()
                     .flex_col()
-                    .gap(sp(2.))
+                    .gap(sp(3.))
                     .child(head)
                     .when(open, |column| {
                         column
@@ -1468,7 +1726,7 @@ impl<'a> Draw<'a> {
                     .and_then(Value::as_u64)
                     .map_or(0, |n| n as usize)
                     .min(tabs.len().saturating_sub(1));
-                let bar = div().flex().flex_wrap().gap(sp(0.5)).children(
+                let bar = div().flex().flex_wrap().gap(sp(5.)).children(
                     tabs.iter().take(MAX_CHILDREN).enumerate().map(
                         |(n, tab)| {
                             let on = n == chosen;
@@ -1477,13 +1735,16 @@ impl<'a> Draw<'a> {
                                     "{path}:tab{n}"
                                 )))
                                 .debug_selector(selector("tab", &tab.label))
-                                .px(sp(3.))
-                                .py(sp(1.5))
-                                .rounded(radius::SMALL)
+                                .pb(sp(1.))
+                                .border_b_2()
+                                .border_color(if on {
+                                    t.rule
+                                } else {
+                                    gpui::transparent_black()
+                                })
                                 .cursor_pointer()
-                                .typeset(Type::CAPTION)
-                                .text_color(if on { t.text } else { t.dim })
-                                .when(on, |tab| tab.bg(t.raised))
+                                .typeset(Type::SMALL)
+                                .text_color(if on { t.bright } else { t.dim })
                                 .child(tab.label.clone())
                                 .when_some(
                                     self.click(Act::Ui {
@@ -1608,12 +1869,24 @@ impl<'a> Draw<'a> {
                 },
                 None => invalid("a fetched tree, drawn where one is kept", t),
             },
-            Node::Diff { text, path } => heiko_ui_kit::diff::view(
+            Node::Diff { text, path } => heiko_ui_kit::diff::numbered(
                 &heiko_ui_kit::diff::parse(text),
+                Some(&heiko_ui_kit::diff::line_numbers(text)),
                 path.as_deref().and_then(heiko_ui_kit::syntax::Lang::of_path),
                 t,
             )
             .into_any_element(),
+            Node::Marked { text, spans } => {
+                let marked: Vec<std::ops::Range<usize>> = spans
+                    .iter()
+                    .take(MAX_CHILDREN)
+                    .map(|(from, to)| {
+                        from.saturating_sub(1) as usize..*to as usize
+                    })
+                    .collect();
+                heiko_ui_kit::components::marked_line(text, &marked, t)
+                    .into_any_element()
+            }
             Node::Terminal {
                 id,
                 text,
@@ -1644,23 +1917,22 @@ impl<'a> Draw<'a> {
                     if !*fold {
                         return screen;
                     }
-                    let toggle = div()
-                        .id(SharedString::from(format!("{path}:expand")))
-                        .debug_selector(selector(
-                            "button",
-                            if expanded { "show less" } else { "show all" },
-                        ))
-                        .cursor_pointer()
-                        .typeset(Type::CAPTION)
-                        .text_color(t.dim)
-                        .child(if expanded { "show less" } else { "show all" })
-                        .when_some(
-                            self.click(Act::Ui {
-                                key,
-                                value: Some(Value::Bool(!expanded)),
-                            }),
-                            |toggle, click| toggle.on_click(click),
-                        );
+                    let toggle = link(
+                        if expanded { "show less" } else { "show all" },
+                        t,
+                    )
+                    .id(SharedString::from(format!("{path}:expand")))
+                    .debug_selector(selector(
+                        "button",
+                        if expanded { "show less" } else { "show all" },
+                    ))
+                    .when_some(
+                        self.click(Act::Ui {
+                            key,
+                            value: Some(Value::Bool(!expanded)),
+                        }),
+                        |toggle, click| toggle.on_click(click),
+                    );
                     div()
                         .flex()
                         .flex_col()
@@ -1761,18 +2033,16 @@ impl<'a> Draw<'a> {
                     .gap(sp(3.))
                     .p(sp(5.))
                     .bg(t.panel)
-                    .border_1()
+                    .border_2()
                     .border_color(t.border_strong)
-                    .rounded(radius::CARD)
-                    .shadow_lg()
                     // A click on it stays in it.
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                         cx.stop_propagation()
                     })
                     .child(
                         div()
-                            .typeset(Type::SUBTITLE)
-                            .font_weight(heiko_ui_kit::theme::weight::STRONG)
+                            .typeset(Type::SECTION.sized(17.))
+                            .text_color(t.bright)
                             .child(title.clone()),
                     )
                     .children(self.children(children, depth, path, cx));
@@ -1864,7 +2134,6 @@ impl<'a> Draw<'a> {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded(radius::SMALL)
                     .hover(|style| style.bg(t.raised))
                     .child(icon(glyph, IconSize::SMALL, t.dim))
                     .when_some(
@@ -1881,17 +2150,34 @@ impl<'a> Draw<'a> {
                 action,
                 args,
                 kind,
+                size,
                 ..
             } => match self.click(Act::Plugin {
                 action: action.clone(),
                 args: args.clone(),
             }) {
-                Some(click) => button(label.clone(), (*kind).into(), t)
-                    .id(SharedString::from(format!("{path}:button")))
-                    .debug_selector(selector("button", label))
-                    .on_click(click)
-                    .into_any_element(),
-                None => stamp(label.clone(), theme::Tone::Quiet, t)
+                Some(click) => match kind {
+                    Kind::Primary => heiko_ui_kit::components::primary_block(
+                        label.clone(),
+                        (*size).into(),
+                        t,
+                    ),
+                    Kind::Hot => {
+                        heiko_ui_kit::components::hot_action(label.clone(), t)
+                            .typeset(Type::SMALL)
+                    }
+                    Kind::Secondary | Kind::Danger => {
+                        button(label.clone(), (*kind).into(), t)
+                    }
+                }
+                .id(SharedString::from(format!("{path}:button")))
+                .debug_selector(selector("button", label))
+                .on_click(click)
+                .into_any_element(),
+                None => div()
+                    .typeset(Type::SMALL)
+                    .text_color(t.dim)
+                    .child(label.clone())
                     .into_any_element(),
             },
             Node::Link { label, to } => {
@@ -1903,7 +2189,7 @@ impl<'a> Draw<'a> {
                         .into_any_element(),
                     None => div()
                         .typeset(Type::SMALL)
-                        .text_color(t.accent)
+                        .text_color(t.text)
                         .child(label.clone())
                         .into_any_element(),
                 }
@@ -1911,9 +2197,137 @@ impl<'a> Draw<'a> {
             Node::Toggle { .. } | Node::Choice { .. } | Node::Field { .. } => {
                 invalid("a setting, drawn on a settings page only", t)
             }
+            Node::Ticks {
+                lit,
+                total,
+                tone,
+                marked,
+            } => {
+                let total = (*total as usize).clamp(1, MAX_TICKS);
+                let marked: Vec<usize> =
+                    marked.iter().map(|at| *at as usize).collect();
+                // It takes the room a row gives it, and never less than
+                // its ticks need.
+                div()
+                    .flex_1()
+                    .min_w(rems(6.))
+                    .child(heiko_ui_kit::components::marked_ticks(
+                        (*lit as usize).min(total),
+                        total,
+                        tone.color(t),
+                        &marked,
+                        t,
+                    ))
+                    .into_any_element()
+            }
+            Node::Mark { state, count } => match count {
+                Some(count) => heiko_ui_kit::components::counted_mark(
+                    *count as usize,
+                    (*state).into(),
+                    t,
+                )
+                .into_any_element(),
+                None => heiko_ui_kit::components::mark((*state).into(), t)
+                    .into_any_element(),
+            },
+            Node::Stamp { label, tone } => {
+                heiko_ui_kit::components::stamp_in(
+                    label.clone(),
+                    tone.outline(t),
+                    t,
+                )
+                .into_any_element()
+            }
+            Node::Square {
+                label,
+                style,
+                tone,
+                action,
+                args,
+            } => {
+                let color = match tone {
+                    Ink::Neutral => t.slate,
+                    tone => tone.color(t),
+                };
+                let square = heiko_ui_kit::components::square(
+                    label.clone(),
+                    match style {
+                        SquareLook::Quiet => SquareStyle::Quiet,
+                        SquareLook::Outlined => SquareStyle::Outlined(color),
+                        SquareLook::Filled => SquareStyle::Filled(color),
+                    },
+                    t,
+                );
+                let click = action.clone().and_then(|action| {
+                    self.click(Act::Plugin {
+                        action,
+                        args: args.clone(),
+                    })
+                });
+                match click {
+                    Some(click) => square
+                        .id(SharedString::from(format!("{path}:square")))
+                        .debug_selector(selector("square", label))
+                        .cursor_pointer()
+                        .on_click(click)
+                        .into_any_element(),
+                    None => square.into_any_element(),
+                }
+            }
+            Node::Slip {
+                text,
+                tone,
+                dashed,
+                to,
+            } => {
+                let slip = heiko_ui_kit::components::slip_in(
+                    text.clone(),
+                    tone.outline(t),
+                    *dashed,
+                    t,
+                );
+                let click =
+                    to.clone().and_then(|to| self.click(Act::Navigate(to)));
+                match click {
+                    // In a row, so only the slip takes the click.
+                    Some(click) => div()
+                        .flex()
+                        .child(
+                            slip.id(SharedString::from(format!("{path}:slip")))
+                                .debug_selector(selector("slip", text))
+                                .cursor_pointer()
+                                .on_click(click),
+                        )
+                        .into_any_element(),
+                    None => slip.into_any_element(),
+                }
+            }
+            Node::Figure { text } => {
+                heiko_ui_kit::components::big_figure(text.clone(), t)
+                    .into_any_element()
+            }
+            Node::Kanji { text, tone } => div()
+                .flex_shrink_0()
+                .typeset(Type::FIGURE.sized(46.))
+                .text_color(match tone {
+                    Ink::Neutral => t.bright,
+                    tone => tone.color(t),
+                })
+                .child(text.clone())
+                .into_any_element(),
             Node::Invalid { why } => invalid(why, t),
         }
     }
+}
+
+/// How many ticks a [`Node::Progress`] is drawn with, and the most a
+/// [`Node::Ticks`] may have.
+const PROGRESS_TICKS: usize = 20;
+const MAX_TICKS: usize = 60;
+
+/// A state's mark, as the piece before a status's line.
+fn status_state(state: State, t: &Theme) -> AnyElement {
+    heiko_ui_kit::components::mark(state, t).into_any_element()
 }
 
 /// An input drawn without an editor: its draft, as text.
@@ -1921,7 +2335,6 @@ fn field_text(draft: &str, t: &Theme) -> AnyElement {
     div()
         .px(sp(3.))
         .py(sp(2.))
-        .rounded(radius::CONTROL)
         .border_1()
         .border_color(t.border)
         .typeset(Type::SMALL)
@@ -1932,7 +2345,7 @@ fn field_text(draft: &str, t: &Theme) -> AnyElement {
 
 /// A clickable piece's name for tests (`debug_bounds`): its kind and
 /// what it says, `button:Save`, `link:Memory`, `switch:Compact idle
-/// chats`, `section:Details`, `tab:Rules`.
+/// chats`, `section:Details`, `tab:Rules`, `square:1`, `slip:a note`.
 fn selector(kind: &str, label: &str) -> impl Fn() -> String + 'static {
     let name = format!("{kind}:{label}");
     move || name.clone()
@@ -1943,7 +2356,6 @@ fn invalid(why: &str, t: &Theme) -> AnyElement {
     div()
         .px(sp(2.))
         .py(sp(1.))
-        .rounded(radius::SMALL)
         .border_1()
         .border_color(t.red_border)
         .typeset(Type::CAPTION)
@@ -2007,6 +2419,7 @@ mod tests {
                 args: json!({}),
                 kind: Kind::Secondary,
                 icon: None,
+                size: ButtonSize::Small,
             }
         );
     }
@@ -2115,6 +2528,153 @@ mod tests {
                             "multiline": true, "submit": "save", "keep": false, "secret": false, "focus": null });
         assert_eq!(Node::read(&input).value(), input);
         assert_eq!(tab_key("views"), "views.tab");
+    }
+
+    /// The pieces of the printed language read and write their wire
+    /// shape; what a builder leaves out is neutral, quiet and unmarked,
+    /// and a color or a state with no such name does not read.
+    #[test]
+    fn marks_stamps_and_ticks() {
+        let wire = json!({ "piece": "row", "children": [
+            { "piece": "kanji", "text": "憶", "tone": "teal" },
+            { "piece": "ticks", "lit": 6, "total": 21, "tone": "bad", "marked": [6, 16] },
+            { "piece": "mark", "state": "asks", "count": 3 },
+            { "piece": "stamp", "label": "exit 0", "tone": "good" },
+            { "piece": "square", "label": "1", "style": "outlined", "tone": "yellow" },
+            { "piece": "slip", "text": "Cap applies to server hints too", "tone": "teal", "dashed": true },
+            { "piece": "figure", "text": "14:00" },
+        ]});
+        let node = Node::read(&wire);
+        assert!(
+            matches!(&node, Node::Row { children } if children.iter().all(|child| !matches!(child, Node::Invalid { .. }))),
+            "{node:?}"
+        );
+        assert_eq!(node.value(), wire);
+        assert_eq!(
+            Node::read(&json!({ "piece": "ticks", "total": 10 })),
+            Node::Ticks {
+                lit: 0,
+                total: 10,
+                tone: Ink::Neutral,
+                marked: Vec::new(),
+            }
+        );
+        assert_eq!(
+            Node::read(&json!({ "piece": "square", "label": "2" })),
+            Node::Square {
+                label: "2".into(),
+                style: SquareLook::Quiet,
+                tone: Ink::Neutral,
+                action: None,
+                args: Value::Null,
+            }
+        );
+        assert_eq!(
+            Node::read(&json!({ "piece": "mark", "state": "met" })),
+            Node::Mark {
+                state: MarkState::Met,
+                count: None,
+            }
+        );
+        for bad in [
+            json!({ "piece": "mark", "state": "happy" }),
+            json!({ "piece": "stamp", "label": "x", "tone": "mauve" }),
+            json!({ "piece": "ticks", "lit": 2 }),
+        ] {
+            assert!(matches!(Node::read(&bad), Node::Invalid { .. }), "{bad}");
+        }
+    }
+
+    /// The pieces results and change lists are made of read and write
+    /// their wire shape; what a builder leaves out is not written, so a
+    /// piece from before them reads and writes as it did.
+    #[test]
+    fn headers_bands_rails_and_marked_lines() {
+        let wire = json!({ "piece": "stack", "children": [
+            { "piece": "header", "title": "Changes", "meta": "3 files", "actions": [
+                { "piece": "button", "label": "Land", "action": "land", "args": {},
+                  "kind": "hot", "icon": null },
+            ] },
+            { "piece": "heading", "text": "Recalled", "tone": "teal" },
+            { "piece": "band", "children": [
+                { "piece": "marked", "text": "let retry = after;", "spans": [[5, 9], [13, 17]] },
+            ] },
+            { "piece": "rail", "children": [
+                { "piece": "row", "children": [
+                    { "piece": "square", "label": "1", "style": "filled", "tone": "info",
+                      "action": "pick", "args": { "n": 1 } },
+                    { "piece": "text", "text": "first" },
+                ] },
+            ] },
+            { "piece": "slip", "text": "Cap applies to hints", "tone": "teal", "dashed": false,
+              "to": { "plugin": null, "page": "note", "params": { "id": "cap" } } },
+            { "piece": "button", "label": "Start", "action": "start", "args": {},
+              "kind": "primary", "icon": null, "size": "large" },
+        ]});
+        let node = Node::read(&wire);
+        let Node::Stack { children } = &node else {
+            panic!("a stack: {node:?}")
+        };
+        assert!(
+            children
+                .iter()
+                .all(|child| !matches!(child, Node::Invalid { .. })),
+            "{node:?}"
+        );
+        assert_eq!(node.value(), wire);
+        assert_eq!(
+            children[5],
+            Node::Button {
+                label: "Start".into(),
+                action: "start".into(),
+                args: json!({}),
+                kind: Kind::Primary,
+                icon: None,
+                size: ButtonSize::Large,
+            }
+        );
+        assert_eq!(
+            Node::read(&json!({ "piece": "header", "title": "Files" })),
+            Node::Header {
+                title: "Files".into(),
+                meta: None,
+                actions: Vec::new(),
+            }
+        );
+        assert_eq!(
+            Node::read(&json!({ "piece": "marked", "text": "plain" })),
+            Node::Marked {
+                text: "plain".into(),
+                spans: Vec::new(),
+            }
+        );
+        // Pieces from before these: nothing new is written for them.
+        for old in [
+            json!({ "piece": "heading", "text": "Rules" }),
+            json!({ "piece": "square", "label": "2", "style": "quiet", "tone": "neutral" }),
+            json!({ "piece": "slip", "text": "kept", "tone": "good", "dashed": false }),
+            json!({ "piece": "button", "label": "Go", "action": "go", "args": {},
+                    "kind": "secondary", "icon": null }),
+        ] {
+            let node = Node::read(&old);
+            assert!(!matches!(node, Node::Invalid { .. }), "{node:?}");
+            assert_eq!(node.value(), old);
+        }
+        assert_eq!(
+            Node::read(&json!({ "piece": "heading", "text": "Rules" })),
+            Node::Heading {
+                text: "Rules".into(),
+                tone: Ink::Neutral,
+            }
+        );
+        for bad in [
+            json!({ "piece": "button", "label": "Go", "action": "go", "size": "huge" }),
+            json!({ "piece": "heading", "text": "x", "tone": "mauve" }),
+            json!({ "piece": "marked", "text": "x", "spans": [[1]] }),
+            json!({ "piece": "header" }),
+        ] {
+            assert!(matches!(Node::read(&bad), Node::Invalid { .. }), "{bad}");
+        }
     }
 
     /// Every icon a tree can name is found by its file's name.

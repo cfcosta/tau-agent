@@ -25,7 +25,8 @@
             "reason": "Blocked by heiko-constitution: this call breaks rule R2 (\"Library code returns errors. No unwrap or expect outside tests.\"), violation probability 0.95. Change the call so it follows the rule, then try again.",
             "review": 0.3,
             "rule": "R2",
-            "score": 0.95
+            "score": 0.95,
+            "text": "Library code returns errors. No unwrap or expect outside tests."
           }
         }
       },
@@ -56,26 +57,72 @@
           "body": {
             "children": [
               {
-                "piece": "badge",
-                "text": "heiko-constitution",
+                "piece": "kanji",
+                "text": "止",
                 "tone": "bad"
               },
               {
-                "label": "Rule R2",
-                "piece": "link",
-                "to": {
-                  "page": "rules",
-                  "params": {
-                    "repo": "heiko-agent",
-                    "rule": "R2"
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "piece": "heading",
+                        "text": "Blocked by rule R2"
+                      },
+                      {
+                        "piece": "spacer"
+                      },
+                      {
+                        "label": "rule",
+                        "piece": "link",
+                        "to": {
+                          "page": "rules",
+                          "params": {
+                            "repo": "heiko-agent",
+                            "rule": "R2"
+                          },
+                          "plugin": null
+                        }
+                      }
+                    ],
+                    "piece": "row"
                   },
-                  "plugin": null
-                }
-              },
-              {
-                "label": "p(violation) 0.95 · review 0.30 · block 0.80",
-                "piece": "progress",
-                "share": 0.95
+                  {
+                    "piece": "text",
+                    "text": "Library code returns errors. No unwrap or expect outside tests."
+                  },
+                  {
+                    "children": [
+                      {
+                        "mono": false,
+                        "piece": "toned",
+                        "text": "p(violation)",
+                        "tone": "neutral"
+                      },
+                      {
+                        "piece": "spacer"
+                      },
+                      {
+                        "mono": true,
+                        "piece": "toned",
+                        "text": "0.95",
+                        "tone": "bad"
+                      }
+                    ],
+                    "piece": "row"
+                  },
+                  {
+                    "lit": 19,
+                    "marked": [
+                      6,
+                      16
+                    ],
+                    "piece": "ticks",
+                    "tone": "bad",
+                    "total": 20
+                  }
+                ],
+                "piece": "stack"
               }
             ],
             "piece": "row"
@@ -116,16 +163,8 @@
               {
                 "key": "held",
                 "value": "0"
-              },
-              {
-                "key": "Jev cost",
-                "value": "$0.000"
               }
             ]
-          },
-          {
-            "piece": "text",
-            "text": "Only the fields the model wrote are checked, such as edit.newText or exec_command.cmd. Tool output never goes to Jev."
           }
         ],
         "piece": "stack"
@@ -166,7 +205,8 @@
             "reason": "Blocked by heiko-constitution: this call breaks rule R2 (\"Library code returns errors. No unwrap or expect outside tests.\"), violation probability 0.95. Change the call so it follows the rule, then try again.",
             "review": 0.3,
             "rule": "R2",
-            "score": 0.95
+            "score": 0.95,
+            "text": "Library code returns errors. No unwrap or expect outside tests."
           }
         },
         "c5": {
@@ -215,26 +255,72 @@
           "body": {
             "children": [
               {
-                "piece": "badge",
-                "text": "heiko-constitution",
+                "piece": "kanji",
+                "text": "止",
                 "tone": "bad"
               },
               {
-                "label": "Rule R2",
-                "piece": "link",
-                "to": {
-                  "page": "rules",
-                  "params": {
-                    "repo": "heiko-agent",
-                    "rule": "R2"
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "piece": "heading",
+                        "text": "Blocked by rule R2"
+                      },
+                      {
+                        "piece": "spacer"
+                      },
+                      {
+                        "label": "rule",
+                        "piece": "link",
+                        "to": {
+                          "page": "rules",
+                          "params": {
+                            "repo": "heiko-agent",
+                            "rule": "R2"
+                          },
+                          "plugin": null
+                        }
+                      }
+                    ],
+                    "piece": "row"
                   },
-                  "plugin": null
-                }
-              },
-              {
-                "label": "p(violation) 0.95 · review 0.30 · block 0.80",
-                "piece": "progress",
-                "share": 0.95
+                  {
+                    "piece": "text",
+                    "text": "Library code returns errors. No unwrap or expect outside tests."
+                  },
+                  {
+                    "children": [
+                      {
+                        "mono": false,
+                        "piece": "toned",
+                        "text": "p(violation)",
+                        "tone": "neutral"
+                      },
+                      {
+                        "piece": "spacer"
+                      },
+                      {
+                        "mono": true,
+                        "piece": "toned",
+                        "text": "0.95",
+                        "tone": "bad"
+                      }
+                    ],
+                    "piece": "row"
+                  },
+                  {
+                    "lit": 19,
+                    "marked": [
+                      6,
+                      16
+                    ],
+                    "piece": "ticks",
+                    "tone": "bad",
+                    "total": 20
+                  }
+                ],
+                "piece": "stack"
               }
             ],
             "piece": "row"
@@ -281,16 +367,8 @@
               {
                 "key": "held",
                 "value": "0"
-              },
-              {
-                "key": "Jev cost",
-                "value": "$0.000"
               }
             ]
-          },
-          {
-            "piece": "text",
-            "text": "Only the fields the model wrote are checked, such as edit.newText or exec_command.cmd. Tool output never goes to Jev."
           }
         ],
         "piece": "stack"
@@ -331,7 +409,8 @@
             "reason": "Blocked by heiko-constitution: this call breaks rule R2 (\"Library code returns errors. No unwrap or expect outside tests.\"), violation probability 0.95. Change the call so it follows the rule, then try again.",
             "review": 0.3,
             "rule": "R2",
-            "score": 0.95
+            "score": 0.95,
+            "text": "Library code returns errors. No unwrap or expect outside tests."
           }
         },
         "c5": {
@@ -367,7 +446,8 @@
             "reason": "Never delete outside target/ or rewrite published history.",
             "review": 0.3,
             "rule": "R1",
-            "score": 0.41
+            "score": 0.41,
+            "text": "Never delete outside target/ or rewrite published history."
           }
         }
       },
@@ -400,26 +480,72 @@
           "body": {
             "children": [
               {
-                "piece": "badge",
-                "text": "heiko-constitution",
+                "piece": "kanji",
+                "text": "止",
                 "tone": "bad"
               },
               {
-                "label": "Rule R2",
-                "piece": "link",
-                "to": {
-                  "page": "rules",
-                  "params": {
-                    "repo": "heiko-agent",
-                    "rule": "R2"
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "piece": "heading",
+                        "text": "Blocked by rule R2"
+                      },
+                      {
+                        "piece": "spacer"
+                      },
+                      {
+                        "label": "rule",
+                        "piece": "link",
+                        "to": {
+                          "page": "rules",
+                          "params": {
+                            "repo": "heiko-agent",
+                            "rule": "R2"
+                          },
+                          "plugin": null
+                        }
+                      }
+                    ],
+                    "piece": "row"
                   },
-                  "plugin": null
-                }
-              },
-              {
-                "label": "p(violation) 0.95 · review 0.30 · block 0.80",
-                "piece": "progress",
-                "share": 0.95
+                  {
+                    "piece": "text",
+                    "text": "Library code returns errors. No unwrap or expect outside tests."
+                  },
+                  {
+                    "children": [
+                      {
+                        "mono": false,
+                        "piece": "toned",
+                        "text": "p(violation)",
+                        "tone": "neutral"
+                      },
+                      {
+                        "piece": "spacer"
+                      },
+                      {
+                        "mono": true,
+                        "piece": "toned",
+                        "text": "0.95",
+                        "tone": "bad"
+                      }
+                    ],
+                    "piece": "row"
+                  },
+                  {
+                    "lit": 19,
+                    "marked": [
+                      6,
+                      16
+                    ],
+                    "piece": "ticks",
+                    "tone": "bad",
+                    "total": 20
+                  }
+                ],
+                "piece": "stack"
               }
             ],
             "piece": "row"
@@ -441,7 +567,7 @@
                 "text": "R1 0.41"
               },
               {
-                "label": "Review",
+                "label": "review",
                 "piece": "link",
                 "to": {
                   "page": "rules",
@@ -490,16 +616,8 @@
               {
                 "key": "held",
                 "value": "0"
-              },
-              {
-                "key": "Jev cost",
-                "value": "$0.000"
               }
             ]
-          },
-          {
-            "piece": "text",
-            "text": "Only the fields the model wrote are checked, such as edit.newText or exec_command.cmd. Tool output never goes to Jev."
           }
         ],
         "piece": "stack"
@@ -540,7 +658,8 @@
             "reason": "Blocked by heiko-constitution: this call breaks rule R2 (\"Library code returns errors. No unwrap or expect outside tests.\"), violation probability 0.95. Change the call so it follows the rule, then try again.",
             "review": 0.3,
             "rule": "R2",
-            "score": 0.95
+            "score": 0.95,
+            "text": "Library code returns errors. No unwrap or expect outside tests."
           }
         },
         "c5": {
@@ -576,7 +695,8 @@
             "reason": "Never delete outside target/ or rewrite published history.",
             "review": 0.3,
             "rule": "R1",
-            "score": 0.41
+            "score": 0.41,
+            "text": "Never delete outside target/ or rewrite published history."
           }
         }
       },
@@ -585,6 +705,13 @@
       "notes": {
         "c0": {
           "detail": "before_stop · continuation 1 / 3",
+          "held": {
+            "hold": 1,
+            "kind": "held",
+            "max_holds": 3,
+            "rule": "R6",
+            "text": "The final answer names the tests that ran and their result."
+          },
           "text": "held the stop: the answer breaks R6 (\"The final answer names the tests that ran and their result.\")",
           "tone": "warn"
         }
@@ -620,26 +747,72 @@
           "body": {
             "children": [
               {
-                "piece": "badge",
-                "text": "heiko-constitution",
+                "piece": "kanji",
+                "text": "止",
                 "tone": "bad"
               },
               {
-                "label": "Rule R2",
-                "piece": "link",
-                "to": {
-                  "page": "rules",
-                  "params": {
-                    "repo": "heiko-agent",
-                    "rule": "R2"
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "piece": "heading",
+                        "text": "Blocked by rule R2"
+                      },
+                      {
+                        "piece": "spacer"
+                      },
+                      {
+                        "label": "rule",
+                        "piece": "link",
+                        "to": {
+                          "page": "rules",
+                          "params": {
+                            "repo": "heiko-agent",
+                            "rule": "R2"
+                          },
+                          "plugin": null
+                        }
+                      }
+                    ],
+                    "piece": "row"
                   },
-                  "plugin": null
-                }
-              },
-              {
-                "label": "p(violation) 0.95 · review 0.30 · block 0.80",
-                "piece": "progress",
-                "share": 0.95
+                  {
+                    "piece": "text",
+                    "text": "Library code returns errors. No unwrap or expect outside tests."
+                  },
+                  {
+                    "children": [
+                      {
+                        "mono": false,
+                        "piece": "toned",
+                        "text": "p(violation)",
+                        "tone": "neutral"
+                      },
+                      {
+                        "piece": "spacer"
+                      },
+                      {
+                        "mono": true,
+                        "piece": "toned",
+                        "text": "0.95",
+                        "tone": "bad"
+                      }
+                    ],
+                    "piece": "row"
+                  },
+                  {
+                    "lit": 19,
+                    "marked": [
+                      6,
+                      16
+                    ],
+                    "piece": "ticks",
+                    "tone": "bad",
+                    "total": 20
+                  }
+                ],
+                "piece": "stack"
               }
             ],
             "piece": "row"
@@ -661,7 +834,7 @@
                 "text": "R1 0.41"
               },
               {
-                "label": "Review",
+                "label": "review",
                 "piece": "link",
                 "to": {
                   "page": "rules",
@@ -710,16 +883,8 @@
               {
                 "key": "held",
                 "value": "1 of 3 (R6)"
-              },
-              {
-                "key": "Jev cost",
-                "value": "$0.000"
               }
             ]
-          },
-          {
-            "piece": "text",
-            "text": "Only the fields the model wrote are checked, such as edit.newText or exec_command.cmd. Tool output never goes to Jev."
           }
         ],
         "piece": "stack"
@@ -734,21 +899,57 @@
         "c0": {
           "children": [
             {
-              "name": "blocked",
-              "piece": "icon",
-              "tone": "warn"
+              "piece": "kanji",
+              "text": "返",
+              "tone": "yellow"
             },
             {
-              "piece": "mono",
-              "text": "heiko-constitution"
-            },
-            {
-              "piece": "text",
-              "text": "held the stop: the answer breaks R6 (\"The final answer names the tests that ran and their result.\")"
-            },
-            {
-              "piece": "mono",
-              "text": "before_stop · continuation 1 / 3"
+              "children": [
+                {
+                  "children": [
+                    {
+                      "piece": "heading",
+                      "text": "Held, sent back"
+                    },
+                    {
+                      "piece": "spacer"
+                    },
+                    {
+                      "piece": "mono",
+                      "text": "heiko-constitution"
+                    }
+                  ],
+                  "piece": "row"
+                },
+                {
+                  "piece": "text",
+                  "text": "R6: The final answer names the tests that ran and their result."
+                },
+                {
+                  "children": [
+                    {
+                      "label": "1",
+                      "piece": "square",
+                      "style": "outlined",
+                      "tone": "yellow"
+                    },
+                    {
+                      "label": "2",
+                      "piece": "square",
+                      "style": "quiet",
+                      "tone": "yellow"
+                    },
+                    {
+                      "label": "3",
+                      "piece": "square",
+                      "style": "quiet",
+                      "tone": "yellow"
+                    }
+                  ],
+                  "piece": "row"
+                }
+              ],
+              "piece": "stack"
             }
           ],
           "piece": "row"
@@ -788,7 +989,8 @@
             "reason": "Blocked by heiko-constitution: this call breaks rule R2 (\"Library code returns errors. No unwrap or expect outside tests.\"), violation probability 0.95. Change the call so it follows the rule, then try again.",
             "review": 0.3,
             "rule": "R2",
-            "score": 0.95
+            "score": 0.95,
+            "text": "Library code returns errors. No unwrap or expect outside tests."
           }
         },
         "c5": {
@@ -824,7 +1026,8 @@
             "reason": "Never delete outside target/ or rewrite published history.",
             "review": 0.3,
             "rule": "R1",
-            "score": 0.41
+            "score": 0.41,
+            "text": "Never delete outside target/ or rewrite published history."
           }
         }
       },
@@ -833,6 +1036,13 @@
       "notes": {
         "c0": {
           "detail": "before_stop · continuation 1 / 3",
+          "held": {
+            "hold": 1,
+            "kind": "held",
+            "max_holds": 3,
+            "rule": "R6",
+            "text": "The final answer names the tests that ran and their result."
+          },
           "text": "held the stop: the answer breaks R6 (\"The final answer names the tests that ran and their result.\")",
           "tone": "warn"
         }
@@ -868,26 +1078,72 @@
           "body": {
             "children": [
               {
-                "piece": "badge",
-                "text": "heiko-constitution",
+                "piece": "kanji",
+                "text": "止",
                 "tone": "bad"
               },
               {
-                "label": "Rule R2",
-                "piece": "link",
-                "to": {
-                  "page": "rules",
-                  "params": {
-                    "repo": "heiko-agent",
-                    "rule": "R2"
+                "children": [
+                  {
+                    "children": [
+                      {
+                        "piece": "heading",
+                        "text": "Blocked by rule R2"
+                      },
+                      {
+                        "piece": "spacer"
+                      },
+                      {
+                        "label": "rule",
+                        "piece": "link",
+                        "to": {
+                          "page": "rules",
+                          "params": {
+                            "repo": "heiko-agent",
+                            "rule": "R2"
+                          },
+                          "plugin": null
+                        }
+                      }
+                    ],
+                    "piece": "row"
                   },
-                  "plugin": null
-                }
-              },
-              {
-                "label": "p(violation) 0.95 · review 0.30 · block 0.80",
-                "piece": "progress",
-                "share": 0.95
+                  {
+                    "piece": "text",
+                    "text": "Library code returns errors. No unwrap or expect outside tests."
+                  },
+                  {
+                    "children": [
+                      {
+                        "mono": false,
+                        "piece": "toned",
+                        "text": "p(violation)",
+                        "tone": "neutral"
+                      },
+                      {
+                        "piece": "spacer"
+                      },
+                      {
+                        "mono": true,
+                        "piece": "toned",
+                        "text": "0.95",
+                        "tone": "bad"
+                      }
+                    ],
+                    "piece": "row"
+                  },
+                  {
+                    "lit": 19,
+                    "marked": [
+                      6,
+                      16
+                    ],
+                    "piece": "ticks",
+                    "tone": "bad",
+                    "total": 20
+                  }
+                ],
+                "piece": "stack"
               }
             ],
             "piece": "row"
@@ -909,7 +1165,7 @@
                 "text": "R1 0.41"
               },
               {
-                "label": "Review",
+                "label": "review",
                 "piece": "link",
                 "to": {
                   "page": "rules",
@@ -958,16 +1214,8 @@
               {
                 "key": "held",
                 "value": "1 of 3 (R6)"
-              },
-              {
-                "key": "Jev cost",
-                "value": "$0.000"
               }
             ]
-          },
-          {
-            "piece": "text",
-            "text": "Only the fields the model wrote are checked, such as edit.newText or exec_command.cmd. Tool output never goes to Jev."
           }
         ],
         "piece": "stack"
@@ -982,21 +1230,57 @@
         "c0": {
           "children": [
             {
-              "name": "blocked",
-              "piece": "icon",
-              "tone": "warn"
+              "piece": "kanji",
+              "text": "返",
+              "tone": "yellow"
             },
             {
-              "piece": "mono",
-              "text": "heiko-constitution"
-            },
-            {
-              "piece": "text",
-              "text": "held the stop: the answer breaks R6 (\"The final answer names the tests that ran and their result.\")"
-            },
-            {
-              "piece": "mono",
-              "text": "before_stop · continuation 1 / 3"
+              "children": [
+                {
+                  "children": [
+                    {
+                      "piece": "heading",
+                      "text": "Held, sent back"
+                    },
+                    {
+                      "piece": "spacer"
+                    },
+                    {
+                      "piece": "mono",
+                      "text": "heiko-constitution"
+                    }
+                  ],
+                  "piece": "row"
+                },
+                {
+                  "piece": "text",
+                  "text": "R6: The final answer names the tests that ran and their result."
+                },
+                {
+                  "children": [
+                    {
+                      "label": "1",
+                      "piece": "square",
+                      "style": "outlined",
+                      "tone": "yellow"
+                    },
+                    {
+                      "label": "2",
+                      "piece": "square",
+                      "style": "quiet",
+                      "tone": "yellow"
+                    },
+                    {
+                      "label": "3",
+                      "piece": "square",
+                      "style": "quiet",
+                      "tone": "yellow"
+                    }
+                  ],
+                  "piece": "row"
+                }
+              ],
+              "piece": "stack"
             }
           ],
           "piece": "row"

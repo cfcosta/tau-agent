@@ -43,17 +43,32 @@
     },
     "notes": {
       "g0": {
+        "checks": [
+          false
+        ],
         "detail": "check 1 · turn 8 · p 0.03 · continuing 1 of 10",
+        "kind": "not_met",
         "text": "the goal is not met yet",
         "tone": "warn"
       },
       "g1": {
+        "checks": [
+          false,
+          false
+        ],
         "detail": "check 2 · turn 10 · p 0.08 · continuing 2 of 10",
+        "kind": "not_met",
         "text": "the goal is not met yet",
         "tone": "warn"
       },
       "g2": {
+        "checks": [
+          false,
+          false,
+          true
+        ],
         "detail": "check 3 · turn 11 · p 0.96 · the run stops",
+        "kind": "met",
         "text": "the goal is met",
         "tone": "good"
       }
@@ -83,50 +98,85 @@
     "banner": {
       "children": [
         {
-          "name": "target",
-          "piece": "icon",
+          "piece": "kanji",
+          "text": "的",
           "tone": "good"
         },
         {
           "children": [
             {
+              "piece": "heading",
+              "text": "Goal met"
+            },
+            {
+              "piece": "text",
+              "text": "All tests in heiko-ai pass and cargo clippy is clean"
+            },
+            {
               "children": [
                 {
-                  "piece": "badge",
-                  "text": "goal",
+                  "label": "✕",
+                  "piece": "square",
+                  "style": "outlined",
+                  "tone": "bad"
+                },
+                {
+                  "label": "✕",
+                  "piece": "square",
+                  "style": "outlined",
+                  "tone": "bad"
+                },
+                {
+                  "label": "✓",
+                  "piece": "square",
+                  "style": "filled",
                   "tone": "good"
                 },
                 {
-                  "piece": "text",
-                  "text": "All tests in heiko-ai pass and cargo clippy is clean"
+                  "piece": "spacer"
+                },
+                {
+                  "lit": 2,
+                  "marked": [],
+                  "piece": "ticks",
+                  "tone": "good",
+                  "total": 10
+                },
+                {
+                  "piece": "mono",
+                  "text": "2 of 10"
                 }
               ],
               "piece": "row"
             },
             {
-              "piece": "mono",
-              "text": "met at check 3 · 2 continuations · $0.360"
+              "children": [
+                {
+                  "action": "act",
+                  "args": {
+                    "what": "edit"
+                  },
+                  "kind": "secondary",
+                  "label": "new goal",
+                  "piece": "button"
+                },
+                {
+                  "action": "act",
+                  "args": {
+                    "what": "clear"
+                  },
+                  "kind": "secondary",
+                  "label": "clear",
+                  "piece": "button"
+                },
+                {
+                  "piece": "spacer"
+                }
+              ],
+              "piece": "row"
             }
           ],
           "piece": "stack"
-        },
-        {
-          "action": "act",
-          "args": {
-            "what": "edit"
-          },
-          "kind": "secondary",
-          "label": "New goal",
-          "piece": "button"
-        },
-        {
-          "action": "act",
-          "args": {
-            "what": "clear"
-          },
-          "kind": "secondary",
-          "label": "Clear",
-          "piece": "button"
         }
       ],
       "piece": "row"
@@ -140,7 +190,11 @@
               "text": "Goal"
             },
             {
-              "piece": "pill",
+              "piece": "spacer"
+            },
+            {
+              "mono": false,
+              "piece": "toned",
               "text": "met",
               "tone": "good"
             }
@@ -152,114 +206,102 @@
           "text": "All tests in heiko-ai pass and cargo clippy is clean"
         },
         {
-          "piece": "text",
-          "text": "Checked when the agent stops · met at p ≥ 0.7 · up to 10 continuations and $2.00"
-        },
-        {
-          "piece": "heading",
-          "text": "Limits"
-        },
-        {
-          "label": "Continuations · 2 / 10",
-          "piece": "progress",
-          "share": 0.2
-        },
-        {
-          "label": "Cost · $0.360 / $2.00",
-          "piece": "progress",
-          "share": 0.180025956
+          "children": [
+            {
+              "mono": false,
+              "piece": "toned",
+              "text": "continuations",
+              "tone": "neutral"
+            },
+            {
+              "lit": 2,
+              "marked": [],
+              "piece": "ticks",
+              "tone": "good",
+              "total": 10
+            },
+            {
+              "piece": "mono",
+              "text": "2 of 10"
+            }
+          ],
+          "piece": "row"
         },
         {
           "piece": "heading",
           "text": "Checks"
         },
         {
-          "children": [
-            {
-              "children": [
-                {
-                  "piece": "mono",
-                  "text": "#3"
-                },
-                {
-                  "piece": "badge",
-                  "text": "met",
-                  "tone": "good"
-                },
-                {
-                  "piece": "text",
-                  "text": "the run stopped"
-                },
-                {
-                  "piece": "mono",
-                  "text": "turn 11 · p 0.96"
-                }
-              ],
-              "piece": "row"
-            },
-            {
-              "children": [
-                {
-                  "piece": "mono",
-                  "text": "#2"
-                },
-                {
-                  "piece": "badge",
-                  "text": "not met",
-                  "tone": "warn"
-                },
-                {
-                  "piece": "text",
-                  "text": "sent back, 2 of 10"
-                },
-                {
-                  "piece": "mono",
-                  "text": "turn 10 · p 0.08"
-                }
-              ],
-              "piece": "row"
-            },
-            {
-              "children": [
-                {
-                  "piece": "mono",
-                  "text": "#1"
-                },
-                {
-                  "piece": "badge",
-                  "text": "not met",
-                  "tone": "warn"
-                },
-                {
-                  "piece": "text",
-                  "text": "sent back, 1 of 10"
-                },
-                {
-                  "piece": "mono",
-                  "text": "turn 8 · p 0.03"
-                }
-              ],
-              "piece": "row"
-            }
-          ],
-          "piece": "stack"
-        },
-        {
-          "piece": "rows",
+          "head": [],
+          "piece": "table",
           "rows": [
-            {
-              "key": "checked by",
-              "value": "heiko-goal · Jev"
-            },
-            {
-              "key": "Jev cost",
-              "value": "$0.00005"
-            }
+            [
+              {
+                "label": "✓",
+                "piece": "square",
+                "style": "filled",
+                "tone": "good"
+              },
+              {
+                "piece": "text",
+                "text": "the run stopped"
+              },
+              {
+                "piece": "mono",
+                "text": "turn 11"
+              },
+              {
+                "piece": "mono",
+                "text": "p 0.96"
+              }
+            ],
+            [
+              {
+                "label": "✕",
+                "piece": "square",
+                "style": "outlined",
+                "tone": "bad"
+              },
+              {
+                "piece": "text",
+                "text": "sent back, 2 of 10"
+              },
+              {
+                "piece": "mono",
+                "text": "turn 10"
+              },
+              {
+                "piece": "mono",
+                "text": "p 0.08"
+              }
+            ],
+            [
+              {
+                "label": "✕",
+                "piece": "square",
+                "style": "outlined",
+                "tone": "bad"
+              },
+              {
+                "piece": "text",
+                "text": "sent back, 1 of 10"
+              },
+              {
+                "piece": "mono",
+                "text": "turn 8"
+              },
+              {
+                "piece": "mono",
+                "text": "p 0.03"
+              }
+            ]
+          ],
+          "widths": [
+            0.6,
+            4,
+            1.5,
+            1.5
           ]
-        },
-        {
-          "piece": "text",
-          "text": "Jev reads the goal, the agent's last answer and its last tool results. When they fall short, the agent is sent back."
         }
       ],
       "piece": "stack"
@@ -268,88 +310,44 @@
       "/goal All tests in heiko-ai pass and cargo clippy is clean": {
         "children": [
           {
-            "children": [
-              {
-                "name": "target",
-                "piece": "icon",
-                "tone": "info"
-              },
-              {
-                "piece": "mono",
-                "text": "/goal"
-              },
-              {
-                "piece": "rich",
-                "text": "All tests in heiko-ai pass and cargo clippy is clean"
-              }
-            ],
-            "piece": "row"
+            "piece": "mono",
+            "text": "/goal"
           },
           {
-            "children": [
-              {
-                "piece": "badge",
-                "text": "up to 10 continuations",
-                "tone": "neutral"
-              },
-              {
-                "piece": "badge",
-                "text": "$2.00 budget",
-                "tone": "neutral"
-              },
-              {
-                "piece": "badge",
-                "text": "checked by Jev",
-                "tone": "neutral"
-              }
-            ],
-            "piece": "row"
+            "piece": "rich",
+            "text": "All tests in heiko-ai pass and cargo clippy is clean"
+          },
+          {
+            "piece": "spacer"
+          },
+          {
+            "label": "up to 10 continuations",
+            "piece": "stamp",
+            "tone": "neutral"
           }
         ],
-        "piece": "stack"
+        "piece": "row"
       },
       "/goal All tests in heiko-ai pass and cargo clippy is clean\n\nThis is your goal. Keep working until it holds. Each time you stop, heiko-goal checks it against your last answer and your recent tool results, and sends you back if it does not hold yet, so run what proves it before you stop.": {
         "children": [
           {
-            "children": [
-              {
-                "name": "target",
-                "piece": "icon",
-                "tone": "info"
-              },
-              {
-                "piece": "mono",
-                "text": "/goal"
-              },
-              {
-                "piece": "rich",
-                "text": "All tests in heiko-ai pass and cargo clippy is clean"
-              }
-            ],
-            "piece": "row"
+            "piece": "mono",
+            "text": "/goal"
           },
           {
-            "children": [
-              {
-                "piece": "badge",
-                "text": "up to 10 continuations",
-                "tone": "neutral"
-              },
-              {
-                "piece": "badge",
-                "text": "$2.00 budget",
-                "tone": "neutral"
-              },
-              {
-                "piece": "badge",
-                "text": "checked by Jev",
-                "tone": "neutral"
-              }
-            ],
-            "piece": "row"
+            "piece": "rich",
+            "text": "All tests in heiko-ai pass and cargo clippy is clean"
+          },
+          {
+            "piece": "spacer"
+          },
+          {
+            "label": "up to 10 continuations",
+            "piece": "stamp",
+            "tone": "neutral"
           }
         ],
-        "piece": "stack"
+        "piece": "row"
       },
       "heiko-goal: the goal is not met yet (check 1, probability 0.03).\nGoal: All tests in heiko-ai pass and cargo clippy is clean\n\nKeep working toward it, and run what proves it. Continuation 1 of 10.": {
         "children": [],
@@ -364,13 +362,17 @@
       "g0": {
         "children": [
           {
-            "name": "target",
-            "piece": "icon",
-            "tone": "warn"
+            "label": "✕",
+            "piece": "square",
+            "style": "outlined",
+            "tone": "bad"
           },
           {
             "piece": "text",
             "text": "the goal is not met yet"
+          },
+          {
+            "piece": "spacer"
           },
           {
             "piece": "mono",
@@ -382,13 +384,17 @@
       "g1": {
         "children": [
           {
-            "name": "target",
-            "piece": "icon",
-            "tone": "warn"
+            "label": "✕",
+            "piece": "square",
+            "style": "outlined",
+            "tone": "bad"
           },
           {
             "piece": "text",
             "text": "the goal is not met yet"
+          },
+          {
+            "piece": "spacer"
           },
           {
             "piece": "mono",
@@ -400,17 +406,41 @@
       "g2": {
         "children": [
           {
-            "name": "target",
-            "piece": "icon",
+            "piece": "kanji",
+            "text": "的",
             "tone": "good"
           },
           {
-            "piece": "text",
-            "text": "the goal is met"
-          },
-          {
-            "piece": "mono",
-            "text": "check 3 · turn 11 · p 0.96 · the run stops"
+            "children": [
+              {
+                "piece": "heading",
+                "text": "Goal met"
+              },
+              {
+                "children": [
+                  {
+                    "label": "✕",
+                    "piece": "square",
+                    "style": "outlined",
+                    "tone": "bad"
+                  },
+                  {
+                    "label": "✕",
+                    "piece": "square",
+                    "style": "outlined",
+                    "tone": "bad"
+                  },
+                  {
+                    "label": "✓",
+                    "piece": "square",
+                    "style": "filled",
+                    "tone": "good"
+                  }
+                ],
+                "piece": "row"
+              }
+            ],
+            "piece": "stack"
           }
         ],
         "piece": "row"
@@ -420,7 +450,7 @@
       "count": "met",
       "icon": "target",
       "line": "goal met · All tests in heiko-ai pass and cargo clippy is clean",
-      "phone_line": "goal · met at check 3 · 2 continuations · $0.360",
+      "phone_line": "goal · met at check 3 · 2 continuations",
       "tone": "good"
     },
     "status": {

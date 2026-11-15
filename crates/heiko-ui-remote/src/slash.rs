@@ -15,9 +15,8 @@ use gpui::{
 };
 
 use crate::{
-    assets::Icon,
     route::Route,
-    theme::{IconSize, Theme, Type, radius, sp},
+    theme::{Theme, Type, sp},
     ui,
     ui::Material as _,
     workspace::{PickerTarget, Workspace},
@@ -31,7 +30,6 @@ pub struct Command {
     /// What follows the name, as the menu shows it.
     pub args: String,
     pub about: String,
-    pub glyph: Icon,
     /// Whether it acts on the open conversation.
     pub needs_run: bool,
     /// The plugin whose command it is.
@@ -42,44 +40,20 @@ pub struct Command {
 
 /// heiko-ui's own commands.
 fn builtin() -> [Command; 5] {
-    let command = |name: &str,
-                   about: &'static str,
-                   glyph: Icon,
-                   needs_run: bool| Command {
+    let command = |name: &str, about: &'static str, needs_run: bool| Command {
         name: name.to_owned(),
         args: String::new(),
         about: about.to_owned(),
-        glyph,
         needs_run,
         plugin: None,
         popover: false,
     };
     [
-        command(
-            "/model",
-            "Pick the model for new runs",
-            Icon::Settings,
-            false,
-        ),
-        command(
-            "/fork",
-            "Fork this conversation at its last turn",
-            Icon::Fork,
-            true,
-        ),
-        command(
-            "/attach",
-            "Attach text files to the message",
-            Icon::Paperclip,
-            false,
-        ),
-        command(
-            "/pr",
-            "Open a pull request from this run",
-            Icon::PullRequest,
-            true,
-        ),
-        command("/close", "Close this conversation", Icon::Close, true),
+        command("/model", "Pick the model for new runs", false),
+        command("/fork", "Fork this conversation at its last turn", true),
+        command("/attach", "Attach text files to the message", false),
+        command("/pr", "Open a pull request from this run", true),
+        command("/close", "Close this conversation", true),
     ]
 }
 
@@ -113,7 +87,6 @@ impl Workspace {
                     name: format!("/{}", command.name),
                     args: command.args,
                     about: command.hint,
-                    glyph: command.icon,
                     needs_run: false,
                     plugin: Some(name),
                     popover: command.popover,
@@ -318,27 +291,23 @@ impl Workspace {
                 args,
             } => self.plugin_popover(plugin, &command, &args, cx)?,
         };
+        // Flat: the sidebar's fill in a heavy outline, with no shadow.
         let popover = div()
             .flex()
             .flex_col()
             .gap(sp(0.5))
             .p(sp(1.5))
-            .raised(t)
-            .border_1()
-            .border_color(t.border_strong)
-            .rounded(if compact {
-                radius::SHEET
-            } else {
-                radius::LARGE
-            })
-            .shadow_lg()
+            .bg(t.card)
+            .border_2()
+            .border_color(t.rule)
             .child(body);
         Some(if compact {
             popover.into_any_element()
         } else {
             div()
                 .absolute()
-                .bottom(rems(4.))
+                // Over the composer's field and its row of controls.
+                .bottom(rems(7.75))
                 .left(sp(6.))
                 .w(rems(40.))
                 .max_w_full()
@@ -364,28 +333,17 @@ impl Workspace {
                 .gap(sp(2.5))
                 .h(rems((if compact { 48. } else { 38. }) / 16.))
                 .px(sp(2.5))
-                .rounded(radius::CONTROL)
                 .cursor_pointer()
                 .when(selected, |row| row.pressed(t))
                 .hover(|style| style.bg(t.selected))
                 .child(
-                    div()
-                        .size(rems((if compact { 30. } else { 24. }) / 16.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(radius::CONTROL)
-                        .key(t)
-                        .child(ui::icon(
-                            command.glyph,
-                            IconSize::COMPACT,
-                            if selected { t.accent } else { t.muted },
-                        )),
-                )
-                .child(
-                    ui::mono(command.name.clone(), Type::SMALL, t.text)
-                        .min_w(rems(4.))
-                        .flex_shrink_0(),
+                    ui::mono(
+                        command.name.clone(),
+                        Type::SMALL,
+                        if selected { t.bright } else { t.text },
+                    )
+                    .min_w(rems(5.))
+                    .flex_shrink_0(),
                 )
                 .when(!compact, |row| {
                     row.child(

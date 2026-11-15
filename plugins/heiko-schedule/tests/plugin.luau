@@ -277,26 +277,29 @@ t.case("the inspector lists what waits, each with a way to cancel it", function(
 	local rows = view.inspector.children
 	t.equal(rows[1], { piece = "heading", text = "Scheduled" })
 	local head = rows[2].children[1].children
-	t.equal(head[2], { piece = "text", text = "recheck" })
-	t.equal(head[4], { piece = "due", id = "r1-recheck", at = 1767610800000 })
-	t.equal(head[5].action, "cancel")
-	t.equal(head[5].icon, "close")
-	run:action("cancel", head[5].args)
+	t.equal(head[1], { piece = "heading", text = "recheck" })
+	t.equal(head[3], { piece = "due", id = "r1-recheck", at = 1767610800000 })
+	t.equal(head[4].action, "cancel")
+	t.equal(head[4].label, "cancel")
+	run:action("cancel", head[4].args)
 	t.equal(run.store, {})
 	t.equal(run:view().inspector, nil)
 	local ok = pcall(run.action, run, "cancel", { name = "recheck" })
 	t.equal(ok, false)
 end)
 
-t.case("the message a chat woke on is a card", function()
+t.case("the message a chat woke on shows each wake-up's time as a figure", function()
 	local run = chat()
 	local text = "[scheduled · a · 2026-01-05 12:01]\nOne\n\n[scheduled · b · 2026-01-05 12:02]\nTwo"
 	run:start({ input = text })
 	local card = run:view().messages[text]
-	t.equal(card.piece, "card")
-	local blocks = card.children[1].children
+	local blocks = card.children
 	t.equal(#blocks, 3)
 	t.equal(blocks[2], { piece = "rule" })
-	t.equal(blocks[1].children[1].children[2], { piece = "text", text = "Scheduled · a" })
-	t.equal(blocks[3].children[2], { piece = "text", text = "Two" })
+	t.equal(blocks[1].children[1].text, "12:01")
+	local first = blocks[1].children[2].children
+	t.equal(first[1].children[1], { piece = "heading", text = "a" })
+	t.equal(first[1].children[3], { piece = "mono", text = "2026-01-05" })
+	t.equal(blocks[3].children[1].text, "12:02")
+	t.equal(blocks[3].children[2].children[2], { piece = "text", text = "Two" })
 end)

@@ -102,23 +102,9 @@ local function tokens_text(n)
 	return string.format("%.1fM", n / 1000000)
 end
 
--- A Jev cost, often a fraction of a cent: to four places under a cent,
--- else to the cent, or to a tenth of one under a dollar.
-local function dollars(amount)
-	if amount < 0.01 then
-		return string.format("$%.4f", amount)
-	end
-	local fine = string.format("%.3f", amount)
-	if tonumber(fine) < 1 then
-		return "$" .. fine
-	end
-	return string.format("$%.2f", amount)
-end
-
--- What a pass judged and what Jev cost: `12 calls judged in 1 Jev
--- request · …`.
+-- What a pass judged: `12 calls judged in 1 Jev request · …`.
 local function detail(stats)
-	local text = count(stats.calls - stats.pinned, "call", "calls")
+	return count(stats.calls - stats.pinned, "call", "calls")
 		.. " judged in "
 		.. count(stats.requests, "Jev request", "Jev requests")
 		.. " · "
@@ -131,10 +117,6 @@ local function detail(stats)
 		.. tokens_text(stats.state_tokens)
 		.. " tokens of history, "
 		.. stats.state_stage
-	if stats.cost > 0 then
-		text ..= " · " .. dollars(stats.cost)
-	end
-	return text
 end
 
 -- A pass between turns: asks Jev about every unpinned call, merges the
@@ -335,7 +317,44 @@ local TONE = { pinned = "neutral", keep = "neutral", drop_result = "info", drop_
 
 -- The ledger page's link.
 local function ledger_link()
-	return ui.link("Ledger", "luau-plugins", { plugin = "heiko-luau-plugins", params = { entry = NAME } })
+	return ui.link("ledger", "luau-plugins", { plugin = "heiko-luau-plugins", params = { entry = NAME } })
+end
+
+-- How many ticks the window is drawn on, and a probability.
+local WINDOW_TICKS = 40
+local ODDS_TICKS = 10
+
+-- The context before and after a pass, each a row of ticks of the
+-- window (the larger of the two without one), where pruning starts
+-- marked on it.
+local function before_after(one)
+	local window = one.window ~= nil and one.window ~= json.null and one.window or math.max(one.before, 1)
+	local function strip(tokens, tone)
+		return ui.ticks(math.clamp(math.floor(tokens / window * WINDOW_TICKS + 0.5), 0, WINDOW_TICKS), WINDOW_TICKS, tone, { math.floor(COMPACT_AT / 100 * WINDOW_TICKS) })
+	end
+	return ui.table({}, {
+		{ ui.toned("before", "neutral"), strip(one.before, "neutral"), ui.mono(tokens_text(one.before)) },
+		{ ui.toned("after", "neutral"), strip(one.after, "info"), ui.mono(tokens_text(one.after)) },
+	}, { widths = { 1, 8, 1 } })
+end
+
+-- A count as a figure over what it counts.
+local function counted(n, what)
+	return ui.stack({ ui.figure(tostring(n)), ui.toned(what, "neutral") })
+end
+
+-- A decision in the ledger: a square, filled for what is pinned or
+-- dropped, and its name.
+local function decision(of)
+	local square
+	if of == "pinned" then
+		square = ui.square("", "filled", "bright")
+	elseif of == "keep" then
+		square = ui.square("")
+	else
+		square = ui.square("", "filled", TONE[of])
+	end
+	return ui.row({ square, ui.toned(LABEL[of], TONE[of], true) })
 end
 
 -- What the run's context was before and after the last pass, and what it
@@ -344,9 +363,8 @@ local function ledger_page(state_now)
 	local passes = state_now.passes or {}
 	local last = passes[#passes]
 	if last == nil then
-		return { ui.empty(NAME .. " has not pruned the context of this run yet.") }
+		return { ui.empty("Nothing pruned in this run yet.") }
 	end
-	local window = last.window ~= json.null and last.window or math.max(last.before, 1)
 	local kept, pinned, results, calls = 0, 0, 0, 0
 	for _, entry in ipairs(state_now.ledger or {}) do
 		if entry.decision == "keep" then
@@ -372,42 +390,52 @@ local function ledger_page(state_now)
 	local rows = {}
 	for _, entry in ipairs(state_now.ledger or {}) do
 		local odds = function(p)
-			return p == json.null and "·" or string.format("%.2f", p)
+			if p == json.null then
+				return ui.toned("·", "neutral", true)
+			end
+			return ui.row({
+				ui.ticks(math.floor(p * ODDS_TICKS + 0.5), ODDS_TICKS, "info"),
+				ui.mono(string.format("%.2f", p)),
+			})
 		end
 		table.insert(rows, {
 			ui.mono(entry.tool),
 			ui.mono(entry.input),
 			ui.mono(tokens_text(entry.tokens)),
-			ui.mono(odds(entry.matters)),
-			ui.mono(odds(entry.verbatim)),
-			ui.badge(LABEL[entry.decision], TONE[entry.decision]),
+			odds(entry.matters),
+			odds(entry.verbatim),
+			decision(entry.decision),
 		})
 	end
 	return {
-		ui.heading("Pruned " .. tokens_text(math.max(last.before - last.after, 0)) .. " tokens of this run's tool history"),
-		ui.text(
-			last.detail
-				.. ". Decisions only escalate: keep, then drop the result, then drop the call. Forks inherit this ledger."
-		),
-		ui.progress(last.before / window, "Before · " .. tokens_text(last.before)),
-		ui.progress(last.after / window, "After · " .. tokens_text(last.after)),
-		ui.text("Window " .. tokens_text(window) .. ". Pruning starts at " .. COMPACT_AT .. "%."),
+		ui.row({
+			ui.title("Pruned " .. tokens_text(math.max(last.before - last.after, 0)) .. " tokens of this run's tool history"),
+			ui.spacer(),
+			ui.mono(NAME),
+		}),
 		ui.rule(),
+		ui.toned(last.detail, "neutral"),
+		before_after(last),
+		ui.row({
+			counted(pinned, "pinned"),
+			counted(kept, "kept"),
+			counted(results, "result dropped"),
+			counted(calls, "call dropped"),
+		}),
 		ui.rows({
-			{ "plugin", NAME },
-			{ "pinned", tostring(pinned) },
-			{ "kept", tostring(kept) },
-			{ "result dropped", tostring(results) },
-			{ "call dropped", tostring(calls) },
 			{ "next request", "1 full resend" },
 			{
 				"outputs pruned",
 				pruned_outputs == 0 and "none" or (pruned_outputs .. " · −" .. tokens_text(saved) .. " tokens"),
 			},
 		}),
-		ui.heading("Ledger"),
-		#rows == 0 and ui.empty("The pass reported no per-call decisions.")
-			or ui.table({ "Tool", "Input", "Size", "Still matters", "Verbatim", "Decision" }, rows),
+		ui.row({ ui.heading("Ledger"), ui.toned(tostring(#rows), "neutral", true) }),
+		#rows == 0 and ui.empty("No per-call decisions.")
+			or ui.table(
+				{ "tool", "input", "size", "still matters", "verbatim", "decision" },
+				rows,
+				{ widths = { 1.5, 5, 0.8, 2, 2, 1.5 } }
+			),
 	}
 end
 
@@ -417,11 +445,7 @@ return heiko.plugin({
 		schema = SCHEMA,
 		default = DEFAULT,
 		view = function(settings, model, env)
-			return ui.stack({
-				ui.text(
-					"Prunes large command outputs as they arrive, and stale tool history between turns, asking Jev what the task still needs. What it cuts is archived for the model to read back. It needs a TypeSafe key."
-				),
-			})
+			return ui.stack({ ui.toned("Needs a TypeSafe key.", "neutral") })
 		end,
 	},
 	-- Whether it can prune: there is a TypeSafe key.
@@ -503,20 +527,12 @@ return heiko.plugin({
 		for at, one in ipairs(passes) do
 			view.notes["pass-" .. at] = ui.stack({
 				ui.row({
-					ui.icon("plug", "info"),
+					ui.heading("Pruned " .. tokens_text(math.max(one.before - one.after, 0)) .. " tokens"),
+					ui.spacer(),
 					ui.mono(NAME),
-					ui.text(
-						"pruned "
-							.. tokens_text(math.max(one.before - one.after, 0))
-							.. " tokens: "
-							.. tokens_text(one.before)
-							.. " to "
-							.. tokens_text(one.after)
-					),
 					ledger_link(),
 				}),
-				ui.mono(one.detail),
-				ui.text("The next request resends the pruned transcript once, then turns are deltas again."),
+				before_after(one),
 			})
 		end
 		-- What the last pass left of each call, on its card.
@@ -524,7 +540,7 @@ return heiko.plugin({
 		for _, entry in ipairs(state_now.ledger or {}) do
 			if CARD[entry.decision] ~= nil then
 				view.calls[entry.call_id] = {
-					badge = ui.badge(CARD[entry.decision], "neutral"),
+					badge = ui.stamp(CARD[entry.decision], "neutral"),
 					dropped = entry.decision == "drop_result" and "result" or "call",
 				}
 			else
@@ -547,7 +563,7 @@ return heiko.plugin({
 			end
 		end
 		if last ~= nil then
-			view.inspector = ui.row({ ui.text(kept .. " kept by " .. NAME .. "."), ledger_link() })
+			view.inspector = ui.row({ ui.text(kept .. " kept by " .. NAME), ui.spacer(), ledger_link() })
 		end
 		view.page = ledger_page(state_now)
 		return view

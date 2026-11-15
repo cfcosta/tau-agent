@@ -147,7 +147,6 @@ impl Workspace {
             open_agents: _,
             hovered_repo: _,
             repo_menu: _,
-            sidebar_filter: _,
             setup_goal: _,
             setup_finished: _,
             setup_motion: _,

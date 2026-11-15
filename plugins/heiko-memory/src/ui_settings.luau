@@ -47,32 +47,18 @@ function M.runs_as(settings, models)
 	return "No " .. tostring(settings.family) .. " model on the plan: runs as each chat's model."
 end
 
--- A setting's name, and what it does under it.
-local function what(name, caption)
-	return ui.stack({ ui.heading(name), ui.text(caption) })
-end
-
 -- The pane of `settings`.
 function M.pane(settings, models)
 	return ui.stack({
-		ui.card({
-			ui.toggle("after_each_run", "Save after each run"),
-			ui.text(
-				"When a run ends, one request reads it and saves what a later run should know, often nothing. Off, memory keeps what the agent writes and what compaction is about to drop."
-			),
-			ui.rule(),
-			what(
-				"Model",
-				"Writes notes after each run and before compaction drops the conversation. Search runs locally and needs none."
-			),
-			ui.choice("family", M.FAMILIES),
-			ui.rule(),
-			what("Reasoning", "How hard it thinks about what is worth keeping. Auto leaves it to the model."),
-			ui.choice("reasoning", M.EFFORTS),
-			ui.rule(),
-			ui.toggle("follow_chat", "Use the chat's model instead"),
-			ui.text("Notes come from whatever model and effort the run is on."),
-		}),
+		ui.toggle("after_each_run", "Save after each run"),
+		ui.rule(),
+		ui.heading("Model"),
+		ui.choice("family", M.FAMILIES),
+		ui.rule(),
+		ui.heading("Reasoning"),
+		ui.choice("reasoning", M.EFFORTS),
+		ui.rule(),
+		ui.toggle("follow_chat", "Use the chat's model instead"),
 		ui.mono(M.runs_as(settings, models)),
 	})
 end

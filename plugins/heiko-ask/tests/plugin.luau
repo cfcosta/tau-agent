@@ -222,28 +222,35 @@ t.case("the panel draws the question in view, its preview, and the review", func
 	local tree = run:view().composer
 	t.equal(tree.id, "ask-panel")
 	t.equal(tree.through, { "escape" })
-	local card = tree.children[1]
-	local tabs, question, foot = card.children[1], card.children[2], card.children[3]
+	local body = tree.children[1]
+	local head, tabs, question, foot = body.children[1], body.children[2], body.children[3], body.children[4]
+	t.equal(head.children[1], { piece = "heading", text = "heiko asks" })
+	t.equal(head.children[2].text, "1 of 2")
 	t.equal(tabs.children[1].label, "Waiting")
-	t.equal(tabs.children[1].kind, "primary")
 	t.equal(tabs.children[#tabs.children].text, "pick one")
-	-- The rows, the person's own field, and the preview of the row in
-	-- focus, its description beside it.
-	t.equal(question.children[1].text, "**How should the ask tool wait for your answer?**")
-	t.equal(question.children[2].children[1].text, "› 1")
-	t.equal(#question.children[2].children, 2, "previews take the descriptions")
-	t.equal(question.children[4].children[2].id, "ask-other-r1-c1-0")
-	t.equal(question.children[5].children[2].text, "select! { a = rx => a }")
+	-- The question, large; the rows, the person's own field last; and the
+	-- preview of the row in focus, its description over it.
+	t.equal(question.children[1].piece, "title")
+	t.equal(question.children[1].text, "How should the ask tool wait for your answer?")
+	local rows = question.children[2].rows
+	t.equal(rows[1][1].text, "› 1")
+	t.equal(#rows[1][2].children, 1, "previews take the descriptions")
+	t.equal(rows[1][2].children[1].kind, "primary", "the row in focus, while none is picked")
+	t.equal(rows[2][2].children[1].kind, "secondary")
+	t.equal(rows[#rows][2].children[1].id, "ask-other-r1-c1-0")
+	t.equal(question.children[3].children[2].text, "select! { a = rx => a }")
 	t.equal(foot.children[3].action, "heiko.cancel")
+	t.equal(foot.children[#foot.children].label, "Next")
+	t.equal(foot.children[#foot.children].kind, "primary")
 	-- The review: each answer, or that there is none, with a way back.
 	run:action("key", { key = "1" })
 	run:action("key", { key = "right" })
 	tree = run:view().composer
-	local review = tree.children[1].children[2]
+	local review = tree.children[1].children[3]
 	t.equal(review.piece, "table")
 	t.equal(review.rows[1][2].text, "Hold the call open (Recommended)")
 	t.equal(review.rows[2][2].text, "not answered")
-	local send = tree.children[1].children[3].children[5]
+	local send = tree.children[1].children[4].children[4]
 	t.equal(send.label, "Send answers · 1 left")
 	t.equal(send.kind, "secondary")
 end)
@@ -252,7 +259,7 @@ t.case("the card shows each answer with its note", function()
 	local run = t.run({})
 	run:tool("ask", questions())
 	local waiting = run:view().calls.call_1.body
-	t.equal(waiting.children[2].text, "Answer in the panel below.")
+	t.equal(waiting.children[2].children[2].text, "waiting for you")
 	run:action("answered", { call = "call_1", answers = answered() })
 	local body = run:view().calls.call_1.body
 	local rows = body.children[1].rows
@@ -265,7 +272,7 @@ t.case("the card shows each answer with its note", function()
 	declined:tool("ask", questions())
 	declined:action("answered", { call = "call_1", declined = true })
 	local said = declined:view().calls.call_1.body
-	t.equal(said.children[2].text, "You declined to answer.")
+	t.equal(said.children[2].text, "declined")
 end)
 
 -- Over any calls that ask, answers and closes, the view shows the first
@@ -312,7 +319,8 @@ t.machine("the view shows the first call still waiting", {
 		t.equal(view.composer ~= nil, first ~= nil, "a panel while one waits")
 		t.equal(view.asks ~= nil, first ~= nil, "asks while one waits")
 		if first ~= nil then
-			local id = view.composer.children[1].children[2].children[4].children[2].id
+			local rows = view.composer.children[1].children[3].children[2].rows
+			local id = rows[#rows][2].children[1].id
 			t.equal(id, "ask-other-r1-" .. first .. "-0")
 		end
 		for _, call in ipairs(m.calls) do

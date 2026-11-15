@@ -513,15 +513,47 @@ Plain tables, drawn by heiko on the computer and on the phone:
 - `ui.code(lang, text, { first_line = 1 })`: highlighted code; with
   `first_line`, its lines are numbered
 - `ui.toned(text, tone, mono)`: a line in a tone; `"neutral"` dims it
-- `ui.heading(text)`, `ui.markdown(text)`, `ui.pill(text, tone)`
+- `ui.heading(text, ink)`: a small label over a group, in an ink when
+  given; `ui.markdown(text)`, `ui.pill(text, tone)`
+- an ink is the color a piece is printed in: a tone, or `"teal"`,
+  `"cyan"`, `"purple"`, `"yellow"` or `"bright"`. A warm ink is for
+  outlines, marks and text, never a fill
+- `ui.header(title, { meta = "3 files", actions = { ... } })`: a
+  section's head, which does not fold: its title over a rule, `meta` in
+  small print at its right, then the `actions`, such as buttons
+- `ui.ticks(lit, total, ink, { 6, 16 })`: a quantity as `total` square
+  ticks, the first `lit` in the ink; the last argument lists the
+  places, from 0, of ticks drawn white, as thresholds
+- `ui.mark(state, count)`: the small mark of a state: `"working"`,
+  `"asks"`, `"failing"`, `"met"`, `"limit"`, `"cap"` or `"idle"`; a
+  `count` goes before it
+- `ui.stamp(label, ink)`: a word or two outlined in the ink, such as
+  `exit 0` or `queued`
+- `ui.square(label, style, ink, action, args)`: a small square holding
+  a number or a letter: a step, a check, a place in a queue; `style` is
+  `"quiet"` (not reached yet), `"outlined"` or `"filled"`. With
+  `action`, a click carries out `actions[action]` with `args`, so a row
+  of squares can be a choice
+- `ui.slip(text, ink, dashed, { page = "note", plugin = "...", params = { ... } })`:
+  a note or an id on a label outlined in the ink; `dashed` for one
+  proposed, not kept yet. With `page`, a click opens that page
+- `ui.figure(text)`: a big number or time
+- `ui.kanji(text, ink)`: one large glyph, the mark beside a note
 - `ui.icon(name, tone)`: one of heiko's icons by name, such as
   `"memory"`, `"check"` or `"sub-agent"`
 - `ui.table({ "head", ... }, { { piece, ... }, ... }, { widths = { 1, 4 } })`:
   a header over rows of pieces or strings; `widths` are the columns'
-  shares of the width
+  shares of the width. With no head (`{}`), rows only
 - `ui.scroll({ ... }, height)`: pieces that scroll past `height` rems
 - `ui.rule()`, `ui.empty(text)`, `ui.spacer()` (room that pushes what
-  follows in a row to its end), `ui.card({ ... })` (pieces in a frame)
+  follows in a row to its end), `ui.card({ ... })` (pieces in a group
+  of their own, under a thin line, with no frame)
+- `ui.band({ ... })`: pieces one under another on a darker plane: a
+  result
+- `ui.rail({ ... })`: pieces one under another, a line down the left
+  joining the squares they start with: the steps of a change, a queue.
+  Start each with a `ui.square`, as in
+  `ui.row({ ui.square("1", "filled", "info"), "Fetched" })`
 - `ui.keys(id, { "up", "enter", "1" }, action, { ... }, { through = { "escape" }, focus = n })`:
   an area that takes the keys. While it has them, each of its keys
   carries out `actions[action]` with `{ key, field = false }`; in a
@@ -529,7 +561,11 @@ Plain tables, drawn by heiko on the computer and on the phone:
   A click outside its fields gives it the keys, and so does a new
   `focus` number: keep the number in the model and raise it to move
   the keys there once. `ui.input`'s `focus` does the same for a field
-- `ui.diff(text, path)`: a unified diff, colored as `path`'s language
+- `ui.diff(text, path)`: a unified diff, its lines numbered, colored as
+  `path`'s language
+- `ui.marked(text, { { from, to }, ... })`: one line of code with parts
+  of it marked: a line a search found, and where. `from` and `to` are
+  the first and last byte of a part, from 1, as `string.find` gives them
 - `ui.terminal(id, text, { cols = 80, rows = 24, live = false, fold = true })`:
   what a program wrote, escapes and all, on a terminal heiko keeps under
   `id`; with `fold`, it shows a few rows until the person opens it
@@ -553,10 +589,12 @@ Plain tables, drawn by heiko on the computer and on the phone:
   opens and closes what is under it
 - `ui.tabs(id, { { "label", { ... } }, ... })`: one tab shown at a
   time
-- `ui.button(label, action, args, kind, icon)`: carries out
+- `ui.button(label, action, args, kind, icon, size)`: carries out
   `actions[action](args, model, env)` on the run's model, then draws `view`
-  again; `kind` is `"primary"`, `"secondary"` or `"danger"`, and `icon`
-  one of heiko's icons, alone when `label` is empty
+  again; `kind` is `"primary"` (the one main action, once or twice a
+  view), `"secondary"`, `"danger"` or `"hot"` (one that needs the
+  person), and `icon` one of heiko's icons, alone when `label` is empty.
+  `size` is a primary button's: `"small"`, `"medium"` or `"large"`
 - `ui.input(id, { placeholder = "...", multiline = true, submit = "action" })`:
   a text input; Enter carries out `submit` with `{ text = ... }` and
   empties it, or keeps what it holds with `keep = true`

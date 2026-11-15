@@ -266,16 +266,6 @@ function goal.tail(text, most)
 	return "…" .. string.sub(text, utf8.offset(text, count - most + 1))
 end
 
--- An amount in US dollars, as heiko's interface writes one: three places
--- under a dollar, else two.
-function goal.usd(amount)
-	local fine = string.format("%.3f", amount)
-	if tonumber(fine) < 1 then
-		return "$" .. fine
-	end
-	return string.format("$%.2f", amount)
-end
-
 -- The plugin's state, as each hook finds it: `goal`, the conversation's
 -- (`condition`, `max_continuations`, `budget`, `status` one of
 -- "active", "paused", "met" and "stopped", `exhausted` when stopped,
@@ -298,9 +288,15 @@ local function count(map)
 	return n
 end
 
--- Puts a note in the transcript.
-local function note(state, text, detail, tone)
-	state.notes["g" .. count(state.notes)] = { text = text, detail = detail, tone = tone }
+-- Puts a note in the transcript: what happened (`kind`: "met",
+-- "not_met", "stopped" or "failed"), and whether each check so far was
+-- met, oldest first.
+local function note(state, text, detail, tone, kind)
+	local checks = array({})
+	for _, check in ipairs(state.goal and state.goal.checks or {}) do
+		table.insert(checks, check.met == true)
+	end
+	state.notes["g" .. count(state.notes)] = { text = text, detail = detail, tone = tone, kind = kind, checks = checks }
 end
 
 -- The fields every goal carries, whatever its status.
@@ -424,19 +420,19 @@ function goal.check(state, check)
 	end
 	local p = string.format("%.2f", check.p)
 	if check.met then
-		note(state, "the goal is met", "check " .. check.n .. " · turn " .. check.turn .. " · p " .. p .. " · the run stops", "good")
+		note(state, "the goal is met", "check " .. check.n .. " · turn " .. check.turn .. " · p " .. p .. " · the run stops", "good", "met")
 		return
 	end
 	local next = check.continuation and ("continuing " .. check.continuation .. " of " .. g.max_continuations)
 		or "not continuing"
-	note(state, "the goal is not met yet", "check " .. check.n .. " · turn " .. check.turn .. " · p " .. p .. " · " .. next, "warn")
+	note(state, "the goal is not met yet", "check " .. check.n .. " · turn " .. check.turn .. " · p " .. p .. " · " .. next, "warn", "not_met")
 end
 
 -- Not met, and out of continuations or budget (`why`).
 function goal.stopped(state, why)
 	state.goal = goal.machine:step(state.goal, { event = "stop", why = why })
 	local said = why == "budget" and "out of budget" or "out of continuations"
-	note(state, "stopped the goal: " .. said .. ", and it is not met", "before_stop", "bad")
+	note(state, "stopped the goal: " .. said .. ", and it is not met", "before_stop", "bad", "stopped")
 end
 
 -- More continuations, and the goal active again.
@@ -460,32 +456,26 @@ end
 -- Jev gave no answer; the run stopped unchecked.
 function goal.failed(state, message)
 	state.goal = goal.machine:step(state.goal, { event = "fail", message = message })
-	note(state, message, "not checked", "bad")
+	note(state, message, "not checked", "bad", "failed")
 end
 
 -- Where the goal stands, in a line.
 function goal.status_line(g)
 	local used = g.continuations .. " of " .. g.max_continuations .. " continuations"
-	local spent = goal.usd(g.spent) .. " of " .. goal.usd(g.budget)
 	local checks = #g.checks
 	local line
 	if g.status == "active" and checks == 0 then
 		line = "set · checked when the agent stops"
 	elseif g.status == "active" then
-		line = "check " .. checks .. " not met · " .. used .. " · " .. spent
+		line = "check " .. checks .. " not met · " .. used
 	elseif g.status == "paused" then
-		line = "paused · " .. used .. " · " .. spent
+		line = "paused · " .. used
 	elseif g.status == "met" then
-		line = "met at check " .. checks .. " · " .. g.continuations .. " continuations · " .. goal.usd(g.spent)
+		line = "met at check " .. checks .. " · " .. g.continuations .. " continuations"
 	elseif g.exhausted == "budget" then
-		line = "stopped: over its " .. goal.usd(g.budget) .. " budget · not met"
+		line = "stopped: over its budget · not met"
 	else
-		line = "stopped: "
-			.. g.continuations
-			.. " of "
-			.. g.max_continuations
-			.. " continuations used · not met · "
-			.. goal.usd(g.spent)
+		line = "stopped: " .. used .. " used · not met"
 	end
 	if g.error ~= nil then
 		return line .. " · the last check failed"

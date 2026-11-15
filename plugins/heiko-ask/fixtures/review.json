@@ -64,12 +64,39 @@
         },
         "call": "call_ask",
         "draft": {
-          "cursor": [0, 2, 1],
+          "cursor": [
+            0,
+            2,
+            1
+          ],
           "note_open": false,
-          "notes": ["", "Only when the run has waited a while.", ""],
-          "other": ["", "", ""],
-          "other_on": [false, false, false],
-          "picked": [[0], [0, 2], [1]],
+          "notes": [
+            "",
+            "Only when the run has waited a while.",
+            ""
+          ],
+          "other": [
+            "",
+            "",
+            ""
+          ],
+          "other_on": [
+            false,
+            false,
+            false
+          ],
+          "picked": [
+            [
+              0
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              1
+            ]
+          ],
           "tab": 3
         },
         "focus": {
@@ -148,13 +175,26 @@
                   }
                 ]
               ],
-              "widths": [1, 4]
+              "widths": [
+                1,
+                4
+              ]
             },
             {
-              "mono": false,
-              "piece": "toned",
-              "text": "Answer in the panel below.",
-              "tone": "info"
+              "children": [
+                {
+                  "count": null,
+                  "piece": "mark",
+                  "state": "asks"
+                },
+                {
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "waiting for you",
+                  "tone": "warn"
+                }
+              ],
+              "piece": "row"
             }
           ],
           "piece": "stack"
@@ -166,6 +206,30 @@
       "children": [
         {
           "children": [
+            {
+              "children": [
+                {
+                  "piece": "heading",
+                  "text": "heiko asks"
+                },
+                {
+                  "mono": false,
+                  "piece": "toned",
+                  "text": "review",
+                  "tone": "neutral"
+                },
+                {
+                  "piece": "spacer"
+                },
+                {
+                  "mono": true,
+                  "piece": "toned",
+                  "text": "← back · ↵ send",
+                  "tone": "neutral"
+                }
+              ],
+              "piece": "row"
+            },
             {
               "children": [
                 {
@@ -204,8 +268,8 @@
                   "args": {
                     "to": 3
                   },
-                  "kind": "primary",
-                  "label": "Submit",
+                  "kind": "secondary",
+                  "label": "submit",
                   "piece": "button"
                 },
                 {
@@ -241,7 +305,7 @@
                       "to": 0
                     },
                     "kind": "secondary",
-                    "label": "Edit",
+                    "label": "edit",
                     "piece": "button"
                   }
                 ],
@@ -262,7 +326,7 @@
                       "to": 1
                     },
                     "kind": "secondary",
-                    "label": "Edit",
+                    "label": "edit",
                     "piece": "button"
                   }
                 ],
@@ -283,37 +347,35 @@
                       "to": 2
                     },
                     "kind": "secondary",
-                    "label": "Edit",
+                    "label": "edit",
                     "piece": "button"
                   }
                 ]
               ],
-              "widths": [1, 4, 1]
+              "widths": [
+                1,
+                4,
+                1
+              ]
             },
             {
               "children": [
                 {
-                  "mono": true,
-                  "piece": "toned",
-                  "text": "← back · Enter send",
-                  "tone": "neutral"
-                },
-                {
-                  "piece": "spacer"
+                  "action": "decline",
+                  "args": {},
+                  "kind": "secondary",
+                  "label": "decline",
+                  "piece": "button"
                 },
                 {
                   "action": "heiko.cancel",
                   "args": {},
                   "kind": "danger",
-                  "label": "Cancel run",
+                  "label": "cancel run",
                   "piece": "button"
                 },
                 {
-                  "action": "decline",
-                  "args": {},
-                  "kind": "secondary",
-                  "label": "Decline to answer",
-                  "piece": "button"
+                  "piece": "spacer"
                 },
                 {
                   "action": "send",
@@ -326,7 +388,7 @@
               "piece": "row"
             }
           ],
-          "piece": "card"
+          "piece": "stack"
         }
       ],
       "focus": 2,
@@ -351,7 +413,9 @@
         "escape"
       ],
       "piece": "keys",
-      "through": ["escape"]
+      "through": [
+        "escape"
+      ]
     },
     "status": {
       "detail": null,

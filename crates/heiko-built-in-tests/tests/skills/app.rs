@@ -47,7 +47,7 @@ fn the_host_draws_its_commands_page_and_folders() {
     assert_eq!(view.value["nav"]["badge"], json!("1"));
     let page = serde_json::to_string(view.page.as_ref().unwrap()).unwrap();
     assert!(page.contains("\"heiko.reveal\""), "{page}");
-    assert!(page.contains("not offered to the model"), "{page}");
+    assert!(page.contains("\"label\":\"not offered\""), "{page}");
     assert!(
         view.roots.contains(&person.display().to_string()),
         "{:?}",

@@ -4,14 +4,14 @@
 use gpui::{Context, Div, div, prelude::*, rems};
 
 use crate::{
-    assets::Icon,
-    theme::{IconSize, Theme, Type, radius, sp, weight},
-    ui::{self, Material as _, components::ButtonKind},
+    assets::State,
+    theme::{Design as _, Theme, Type, sp},
+    ui,
     view::{Origin, RunStatus, RunView},
     workspace::Workspace,
 };
 
-/// The card at the end of a run heiko closing cut off: when, at which
+/// The note at the end of a run heiko closing cut off: when, at which
 /// turn, what its files hold, and Resume. A sub-agent's has no Resume:
 /// its call is gone.
 pub fn card(
@@ -35,46 +35,35 @@ pub fn card(
         div()
             .flex()
             .flex_col()
-            .border_1()
-            .border_color(t.border)
-            .rounded(radius::BOX)
-            .raised(t)
-            .overflow_hidden()
+            .gap(sp(2.))
+            .pt(sp(2.5))
+            .border_t_2()
+            .border_color(t.slate)
             .child(
                 div()
                     .flex()
-                    .items_center()
-                    .gap(sp(2.))
-                    .min_h(rems(2.5))
-                    .px(sp(3.))
-                    .child(ui::icon(
-                        Icon::Pause,
-                        IconSize::COMPACT,
-                        t.text_soft,
-                    ))
+                    .items_baseline()
+                    .gap(sp(3.))
                     .child(
                         div()
                             .flex_1()
                             .min_w(rems(0.))
                             .truncate()
-                            .font_weight(weight::STRONG)
+                            .typeset(Type::SECTION.sized(17.))
+                            .text_color(t.bright)
                             .child("Interrupted when heiko closed"),
                     )
                     .child(ui::mono(
                         format!("turn {}", run.turn),
-                        Type::MICRO,
-                        t.muted,
+                        Type::CAPTION,
+                        t.dim,
                     )),
             )
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap(sp(3.))
-                    .px(sp(3.))
-                    .py(sp(2.5))
-                    .border_t_1()
-                    .border_color(t.border)
+                    .gap(sp(5.))
                     .child(
                         div()
                             .flex_1()
@@ -87,9 +76,9 @@ pub fn card(
                         row.child(
                             div()
                                 .id("resume-cut-off")
-                                .child(ui::button(
+                                .child(ui::primary_block(
                                     "Resume",
-                                    ButtonKind::Primary,
+                                    ui::BlockSize::Small,
                                     t,
                                 ))
                                 .on_click(cx.listener(move |ws, _, _, cx| {
@@ -101,20 +90,17 @@ pub fn card(
     )
 }
 
-/// The card a landing heiko finished at start leaves in the chat it
+/// The note a landing heiko finished at start leaves in the chat it
 /// landed on: `title` was cut off, and is done now.
 pub fn finished_landing(title: &str, t: &Theme) -> Div {
     div()
         .flex()
         .items_center()
-        .gap(sp(2.))
-        .px(sp(3.))
-        .py(sp(2.5))
-        .rounded(radius::BOX)
-        .border_1()
-        .border_color(t.border)
-        .raised(t)
-        .child(ui::icon(Icon::Check, IconSize::COMPACT, t.green))
+        .gap(sp(2.5))
+        .pt(sp(2.5))
+        .border_t_1()
+        .border_color(t.hairline)
+        .child(ui::mark(State::Met, t))
         .child(
             div()
                 .flex_1()

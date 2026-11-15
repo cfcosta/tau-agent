@@ -340,7 +340,10 @@ local RECALLED = {
 }
 local SAVED = {
 	kind = "saved",
-	calls = { { tool = "memory_write", details = {} }, { tool = "memory_write", details = {} } },
+	calls = {
+		{ tool = "memory_write", details = { id = "n-0441", title = "Malformed retry-after falls back to backoff" } },
+		{ tool = "memory_write", details = { id = "n-0442", title = "Cap applies to server hints too" } },
+	},
 }
 
 t.fixture("demo", function()

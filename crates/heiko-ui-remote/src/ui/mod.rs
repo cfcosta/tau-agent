@@ -16,8 +16,8 @@ pub mod screens;
 pub mod transcript;
 
 pub use components::*;
-use gpui::{Hsla, IntoElement, SharedString, div, prelude::*, rems};
-use heiko_agent::event::StopReason;
+use gpui::{Hsla, IntoElement, SharedString, prelude::*, rems};
+use heiko_agent::event::{LimitKind, StopReason};
 pub use heiko_ui_kit::prose::*;
 
 use crate::{
@@ -27,18 +27,55 @@ use crate::{
     view::{RunStatus, RunView},
 };
 
-/// The dot color and words a run's status reads as.
+/// The mark a run's status is shown with: working while it plans or
+/// runs, failing on an error, the limit it stopped at (a cap, when it is
+/// the one the person set on its cost), and idle while it waits for the
+/// person.
+pub fn status_mark_state(status: &RunStatus) -> State {
+    match status {
+        RunStatus::Planning | RunStatus::Running => State::Working,
+        RunStatus::Finished(StopReason::Limit(LimitKind::Usd)) => State::Cap,
+        RunStatus::Finished(StopReason::Limit(_)) => State::Limit,
+        RunStatus::Finished(StopReason::Error(_)) => State::Failing,
+        // Waiting for the person, whether it stopped or was stopped.
+        RunStatus::Finished(StopReason::Stop | StopReason::Cancelled)
+        | RunStatus::Interrupted => State::Idle,
+    }
+}
+
+/// The mark a run is shown with for what it needs: its state's own, or,
+/// when it needs nothing in particular, its `status`'s
+/// ([`status_mark_state`]).
+pub fn attention_mark_state(
+    attention: &Attention,
+    status: &RunStatus,
+) -> State {
+    match attention {
+        Attention::Working { .. } => State::Working,
+        Attention::Asks { .. } => State::Asks,
+        Attention::ReadyToLand { .. } | Attention::Landed => State::Met,
+        Attention::WouldConflict { .. } | Attention::ConflictsOnMain { .. } => {
+            State::Failing
+        }
+        Attention::Queued(_) | Attention::Interrupted | Attention::Dropped => {
+            State::Idle
+        }
+        Attention::Failed | Attention::Idle => status_mark_state(status),
+    }
+}
+
+/// The color and words a run's status reads as.
 pub fn status_look(status: &RunStatus, t: &Theme) -> (Hsla, SharedString) {
     match status {
-        RunStatus::Planning => (t.blue, "planning".into()),
-        RunStatus::Running => (t.roles.live, "running".into()),
+        RunStatus::Planning => (t.green, "planning".into()),
+        RunStatus::Running => (t.green, "running".into()),
         RunStatus::Finished(stop) => stop_look(stop, t),
         RunStatus::Interrupted => (t.muted, "interrupted".into()),
     }
 }
 
-/// The dot color and words `run` reads as: its status, or read-only
-/// for a chat that landed or was dropped.
+/// The color and words `run` reads as: its status, or read-only for a
+/// chat that landed or was dropped.
 pub fn run_look(run: &RunView, t: &Theme) -> (Hsla, SharedString) {
     match run.ending {
         Some(_) => (t.dim, ending::READ_ONLY.into()),
@@ -50,44 +87,34 @@ pub fn stop_look(stop: &StopReason, t: &Theme) -> (Hsla, SharedString) {
     match stop {
         // A conversation that stopped is not over: it waits for the user.
         StopReason::Stop => (t.muted, "your turn".into()),
-        StopReason::Limit(kind) => {
-            (t.red, format!("limit · {kind:?}").to_lowercase().into())
-        }
+        StopReason::Limit(kind) => (
+            // The cap the person set reads in the cap's own color.
+            if *kind == LimitKind::Usd {
+                t.roles.cost
+            } else {
+                t.red
+            },
+            format!("limit · {kind:?}").to_lowercase().into(),
+        ),
         StopReason::Cancelled => (t.muted, "cancelled".into()),
         StopReason::Error(_) => (t.red, "error".into()),
     }
 }
 
-/// The icon a run shows in lists.
+/// The mark a run shows in lists, `size` px wide.
 pub fn status_icon(
     run: &RunView,
     t: &Theme,
     size: IconSize,
 ) -> gpui::AnyElement {
-    match &run.status {
-        RunStatus::Planning | RunStatus::Running => {
-            live_dot(t.accent, 8.).into_any_element()
-        }
-        // Waiting for the user, whether it stopped or was stopped.
-        RunStatus::Finished(StopReason::Stop | StopReason::Cancelled) => div()
-            .size(rems((size.0) / 16.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(dot(t.border_strong, 6.))
-            .into_any_element(),
-        RunStatus::Finished(_) => {
-            icon(Icon::Warning, size, t.red).into_any_element()
-        }
-        RunStatus::Interrupted => {
-            icon(Icon::Pause, size, t.muted).into_any_element()
-        }
-    }
+    mark(status_mark_state(&run.status), t)
+        .size(rems(size.0 / 16.))
+        .into_any_element()
 }
 
-/// The icon a run's row shows for what it needs: its state's own, or,
-/// when it needs nothing in particular, its status's (`nested` rows
-/// under a run show the fork mark then).
+/// The mark a run's row shows for what it needs
+/// ([`attention_mark_state`]), dimmed once the run is closed; a `nested`
+/// row under a run that needs nothing shows the fork icon.
 pub fn attention_icon(
     attention: &Attention,
     run: &RunView,
@@ -95,28 +122,23 @@ pub fn attention_icon(
     t: &Theme,
     size: IconSize,
 ) -> gpui::AnyElement {
-    let glyph = |glyph, color| icon(glyph, size, color).into_any_element();
-    match attention {
-        Attention::Asks { .. } => glyph(Icon::Question, t.blue),
-        Attention::ReadyToLand { .. } => glyph(Icon::Landable, t.green),
-        Attention::WouldConflict { .. } | Attention::ConflictsOnMain { .. } => {
-            glyph(Icon::Warning, t.red)
-        }
-        Attention::Queued(_) => glyph(Icon::History, t.accent),
-        Attention::Interrupted => glyph(Icon::Interrupted, t.muted),
-        Attention::Landed => glyph(Icon::Check, t.dim),
-        Attention::Dropped => glyph(Icon::Close, t.dim),
-        Attention::Idle if nested => glyph(Icon::Fork, t.blue),
-        Attention::Working { .. } | Attention::Failed | Attention::Idle => {
-            status_icon(run, t, size)
-        }
+    if nested && *attention == Attention::Idle {
+        return icon(Icon::Fork, size, t.blue).into_any_element();
     }
+    let drawn = mark(attention_mark_state(attention, &run.status), t)
+        .size(rems(size.0 / 16.));
+    match attention {
+        Attention::Landed | Attention::Dropped => drawn.text_color(t.dim),
+        Attention::Queued(_) => drawn.text_color(t.accent),
+        _ => drawn,
+    }
+    .into_any_element()
 }
 
-/// The color of a run's line for what it needs.
+/// The color of a run's line for what it needs: its mark's.
 pub fn attention_color(attention: &Attention, t: &Theme) -> Hsla {
     match attention {
-        Attention::Asks { .. } => t.blue,
+        Attention::Asks { .. } => t.roles.live,
         Attention::ReadyToLand { .. } => t.green,
         Attention::WouldConflict { .. }
         | Attention::ConflictsOnMain { .. }

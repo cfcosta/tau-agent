@@ -124,7 +124,7 @@
                   "text": "1. Should the person edit a document in place?"
                 }
               ],
-              "piece": "card"
+              "piece": "stack"
             },
             {
               "action": "open",
@@ -134,7 +134,7 @@
                 "revision": 2
               },
               "kind": "secondary",
-              "label": "Open on the canvas",
+              "label": "open on the canvas",
               "piece": "button"
             }
           ],
@@ -171,7 +171,7 @@
                 "revision": 1
               },
               "kind": "secondary",
-              "label": "Open on the canvas",
+              "label": "open on the canvas",
               "piece": "button"
             }
           ],
@@ -213,7 +213,7 @@
                   "text": "1. Should the person edit a document in place?"
                 }
               ],
-              "piece": "card"
+              "piece": "stack"
             },
             {
               "action": "open",
@@ -223,7 +223,7 @@
                 "revision": 1
               },
               "kind": "secondary",
-              "label": "Open on the canvas",
+              "label": "open on the canvas",
               "piece": "button"
             }
           ],
@@ -249,19 +249,12 @@
                   "revision": 1
                 },
                 "kind": "secondary",
-                "label": "Image · Retry latency",
+                "label": "Retry latency",
                 "piece": "button"
               },
               {
-                "action": "pick",
-                "args": {
-                  "fresh": 3,
-                  "item": 2,
-                  "revision": 2
-                },
-                "kind": "primary",
-                "label": "Document · Canvas plan",
-                "piece": "button"
+                "piece": "rich",
+                "text": "**Canvas plan**"
               }
             ],
             "piece": "row"
@@ -269,8 +262,34 @@
           {
             "children": [
               {
-                "name": "back",
-                "piece": "icon",
+                "label": "1",
+                "piece": "square",
+                "style": "filled",
+                "tone": "info"
+              },
+              {
+                "label": "2",
+                "piece": "square",
+                "style": "quiet",
+                "tone": "info"
+              },
+              {
+                "piece": "text",
+                "text": "Revision 1 of 2"
+              },
+              {
+                "mono": false,
+                "piece": "toned",
+                "text": "not the latest",
+                "tone": "warn"
+              },
+              {
+                "piece": "spacer"
+              },
+              {
+                "mono": false,
+                "piece": "toned",
+                "text": "older",
                 "tone": "neutral"
               },
               {
@@ -280,18 +299,9 @@
                   "item": 2,
                   "revision": 2
                 },
-                "icon": "chevron",
                 "kind": "secondary",
-                "label": "",
+                "label": "newer",
                 "piece": "button"
-              },
-              {
-                "piece": "text",
-                "text": "Revision 1 of 2"
-              },
-              {
-                "piece": "text",
-                "text": "· not the latest"
               }
             ],
             "piece": "row"

@@ -1,5 +1,5 @@
 //! heiko-direnv's UI (ADR 0017): the question in the composer's place
-//! ([`points::COMPOSER`]), the loading and failure cards above the
+//! ([`points::COMPOSER`]), the loading and failure lines above the
 //! transcript ([`points::RUN_BANNER`]), and the toggle on the
 //! repository's menu ([`points::REPO_MENU`]), each a view tree (ADR
 //! 0045).

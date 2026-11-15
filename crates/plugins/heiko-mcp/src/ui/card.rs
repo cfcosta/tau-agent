@@ -1,8 +1,8 @@
-//! An MCP tool's card: the server and the tool, the tool's hints, and
-//! what it returned, as structured JSON when the server gave some, else
-//! as text. Its head and body are view trees (ADR 0045).
+//! An MCP tool's card: what it sent on the call's line with the tool's
+//! hints, the server as the result's word, and what it returned on a
+//! band, as structured JSON when the server gave some, else as text.
+//! Its head and body are view trees (ADR 0045).
 
-use serde_json::Value;
 use heiko_ui_kit::theme::Tone;
 use heiko_ui_plugin::{
     CallData,
@@ -10,6 +10,7 @@ use heiko_ui_plugin::{
     points::{AtCard, CardView},
     tree::Node,
 };
+use serde_json::Value;
 
 use super::{
     McpUi,
@@ -17,8 +18,12 @@ use super::{
 };
 use crate::info::Annotations;
 
-/// The most lines of a result's text a card shows.
+/// The most lines of a result a card shows.
 const TEXT_LINES: usize = 40;
+
+/// The most characters of its arguments a call's line holds; longer
+/// ones go in the body, whole.
+const ARGS_CHARS: usize = 96;
 
 /// What a card shows of a call to an MCP tool.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -87,67 +92,77 @@ pub fn card(at: &AtCard, view: &mut ViewCx<'_, McpUi>) -> Option<CardView> {
         (server.name.clone(), tool.tool.clone(), tool.annotations)
     });
     let shown = shown(&at.data, listed);
+    let body = body(&at.data, &shown);
     Some(CardView {
-        head: Some(head(&shown, &at.summary)),
-        label: None,
+        head: Some(head(&at.data, &shown, &at.summary)),
+        label: shown.server.clone(),
         failed: shown.failed.clone(),
         edge: shown.failed.as_ref().map(|_| Tone::Danger),
         shape: None,
-        body: Some(body(&at.data, &shown)),
-        folds: at.data.result.is_some(),
+        body,
+        folds: false,
         inset: false,
     })
 }
 
-/// The server and the tool, and the tool's hints.
-pub fn head(shown: &Shown, summary: &str) -> Node {
-    let named = match (&shown.server, &shown.tool) {
-        (Some(server), Some(tool)) => format!("{server} · {tool}"),
-        _ => summary.to_owned(),
-    };
-    let mut head = vec![Node::Mono { text: named }];
+/// The call's arguments on one line, when it sent any.
+fn args_line(data: &CallData) -> Option<String> {
+    (!data.args.is_null()
+        && data.args.as_object().is_none_or(|args| !args.is_empty()))
+    .then(|| data.args.to_string())
+}
+
+/// What the call sent, on one line (`summary` when it sent nothing or
+/// too much for a line), and the tool's hints.
+pub fn head(data: &CallData, shown: &Shown, summary: &str) -> Node {
+    let args = args_line(data)
+        .filter(|args| args.chars().count() <= ARGS_CHARS)
+        .unwrap_or_else(|| summary.to_owned());
+    let mut head = vec![Node::Mono { text: args }];
     head.extend(hints(&shown.annotations).into_iter().map(hint_badge));
     Node::row(head)
 }
 
-/// What the call sent, and what it returned.
-pub fn body(data: &CallData, shown: &Shown) -> Node {
-    let heading = |text: &str| Node::Heading { text: text.into() };
-    let json = |text: String| Node::Code {
-        lang: Some("json".into()),
-        text,
+/// `text` on a band, down to its first [`TEXT_LINES`] lines, and how
+/// many more there are.
+fn band(lang: Option<&str>, text: &str) -> Vec<Node> {
+    let lines: Vec<&str> = text.lines().collect();
+    let more = lines.len().saturating_sub(TEXT_LINES);
+    let mut pieces = vec![Node::Code {
+        lang: lang.map(str::to_owned),
+        text: lines[..lines.len() - more].join("\n"),
         first_line: None,
-    };
+    }];
+    if more > 0 {
+        pieces.push(Node::Toned {
+            text: format!("+ {more} more lines"),
+            tone: heiko_ui_plugin::tree::Tone::Neutral,
+            mono: true,
+        });
+    }
+    pieces
+}
+
+/// What the call returned, or has said so far; before it, what it sent
+/// when that is too long for its line.
+pub fn body(data: &CallData, shown: &Shown) -> Option<Node> {
     let mut body = Vec::new();
-    if !data.args.is_null()
-        && data.args.as_object().is_none_or(|args| !args.is_empty())
-    {
-        body.push(heading("Arguments"));
-        body.push(json(
-            serde_json::to_string_pretty(&data.args).unwrap_or_default(),
+    if args_line(data).is_some_and(|args| args.chars().count() > ARGS_CHARS) {
+        body.extend(band(
+            Some("json"),
+            &serde_json::to_string_pretty(&data.args).unwrap_or_default(),
         ));
     }
     if let Some(structured) = &shown.structured {
-        body.push(heading("Structured result"));
-        body.push(json(structured.clone()));
+        body.extend(band(Some("json"), structured));
     }
     if let Some(text) = &shown.text {
-        let lines: Vec<&str> = text.lines().collect();
-        let more = lines.len().saturating_sub(TEXT_LINES);
-        body.push(heading("Result"));
-        body.push(Node::Mono {
-            text: lines[..lines.len() - more].join("\n"),
-        });
-        if more > 0 {
-            body.push(Node::text(format!("… {more} more lines")));
-        }
+        body.extend(band(None, text));
     }
     if data.result.is_none()
         && let Some(partial) = &data.partial
     {
-        body.push(Node::Mono {
-            text: partial.clone(),
-        });
+        body.extend(band(None, partial));
     }
-    Node::stack(body)
+    (!body.is_empty()).then(|| Node::stack(body))
 }

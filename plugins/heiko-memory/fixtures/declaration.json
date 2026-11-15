@@ -13,8 +13,16 @@
     "transcript": true,
     "archive": false,
     "chats": false,
-    "files": ["repository/heiko-memory", "data/heiko-memory", "~/.claude", "~/.codex"],
-    "writes": ["repository/heiko-memory", "data/heiko-memory"]
+    "files": [
+      "repository/heiko-memory",
+      "data/heiko-memory",
+      "~/.claude",
+      "~/.codex"
+    ],
+    "writes": [
+      "repository/heiko-memory",
+      "data/heiko-memory"
+    ]
   },
   "settings": {
     "default": {
@@ -29,14 +37,24 @@
           "type": "boolean"
         },
         "family": {
-          "enum": ["sol", "luna", "astra", "terra"],
+          "enum": [
+            "sol",
+            "luna",
+            "astra",
+            "terra"
+          ],
           "type": "string"
         },
         "follow_chat": {
           "type": "boolean"
         },
         "reasoning": {
-          "enum": ["auto", "low", "medium", "high"],
+          "enum": [
+            "auto",
+            "low",
+            "medium",
+            "high"
+          ],
           "type": "string"
         }
       },
@@ -65,7 +83,11 @@
             "type": "string"
           }
         },
-        "required": ["from", "to", "type"],
+        "required": [
+          "from",
+          "to",
+          "type"
+        ],
         "type": "object"
       },
       "card": false
@@ -80,7 +102,9 @@
             "type": "string"
           }
         },
-        "required": ["id"],
+        "required": [
+          "id"
+        ],
         "type": "object"
       },
       "card": false
@@ -100,7 +124,9 @@
             "type": "string"
           }
         },
-        "required": ["query"],
+        "required": [
+          "query"
+        ],
         "type": "object"
       },
       "card": false
@@ -137,7 +163,10 @@
                   "type": "string"
                 }
               },
-              "required": ["to", "type"],
+              "required": [
+                "to",
+                "type"
+              ],
               "type": "object"
             },
             "type": "array"
@@ -165,7 +194,12 @@
             "type": "string"
           }
         },
-        "required": ["type", "title", "description", "body"],
+        "required": [
+          "type",
+          "title",
+          "description",
+          "body"
+        ],
         "type": "object"
       },
       "card": false
@@ -193,7 +227,12 @@
     "setup": true,
     "models": false
   },
-  "actions": ["act", "import", "setup_choose", "setup_start"],
+  "actions": [
+    "act",
+    "import",
+    "setup_choose",
+    "setup_start"
+  ],
   "events": [],
   "fills": [],
   "compaction": null,
@@ -211,7 +250,10 @@
       "label": "Importing notes"
     }
   ],
-  "pages": ["import", "notes"],
+  "pages": [
+    "import",
+    "notes"
+  ],
   "repo_nav": {
     "label": "Memory",
     "page": "notes",
@@ -225,7 +267,10 @@
     "page": "notes",
     "icon": "memory"
   },
-  "drafts": ["search", "review-search"],
+  "drafts": [
+    "search",
+    "review-search"
+  ],
   "keys": {
     "ctrl-2": "notes"
   }

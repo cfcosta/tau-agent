@@ -325,7 +325,7 @@ fn object(fields: &Map<String, Value>) -> Vec<Node> {
             .collect(),
     }];
     for (key, value) in fields.iter().filter(|(_, value)| long(value)) {
-        nodes.push(Node::Heading { text: key.clone() });
+        nodes.push(Node::Heading { text: key.clone(), tone: Default::default() });
         nodes.extend(text_block(value.as_str().unwrap_or_default()));
     }
     nodes

@@ -1,22 +1,23 @@
 //! The `vcs_commit` card, as a view tree (ADR 0045), drawn as the
-//! stack the commit made: the working copy on top, the new change in
-//! the middle, and the parent below. Closed, the change's subject;
-//! open, each with its files, so a commit that took only some paths
-//! shows what went into the change and what stayed in `@`.
+//! stack the commit made, each change a square on the line: the new
+//! working copy on top, the new change under it (the filled square), and
+//! the parent below. Each has its files, so a commit that took only
+//! some paths shows what went into the change and what stayed in `@`.
 
+use heiko_ui_plugin::tree::Node;
 use serde::Deserialize;
 use serde_json::Value;
-use heiko_ui_plugin::tree::{Node, Tone};
 
 use super::{
-    Card,
     bookmarks,
     change_diff::{FileDiff, files_of},
     change_log::Change,
-    diff_card::{file_list, message},
-    kind_badge,
+    diff_card::message,
+    file_rows,
+    first_line,
+    node,
+    quiet,
     short_id,
-    subject,
 };
 use crate::{ChangeInfo, FileChange};
 
@@ -92,82 +93,48 @@ impl Commit {
     }
 }
 
-/// The closed card's head: the stack the commit made in small, the
-/// change's type and subject, and the bookmarks on it.
+/// The card's head: the change's first line.
 pub fn summary(commit: &Commit) -> Node {
-    let change = &commit.change;
-    let graph = if commit.parent.is_some() {
-        "○─●─◌"
-    } else {
-        "●─◌"
-    };
-    let mut row = vec![Node::Mono { text: graph.into() }];
-    row.extend(kind_badge(change));
-    row.push(Node::text(subject(change)));
-    row.push(Node::Spacer);
-    row.extend(bookmarks(change));
-    Node::row(row)
+    Node::Mono {
+        text: first_line(&commit.change),
+    }
 }
 
-/// The open card: `@` on top with what stayed in it, the new change
-/// with its message and files, and the parent below.
-pub fn body(card: &Card, commit: &Commit) -> Node {
+/// The stack the commit made: `@` on top with what stayed in it, the
+/// new change with its message and files, and the parent below.
+pub fn body(commit: &Commit) -> Node {
     let change = &commit.change;
-    let left = commit.left.len();
-    let mut working = vec![Node::row([
-        Node::Badge {
-            text: "@".into(),
-            tone: Tone::Warn,
-        },
-        short_id(&commit.working_copy),
-        Node::text(match left {
-            0 => "working copy · empty".to_owned(),
-            1 => "working copy · still holds 1 file".to_owned(),
-            n => format!("working copy · still holds {n} files"),
-        }),
-    ])];
-    if left > 0 {
-        working.push(file_list(
-            card,
-            &commit.left,
-            commit.left_truncated,
-            &|_| false,
-        ));
-    }
-    let mut head: Vec<Node> = kind_badge(change).into_iter().collect();
-    head.push(Node::Heading {
-        text: subject(change),
-    });
-    head.push(Node::Spacer);
-    head.push(short_id(change));
-    head.extend(bookmarks(change));
-    let mut committed = vec![Node::row(head)];
-    committed.extend(message(change));
-    committed.push(Node::Card {
-        children: vec![file_list(
-            card,
-            &commit.files,
-            commit.truncated,
-            &|_| false,
-        )],
-    });
-    let mut column =
-        vec![Node::stack(working), Node::Rule, Node::stack(committed)];
+    let mut column = vec![match commit.left.len() {
+        0 => Node::row([
+            node(false),
+            quiet("(empty)"),
+            Node::text("new working copy"),
+        ]),
+        left => Node::row([
+            node(false),
+            short_id(&commit.working_copy),
+            Node::text(match left {
+                1 => "working copy · still holds 1 file".to_owned(),
+                n => format!("working copy · still holds {n} files"),
+            }),
+        ]),
+    }];
+    column.extend(file_rows(&commit.left, commit.left_truncated, &|_| false));
+    let mut committed =
+        vec![node(true), short_id(change), Node::text(first_line(change))];
+    committed.push(Node::Spacer);
+    committed.extend(bookmarks(change));
+    column.push(Node::row(committed));
+    column.extend(message(change));
+    column.extend(file_rows(&commit.files, commit.truncated, &|_| false));
     if let Some(parent) = &commit.parent {
-        let mut row = vec![Node::Mono {
-            text: parent.short_id().to_owned(),
-        }];
+        let mut row = vec![
+            node(false),
+            short_id(parent),
+            Node::text(first_line(parent)),
+        ];
+        row.push(Node::Spacer);
         row.extend(bookmarks(parent));
-        row.push(Node::text(
-            parent
-                .info
-                .description
-                .lines()
-                .next()
-                .unwrap_or("(no description set)")
-                .to_owned(),
-        ));
-        column.push(Node::Rule);
         column.push(Node::row(row));
     }
     Node::stack(column)

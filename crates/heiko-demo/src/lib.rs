@@ -3052,7 +3052,9 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), listed, "a name opens one screen");
-        for name in ["run", "memory", "constitution", "ledger", "pr-opened"] {
+        for name in
+            ["home", "run", "memory", "constitution", "ledger", "pr-opened"]
+        {
             assert!(names.contains(&name), "{name}");
         }
         let catalog = catalog();
@@ -3152,7 +3154,10 @@ mod tests {
             &luau["plugins"][heiko_luau_plugins::names::FAST_COMPACTION]["state"];
         assert_eq!(pruning["ledger"].as_array().unwrap().len(), calls);
         let detail = pruning["passes"][0]["detail"].as_str().unwrap();
-        assert!(detail.contains("$0.0011"), "the pass's cost: {detail}");
+        assert!(
+            detail.ends_with("Jev read 18k tokens of history, whole"),
+            "what the pass read, and no cost: {detail}"
+        );
         assert_eq!(
             view.tool("c8").and_then(|card| card.dropped),
             Some(heiko_ui_remote::view::Dropped::Result)

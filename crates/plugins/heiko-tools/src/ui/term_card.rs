@@ -1,8 +1,9 @@
-//! A command card's terminal, as a view tree (ADR 0045): its screen
-//! under a strip. The interface keeps the screen, live while the command
-//! runs and frozen once it ends, fed the bytes so far. When a plugin cut
-//! the output, the card holds two tabs: the terminal, and the text the
-//! model saw.
+//! A command card's terminal, as a view tree (ADR 0045): its screen,
+//! flat, and the button that copies its text. The interface keeps the
+//! screen, live while the command runs and frozen once it ends, fed the
+//! bytes so far; how the command stands is the card's stamp. When a
+//! plugin cut the output, the card holds two tabs: the terminal, and the
+//! text the model saw.
 
 use heiko_ui_kit::format::grouped;
 use heiko_ui_plugin::{
@@ -20,22 +21,23 @@ pub const OPEN: &str = "open";
 /// `{ "text": ... }`.
 pub const COPY: &str = "copy";
 
-/// The card's body: the strip, then the screen; on a cut card, the
-/// terminal and the text the model saw, as tabs. `id` names the card
-/// among the plugin's: its run and call.
+/// The card's body: the screen, then the button that copies its text;
+/// on a cut card, the terminal and the text the model saw, as tabs.
+/// `id` names the card among the plugin's: its run and call.
 pub fn body(id: &str, term: &TermOutput, cut: Option<&OutputCut>) -> Node {
-    let live = term.end.is_none();
     let screen = Node::Terminal {
         id: format!("term-{id}"),
         text: String::from_utf8_lossy(&term.bytes).into_owned(),
         cols: term.cols,
         rows: term.rows,
-        live,
+        live: term.end.is_none(),
         // A long output folds to its last rows; the person opens it.
         fold: true,
     };
+    let mut terminal = vec![screen];
+    terminal.extend(copy(term));
     let Some(cut) = cut else {
-        return Node::stack([strip(term, live), screen]);
+        return Node::stack(terminal);
     };
     Node::stack([
         Node::Tabs {
@@ -43,7 +45,7 @@ pub fn body(id: &str, term: &TermOutput, cut: Option<&OutputCut>) -> Node {
             tabs: vec![
                 Tab {
                     label: format!("terminal · {} lines", grouped(cut.lines)),
-                    children: vec![strip(term, live), screen],
+                    children: terminal,
                 },
                 Tab {
                     label: format!("model saw · {} lines", grouped(cut.kept)),
@@ -57,43 +59,27 @@ pub fn body(id: &str, term: &TermOutput, cut: Option<&OutputCut>) -> Node {
             args: serde_json::json!({ "path": cut.archive }),
             kind: Kind::Secondary,
             icon: None,
+            size: Default::default(),
         },
     ])
 }
 
-/// The terminal's size and how it stands: `120×40 · xterm-256color` and
-/// `live` while it runs, `no output` once it ended without any.
-fn strip(term: &TermOutput, live: bool) -> Node {
-    let label = if live {
-        format!("{} · xterm-256color", term.size_label())
-    } else if term.bytes.is_empty() {
-        format!("{} · no output", term.size_label())
-    } else {
-        term.size_label()
-    };
-    let mut row = vec![Node::Mono { text: label }, Node::Spacer];
-    if live {
-        row.push(Node::Pill {
-            text: "live".into(),
-            tone: Tone::Info,
-        });
-    }
-    // Its text, without the terminal's colors and moves.
+/// The button that copies the command's text, without the terminal's
+/// colors and moves; none while there is no text.
+fn copy(term: &TermOutput) -> Option<Node> {
     let text = term.seen.trim_end();
-    if !text.is_empty() {
-        row.push(Node::Button {
-            label: String::new(),
-            action: COPY.into(),
-            args: serde_json::json!({ "text": text }),
-            kind: Kind::Secondary,
-            icon: Some("copy".into()),
-        });
-    }
-    Node::row(row)
+    (!text.is_empty()).then(|| Node::Button {
+        label: "copy".into(),
+        action: COPY.into(),
+        args: serde_json::json!({ "text": text }),
+        kind: Kind::Secondary,
+        icon: None,
+        size: Default::default(),
+    })
 }
 
-/// The text the model saw, with the cut's marks: omitted lines as small
-/// badges, its header and footer as quiet lines.
+/// The text the model saw, with the cut's marks: omitted lines and its
+/// header and footer as quiet lines.
 fn seen(term: &TermOutput) -> Node {
     let mut pieces = Vec::new();
     let mut text = Vec::new();
@@ -112,14 +98,12 @@ fn seen(term: &TermOutput) -> Node {
             SeenLine::Text(line) => text.push(line),
             SeenLine::Note(line) => {
                 flush(&mut text, &mut pieces);
-                pieces.push(Node::Mono { text: line });
+                pieces.push(quiet(line));
             }
             SeenLine::Omitted(count) => {
                 flush(&mut text, &mut pieces);
-                pieces.push(Node::Badge {
-                    text: format!("{} lines omitted", grouped(count)),
-                    tone: Tone::Info,
-                });
+                pieces
+                    .push(quiet(format!("… {} lines omitted", grouped(count))));
             }
         }
     }
@@ -127,5 +111,14 @@ fn seen(term: &TermOutput) -> Node {
     Node::Scroll {
         height: Some(24.),
         children: pieces,
+    }
+}
+
+/// A line that is not the command's own.
+fn quiet(text: String) -> Node {
+    Node::Toned {
+        text,
+        tone: Tone::Neutral,
+        mono: true,
     }
 }

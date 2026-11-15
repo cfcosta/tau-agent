@@ -199,6 +199,32 @@ fn the_sidebar_says_what_each_chat_needs(cx: &mut TestAppContext) {
     // Asking, ready to land and would conflict need the person.
     let need_you = workspace.update(&mut cx, |ws, _| ws.need_you(REPO));
     assert_eq!(need_you, 3);
+    // Each row says it with marks alone, and Home lists the three as
+    // waiting on the person.
+    workspace.update(&mut cx, |ws, _| {
+        use heiko_ui_kit::assets::State;
+        let marks = |name: &str| {
+            ws.run_marks(ws.run(&id(name)).unwrap(), false).shown()
+        };
+        assert_eq!(marks("working"), [(1, State::Working)]);
+        assert_eq!(marks("asks"), [(1, State::Asks)]);
+        assert_eq!(marks("ready"), [(1, State::Met)]);
+        assert_eq!(marks("conflict"), [(2, State::Failing)]);
+        assert!(marks("main").is_empty());
+        assert_eq!(ws.need_you_everywhere(), 3);
+        let since = ws.since();
+        let hot: Vec<(&str, &str)> = since
+            .iter()
+            .filter(|happened| happened.hot)
+            .map(|happened| (happened.name.as_str(), happened.action.as_str()))
+            .collect();
+        assert!(hot.contains(&("asks", "answer")), "{since:?}");
+        assert!(hot.contains(&("ready", "land")), "{since:?}");
+        assert!(hot.contains(&("conflict", "compare")), "{since:?}");
+        // The run at work is first, and nothing is said of main at rest.
+        assert_eq!(since[0].name, "working");
+        assert!(since.iter().all(|happened| happened.name != "main"));
+    });
 
     // A phone takes the computer's snapshot and says the same.
     let snapshot = workspace.read_with(&cx, |ws, _| ws.snapshot());
@@ -565,99 +591,86 @@ fn the_crew_is_this_rounds_sub_agents(cx: &mut TestAppContext) {
     });
 }
 
-/// A row's icon says where its run stands, git's way, and its counts
-/// say how much: main's changes to push, a fork's to land or its
-/// conflicting files, its place in the queue, what it landed.
+/// A row says where its run stands with marks alone, packed in one
+/// order: met, working, limit, failing, asks. A state nothing is in
+/// has no mark.
 #[test]
-fn a_row_says_where_its_run_stands_and_how_much() {
-    use heiko_ui_kit::{assets::Icon, theme::Theme};
-    use heiko_ui_remote::{
-        attention::Queued,
-        ui::chrome::{counts, state_icon},
-    };
+fn a_row_says_where_its_run_stands_with_marks() {
+    use heiko_ui_kit::assets::State;
+    use heiko_ui_remote::attention::{Marks, Queued};
 
-    let t = Theme::tokyo_night();
-    let fork = chat("fork", None);
-    let mut sub = RunView::new(id("sub"), "sub", "coder", "gpt-5.5")
-        .with_origin(Origin::SubAgent { parent: id("main") });
-    let main = RunView::new(id("main"), "main", "coder", "gpt-5.5");
-    let icon = |attention: &Attention, run: &RunView, is_main, unpushed| {
-        state_icon(attention, run, is_main, unpushed, &t).0
-    };
-    let said =
-        |attention: &Attention, run: &RunView, unpushed| -> Vec<String> {
-            counts(attention, run, None, unpushed, &t)
-                .into_iter()
-                .map(|(count, _)| count)
-                .collect()
-        };
-    // Main is its branch, at work or at rest, with what it would push.
-    assert_eq!(icon(&Attention::Idle, &main, true, 2), Icon::Branch);
+    let shown = |attention: &Attention| attention.marks().shown();
     assert_eq!(
-        icon(&Attention::Working { turn: 1 }, &main, true, 0),
-        Icon::Branch
+        shown(&Attention::Working { turn: 1 }),
+        [(1, State::Working)]
     );
-    assert_eq!(said(&Attention::Idle, &main, 2), ["↑2"]);
-    assert!(said(&Attention::Idle, &main, 0).is_empty());
-    // A fork at work is a draft; done, a pull request with its changes.
     assert_eq!(
-        icon(&Attention::Working { turn: 1 }, &fork, false, 0),
-        Icon::Draft
+        shown(&Attention::Asks {
+            question: "?".into()
+        }),
+        [(1, State::Asks)]
     );
-    let ready = Attention::ReadyToLand { changes: 3 };
+    // Ready to land is met; a landing that would conflict fails by as
+    // many files.
     assert_eq!(
-        (icon(&ready, &fork, false, 0), said(&ready, &fork, 0)),
-        (Icon::PullRequest, vec!["3".to_owned()])
+        shown(&Attention::ReadyToLand { changes: 3 }),
+        [(1, State::Met)]
     );
     let conflict = Attention::WouldConflict {
         files: vec!["a".into(), "b".into()],
     };
+    assert_eq!(shown(&conflict), [(2, State::Failing)]);
+    let on_main = Attention::ConflictsOnMain {
+        files: vec!["a".into()],
+    };
+    assert_eq!(shown(&on_main), [(1, State::Failing)]);
+    assert_eq!(shown(&Attention::Failed), [(1, State::Failing)]);
+    // Queued, it waits on nothing, unless a conflict is to confirm.
+    let queued = |needs_confirmation| {
+        Attention::Queued(Queued {
+            position: 2,
+            needs_confirmation,
+        })
+    };
+    assert!(shown(&queued(false)).is_empty());
+    assert_eq!(shown(&queued(true)), [(1, State::Asks)]);
+    for at_rest in [
+        Attention::Idle,
+        Attention::Interrupted,
+        Attention::Landed,
+        Attention::Dropped,
+    ] {
+        assert!(shown(&at_rest).is_empty(), "{at_rest:?}");
+    }
+    // Together they keep the one order, and a count shows what is
+    // under the row.
+    let all = Marks {
+        met: 1,
+        working: 2,
+        limit: 1,
+        failing: 3,
+        asks: 4,
+    };
     assert_eq!(
-        (icon(&conflict, &fork, false, 0), said(&conflict, &fork, 0)),
-        (Icon::Warning, vec!["2 files".to_owned()])
+        all.shown(),
+        [
+            (1, State::Met),
+            (2, State::Working),
+            (1, State::Limit),
+            (3, State::Failing),
+            (4, State::Asks),
+        ]
     );
-    let queued = Attention::Queued(Queued {
-        position: 2,
-        needs_confirmation: false,
+    let both = Marks {
+        working: 1,
+        ..Marks::default()
+    }
+    .and(Marks {
+        working: 1,
+        asks: 2,
+        ..Marks::default()
     });
-    assert_eq!(
-        (icon(&queued, &fork, false, 0), said(&queued, &fork, 0)),
-        (Icon::Clock, vec!["#2".to_owned()])
-    );
-    assert_eq!(
-        icon(
-            &Attention::Asks {
-                question: "?".into()
-            },
-            &fork,
-            false,
-            0
-        ),
-        Icon::Question
-    );
-    assert_eq!(icon(&Attention::Failed, &sub, false, 0), Icon::Failed);
-    // At the end: a merge, with what it landed, or a closed one.
-    sub.ending = Some(Ending::Landed {
-        on: id("main"),
-        changes: 4,
-    });
-    assert_eq!(
-        (
-            icon(&Attention::Landed, &sub, false, 0),
-            said(&Attention::Landed, &sub, 0)
-        ),
-        (Icon::Merge, vec!["4".to_owned()])
-    );
-    assert_eq!(icon(&Attention::Dropped, &fork, false, 0), Icon::Closed);
-    // At rest, a run is what it is.
-    assert_eq!(icon(&Attention::Idle, &fork, false, 0), Icon::Fork);
-    sub.ending = None;
-    assert_eq!(icon(&Attention::Idle, &sub, false, 0), Icon::SubAgent);
-    // A sub-agent at work stays one, not a fork's draft.
-    assert_eq!(
-        icon(&Attention::Working { turn: 1 }, &sub, false, 0),
-        Icon::SubAgent
-    );
+    assert_eq!(both.shown(), [(2, State::Working), (2, State::Asks)]);
 }
 
 /// A repository menu's entry does what it says, not what the row drawn

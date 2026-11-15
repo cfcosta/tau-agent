@@ -20,15 +20,6 @@ function checks.two(x)
 	return string.format("%.2f", x)
 end
 
--- US dollars, to three places under a dollar.
-function checks.usd(amount)
-	local fine = string.format("%.3f", amount)
-	if tonumber(fine) < 1 then
-		return "$" .. fine
-	end
-	return string.format("$%.2f", amount)
-end
-
 -- `text` cut at `chars` characters.
 function checks.cut(text, chars)
 	local after = utf8.offset(text, chars + 1)
@@ -339,12 +330,14 @@ function checks.state(state)
 	return state
 end
 
-local function note(state, text, detail, tone)
+-- A note of the run's: `held`, when it is of an answer's verdict, says
+-- which rule, and which of how many times the answer went back.
+local function note(state, text, detail, tone, held)
 	local n = 0
 	for _ in pairs(state.notes) do
 		n += 1
 	end
-	state.notes["c" .. n] = { text = text, detail = detail, tone = tone }
+	state.notes["c" .. n] = { text = text, detail = detail, tone = tone, held = held }
 end
 
 -- How grave a call's verdict is: a block refused it.
@@ -401,6 +394,7 @@ function checks.fold(state, record, answer, shown)
 			score = record.score,
 			review = record.review,
 			block = record.block,
+			text = record.text,
 			reason = record.reason or record.text,
 		}
 		return
@@ -417,7 +411,13 @@ function checks.fold(state, record, answer, shown)
 	else
 		detail = "before_stop · " .. checks.two(record.score)
 	end
-	note(state, said .. record.rule .. ' ("' .. record.text .. '")', detail, "warn")
+	note(state, said .. record.rule .. ' ("' .. record.text .. '")', detail, "warn", {
+		kind = kind,
+		rule = record.rule,
+		text = record.text,
+		hold = record.hold,
+		max_holds = record.max_holds,
+	})
 end
 
 -- The run's status line, and its tone.

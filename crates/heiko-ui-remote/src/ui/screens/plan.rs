@@ -1,12 +1,11 @@
 //! What each plugin's `start` decided before a run's session opened.
 
-use gpui::{AnyElement, Context, Div, Hsla, div, prelude::*, relative, rems};
+use gpui::{AnyElement, Context, Div, div, prelude::*, rems};
 use heiko_agent::tool::RunId;
 
 use crate::{
-    assets::Icon,
-    theme::{Design as _, IconSize, Theme, Type, radius, sp, weight},
-    ui::{self, dot, heading, icon, mono, rich},
+    theme::{Design as _, Theme, Type, sp},
+    ui::{self, SquareStyle, mono, rich},
     view::{Item, PluginNote},
     workspace::Workspace,
 };
@@ -40,113 +39,93 @@ pub fn render(
         _ => None,
     });
 
-    let steps = notes.iter().map(|note| {
-        step(
-            t.green,
-            div().flex().flex_col().gap(sp(3.)).pb(sp(4.5)).child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap(sp(2.5))
-                    .child(mono(note.plugin.clone(), Type::SMALL, t.text))
-                    .child(div().text_color(t.muted).child(note.text.clone()))
-                    .child(div().flex_1())
-                    .children(
-                        note.detail
-                            .clone()
-                            .map(|detail| mono(detail, Type::CAPTION, t.muted)),
-                    ),
-            ),
-            true,
-            t,
-        )
+    // Each plugin's start is a numbered step; opening the session is
+    // the last.
+    let noted = notes.iter().map(|note| {
+        div()
+            .flex()
+            .flex_wrap()
+            .items_baseline()
+            .gap(sp(2.5))
+            .child(mono(note.plugin.clone(), Type::SMALL, t.text))
+            .child(div().text_color(t.muted).child(note.text.clone()))
+            .child(div().flex_1())
+            .children(
+                note.detail
+                    .clone()
+                    .map(|detail| mono(detail, Type::CAPTION, t.dim)),
+            )
     });
-
+    let done: Vec<Div> = noted
+        .chain(plugin_steps.into_iter().map(|body| div().child(body)))
+        .enumerate()
+        .map(|(n, content)| {
+            step(
+                ui::square(
+                    (n + 1).to_string(),
+                    SquareStyle::Outlined(t.green),
+                    t,
+                ),
+                content,
+                t,
+            )
+        })
+        .collect();
+    let opening = step(
+        ui::square(
+            (done.len() + 1).to_string(),
+            SquareStyle::Filled(t.blue),
+            t,
+        ),
+        div()
+            .flex()
+            .flex_wrap()
+            .items_baseline()
+            .gap(sp(2.5))
+            .child("Opening session")
+            .child(mono(
+                format!("{} · {effort}", run.model),
+                Type::CAPTION,
+                t.dim,
+            )),
+        t,
+    );
     let timeline = div()
         .flex()
         .flex_col()
-        .border_1()
-        .border_color(t.blue_border)
-        .rounded(radius::LARGE)
-        .bg(t.info_panel)
+        .child(ui::section_header(
+            "Preparing the run",
+            Some("each plugin's start, in order".into()),
+            t,
+        ))
+        .when(notes.is_empty() && no_plugin_steps, |timeline| {
+            timeline.child(
+                div()
+                    .py(sp(3.))
+                    .border_b_1()
+                    .border_color(t.hairline)
+                    .text_color(t.muted)
+                    .child("No plugin changed this run's plan."),
+            )
+        })
+        .children(done)
+        .child(opening)
         .child(
             div()
-                .flex()
-                .items_center()
-                .gap(sp(2.5))
-                .px(sp(4.))
-                .py(sp(3.))
-                .border_b_1()
-                .border_color(t.border)
+                .pt(sp(3.))
+                .typeset(Type::SMALL.leading(1.5))
+                .text_color(t.dim)
                 .child(
-                    div()
-                        .font_weight(weight::STRONG)
-                        .child("Preparing the run"),
-                )
-                .child(
-                    div()
-                        .typeset(Type::CAPTION)
-                        .text_color(t.muted)
-                        .child("each plugin's start, in order"),
+                    "The effort holds until the run stops. Your next \
+                     message is scored again, on whatever model it goes to.",
                 ),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .p(sp(4.))
-                .children(steps)
-                .children(plugin_steps.into_iter().map(|body| {
-                    step(t.green, div().pb(sp(4.5)).child(body), true, t)
-                }))
-                .when(notes.is_empty() && no_plugin_steps, |timeline| {
-                    timeline.child(ui::empty(
-                        "No plugin changed this run's plan.",
-                        t,
-                    ))
-                })
-                .child(step(
-                    t.accent,
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .gap(sp(2.5))
-                        .child("Opening session")
-                        .child(mono(
-                            format!("{} · {effort}", run.model),
-                            Type::CAPTION,
-                            t.muted,
-                        )),
-                    false,
-                    t,
-                )),
         );
-
-    let notice = div()
-        .flex()
-        .items_center()
-        .gap(sp(2.5))
-        .px(sp(3.5))
-        .py(sp(2.5))
-        .border_1()
-        .border_dashed()
-        .border_color(t.border_strong)
-        .rounded(radius::BOX)
-        .text_color(t.muted)
-        .line_height(relative(1.5))
-        .child(icon(Icon::Warning, IconSize::BASE, t.muted))
-        .child(div().flex_1().child(
-            "The effort holds until the run stops. Your next message is \
-             scored again, on whatever model it goes to.",
-        ));
 
     let side = div()
         .flex()
         .flex_col()
-        .gap(sp(3.5))
         .when(!compact, |side| side.w(rems(21.625)).flex_shrink_0())
-        .child(heading("RunPlan after start", t))
+        .child(ui::section_header("Plan after start", None, t))
         .child(plan_table(&ws.run_plan(run), t));
 
     let main = div()
@@ -154,16 +133,25 @@ pub fn render(
         .min_w(rems(0.))
         .flex()
         .flex_col()
-        .gap(sp(4.))
+        .gap(sp(6.))
         .children(prompt.map(|prompt| {
-            div().flex().justify_end().child(
-                ui::bubble(t)
-                    .max_w(rems(40.))
-                    .child(rich(&prompt, t.text, t)),
-            )
+            ui::bubble(t)
+                .flex()
+                .flex_col()
+                .gap(sp(1.5))
+                .child(mono("you", Type::CAPTION, t.dim))
+                .child(
+                    div()
+                        .typeset(if compact {
+                            Type::TITLE.leading(1.35)
+                        } else {
+                            Type::HEADING.leading(1.35)
+                        })
+                        .text_color(t.bright)
+                        .child(rich(&prompt, t.bright, t)),
+                )
         }))
-        .child(timeline)
-        .child(notice);
+        .child(timeline);
 
     ui::screen(
         "plan",
@@ -171,27 +159,31 @@ pub fn render(
         div()
             .flex()
             .when(compact, |layout| layout.flex_col())
-            .gap(sp(6.))
+            .gap(sp(if compact { 6. } else { 10. }))
             .child(main)
             .child(side),
     )
     .into_any_element()
 }
 
-/// The plan as a bordered table: name, value, and who set it.
+/// The plan as ruled rows: name, value, and who set it.
 fn plan_table(plan: &[crate::view::PlanField], t: &Theme) -> Div {
-    ui::card(t).children(plan.iter().map(|field| {
+    div().flex().flex_col().children(plan.iter().map(|field| {
         div()
             .flex()
             .gap(sp(3.))
-            .px(sp(3.))
-            .py(sp(2.5))
+            .py(sp(2.25))
             .border_b_1()
-            .border_color(t.border)
-            .child(mono(field.name.clone(), Type::CAPTION, t.muted).w(rems(6.)))
+            .border_color(t.hairline)
+            .child(
+                mono(field.name.clone(), Type::CAPTION, t.muted)
+                    .w(rems(6.))
+                    .flex_shrink_0(),
+            )
             .child(
                 div()
                     .flex_1()
+                    .min_w(rems(0.))
                     .flex()
                     .flex_col()
                     .gap(sp(0.5))
@@ -203,24 +195,16 @@ fn plan_table(plan: &[crate::view::PlanField], t: &Theme) -> Div {
     }))
 }
 
-/// One stop on the timeline: a dot, a rail down to the next, the content.
-fn step(color: Hsla, content: Div, rail: bool, t: &Theme) -> impl IntoElement {
+/// One step of the run's start: its numbered square, then what it
+/// decided, over a hairline.
+fn step(number: Div, content: Div, t: &Theme) -> Div {
     div()
         .flex()
-        .gap(sp(3.))
-        .child(
-            div()
-                .w(rems(0.875))
-                .flex_shrink_0()
-                .flex()
-                .flex_col()
-                .items_center()
-                .child(div().mt(sp(1.)).child(dot(color, 10.)))
-                .when(rail, |column| {
-                    column.child(
-                        div().flex_1().w(rems(0.0625)).my(sp(1.)).bg(t.border),
-                    )
-                }),
-        )
-        .child(div().flex_1().min_w(rems(0.)).child(content))
+        .items_start()
+        .gap(sp(3.5))
+        .py(sp(3.))
+        .border_b_1()
+        .border_color(t.hairline)
+        .child(number)
+        .child(div().flex_1().min_w(rems(0.)).pt(sp(0.5)).child(content))
 }

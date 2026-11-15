@@ -187,41 +187,46 @@ local function picture(image, env, height)
 	return ui.image(image.blob, image.mime, env.run.repo or "", height)
 end
 
--- A button that shows the revision `revision` of `item`.
-local function pick_button(label, of, item, revision, kind, icon)
-	return ui.button(label, "pick", { item = item.id, revision = revision, fresh = of.fresh }, kind, icon)
+-- A word that shows the revision `revision` of `item`.
+local function pick_button(label, of, item, revision)
+	return ui.button(label, "pick", { item = item.id, revision = revision, fresh = of.fresh }, "secondary")
 end
 
--- A tab per item, the one shown marked; a click shows another.
+-- A tab per item: the one shown in bold, the others a click away.
 local function tabs(of, shown)
 	local row = {}
 	for _, item in ipairs(of.items) do
-		local noun = canvas.kind(item) == "image" and "Image ·" or "Document ·"
-		local kind = item.id == shown and "primary" or "secondary"
-		table.insert(row, pick_button(noun .. " " .. item.title, of, item, #item.revisions, kind))
+		if item.id == shown then
+			table.insert(row, ui.rich("**" .. item.title .. "**"))
+		else
+			table.insert(row, pick_button(item.title, of, item, #item.revisions))
+		end
 	end
 	return ui.row(row)
 end
 
--- Which revision is shown, of how many, with the ones before and after
--- it a click away.
+-- Which revision is shown: a square for each, the one shown filled, and
+-- the ones before and after it a click away.
 local function revisions(of, item, revision)
 	local count = #item.revisions
-	local function step(glyph, to)
+	local function step(label, to)
 		if to == nil then
-			return ui.icon(glyph, "neutral")
+			return ui.toned(label, "neutral")
 		end
-		return pick_button("", of, item, to, "secondary", glyph)
+		return pick_button(label, of, item, to)
+	end
+	local bar = {}
+	for at = 1, count do
+		table.insert(bar, ui.square(tostring(at), at == revision and "filled" or "quiet", "info"))
 	end
 	local noun = canvas.kind(item) == "image" and "Version" or "Revision"
-	local bar = {
-		step("back", revision > 1 and revision - 1 or nil),
-		step("chevron", revision < count and revision + 1 or nil),
-		ui.text(noun .. " " .. revision .. " of " .. count),
-	}
+	table.insert(bar, ui.text(noun .. " " .. revision .. " of " .. count))
 	if revision < count then
-		table.insert(bar, ui.text("· not the latest"))
+		table.insert(bar, ui.toned("not the latest", "warn"))
 	end
+	table.insert(bar, ui.spacer())
+	table.insert(bar, step("older", revision > 1 and revision - 1 or nil))
+	table.insert(bar, step("newer", revision < count and revision + 1 or nil))
 	return ui.row(bar)
 end
 
@@ -243,7 +248,7 @@ local function pane(of, pick, env)
 	if content.type == "image" then
 		local parts = { picture(content.image, env, IMAGE_HEIGHT) }
 		if content.caption ~= "" then
-			table.insert(parts, ui.text(content.caption))
+			table.insert(parts, ui.heading(content.caption))
 		end
 		table.insert(parts, ui.mono(canvas.describe(content.image) .. " · " .. content.image.path))
 		table.insert(bars, ui.stack(parts))
@@ -266,12 +271,12 @@ local function card(of, item, revision, env)
 	else
 		label = "revision " .. revision .. " · " .. canvas.grouped(canvas.words(content.text)) .. " words"
 	end
-	local open = ui.button("Open on the canvas", "open", { item = item.id, revision = revision, fresh = of.fresh })
+	local open = ui.button("open on the canvas", "open", { item = item.id, revision = revision, fresh = of.fresh })
 	local body
 	if content.type == "image" then
 		body = ui.stack({ picture(content.image, env, THUMBNAIL), open })
 	else
-		body = ui.stack({ ui.card(canvas.excerpt(content.text, EXCERPT_LINES)), open })
+		body = ui.stack({ ui.stack(canvas.excerpt(content.text, EXCERPT_LINES)), open })
 	end
 	return {
 		head = ui.mono(canvas.kind(item) .. " " .. item.id .. " · " .. item.title),

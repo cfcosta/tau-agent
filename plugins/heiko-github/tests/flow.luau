@@ -61,7 +61,10 @@ t.machine_of("a sign-in checks every token it is given", machine, {
 		end
 		model.before = state
 	end,
-})
+	-- Enough cases that every arm is taken whatever the seed: at the
+	-- hundred a property has unless said, about one version in eight
+	-- left an arm from `waiting` untaken.
+}, { cases = 300 })
 
 -- The case the model was written against: a refused token, then another.
 t.case("a token after a refused one is checked, as the machine has it", function()

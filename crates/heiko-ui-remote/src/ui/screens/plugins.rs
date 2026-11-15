@@ -10,9 +10,8 @@ use heiko_ui_plugin::{CatalogEntry, Group, Note, Seam, StoreReach};
 use crate::{
     catalog::PluginInfo,
     route::Route,
-    theme::{Design as _, Theme, Type, radius, sp},
+    theme::{Design as _, Theme, Type, sp, weight},
     ui::{self, Material as _, mono},
-    view::usd,
     workspace::Workspace,
 };
 
@@ -207,10 +206,8 @@ pub fn render(
                 .w(rems(20.))
                 .flex_shrink_0()
                 .overflow_y_scroll()
-                .border_r_1()
-                .border_color(t.border)
-                .bg(t.panel)
-                .px(sp(3.))
+                .pl(sp(8.))
+                .pr(sp(4.))
                 .py(sp(6.))
                 .child(list(ws, &selection, t, cx)),
         )
@@ -220,8 +217,8 @@ pub fn render(
                 .flex_1()
                 .min_w(rems(0.))
                 .overflow_y_scroll()
-                .px(sp(10.))
-                .py(sp(7.))
+                .px(sp(8.))
+                .py(sp(6.))
                 .child(
                     div()
                         .max_w(rems(52.))
@@ -231,27 +228,31 @@ pub fn render(
         .into_any_element()
 }
 
-/// The list: a heading with what plugins charged, then each group's
-/// rows.
+/// A group's name over its rows.
+fn group_label(text: impl Into<SharedString>, t: &Theme) -> gpui::Div {
+    div()
+        .pb(sp(1.5))
+        .typeset(Type::SMALL)
+        .font_weight(weight::EMPHASIS)
+        .text_color(t.muted)
+        .child(text.into())
+}
+
+/// The list: its title with how many plugins are built in and the way
+/// to the person's own, then each group's rows.
 fn list(
     ws: &Workspace,
     selection: &Selection,
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
-    let catalog = &ws.catalog;
-    let spent: f64 = catalog.built_in().map(|plugin| plugin.spend).sum();
     let rows = rows(ws);
     let roles = roles(ws, t, cx);
     // The person's own plugins are on a page of their own.
     let yours = ws.yours_route(None).map(|route| {
         div()
             .id("plugins-yours-link")
-            .px(sp(2.))
-            .cursor_pointer()
-            .typeset(Type::CAPTION)
-            .text_color(t.roles.link)
-            .child("Your own plugins ›")
+            .child(ui::link("your own ›", t))
             .on_click(
                 cx.listener(move |ws, _, _, cx| ws.navigate(route.clone(), cx)),
             )
@@ -266,15 +267,7 @@ fn list(
             div()
                 .flex()
                 .flex_col()
-                .gap(sp(0.5))
-                .child(
-                    div()
-                        .px(sp(2.))
-                        .pb(sp(1.5))
-                        .typeset(Type::MICRO)
-                        .text_color(t.dim)
-                        .child(group.label().to_uppercase()),
-                )
+                .child(group_label(group.label(), t))
                 .children(rows)
         })
     });
@@ -283,22 +276,15 @@ fn list(
         .flex_col()
         .gap(sp(4.5))
         .child(
-            div()
-                .px(sp(2.))
-                .flex()
-                .items_baseline()
-                .justify_between()
-                .child(
-                    div()
-                        .typeset(Type::HEADING)
-                        .text_color(t.text)
-                        .child("Built in"),
-                )
-                .child(mono(usd(spent), Type::CAPTION, t.roles.cost)),
+            ui::section_header(
+                "Built in",
+                Some(ws.catalog.built_in().count().to_string().into()),
+                t,
+            )
+            .children(yours),
         )
         // Choices first: who fills a slot several plugins can.
         .children(roles)
-        .children(yours)
         .children(groups)
         .into_any_element()
 }
@@ -333,25 +319,24 @@ fn roles(
                 .flex()
                 .items_center()
                 .gap(sp(2.5))
-                .min_h(rems(2.))
-                .px(sp(2.))
-                .rounded(radius::CONTROL)
+                .min_h(rems(1.75))
                 .cursor_pointer()
-                .when(on, |row| row.bg(t.selected))
-                .when(!on, |row| row.hover(|style| style.bg(t.card)))
                 .child(
                     div()
-                        .size(rems(0.4375))
+                        .size(rems(0.5))
                         .flex_shrink_0()
-                        .rounded(radius::FULL)
-                        .when(on, |dot| dot.bg(t.accent))
-                        .when(!on, |dot| dot.border_1().border_color(t.dim)),
+                        .border_1()
+                        .border_color(if on { t.accent } else { t.slate })
+                        .when(on, |square| square.bg(t.accent)),
                 )
-                .child(mono(
-                    plugin.clone(),
-                    Type::SMALL,
-                    if on { t.text } else { t.text_soft },
-                ))
+                .child(
+                    mono(
+                        plugin.clone(),
+                        Type::SMALL,
+                        if on { t.bright } else { t.text_soft },
+                    )
+                    .when(on, |name| name.font_weight(weight::EMPHASIS)),
+                )
                 .on_click(cx.listener(move |ws, _, _, cx| {
                     ws.pick_slot(&name, &picked, cx)
                 }))
@@ -359,15 +344,7 @@ fn roles(
         div()
             .flex()
             .flex_col()
-            .gap(sp(0.5))
-            .child(
-                div()
-                    .px(sp(2.))
-                    .pb(sp(1.5))
-                    .typeset(Type::MICRO)
-                    .text_color(t.dim)
-                    .child(slot.name.clone()),
-            )
+            .child(mono(slot.name.clone(), Type::CAPTION, t.dim).pb(sp(1.)))
             .children(rows)
     });
     Some(
@@ -375,18 +352,14 @@ fn roles(
             .flex()
             .flex_col()
             .gap(sp(3.))
-            .child(
-                div()
-                    .px(sp(2.))
-                    .typeset(Type::MICRO)
-                    .text_color(t.dim)
-                    .child("ROLES"),
-            )
+            .child(group_label("Roles", t))
             .children(slots)
             .into_any_element(),
     )
 }
 
+/// A row of the list: the name in mono, and its note. The selected one
+/// is the offset block.
 fn list_row(
     row: &Row<'_>,
     selected: bool,
@@ -396,42 +369,45 @@ fn list_row(
     let name = row.name().to_owned();
     let plugin = row.plugin.name.clone();
     let entry = row.entry.map(|entry| entry.name.clone());
-    let ink = t.roles.plugin(&name).unwrap_or(t.mark(&name));
     div()
         .id(SharedString::from(format!("plugin-row-{plugin}-{name}")))
         .flex()
         .items_center()
         .gap(sp(2.5))
-        .min_h(rems(2.25))
-        .px(sp(2.))
-        .rounded(radius::CONTROL)
+        .min_h(rems(1.6875))
         .cursor_pointer()
-        .when(selected, |row| row.bg(t.selected))
-        .when(!selected, |row| row.hover(|style| style.bg(t.card)))
+        .when(selected, |row| {
+            row.mx(sp(-2.))
+                .px(sp(2.))
+                .printed(3., t)
+                .font_weight(weight::STRONG)
+        })
         .when(row.entry.is_some(), |row| row.pl(sp(4.)))
-        .child(
-            div()
-                .size(rems(0.4375))
-                .flex_shrink_0()
-                .rounded(radius::FULL)
-                .bg(ink),
-        )
         .child(
             mono(
                 name.clone(),
                 Type::SMALL,
-                if selected { t.text } else { t.text_soft },
+                if selected {
+                    t.roles.on_primary
+                } else {
+                    t.text_soft
+                },
             )
             .flex_1()
             .min_w(rems(0.))
             .truncate(),
         )
         .children(row.note().map(|note| {
-            div()
-                .flex_shrink_0()
-                .typeset(Type::MICRO)
-                .text_color(t.tone(note.tone))
-                .child(note.text.clone())
+            mono(
+                note.text.clone(),
+                Type::MICRO,
+                if selected {
+                    t.roles.on_primary
+                } else {
+                    t.tone(note.tone)
+                },
+            )
+            .flex_shrink_0()
         }))
         .on_click(cx.listener(move |ws, _, _, cx| {
             ws.pick_plugin(&plugin, entry.as_deref(), cx)
@@ -451,36 +427,39 @@ fn pane(
     let Some(row) = rows.iter().find(|row| row.is(selection)) else {
         return ui::empty("No plugin selected.", t).into_any_element();
     };
-    let name = row.name().to_owned();
-    let ink = t.roles.plugin(&name).unwrap_or(t.mark(&name));
     let back = compact.then(|| {
         div()
             .id("plugins-back")
-            .cursor_pointer()
-            .typeset(Type::CAPTION)
-            .text_color(t.roles.link)
-            .child("‹ Plugins")
+            .flex()
+            .child(ui::link("‹ Plugins", t))
             .on_click(cx.listener(|ws, _, _, cx| ws.unpick_plugin(cx)))
     });
+    // The name as the page's title, with its note and what it is for
+    // beside it, over the heavy rule.
     let head = div()
         .flex()
-        .flex_col()
-        .gap(sp(1.5))
+        .flex_wrap()
+        .items_baseline()
+        .gap(sp(3.))
+        .pb(sp(2.5))
+        .border_b_2()
+        .border_color(t.rule)
         .child(
             div()
-                .flex()
-                .items_center()
-                .gap(sp(2.5))
-                .child(div().size(rems(0.5625)).rounded(radius::FULL).bg(ink))
-                .child(mono(name.clone(), Type::TITLE, ink))
-                .children(row.note().map(|note| {
-                    ui::status_mark(note.text.clone(), t.tone(note.tone))
-                })),
+                .typeset(Type::PAGE_TITLE)
+                .text_color(t.bright)
+                .child(row.name().to_owned()),
         )
+        .children(row.note().map(|note| {
+            mono(note.text.clone(), Type::CAPTION, t.tone(note.tone))
+        }))
         .child(
             div()
+                .flex_1()
+                .min_w(rems(12.))
+                .text_right()
+                .typeset(Type::CAPTION)
                 .text_color(t.muted)
-                .leading(1.5)
                 .child(row.description().to_owned()),
         );
     // The tabs it has: settings when it draws them, its work when it
@@ -498,20 +477,23 @@ fn pane(
             .find(|tab| has(*tab))
             .unwrap_or(Tab::About)
     };
+    // Underlined words; the one shown is brighter, over a blue line.
     let tabs = div()
         .flex()
-        .gap(sp(6.))
+        .gap(sp(5.))
+        .pb(sp(3.))
         .border_b_1()
-        .border_color(t.border)
+        .border_color(t.hairline)
         .children(Tab::ALL.into_iter().filter(|tab| has(*tab)).map(|tab| {
             let on = tab == shown;
             div()
                 .id(SharedString::from(format!("plugin-tab-{}", tab.label())))
                 .cursor_pointer()
-                .pb(sp(2.5))
-                .typeset(Type::SMALL)
-                .text_color(if on { t.text } else { t.dim })
-                .when(on, |tab| tab.border_b_2().border_color(t.accent))
+                .border_b_1()
+                .border_color(if on { t.blue } else { t.slate })
+                .typeset(Type::BODY)
+                .text_color(if on { t.bright } else { t.text_soft })
+                .when(on, |tab| tab.font_weight(weight::EMPHASIS))
                 .child(tab.label())
                 .on_click(
                     cx.listener(move |ws, _, _, cx| ws.set_plugin_tab(tab, cx)),
@@ -525,7 +507,7 @@ fn pane(
     div()
         .flex()
         .flex_col()
-        .gap(sp(5.))
+        .gap(sp(4.))
         .children(back)
         .child(head)
         .child(tabs)
@@ -575,8 +557,9 @@ fn settings(
         .into_any_element()
 }
 
-/// Everywhere and each repository, as a segmented switch; a repository
-/// with its own copy of `plugin`'s settings is marked.
+/// "Applies to", then everywhere and each repository as square
+/// segments, the one shown outlined; a repository with its own copy of
+/// `plugin`'s settings is marked.
 pub fn scope_switch(
     ws: &Workspace,
     plugin: &str,
@@ -594,59 +577,66 @@ pub fn scope_switch(
         .flex_wrap()
         .items_center()
         .gap(sp(2.5))
+        .pb(sp(4.))
+        .border_b_1()
+        .border_color(t.hairline)
         .child(
             div()
-                .typeset(Type::CAPTION)
-                .text_color(t.dim)
+                .flex_1()
+                .typeset(Type::BODY)
+                .text_color(t.text)
                 .child("Applies to"),
         )
-        .child(
-            div()
-                .flex()
-                .flex_wrap()
-                .gap(sp(0.5))
-                .p(sp(0.75))
-                .rounded(radius::CONTROL)
-                .well(t)
-                .children(options.map(|option| {
-                    let on = option.as_deref() == scope;
-                    let own = option.as_deref().is_some_and(|repo| {
-                        ws.catalog.has_own_settings(repo, plugin)
-                    });
-                    let label =
-                        option.clone().unwrap_or_else(|| "Everywhere".into());
-                    let pick = pick.clone();
-                    div()
-                        .id(SharedString::from(format!("scope-{label}")))
-                        .flex()
-                        .items_center()
-                        .gap(sp(1.5))
-                        .px(sp(3.))
-                        .py(sp(1.5))
-                        .rounded(radius::SMALL)
-                        .cursor_pointer()
-                        .typeset(Type::CAPTION)
-                        .text_color(if on { t.text } else { t.dim })
-                        .when(on, |option| option.key(t))
-                        .when(own, |option| {
-                            option.child(
-                                div()
-                                    .size(rems(0.375))
-                                    .rounded(radius::FULL)
-                                    .bg(t.roles.live),
-                            )
-                        })
-                        .child(label)
-                        .on_click(cx.listener(move |ws, _, _, cx| {
-                            pick(ws, option.clone(), cx)
-                        }))
-                })),
-        )
+        .child(div().flex().flex_wrap().gap(sp(1.)).children(options.map(
+            |option| {
+                let on = option.as_deref() == scope;
+                let own = option.as_deref().is_some_and(|repo| {
+                    ws.catalog.has_own_settings(repo, plugin)
+                });
+                let label =
+                    option.clone().unwrap_or_else(|| "everywhere".into());
+                let pick = pick.clone();
+                div()
+                    .id(SharedString::from(format!("scope-{label}")))
+                    .flex()
+                    .items_center()
+                    .gap(sp(1.5))
+                    .px(sp(2.5))
+                    .py(sp(1.))
+                    .border_1()
+                    .cursor_pointer()
+                    .when(on, |option| {
+                        option
+                            .border_color(t.bright)
+                            .font_weight(weight::EMPHASIS)
+                            .lifted(t)
+                    })
+                    .when(!on, |option| {
+                        option.border_color(t.raised).bg(t.raised)
+                    })
+                    .when(own, |option| {
+                        option.child(
+                            div()
+                                .size(rems(0.375))
+                                .flex_shrink_0()
+                                .bg(t.roles.live),
+                        )
+                    })
+                    .child(mono(
+                        label,
+                        Type::CAPTION,
+                        if on { t.bright } else { t.dim },
+                    ))
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        pick(ws, option.clone(), cx)
+                    }))
+            },
+        )))
         .into_any_element()
 }
 
-/// What the scope shown means, and the way back to the value
-/// everywhere for a repository with its own copy.
+/// Under the settings: the way back to the value everywhere for a
+/// repository with its own copy, and when a change applies.
 pub fn scope_line(
     ws: &Workspace,
     plugin: &str,
@@ -654,44 +644,40 @@ pub fn scope_line(
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> AnyElement {
-    let line = div()
+    let own = scope
+        .filter(|repo| ws.catalog.has_own_settings(repo, plugin))
+        .map(|repo| {
+            let (plugin, repo) = (plugin.to_owned(), repo.to_owned());
+            div()
+                .flex()
+                .items_baseline()
+                .gap(sp(2.))
+                .child(format!("{repo} keeps its own copy"))
+                .child(
+                    div()
+                        .id("drop-own-settings")
+                        .child(ui::link("use the value everywhere", t))
+                        .on_click(cx.listener(move |ws, _, _, cx| {
+                            if let Some(erased) =
+                                crate::plugins::registry().get(&plugin)
+                            {
+                                ws.plugin_handle(erased.name())
+                                    .drop_settings(&repo);
+                                ws.drain_plugin_requests(cx);
+                            }
+                        })),
+                )
+        });
+    div()
         .flex()
         .flex_wrap()
-        .items_center()
+        .items_baseline()
         .gap(sp(2.))
         .typeset(Type::CAPTION)
-        .text_color(t.dim);
-    let line = match scope {
-        None => line.child("Every repository without its own copy uses these."),
-        Some(repo) if ws.catalog.has_own_settings(repo, plugin) => {
-            let (plugin, repo) = (plugin.to_owned(), repo.to_owned());
-            line.child(format!("{repo} keeps its own copy.")).child(
-                div()
-                    .id("drop-own-settings")
-                    .cursor_pointer()
-                    .text_color(t.roles.link)
-                    .child("Use the value everywhere")
-                    .on_click(cx.listener(move |ws, _, _, cx| {
-                        if let Some(erased) =
-                            crate::plugins::registry().get(&plugin)
-                        {
-                            ws.plugin_handle(erased.name())
-                                .drop_settings(&repo);
-                            ws.drain_plugin_requests(cx);
-                        }
-                    })),
-            )
-        }
-        Some(repo) => line.child(format!(
-            "{repo} uses the value everywhere until you change something here."
-        )),
-    };
-    line.child(
-        div()
-            .ml_auto()
-            .child("Applies from each chat's next message."),
-    )
-    .into_any_element()
+        .text_color(t.dim)
+        .children(own)
+        .child(div().ml_auto().child("from each chat's next message"))
+        .into_any_element()
 }
 
 /// What it did: the plugin's page, drawn in the pane.
@@ -723,8 +709,7 @@ fn work(
         })
 }
 
-/// How it works: what it is for, where it steps into a run, and what it
-/// cost.
+/// How it works: what it is for, and where it steps into a run.
 fn about(row: &Row<'_>, t: &Theme) -> AnyElement {
     let seams = row.seams();
     div()
@@ -753,17 +738,6 @@ fn about(row: &Row<'_>, t: &Theme) -> AnyElement {
                 }))
         })
         .when_some(reach(row, t), |about, reach| about.child(reach))
-        .when(row.entry.is_none(), |about| {
-            about.child(
-                div()
-                    .typeset(Type::CAPTION)
-                    .text_color(t.dim)
-                    .child(format!(
-                        "{} charged lately.",
-                        usd(row.plugin.spend)
-                    )),
-            )
-        })
         .into_any_element()
 }
 

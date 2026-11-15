@@ -364,6 +364,7 @@ mod tests {
                 args: serde_json::json!({ "n": tc.draw(gs::integers::<i32>()) }),
                 kind: Kind::Secondary,
                 icon: maybe(tc),
+                size: Default::default(),
             },
             _ => Node::stack([Node::text(word(tc)), Node::Rule]),
         }

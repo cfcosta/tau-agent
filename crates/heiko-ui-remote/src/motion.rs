@@ -5,16 +5,12 @@
 //! records what onboarding shows each frame in a [`SetupMotion`]; a value
 //! that changed gets a new epoch, and the elements that animate it put
 //! the epoch in their id, so GPUI starts their animation then and only
-//! then. Loops (the rings breathing, the dashes drifting, the comet) run
-//! only while the window is focused and motion is not reduced.
+//! then. Onboarding is flat and still: the only motion left is each
+//! screen's words rising into place, a plain fade when motion is reduced.
 
-use std::{
-    collections::HashMap,
-    path::Path,
-    time::{Duration, Instant},
-};
+use std::{path::Path, time::Duration};
 
-use gpui::{Animation, Hsla, Rgba};
+use gpui::Animation;
 use serde::Deserialize;
 
 use crate::setup::SetupStep;
@@ -59,50 +55,13 @@ pub fn cubic_bezier(
     }
 }
 
-/// The curves the prototype names, by what they do.
+/// The curves onboarding moves along, by what they do.
 pub mod curve {
     use super::cubic_bezier;
 
     /// Things rising into place: `cubic-bezier(.2,.7,.2,1)`.
     pub fn rise() -> impl Fn(f32) -> f32 + Clone {
         cubic_bezier(0.2, 0.7, 0.2, 1.)
-    }
-
-    /// Lines drawing and bars filling, the handshake moving:
-    /// `cubic-bezier(.3,.7,.2,1)`.
-    pub fn settle() -> impl Fn(f32) -> f32 + Clone {
-        cubic_bezier(0.3, 0.7, 0.2, 1.)
-    }
-
-    /// A pop past the end and back: `cubic-bezier(.3,1.4,.5,1)`.
-    pub fn pop() -> impl Fn(f32) -> f32 + Clone {
-        cubic_bezier(0.3, 1.4, 0.5, 1.)
-    }
-
-    /// A smaller overshoot, for an icon swapping in:
-    /// `cubic-bezier(.3,1.3,.5,1)`.
-    pub fn swap() -> impl Fn(f32) -> f32 + Clone {
-        cubic_bezier(0.3, 1.3, 0.5, 1.)
-    }
-
-    /// A checkbox bouncing as it fills: `cubic-bezier(.3,1.5,.5,1)`.
-    pub fn bounce() -> impl Fn(f32) -> f32 + Clone {
-        cubic_bezier(0.3, 1.5, 0.5, 1.)
-    }
-
-    /// The comet's travel: `cubic-bezier(.45,0,.55,1)`.
-    pub fn travel() -> impl Fn(f32) -> f32 + Clone {
-        cubic_bezier(0.45, 0., 0.55, 1.)
-    }
-
-    /// A ring rippling out: `cubic-bezier(.2,.6,.3,1)`.
-    pub fn ripple() -> impl Fn(f32) -> f32 + Clone {
-        cubic_bezier(0.2, 0.6, 0.3, 1.)
-    }
-
-    /// CSS's `ease-in-out`.
-    pub fn ease_in_out() -> impl Fn(f32) -> f32 + Clone {
-        cubic_bezier(0.42, 0., 0.58, 1.)
     }
 }
 
@@ -149,46 +108,6 @@ pub fn stagger(start: u64, step: u64, n: usize) -> u64 {
     start + step * n as u64
 }
 
-/// A loop of `period` ms, phase-locked to the app's clock so that loops
-/// meant to move together do, and `offset` of a period ahead.
-pub fn loop_of(period: u64, offset: f32) -> Animation {
-    Animation::new(Duration::from_millis(period))
-        .repeat_synced()
-        .with_easing(move |t| (t + offset).fract())
-}
-
-pub fn lerp(from: f32, to: f32, t: f32) -> f32 {
-    from + (to - from) * t
-}
-
-/// `from` blended into `to`, `t` of the way, in RGB.
-pub fn mix(from: Hsla, to: Hsla, t: f32) -> Hsla {
-    let (a, b): (Rgba, Rgba) = (from.into(), to.into());
-    Rgba {
-        r: lerp(a.r, b.r, t),
-        g: lerp(a.g, b.g, t),
-        b: lerp(a.b, b.b, t),
-        a: lerp(a.a, b.a, t),
-    }
-    .into()
-}
-
-/// A breath: 0 at the ends of a loop, 1 in its middle, eased in and out.
-pub fn breath(phase: f32) -> f32 {
-    (1. - (phase * std::f32::consts::TAU).cos()) / 2.
-}
-
-/// Keyframes for a pop: from `.4` to `1.12` at 60 %, then to 1, each leg
-/// along `curve`; opacity reaches 1 at 60 %. Returns (scale, opacity).
-pub fn pop(t: f32, curve: &impl Fn(f32) -> f32) -> (f32, f32) {
-    if t < 0.6 {
-        let leg = curve(t / 0.6);
-        (lerp(0.4, 1.12, leg), leg.clamp(0., 1.))
-    } else {
-        (lerp(1.12, 1., curve((t - 0.6) / 0.4)), 1.)
-    }
-}
-
 /// A value on screen and the one before it. `epoch` counts the changes;
 /// elements that animate the change put it in their id.
 #[derive(Debug, Clone)]
@@ -196,8 +115,6 @@ pub struct Tracked<T> {
     pub current: T,
     pub previous: T,
     pub epoch: u64,
-    /// When it last changed.
-    pub since: Instant,
 }
 
 impl<T: Clone + PartialEq> Tracked<T> {
@@ -206,7 +123,6 @@ impl<T: Clone + PartialEq> Tracked<T> {
             previous: value.clone(),
             current: value,
             epoch: 0,
-            since: Instant::now(),
         }
     }
 
@@ -217,7 +133,6 @@ impl<T: Clone + PartialEq> Tracked<T> {
         }
         self.previous = std::mem::replace(&mut self.current, value);
         self.epoch += 1;
-        self.since = Instant::now();
         true
     }
 
@@ -226,62 +141,23 @@ impl<T: Clone + PartialEq> Tracked<T> {
     pub fn changed(&self) -> bool {
         self.previous != self.current
     }
-
-    /// Whether it changed less than `ms` ago.
-    pub fn within(&self, ms: u64) -> bool {
-        self.changed() && self.since.elapsed() < Duration::from_millis(ms)
-    }
 }
 
-/// The color of a screen's rings and glow.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Mood {
-    Acting,
-    Done,
-    Refused,
-}
-
-/// How a connection stands, as the line between the tiles draws it.
+/// How a connection stands, as the line between heiko and a service
+/// draws it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Link {
-    /// Not started: amber dashes drifting toward the service.
+    /// Not started: a dashed line.
     Idle,
-    /// Waiting on the other side: dim dashes and a comet.
+    /// Waiting on the other side: a dashed line and the working mark.
     Waiting,
-    /// Done: solid green with a check.
+    /// Done: a solid green line and a tick.
     Connected,
-    /// Signed in, but something was not allowed: broken amber and "!".
+    /// Signed in, but something was not allowed: a dashed line and the
+    /// asking mark.
     Declined,
-    /// Refused for good: broken red and a cross.
+    /// Refused for good: a dashed red line and a cross.
     Blocked,
-}
-
-/// What stands on the other side of the handshake.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Service {
-    /// The welcome: no handshake yet.
-    None,
-    /// The provider a step signs in to (`SetupView::link`).
-    Provider,
-    Repos,
-    /// A plugin's step.
-    Plugin,
-    FirstRun,
-}
-
-/// The handshake's size: big for sign-ins, small over a list.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Scale {
-    Big,
-    Small,
-}
-
-/// A progress segment's state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Segment {
-    Ahead,
-    Current,
-    Done,
 }
 
 /// What a screen is showing: its step and the state it is in. A new one
@@ -296,20 +172,8 @@ pub struct Scene {
 #[derive(Debug, Clone)]
 pub struct SetupMotion {
     pub scene: Tracked<Scene>,
-    pub mood: Tracked<Mood>,
     pub link: Tracked<Link>,
-    pub service: Tracked<Service>,
-    pub scale: Tracked<Scale>,
-    /// One per stage of the step bar, which plugins' steps lengthen.
-    pub segments: Tracked<Vec<Segment>>,
-    /// Whether the first run's field has the keyboard.
-    pub composing: Tracked<bool>,
-    /// Each clone's progress in thousandths, and whether it is ready.
-    pub clones: HashMap<String, Tracked<(u32, bool)>>,
-    /// Whether the window has the focus: loops pause without it.
-    pub active: bool,
-    /// Whether motion is reduced: no loops, ripples or comets, and
-    /// transitions are plain fades.
+    /// Whether motion is reduced: entrances are plain fades.
     pub reduce: bool,
 }
 
@@ -320,14 +184,7 @@ impl Default for SetupMotion {
                 step: SetupStep::Welcome,
                 state: 0,
             }),
-            mood: Tracked::new(Mood::Acting),
             link: Tracked::new(Link::Idle),
-            service: Tracked::new(Service::None),
-            scale: Tracked::new(Scale::Big),
-            segments: Tracked::new(vec![Segment::Ahead; 3]),
-            composing: Tracked::new(false),
-            clones: HashMap::new(),
-            active: true,
             reduce: false,
         }
     }
@@ -337,11 +194,7 @@ impl Default for SetupMotion {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frame {
     pub scene: Scene,
-    pub mood: Mood,
     pub link: Link,
-    pub service: Service,
-    pub scale: Scale,
-    pub segments: Vec<Segment>,
 }
 
 impl SetupMotion {
@@ -349,38 +202,7 @@ impl SetupMotion {
     /// to animate, except the scene, whose entrances always play.
     pub fn observe(&mut self, frame: Frame) {
         self.scene.observe(frame.scene);
-        self.mood.observe(frame.mood);
         self.link.observe(frame.link);
-        self.service.observe(frame.service);
-        self.scale.observe(frame.scale);
-        self.segments.observe(frame.segments);
-    }
-
-    /// Records a clone's progress, forgetting clones no longer listed.
-    pub fn observe_clones<'a>(
-        &mut self,
-        clones: impl Iterator<Item = (&'a str, u32, bool)>,
-    ) {
-        let mut seen = Vec::new();
-        for (name, share, ready) in clones {
-            seen.push(name.to_owned());
-            match self.clones.get_mut(name) {
-                Some(tracked) => {
-                    tracked.observe((share, ready));
-                }
-                None => {
-                    self.clones
-                        .insert(name.to_owned(), Tracked::new((share, ready)));
-                }
-            }
-        }
-        self.clones.retain(|name, _| seen.contains(name));
-    }
-
-    /// Whether loops may run: the window is focused, and motion is not
-    /// reduced.
-    pub fn loops(&self) -> bool {
-        self.active && !self.reduce
     }
 }
 
@@ -555,17 +377,6 @@ mod tests {
         assert_eq!(saved_reduce_motion(&path), None, "unreadable");
     }
 
-    /// The named curves do what their names say: a pop overshoots, and
-    /// an ease in and out is symmetric. (Ends and monotony are the
-    /// properties' below.)
-    #[test]
-    fn the_named_curves_overshoot_and_ease_where_asked() {
-        let pop = curve::pop();
-        assert!((0..100).any(|n| pop(n as f32 / 100.) > 1.01), "overshoots");
-        let ease = curve::ease_in_out();
-        assert!((ease(0.5) - 0.5).abs() < 1e-3, "symmetric");
-    }
-
     #[test]
     fn delayed_animations_hold_then_run() {
         let animation = after(100, 300, |t| t);
@@ -598,22 +409,11 @@ mod tests {
                 },
                 state: 1,
             },
-            mood: Mood::Acting,
             link: Link::Waiting,
-            service: Service::Provider,
-            scale: Scale::Big,
-            segments: vec![
-                Segment::Done,
-                Segment::Current,
-                Segment::Ahead,
-                Segment::Ahead,
-            ],
         };
         let mut motion = SetupMotion::default();
         motion.observe(waiting.clone());
-        let epochs = |m: &SetupMotion| {
-            (m.scene.epoch, m.mood.epoch, m.link.epoch, m.scale.epoch)
-        };
+        let epochs = |m: &SetupMotion| (m.scene.epoch, m.link.epoch);
         let first = epochs(&motion);
         motion.observe(waiting.clone());
         motion.observe(waiting.clone());
@@ -623,65 +423,11 @@ mod tests {
                 state: 2,
                 ..waiting.scene
             },
-            mood: Mood::Done,
             link: Link::Connected,
-            ..waiting
         });
-        let (scene, mood, link, scale) = epochs(&motion);
-        assert_eq!(
-            (scene, mood, link),
-            (first.0 + 1, first.1 + 1, first.2 + 1)
-        );
-        assert_eq!(scale, first.3, "the size did not change");
+        assert_eq!(epochs(&motion), (first.0 + 1, first.1 + 1));
         assert_eq!(motion.link.previous, Link::Waiting);
-        assert!(motion.link.within(60_000));
-    }
-
-    /// Any colour, channels in `[0, 1]`; built in RGB so the HSL round
-    /// trip inside `mix` is what the properties exercise.
-    #[hegel::composite]
-    fn channels(tc: &hegel::TestCase) -> (f32, f32, f32, f32) {
-        let channel = || gs::floats::<f32>().min_value(0.).max_value(1.);
-        (
-            tc.draw(channel()),
-            tc.draw(channel()),
-            tc.draw(channel()),
-            tc.draw(channel()),
-        )
-    }
-
-    fn rgba((r, g, b, a): (f32, f32, f32, f32)) -> Rgba {
-        Rgba { r, g, b, a }
-    }
-
-    /// A mix moves along the straight line between its inputs in RGB:
-    /// each channel is `t` of the way from `from`'s to `to`'s, through
-    /// the HSL round trip, so a transition never overshoots either
-    /// colour and black and white meet in grey. Its ends are its inputs
-    /// (`t` is drawn at 0 and 1 too), and a colour mixed with itself
-    /// stays itself (`to` is sometimes `from`).
-    #[hegel::test(test_cases = 300)]
-    fn a_mix_is_the_straight_line_between_its_inputs(tc: hegel::TestCase) {
-        let from = rgba(tc.draw(channels()));
-        let to = if tc.draw(gs::weighted_booleans(0.2)) {
-            from
-        } else {
-            rgba(tc.draw(channels()))
-        };
-        let t = tc.draw(hegel::one_of!(
-            gs::sampled_from(vec![0.0f32, 1.0]),
-            gs::floats::<f32>().min_value(0.).max_value(1.),
-        ));
-        let mixed: Rgba = mix(from.into(), to.into(), t).into();
-        for (m, f, o) in [
-            (mixed.r, from.r, to.r),
-            (mixed.g, from.g, to.g),
-            (mixed.b, from.b, to.b),
-            (mixed.a, from.a, to.a),
-        ] {
-            let along = f * (1. - t) + o * t;
-            assert!((m - along).abs() < 1e-3, "{m} is not {along}");
-        }
+        assert!(motion.link.changed());
     }
 
     fn unit() -> impl hegel::generators::PrintableGenerator<f32> {
@@ -737,53 +483,6 @@ mod tests {
         assert_eq!(curve(late), curve(1.));
     }
 
-    /// A breath rises from 0 at the start of its loop to 1 in its
-    /// middle, never falling on the way, and its second half mirrors the
-    /// first, so it falls back to 0.
-    #[hegel::test(test_cases = 200)]
-    fn a_breath_rises_to_the_middle_and_mirrors_itself(tc: hegel::TestCase) {
-        let phase = tc.draw(unit());
-        let breath = breath(phase);
-        assert!((-1e-6..=1. + 1e-6).contains(&breath));
-        assert!((breath - super::breath(1. - phase)).abs() < 1e-4);
-        let (a, b) = (
-            tc.draw(gs::floats::<f32>().min_value(0.).max_value(0.5)),
-            tc.draw(gs::floats::<f32>().min_value(0.).max_value(0.5)),
-        );
-        let (low, high) = (a.min(b), a.max(b));
-        assert!(super::breath(low) <= super::breath(high) + 1e-6);
-        assert!(super::breath(0.).abs() < 1e-6);
-        assert!((super::breath(0.5) - 1.).abs() < 1e-6);
-    }
-
-    /// A pop starts at `.4` and unseen, its two legs meet at 60 %, where
-    /// the scale is the peak, and it settles at 1, for every curve the
-    /// screens pop along. (A curve that is nearly
-    /// vertical may jump anywhere, so arbitrary ones are not asked.)
-    #[hegel::test(test_cases = 100)]
-    fn a_pop_is_continuous_at_its_peak(tc: hegel::TestCase) {
-        let curves: Vec<Box<dyn Fn(f32) -> f32>> = vec![
-            Box::new(curve::pop()),
-            Box::new(curve::swap()),
-            Box::new(curve::bounce()),
-            Box::new(curve::rise()),
-            Box::new(curve::ease_in_out()),
-        ];
-        let which =
-            tc.draw(gs::integers::<usize>().max_value(curves.len() - 1));
-        let curve = &curves[which];
-        let (start, unseen) = pop(0., curve);
-        assert!((start - 0.4).abs() < 1e-3 && unseen.abs() < 1e-3);
-        let (before, _) = pop(0.6 - 1e-4, curve);
-        let (after, opacity) = pop(0.6, curve);
-        assert!((before - after).abs() < 0.02, "{before} then {after}");
-        assert!((after - 1.12).abs() < 0.02 && opacity == 1.);
-        assert_eq!(pop(1., curve).0, 1.);
-        let t = tc.draw(unit());
-        let (scale, opacity) = pop(t, curve);
-        assert!(scale > 0. && (0. ..=1.).contains(&opacity));
-    }
-
     /// `Tracked` against a model: the epoch counts the observations
     /// that differed from the value before them, and `previous` is the
     /// value that last gave way.
@@ -807,66 +506,6 @@ mod tests {
                 (current, previous, epoch)
             );
             assert_eq!(tracked.changed(), previous != current);
-        }
-    }
-
-    /// After any series of frames, the clones followed are exactly the
-    /// ones the last frame listed, each at its latest progress and with
-    /// the progress that last gave way, against a map of pairs: a clone
-    /// that comes (or comes back) starts with nothing that gave way.
-    #[hegel::test(test_cases = 200)]
-    fn followed_clones_are_the_ones_last_listed(tc: hegel::TestCase) {
-        let frame = || {
-            gs::hashmaps(
-                gs::sampled_from(vec!["a", "b", "c", "d"]),
-                hegel::tuples!(
-                    gs::integers::<u32>().max_value(1000),
-                    gs::booleans()
-                ),
-            )
-            .max_size(4)
-        };
-        let frames = tc.draw(gs::vecs(frame()).min_size(1).max_size(6));
-        let mut motion = SetupMotion::default();
-        // name -> (previous, current)
-        type Progress = (u32, bool);
-        let mut model: HashMap<&str, (Progress, Progress)> = HashMap::new();
-        for listed in &frames {
-            motion.observe_clones(
-                listed
-                    .iter()
-                    .map(|(name, (share, ready))| (*name, *share, *ready)),
-            );
-            model = listed
-                .iter()
-                .map(|(name, now)| {
-                    let pair = match model.get(name) {
-                        Some((_, current)) if current != now => {
-                            (*current, *now)
-                        }
-                        Some(same) => *same,
-                        None => (*now, *now),
-                    };
-                    (*name, pair)
-                })
-                .collect();
-        }
-        for (name, (previous, current)) in &model {
-            let tracked = &motion.clones[*name];
-            assert_eq!(
-                (tracked.previous, tracked.current),
-                (*previous, *current)
-            );
-        }
-        let last = frames.last().unwrap();
-        let mut followed: Vec<&str> =
-            motion.clones.keys().map(String::as_str).collect();
-        followed.sort_unstable();
-        let mut listed: Vec<&str> = last.keys().copied().collect();
-        listed.sort_unstable();
-        assert_eq!(followed, listed);
-        for (name, progress) in last {
-            assert_eq!(motion.clones[*name].current, *progress);
         }
     }
 }

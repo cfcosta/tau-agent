@@ -112,6 +112,7 @@ impl UiPlugin for Before {
                         args: serde_json::Value::Null,
                         kind: Kind::Primary,
                         icon: None,
+                        size: Default::default(),
                     },
                     required: false,
                     link: None,
@@ -175,6 +176,7 @@ fn step(at: &AtSetup, view: &mut ViewCx<'_, Stepper>) -> Option<SetupView> {
         args: serde_json::Value::Null,
         kind: Kind::Primary,
         icon: None,
+        size: Default::default(),
     };
     Some(SetupView {
         step: "pick",
@@ -382,7 +384,7 @@ fn without_repositories_the_model_leads_to_the_plugin_s_step(
     workspace.update(&mut cx, |ws, cx| {
         ws.set_setup(Setup::default(), cx);
         ws.start_setup(SetupStep::Welcome, cx);
-        // What "Get started" does: the provider's sign-in first.
+        // What the welcome's button does: the provider's sign-in first.
         ws.start_setup_steps(cx);
     });
     assert_eq!(route(&workspace, &mut cx), Route::Setup(MODEL_STEP));

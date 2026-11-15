@@ -183,12 +183,7 @@ return heiko.plugin({
 			jobs = 8,
 		},
 		view = function(settings, model, env)
-			return ui.stack({
-				ui.toggle("on", "Compact into a tree"),
-				ui.text(
-					"Near the window, older messages fold into one-line summaries the agent can zoom back into, instead of one summary. Each long message costs a request when it folds."
-				),
-			})
+			return ui.stack({ ui.toggle("on", "Compact into a tree") })
 		end,
 	},
 	tools = {

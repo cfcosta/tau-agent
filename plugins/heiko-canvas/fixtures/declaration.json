@@ -13,7 +13,10 @@
     "transcript": false,
     "archive": false,
     "chats": false,
-    "files": ["workspace", "~"]
+    "files": [
+      "workspace",
+      "~"
+    ]
   },
   "settings": null,
   "tools": [
@@ -37,7 +40,10 @@
                   "type": "string"
                 }
               },
-              "required": ["old", "new"],
+              "required": [
+                "old",
+                "new"
+              ],
               "type": "object"
             },
             "type": "array"
@@ -52,7 +58,10 @@
             "type": "string"
           }
         },
-        "required": ["item", "edits"],
+        "required": [
+          "item",
+          "edits"
+        ],
         "type": "object"
       },
       "card": false
@@ -74,7 +83,9 @@
             "type": "integer"
           }
         },
-        "required": ["item"],
+        "required": [
+          "item"
+        ],
         "type": "object"
       },
       "card": false
@@ -103,7 +114,10 @@
             "type": "string"
           }
         },
-        "required": ["path", "title"],
+        "required": [
+          "path",
+          "title"
+        ],
         "type": "object"
       },
       "card": false
@@ -128,7 +142,10 @@
             "type": "string"
           }
         },
-        "required": ["title", "text"],
+        "required": [
+          "title",
+          "text"
+        ],
         "type": "object"
       },
       "card": false
@@ -156,7 +173,10 @@
     "setup": false,
     "models": false
   },
-  "actions": ["open", "pick"],
+  "actions": [
+    "open",
+    "pick"
+  ],
   "events": [],
   "fills": [],
   "compaction": null,

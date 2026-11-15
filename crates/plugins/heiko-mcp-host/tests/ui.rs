@@ -994,6 +994,11 @@ impl Window_ {
                 .get(page::REMOVING)
                 .and_then(Value::as_str)
                 .map(str::to_owned),
+            open: self
+                .ui
+                .get(page::OPEN)
+                .map(|value| serde_json::from_value(value.clone()).unwrap())
+                .unwrap_or_default(),
             name: draft(page::NAME_INPUT),
             entry: draft(page::ENTRY_INPUT),
         }
@@ -1084,7 +1089,7 @@ fn the_editor_sends_what_it_may() {
     let servers = servers();
     let repo = Some("r");
     let mut window = Window_::default();
-    window.click(repo, &servers, "Add a server");
+    window.click(repo, &servers, "add a server");
     assert_eq!(window.held().editor, Some(page::Editor::default()));
     window.type_in(page::NAME_INPUT, "linear");
     window.type_in(page::ENTRY_INPUT, "{ \"command\": \"x\" }");
@@ -1102,7 +1107,7 @@ fn the_editor_sends_what_it_may() {
     window.click(repo, &servers, "Save");
     assert_eq!(window.held().editor, None);
     // Edit opens on the server's entry as it is.
-    window.click(repo, &servers, "Edit");
+    window.click(repo, &servers, "edit");
     let held = window.held();
     assert_eq!(held.editor.unwrap().editing.as_deref(), Some("git"));
     assert_eq!(
@@ -1112,23 +1117,23 @@ fn the_editor_sends_what_it_may() {
     window.type_in(page::ENTRY_INPUT, "{ \"command\": \"git-mcp\" }");
     window.click(repo, &servers, "Save");
     // Cancel closes the editor, and forgets a removal asked.
-    window.click(repo, &servers, "Add a server");
-    window.click(repo, &servers, "Remove");
+    window.click(repo, &servers, "add a server");
+    window.click(repo, &servers, "remove");
     assert_eq!(window.held().removing.as_deref(), Some("git"));
-    window.click(repo, &servers, "Cancel");
+    window.click(repo, &servers, "cancel");
     assert_eq!(window.held(), page::Held::default());
     // Removing asks twice.
-    window.click(repo, &servers, "Remove");
+    window.click(repo, &servers, "remove");
     assert_eq!(window.held().removing.as_deref(), Some("git"));
-    window.click(repo, &servers, "Remove it");
+    window.click(repo, &servers, "remove it");
     assert_eq!(window.held().removing, None);
     // The rest asks the host half as clicked.
     window.click(None, &servers, "On in every repository");
     window.click(repo, &servers, "Approve");
-    window.click(repo, &servers, "Reconnect");
+    window.click(repo, &servers, "reconnect");
     let mut unstarted = servers.clone();
     unstarted.started = false;
-    window.click(repo, &unstarted, "Connect now");
+    window.click(repo, &unstarted, "connect now");
     assert_eq!(
         window.acts,
         [
@@ -1451,7 +1456,7 @@ fn the_page_and_the_sidebar_draw_the_servers() {
         assert_eq!((repo, shown.servers.len()), (None, 0));
     });
     let mut window = Window_::default();
-    window.click(None, &repos["r"], "Add a server");
+    window.click(None, &repos["r"], "add a server");
     window.click(None, &repos["r"], "Save");
     assert!(window.held().editor.unwrap().problem.is_some());
     let shown = draw_page_in(&repos, BTreeMap::new(), false, window.ui);
@@ -1460,8 +1465,8 @@ fn the_page_and_the_sidebar_draw_the_servers() {
         ui::sidebar(&AtRepo { repo: "r".into() }, view)
     })
     .unwrap();
-    assert_eq!(entry.label, "MCP");
-    assert_eq!(entry.detail.as_deref(), Some("2 servers"));
+    assert_eq!(entry.label, "MCP servers");
+    assert_eq!(entry.detail.as_deref(), Some("2"));
     assert_eq!(entry.badge.as_ref().map(|(n, _)| n.as_str()), Some("1"));
     assert_eq!(entry.to.params["repo"], "r");
     let run = info("r");
@@ -1524,7 +1529,7 @@ fn the_page_signs_in_and_out() {
     let at_repo = BTreeMap::from([("repo".to_owned(), "r".to_owned())]);
     for compact in [false, true] {
         let shown = draw_page(&repos, at_repo.clone(), compact);
-        for label in ["Sign in", "Sign out", "ada@example.com"] {
+        for label in ["Sign in", "sign out", "ada@example.com"] {
             assert!(shown.contains(label), "{label} in {shown}");
         }
     }
@@ -1539,7 +1544,7 @@ fn the_page_signs_in_and_out() {
 
     let mut window = Window_::default();
     window.click(Some("r"), &repos["r"], "Sign in");
-    window.click(None, &repos["r"], "Sign out");
+    window.click(None, &repos["r"], "sign out");
     McpUi.reply(
         serde_json::to_value(Reply::SignIn {
             server: "db".into(),
@@ -1585,14 +1590,21 @@ fn at_card(tool: &str, data: CallData) -> AtCard {
 /// A call's card names its server and tool and their hints while it
 /// runs, from the repository's servers, and once it ended, from its
 /// details; it shows the structured result when there is one, else the
-/// text, and goes red when the call failed.
+/// text, and goes red when the call failed. It never folds: its body
+/// is there once the call returned something.
 #[test]
 fn the_card_shows_the_server_and_the_result() {
     let repos = BTreeMap::from([("r".to_owned(), servers())]);
     let draw = |at: AtCard| {
         with_view(&repos, &BTreeMap::new(), None, false, |view| {
-            card::card(&at, view)
-                .map(|card| (card.failed, card.folds, card.edge.is_some()))
+            card::card(&at, view).map(|card| {
+                (
+                    card.failed,
+                    card.folds,
+                    card.body.is_some(),
+                    card.edge.is_some(),
+                )
+            })
         })
     };
     assert!(draw(at_card("bash", CallData::default())).is_none());
@@ -1602,7 +1614,7 @@ fn the_card_shows_the_server_and_the_result() {
     };
     assert_eq!(
         draw(at_card("mcp__git__push", running.clone())),
-        Some((None, false, false))
+        Some((None, false, false, false))
     );
     let listed = card::shown(
         &running,
@@ -1637,7 +1649,7 @@ fn the_card_shows_the_server_and_the_result() {
     assert_eq!(shown.text, None);
     assert_eq!(
         draw(at_card("mcp__git__status", done)),
-        Some((None, true, false))
+        Some((None, false, true, false))
     );
 
     let mut failed = running;
@@ -1657,6 +1669,7 @@ fn the_card_shows_the_server_and_the_result() {
         draw(at_card("mcp__git__push", failed)),
         Some((
             Some("MCP tool git/push returned an error".into()),
+            false,
             true,
             true
         ))

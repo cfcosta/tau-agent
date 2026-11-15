@@ -1,203 +1,81 @@
-//! A repository's page: its header, and tabs for its runs and for what
-//! plugins keep for it (memory, rules, MCP servers). The sidebar lists
-//! only runs; the rest of a repository lives here.
+//! A repository's page: its runs, as ruled rows. What plugins keep for
+//! the repository (memory, rules, MCP servers) is listed under it in the
+//! sidebar's tree; each of those pages is drawn here under its title.
 
 use gpui::{AnyElement, Context, SharedString, div, prelude::*, rems};
 use heiko_agent::event::StopReason;
+use heiko_ui_kit::assets::State;
 
 use crate::{
     attention::Attention,
     route::Route,
-    theme::{Design as _, Theme, Type, radius, sp, weight},
-    ui::{self, components::ButtonKind, mono, status_look},
-    view::{Ending, Item, RunStatus, RunView, usd},
+    theme::{Design as _, Theme, Type, sp, weight},
+    ui::{self, components::BlockSize, mono, status_look},
+    view::{Ending, Item, RunStatus, RunView},
     workspace::Workspace,
 };
 
-/// One tab: its label, small print beside it, and where it leads.
-struct RepoTab {
-    label: String,
-    detail: Option<String>,
-    route: Route,
-    /// The plugin whose page it is; none for Runs.
-    plugin: Option<String>,
-}
-
-/// The repository's tabs: its runs, then each page a plugin lists for
-/// it.
-fn tabs(ws: &Workspace, repo: &str) -> Vec<RepoTab> {
-    let runs = ws.runs.iter().filter(|run| ws.repo_of(run) == repo).count();
-    let entries = ws.contributions(
+/// A page a plugin lists for `repo`: what the sidebar calls it, and
+/// where it leads.
+fn pages(ws: &Workspace, repo: &str) -> Vec<(String, Route)> {
+    ws.contributions(
         heiko_ui_plugin::points::SIDEBAR_REPO,
         &heiko_ui_plugin::points::AtRepo {
             repo: repo.to_owned(),
         },
-    );
-    std::iter::once(RepoTab {
-        label: "Runs".into(),
-        detail: Some(runs.to_string()),
-        route: Route::Repo(repo.to_owned()),
-        plugin: None,
-    })
-    .chain(entries.into_iter().filter_map(|entry| {
-        Some(RepoTab {
-            route: ws.link_route(&entry.to, None)?,
-            plugin: entry.to.plugin.clone(),
-            label: entry.label,
-            detail: entry.badge.map(|(count, _)| count).or(entry.detail),
-        })
-    }))
+    )
+    .into_iter()
+    .filter_map(|entry| Some((entry.label, ws.link_route(&entry.to, None)?)))
     .collect()
 }
 
-/// The repository whose page `route` is a tab of, if any: its Runs
-/// tab, or a page a plugin lists for it.
+/// The repository `route` is a page of, if any: its runs, or a page a
+/// plugin lists for it.
 pub fn owner(ws: &Workspace, route: &Route) -> Option<String> {
     if let Route::Repo(repo) = route {
         return Some(repo.clone());
     }
     let repo = route.repo()?.to_owned();
-    tabs(ws, &repo)
+    pages(ws, &repo)
         .iter()
-        .any(|tab| &tab.route == route)
+        .any(|(_, page)| page == route)
         .then_some(repo)
 }
 
-/// `body` under the repository's header and tabs, the tab for the
-/// current route selected.
+/// The room at a page's sides.
+fn gutter(compact: bool) -> gpui::Rems {
+    sp(if compact { 4. } else { 8. })
+}
+
+/// `body`, a page a plugin lists for `repo`, under its title: what the
+/// sidebar calls the page, with the repository's name beside it.
 pub fn framed(
     ws: &Workspace,
     repo: &str,
     body: AnyElement,
     compact: bool,
     t: &Theme,
-    cx: &mut Context<Workspace>,
+    _: &mut Context<Workspace>,
 ) -> AnyElement {
-    let path = ws
-        .catalog
-        .repos
-        .iter()
-        .find(|known| known.name == repo)
-        .map(|known| known.path.clone());
-    let live = ws
-        .runs
-        .iter()
-        .filter(|run| ws.repo_of(run) == repo && run.status.is_live())
-        .count();
-    let total = ws.runs.iter().filter(|run| ws.repo_of(run) == repo).count();
-    let branch = ws
-        .catalog
-        .repos
-        .iter()
-        .find(|known| known.name == repo)
-        .and_then(|known| known.trunk.clone())
-        .unwrap_or_else(|| "main".to_owned());
-    let new_in = repo.to_owned();
-    let actions = ws.drawn(
-        heiko_ui_plugin::points::REPO_ACTIONS,
-        &heiko_ui_plugin::points::AtRepo {
-            repo: repo.to_owned(),
-        },
-        cx,
-    );
-    let header = div()
-        .flex()
-        .flex_shrink_0()
-        .items_center()
-        .gap(sp(3.5))
-        .px(sp(if compact { 4. } else { 9. }))
-        .pt(sp(5.5))
-        .child(heiko_ui_kit::components::repo_mark(repo, 34., t))
-        .child(
-            div()
-                .flex_1()
-                .min_w(rems(0.))
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .typeset(Type::HEADING)
-                        .font_weight(weight::STRONG)
-                        .child(repo.to_owned()),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .gap(sp(1.5))
-                        .typeset(Type::CAPTION)
-                        .text_color(t.muted)
-                        .children(path.map(|path| {
-                            mono(path, Type::CAPTION, t.dim).truncate()
-                        }))
-                        .child("· on")
-                        .child(mono(branch, Type::CAPTION, t.roles.branch))
-                        .when(live > 0, |line| {
-                            line.child("·").child(
-                                div()
-                                    .text_color(t.roles.live)
-                                    .child(format!("{live} running")),
-                            )
-                        })
-                        .child(format!("· {total} runs")),
-                ),
-        )
-        .children(actions)
-        .child(
-            div()
-                .id("repo-new-run")
-                .child(ui::button("New run", ButtonKind::Primary, t))
-                .on_click(cx.listener(move |ws, _, window, cx| {
-                    ws.new_run_in(&new_in, window, cx)
-                })),
-        );
-    let tab_bar = div()
-        .flex()
-        .flex_shrink_0()
-        .gap(sp(6.))
-        .px(sp(if compact { 4. } else { 9. }))
-        .pt(sp(4.5))
-        .border_b_1()
-        .border_color(t.border)
-        .children(tabs(ws, repo).into_iter().enumerate().map(|(n, tab)| {
-            let on = tab.route == ws.route;
-            let route = tab.route.clone();
-            div()
-                .id(SharedString::from(format!("repo-tab-{n}")))
-                .flex()
-                .gap(sp(1.5))
-                .pb(sp(2.5))
-                .cursor_pointer()
-                .text_color(if on { t.text } else { t.text_soft })
-                .when(on, |tab| {
-                    tab.font_weight(weight::EMPHASIS)
-                        .border_b_2()
-                        .border_color(t.roles.primary)
-                })
-                .child(tab.label)
-                .children(tab.detail.map(|detail| {
-                    let ink = tab
-                        .plugin
-                        .as_deref()
-                        .and_then(|plugin| t.roles.plugin(plugin))
-                        .unwrap_or(t.dim);
-                    div().text_color(ink).child(detail)
-                }))
-                .on_click(cx.listener(move |ws, _, _, cx| {
-                    ws.navigate(route.clone(), cx)
-                }))
-        }));
+    let title = pages(ws, repo)
+        .into_iter()
+        .find(|(_, page)| page == &ws.route)
+        .map(|(label, _)| label);
     div()
         .flex_1()
         .min_h(rems(0.))
         .flex()
         .flex_col()
-        .child(header)
-        .child(tab_bar)
+        .children(title.map(|title| {
+            div().flex_shrink_0().px(gutter(compact)).pt(sp(6.)).child(
+                ui::section_header(title, Some(repo.to_owned().into()), t),
+            )
+        }))
         .child(div().flex_1().min_h(rems(0.)).flex().flex_col().child(body))
         .into_any_element()
 }
 
-/// Which runs the Runs tab lists.
+/// Which runs the repository's page lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RunsFilter {
     #[default]
@@ -267,18 +145,11 @@ impl RunsFilter {
     }
 }
 
-/// The widths of the list's columns after the run's: agent, turns,
-/// spent, changes, updated.
-const COLUMNS: [(&str, f32); 5] = [
-    ("Agent", 90.),
-    ("Turns", 64.),
-    ("Spent", 76.),
-    ("Changes", 84.),
-    ("Updated", 110.),
-];
+/// The widths of a row's columns after the run's: agent, turns,
+/// changes, started.
+const COLUMNS: [f32; 4] = [90., 64., 84., 110.];
 
-/// The Runs tab: the repository's runs, newest first, filtered by what
-/// they need.
+/// The repository's runs, newest first, filtered by what they need.
 pub fn render(
     ws: &Workspace,
     repo: &str,
@@ -301,50 +172,64 @@ pub fn render(
             })
             .count()
     };
-    let chips = div().flex().flex_wrap().gap(sp(1.5)).children(
-        RunsFilter::ALL.into_iter().map(|filter| {
+    let filters = div()
+        .flex()
+        .flex_wrap()
+        .items_baseline()
+        .gap(sp(5.))
+        .children(RunsFilter::ALL.into_iter().map(|filter| {
             let on = ws.runs_filter == filter;
             div()
                 .id(SharedString::from(format!("runs-filter-{filter:?}")))
                 .flex()
+                .items_baseline()
                 .gap(sp(1.5))
-                .px(sp(2.75))
-                .py(sp(1.5))
-                .rounded(radius::BOX)
+                .pb(sp(0.5))
+                .border_b_1()
+                .border_color(if on { t.rule } else { t.hairline })
+                .typeset(Type::SMALL)
                 .cursor_pointer()
-                .text_color(if on { t.text } else { t.text_soft })
-                .when(on, |chip| chip.bg(t.raised))
-                .when(!on, |chip| chip.hover(|style| style.bg(t.card)))
+                .text_color(if on { t.bright } else { t.text_soft })
+                .when(on, |word| word.font_weight(weight::EMPHASIS))
                 .child(filter.label())
-                .child(
-                    div()
-                        .text_color(filter.ink(t))
-                        .child(count(filter).to_string()),
-                )
+                .child(mono(
+                    count(filter).to_string(),
+                    Type::CAPTION,
+                    filter.ink(t),
+                ))
                 .on_click(cx.listener(move |ws, _, _, cx| {
                     ws.runs_filter = filter;
                     cx.notify();
                 }))
-        }),
-    );
-    let spent: f64 = runs.iter().map(|(run, _)| run.usage.cost).sum();
-    let heading = div()
-        .flex()
-        .gap(sp(3.5))
-        .px(sp(1.))
-        .pb(sp(2.))
-        .border_b_1()
-        .border_color(t.border)
-        .typeset(Type::CAPTION)
-        .text_color(t.dim)
-        .child(div().w(rems(0.4375)))
-        .child(div().flex_1().child("Run"))
-        .children(COLUMNS.iter().enumerate().map(|(n, (label, width))| {
-            div()
-                .w(rems((*width) / 16.))
-                .when(n > 0, |cell| cell.text_right())
-                .child(*label)
         }));
+    let known = ws.catalog.repos.iter().find(|known| known.name == repo);
+    let branch = known
+        .and_then(|known| known.trunk.clone())
+        .unwrap_or_else(|| "main".to_owned());
+    let place = match known {
+        Some(known) => format!("{} · {branch}", known.path),
+        None => branch,
+    };
+    let actions = ws.drawn(
+        heiko_ui_plugin::points::REPO_ACTIONS,
+        &heiko_ui_plugin::points::AtRepo {
+            repo: repo.to_owned(),
+        },
+        cx,
+    );
+    let new_in = repo.to_owned();
+    let header = ui::section_header(repo.to_owned(), None, t)
+        .items_center()
+        .child(mono(place, Type::CAPTION, t.dim).truncate())
+        .children(actions)
+        .child(
+            div()
+                .id("repo-new-run")
+                .child(ui::primary_block("New run", BlockSize::Small, t))
+                .on_click(cx.listener(move |ws, _, window, cx| {
+                    ws.new_run_in(&new_in, window, cx)
+                })),
+        );
     let rows: Vec<AnyElement> = runs
         .iter()
         .filter(|(run, attention)| {
@@ -361,41 +246,25 @@ pub fn render(
         .flex()
         .flex_col()
         .gap(sp(4.))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .child(chips)
-                .child(div().flex_1())
-                .child(
-                    div()
-                        .flex()
-                        .gap(sp(1.5))
-                        .typeset(Type::CAPTION)
-                        .text_color(t.muted)
-                        .child("spent")
-                        .child(
-                            div().text_color(t.roles.cost).child(usd(spent)),
-                        ),
-                ),
-        )
+        .child(header)
+        .child(filters)
         .child(
             div()
                 .flex()
                 .flex_col()
-                .child(heading)
+                .border_t_1()
+                .border_color(t.hairline)
                 .when(rows.is_empty(), |list| {
                     list.child(ui::empty("No runs here.", t))
                 })
                 .children(rows),
         );
-    let body = ui::screen(
+    ui::screen(
         "repo-runs",
         compact,
         div().w_full().flex().justify_center().child(list),
     )
-    .into_any_element();
-    framed(ws, repo, body, compact, t, cx)
+    .into_any_element()
 }
 
 /// What a run was asked to do: its first message, on one line.
@@ -416,7 +285,27 @@ pub(crate) fn task(run: &RunView) -> String {
         .unwrap_or_default()
 }
 
-/// A run in the list: its state, title and task, agent, turns, cost,
+/// The mark a run's row shows: what it needs, else how it stopped.
+fn state(run: &RunView, attention: &Attention) -> State {
+    match attention {
+        Attention::Working { .. } => State::Working,
+        Attention::Asks { .. } => State::Asks,
+        Attention::ReadyToLand { .. } | Attention::Landed => State::Met,
+        Attention::Failed
+        | Attention::WouldConflict { .. }
+        | Attention::ConflictsOnMain { .. } => State::Failing,
+        Attention::Queued(_) | Attention::Interrupted | Attention::Dropped => {
+            State::Idle
+        }
+        Attention::Idle => match run.status {
+            RunStatus::Finished(StopReason::Limit(_)) => State::Limit,
+            RunStatus::Finished(StopReason::Error(_)) => State::Failing,
+            _ => State::Idle,
+        },
+    }
+}
+
+/// A run in the list: its state's mark, title and task, agent, turns,
 /// changes and when it started.
 fn run_row(
     run: &RunView,
@@ -442,7 +331,7 @@ fn run_row(
     };
     let route = Route::Run(run.id.clone());
     let cell =
-        |width: f32| div().w(rems((width) / 16.)).flex_shrink_0().text_right();
+        |width: f32| div().w(rems(width / 16.)).flex_shrink_0().text_right();
     div()
         .id(SharedString::from(format!("repo-run-{}", run.id)))
         .flex()
@@ -451,16 +340,10 @@ fn run_row(
         .px(sp(1.))
         .py(sp(2.75))
         .border_b_1()
-        .border_color(t.border)
+        .border_color(t.hairline)
         .cursor_pointer()
         .hover(|row| row.bg(t.card))
-        .child(
-            div()
-                .size(rems(0.4375))
-                .flex_shrink_0()
-                .rounded(radius::FULL)
-                .bg(color),
-        )
+        .child(ui::mark(state(run, attention), t))
         .child(
             div()
                 .flex_1()
@@ -495,13 +378,13 @@ fn run_row(
         )
         .child(
             div()
-                .w(rems((COLUMNS[0].1) / 16.))
+                .w(rems(COLUMNS[0] / 16.))
                 .flex_shrink_0()
                 .typeset(Type::CAPTION)
                 .text_color(t.roles.agent)
                 .child(run.agent.clone()),
         )
-        .child(cell(COLUMNS[1].1).child(mono(
+        .child(cell(COLUMNS[1]).child(mono(
             match run.limits.max_turns {
                 Some(max) => format!("{}/{max}", run.turn),
                 None => run.turn.to_string(),
@@ -509,12 +392,7 @@ fn run_row(
             Type::CAPTION,
             t.text_soft,
         )))
-        .child(cell(COLUMNS[2].1).child(mono(
-            usd(run.usage.cost),
-            Type::CAPTION,
-            t.roles.cost,
-        )))
-        .child(cell(COLUMNS[3].1).child(mono(
+        .child(cell(COLUMNS[2]).child(mono(
             changes.map_or(String::new(), |n| match n {
                 1 => "1 change".into(),
                 n => format!("{n} changes"),
@@ -523,7 +401,7 @@ fn run_row(
             t.green,
         )))
         .child(
-            cell(COLUMNS[4].1)
+            cell(COLUMNS[3])
                 .typeset(Type::CAPTION)
                 .text_color(t.dim)
                 .child(run.started.clone()),

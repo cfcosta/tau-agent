@@ -872,7 +872,7 @@ fn a_waiting_chatgpt_sign_in_can_be_cancelled(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_landing_sign_in_animates_the_handshake_once(cx: &mut TestAppContext) {
-    use heiko_ui_remote::motion::{Link, Mood};
+    use heiko_ui_remote::motion::Link;
     let (workspace, mut cx, _) = open_demo(cx);
     workspace.update(&mut cx, |ws, cx| {
         ws.set_setup(demo::setup(demo::CHATGPT_STEP), cx);
@@ -895,7 +895,6 @@ fn a_landing_sign_in_animates_the_handshake_once(cx: &mut TestAppContext) {
         let motion = ws.setup_motion();
         assert_eq!(motion.link.current, Link::Connected);
         assert_eq!(motion.link.previous, Link::Waiting);
-        assert_eq!(motion.mood.current, Mood::Done);
         assert_eq!(motion.link.epoch, waited + 1);
         motion.link.epoch
     });
@@ -920,7 +919,7 @@ fn reduced_motion_stops_onboardings_loops(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     workspace.read_with(&cx, |ws, _| {
-        assert!(ws.setup_motion().reduce && !ws.setup_motion().loops())
+        assert!(ws.setup_motion().reduce)
     });
 }
 
@@ -3613,6 +3612,62 @@ fn a_plugins_ui_state_set_on_a_phone_reaches_the_computer(
         phone.update(&mut phone_cx, |ws, _| ws.synced()),
         computer.update(&mut computer_cx, |ws, _| ws.synced()),
     );
+}
+
+/// Home shows no run: what is written there starts one in the selected
+/// repository, whatever run was open before, and its model is the next
+/// run's.
+#[gpui::test]
+fn home_starts_a_run_and_steers_none(cx: &mut TestAppContext) {
+    let (workspace, mut cx, events) = open_demo(cx);
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(Route::Run(demo::run_id()), cx);
+        assert_eq!(
+            ws.composer_target(),
+            Some(PickerTarget::Run(demo::run_id()))
+        );
+        ws.navigate(Route::Home, cx);
+        assert_eq!(ws.composer_target(), Some(PickerTarget::Next));
+        ws.submit_prompt("log malformed headers once".into(), cx);
+    });
+    assert!(
+        matches!(
+            events.borrow().last(),
+            Some(WorkspaceEvent::NewRun { repo, prompt, .. })
+                if repo == "heiko-agent"
+                    && prompt == "log malformed headers once"
+        ),
+        "{:?}",
+        events.borrow().last()
+    );
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+}
+
+/// The sidebar's tree is of what the screen is about, else of the
+/// repository chosen on its rail; choosing one leaves a screen about
+/// another for Home, and keeps a screen about none.
+#[gpui::test]
+fn the_sidebar_s_tree_follows_the_screen_and_the_rail(cx: &mut TestAppContext) {
+    use heiko_ui_remote::repos::TreeOf;
+
+    let (workspace, mut cx, _) = open_demo(cx);
+    let repo = |name: &str| Some(TreeOf::Repo(name.to_owned()));
+    workspace.update(&mut cx, |ws, cx| {
+        ws.navigate(
+            Route::Run(heiko_agent::tool::RunId("pdf-ingest".into())),
+            cx,
+        );
+        assert_eq!(ws.tree_of(), repo("docbert"));
+        ws.choose_repo("homelab.nix", cx);
+        assert_eq!(ws.route(), &Route::Home);
+        assert_eq!(ws.tree_of(), repo("homelab.nix"));
+        assert_eq!(ws.selected_repo(), Some("homelab.nix"));
+        ws.navigate(Route::History, cx);
+        ws.choose_repo("docbert", cx);
+        assert_eq!(ws.route(), &Route::History);
+        assert_eq!(ws.tree_of(), repo("docbert"));
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
 }
 
 /// The skills heiko-skills ships, by their folders' names in its package.
