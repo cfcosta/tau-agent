@@ -15,7 +15,6 @@ use std::{sync::Arc, time::Duration};
 use async_trait::async_trait;
 use common::State as Fixture;
 use hegel::{TestCase, generators as gs};
-use serde_json::{Value, json};
 use heiko_agent::{
     agent::Agent,
     error::ToolError,
@@ -32,6 +31,7 @@ use heiko_mcp_host::{
 };
 use heiko_store::Store;
 use heiko_testing::scripted::ScriptedModel;
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use crate::common;
@@ -348,8 +348,35 @@ async fn hidden_tools_are_nowhere() {
     plugin.shutdown().await;
 }
 
+/// Opens the fixture's gate, so a waiting dial connects.
+struct Open(Arc<Fixture>);
+
+#[async_trait]
+impl AgentTool for Open {
+    fn name(&self) -> &str {
+        "open"
+    }
+    fn description(&self) -> &str {
+        "Opens the gate."
+    }
+    fn parameters(&self) -> &Value {
+        static SCHEMA: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
+        SCHEMA.get_or_init(|| json!({"type": "object", "properties": {}}))
+    }
+    async fn call(
+        &self,
+        _args: Value,
+        _ctx: ToolCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        self.0.gate(true);
+        Ok(ToolOutput::text("opened"))
+    }
+}
+
 /// A server that connects after a run started is declared from the
 /// next run on; within the run, a tool reaches it through the source.
+/// The gate opens from the run's first tool call, so the server cannot
+/// connect before the run declared its tools.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_server_that_connects_mid_run_shows_from_the_next_run() {
     let fixture = Fixture::new(false);
@@ -361,31 +388,35 @@ async fn a_server_that_connects_mid_run_shows_from_the_next_run() {
         .env(Arc::new(|_| None))
         .home(None)
         .server(config)
-        .startup_wait(Duration::from_millis(200))
+        .startup_wait(Duration::ZERO)
         .build();
     let store = heiko_store_sqlite::memory().await.unwrap();
-    let gate = fixture.clone();
     let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("open", json!({})))
         .turn(|t| t.tool_call("caller", json!({"name": "mcp__srv__echo", "args": {"text": "late"}, "wait": ["srv"]})))
         .turn(|t| t.text("first done"))
         .turn(|t| t.text("second done"));
-    let agent = Agent::new(llm.clone()).tool(Caller).plugin(plugin.clone());
-    let opener = tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(400)).await;
-        gate.gate(true);
-    });
+    let agent = Agent::new(llm.clone())
+        .tool(Caller)
+        .tool(Open(fixture.clone()))
+        .plugin(plugin.clone());
     run(&agent, &store).await;
-    opener.await.unwrap();
 
-    assert_eq!(declared(&llm, 0), ["caller"]);
-    let (late, _) = last_result(&llm, 1);
+    for request in 0..3 {
+        let tools = declared(&llm, request);
+        assert!(
+            !tools.iter().any(|t| t.starts_with("mcp__srv__")),
+            "request {request}: {tools:?}"
+        );
+    }
+    let (late, _) = last_result(&llm, 2);
     let late: Value = serde_json::from_str(&late).unwrap();
     assert_eq!(late["result"]["ok"], json!("late"));
     // The block is fixed by the configuration, so it is there already.
     assert!(first_input(&llm, 0).contains("- mcp__srv (direct): Late."));
 
     run(&agent, &store).await;
-    assert!(declared(&llm, 2).contains(&"mcp__srv__echo".to_owned()));
+    assert!(declared(&llm, 3).contains(&"mcp__srv__echo".to_owned()));
     plugin.shutdown().await;
 }
 

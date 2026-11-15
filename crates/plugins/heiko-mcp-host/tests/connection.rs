@@ -22,8 +22,7 @@ use std::{
 
 use common::State as Fixture;
 use hegel::{TestCase, generators as gs};
-use serde_json::{Value, json};
-use heiko_mcp::config::{HttpConfig, Origin, ServerConfig, Transport};
+use heiko_mcp::config::{Dial, HttpConfig, Origin, ServerConfig, Transport};
 use heiko_mcp_host::connection::{
     CallFailure,
     Connection,
@@ -32,6 +31,7 @@ use heiko_mcp_host::connection::{
     Progress,
     State,
 };
+use serde_json::{Value, json};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
@@ -342,28 +342,44 @@ async fn a_dropped_server_reconnects_and_calls_are_not_retried() {
     .await;
 }
 
-/// A server that does not answer `initialize` in time is not waited on
-/// forever by a call, and a cancelled wait fails as cancelled.
+/// A call that finds no session connects and waits for that connect;
+/// cancelled while it waits, it fails as cancelled and the connect goes
+/// on. The connection only dials when the call asks it to, and the dial
+/// says so, so the cancel lands while the call is waiting on it.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_call_waiting_for_a_connect_can_be_cancelled() {
     let fixture = Fixture::new(false);
     fixture.gate(false);
-    let connection = connect(&fixture, 60.0);
-    let cancel = CancellationToken::new();
-    let canceller = cancel.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        canceller.cancel();
+    let (dialed, mut dials) = tokio::sync::mpsc::unbounded_channel();
+    let inner = fixture.dial();
+    let dial = Dial::new(move || {
+        let _ = dialed.send(());
+        inner.open()
     });
-    let error = connection
-        .call("echo", json!({"text": "x"}), &no_progress(), &cancel)
-        .await
-        .unwrap_err();
+    let config = ServerConfig::new("test-server", Transport::Stream(dial));
+    let connection = Connection::new(config, Origin::User, environment());
+    let cancel = CancellationToken::new();
+    let call = tokio::spawn({
+        let connection = connection.clone();
+        let cancel = cancel.clone();
+        async move {
+            connection
+                .call("echo", json!({"text": "x"}), &no_progress(), &cancel)
+                .await
+        }
+    });
+    dials.recv().await.unwrap();
+    assert_eq!(connection.status().state, State::Connecting);
+    assert!(!call.is_finished(), "the call did not wait for the connect");
+    cancel.cancel();
+    let error = call.await.unwrap().unwrap_err();
     assert!(matches!(error, CallFailure::Cancelled { .. }), "{error}");
     assert_eq!(connection.status().state, State::Connecting);
+    assert_eq!(fixture.calls("echo"), 0);
     fixture.gate(true);
     settle(&connection).await;
     assert_eq!(connection.status().state, State::Connected);
+    assert_eq!(fixture.calls("echo"), 0, "a cancelled call was sent");
     connection.shutdown().await;
 }
 

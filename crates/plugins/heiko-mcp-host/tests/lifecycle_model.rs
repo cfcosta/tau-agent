@@ -60,11 +60,11 @@ use common::{
     http::{HttpServer, Unknown},
 };
 use hegel::{TestCase, generators as gs};
-use serde_json::{Value, json};
 use heiko_mcp::config::{HttpConfig, Origin, ServerConfig, Transport};
 use heiko_mcp_host::{
     McpPlugin,
     connection::{
+        CallFailure,
         Connection,
         Environment,
         Progress,
@@ -73,6 +73,7 @@ use heiko_mcp_host::{
         WatchError,
     },
 };
+use serde_json::{Value, json};
 use tokio::{runtime::Runtime, sync::watch};
 use tokio_util::sync::CancellationToken;
 
@@ -563,6 +564,54 @@ impl Machine {
                 "connected again"
             );
         }
+    }
+
+    /// A call on a dropped server waits for the connect it starts and is
+    /// cancelled while it waits: it fails as cancelled, never reaches
+    /// the server, and the connect goes on. Over a duplex stream only:
+    /// the dial count says the call is waiting.
+    #[rule]
+    fn a_call_waiting_for_a_connect_is_cancelled(&mut self, tc: TestCase) {
+        if self.live || self.http.is_some() {
+            tc.reject();
+        }
+        let dials = self.fixture.dials();
+        let slow_calls = self.fixture.calls("slow");
+        self.gate(false);
+        let cancel = CancellationToken::new();
+        let call = {
+            let connection = self.connection.clone();
+            let cancel = cancel.clone();
+            self.runtime.spawn(async move {
+                connection
+                    .call(
+                        "slow",
+                        json!({"steps": 0, "ms": 0}),
+                        &|_| {},
+                        &cancel,
+                    )
+                    .await
+            })
+        };
+        self.settle();
+        assert!(self.fixture.dials() > dials, "the call did not connect");
+        assert!(!call.is_finished(), "the call did not wait for the connect");
+        assert_eq!(self.connection.status().state, State::Connecting);
+        cancel.cancel();
+        let called = self.block_on(call).unwrap();
+        assert!(
+            matches!(called, Err(CallFailure::Cancelled { .. })),
+            "{called:?}"
+        );
+        self.gate(true);
+        self.quiet();
+        assert_eq!(self.connection.status().state, State::Connected);
+        assert_eq!(
+            self.fixture.calls("slow"),
+            slow_calls,
+            "a cancelled call ran"
+        );
+        self.connects();
     }
 
     /// The plugin closes the connection, as when its server is turned
