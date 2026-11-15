@@ -90,7 +90,10 @@ impl Artifact {
     fn validate(&self) -> Result<()> {
         let id =
             Uuid::parse_str(&self.id).map_err(|_| Error::InvalidArtifact)?;
-        if id.get_version_num() != 7 || id.hyphenated().to_string() != self.id {
+        if id.get_version_num() != 7
+            || id.get_variant() != uuid::Variant::RFC4122
+            || id.hyphenated().to_string() != self.id
+        {
             return Err(Error::InvalidArtifact);
         }
         if self.digest.len() != 64

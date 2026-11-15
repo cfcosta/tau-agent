@@ -478,14 +478,16 @@ fn published_files_are_private_and_read_only() {
 }
 
 /// The rule metadata is read by: an ID in a UUID's canonical form,
-/// lowercase and hyphenated, of version 7; a digest of 64 lowercase hex
-/// digits.
+/// lowercase and hyphenated, of version 7 and the standard variant
+/// (`8`, `9`, `a` or `b` first in its fourth group); a digest of 64
+/// lowercase hex digits.
 fn readable(id: &str, digest: &str) -> bool {
     let hex = |byte: u8| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte);
     let id_ok = id.len() == 36
         && id.bytes().enumerate().all(|(at, byte)| match at {
             8 | 13 | 18 | 23 => byte == b'-',
             14 => byte == b'7',
+            19 => b"89ab".contains(&byte),
             _ => hex(byte),
         });
     id_ok && digest.len() == 64 && digest.bytes().all(hex)
@@ -639,6 +641,10 @@ fn published_metadata_reads_back_and_a_path_in_it_does_not() {
         ("digest", "../bad".to_owned()),
     ];
     refused.push(("digest", artifact.digest()[1..].to_owned()));
+    // Version 7 still, but not the standard variant.
+    let mut other_variant = artifact.id().to_owned();
+    other_variant.replace_range(19..20, "c");
+    refused.push(("id", other_variant));
     for (field, text) in refused {
         let mut changed = value.clone();
         changed[field] = serde_json::json!(text);
