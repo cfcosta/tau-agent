@@ -67,8 +67,8 @@ return heiko.agent { triggers = { morning = { at = "09:00" } },
 struct Host {
     running: AtomicBool,
     turns: Mutex<Vec<Turn>>,
-    /// What each agent spent today.
-    spent: Mutex<BTreeMap<String, f64>>,
+    /// The tokens each agent used today.
+    used: Mutex<BTreeMap<String, u64>>,
     secrets: std::sync::OnceLock<SecretStore>,
 }
 
@@ -113,13 +113,13 @@ impl Env for HostEnv {
         Box::pin(async { Ok(()) })
     }
 
-    fn spent_since(
+    fn used_since(
         &self,
         agent: &str,
         _since: i64,
-    ) -> HostFuture<'_, anyhow::Result<f64>> {
-        let spent = self.0.spent.lock().unwrap().get(agent).copied();
-        Box::pin(async move { Ok(spent.unwrap_or(0.0)) })
+    ) -> HostFuture<'_, anyhow::Result<u64>> {
+        let used = self.0.used.lock().unwrap().get(agent).copied();
+        Box::pin(async move { Ok(used.unwrap_or(0)) })
     }
 
     fn conversations(&self) -> Option<Arc<dyn Conversations>> {
@@ -391,8 +391,12 @@ fn a_message_reaches_an_agent_that_hears_them_and_no_other() {
 #[test]
 fn a_message_spends_the_receivers_day() {
     let f = Fixture::new();
-    // triage spent its dollar today.
-    f.host.spent.lock().unwrap().insert("triage".into(), 1.5);
+    // triage used its million tokens today.
+    f.host
+        .used
+        .lock()
+        .unwrap()
+        .insert("triage".into(), 1_500_000);
     block_on_io(f.agents.send("digest", "triage", "look at #412", 1)).unwrap();
     assert!(f.tick_past_window().is_empty());
     let triage = f.agent("triage");

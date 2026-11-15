@@ -1154,8 +1154,8 @@ fn agents(
         status,
         triggers: Vec::new(),
         versions: Vec::new(),
-        spend_today: 0.0,
-        cap_today: 1.0,
+        used_today: 0,
+        cap_today: 1_000_000,
         queued: 0,
         last: None,
         model: heiko_agents::default_model(),
@@ -1189,7 +1189,7 @@ fn agents(
                     live: true,
                     error: None,
                 }],
-                spend_today: 0.08,
+                used_today: 80_000,
                 notices: vec![heiko_agents::Notice {
                     id: "n3".into(),
                     at: now - 40 * 60,
@@ -1269,7 +1269,7 @@ fn agents(
                         error: None,
                     },
                 ],
-                spend_today: 0.41,
+                used_today: 410_000,
                 queued: 2,
                 scheduled: vec![
                     heiko_agents::Scheduled {
@@ -1348,7 +1348,7 @@ fn agents(
                     None,
                     None,
                 )],
-                spend_today: 1.0,
+                used_today: 1_000_000,
                 queued: 3,
                 last: Some(Last {
                     at: now - 2 * 3600,

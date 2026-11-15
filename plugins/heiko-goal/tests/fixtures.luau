@@ -2,37 +2,17 @@
 local heiko = require("heiko")
 local t = heiko.test
 
--- What Jev charges per million bytes of a request, as heiko's fake Jev
--- counts them: one token a byte.
-local PRICE_PER_MILLION_INPUT = 0.042
-
--- The request as Jev gets it: each yes/no question as
--- `{ type, instructions, criteria = { true, false } }`.
-local function wire(request)
-	local questions = {}
-	for id, q in pairs(request.questions) do
-		questions[id] = {
-			type = q.kind,
-			instructions = q.question,
-			criteria = { ["true"] = q.yes, ["false"] = q.no },
-		}
-	end
-	return { state = request.state, questions = questions }
-end
-
--- A Jev that answers each check with the next of `answers`, charging
--- for the bytes of the request it gets.
+-- A Jev that answers each check with the next of `answers`.
 local function jev(answers)
 	local n = 0
 	return {
-		ask = function(request)
+		ask = function()
 			n += 1
 			local p = answers[n]
 			if p == nil then
 				error("no answer left", 0)
 			end
-			local cost = #json.encode(wire(request)) * PRICE_PER_MILLION_INPUT / 1000000
-			return { met = { probability = p } }, cost
+			return { met = { probability = p } }, 0
 		end,
 	}
 end
@@ -43,7 +23,7 @@ local function goal_run(command, answers, turns)
 	local r = t.run({ id = "demo", jev = jev(answers) })
 	r:start({ input = command })
 	for _, turn in ipairs(turns) do
-		r:turn_end({ turn = turn, text = "", calls = array({}), cost = 0.12 })
+		r:turn_end({ turn = turn, text = "", calls = array({}), cost = 0, tokens = 120000 })
 		r:before_stop({ text = "done", turn = turn, reason = "stop" })
 	end
 	r:run_end({ stop = "Stop", turns = 0, cost = 0, text = "done" })

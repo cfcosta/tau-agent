@@ -176,7 +176,6 @@ pub enum Decision { Allow, Block(String) }   // a Block's reason is the result t
 Limits::default()
     .max_turns(30)
     .max_tokens(400_000)
-    .max_usd(2.0)
     .timeout(Duration::from_secs(900))
 ```
 
@@ -232,7 +231,7 @@ let lead = Agent::new(llm.clone()).name("lead").model("gpt-5.5")
     .instructions("Break the task down. Delegate. Verify before finishing.")
     .tool(researcher.as_tool("research", "Investigate a question and report findings."))
     .tool(coder.as_tool("implement", "Make a scoped code change and report what changed."))
-    .limits(Limits::default().max_usd(5.0).timeout(Duration::from_secs(1800)));
+    .limits(Limits::default().max_tokens(2_000_000).timeout(Duration::from_secs(1800)));
 
 let mut run = lead.start("Add retry with jitter to the HTTP client.", &store);
 while let Some(ev) = run.events().next().await {

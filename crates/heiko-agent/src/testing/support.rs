@@ -73,7 +73,7 @@ pub fn assert_grammar(events: &[RunEvent]) {
     assert!(in_turn.is_none(), "a turn never ended");
 }
 
-/// The reference: each limit, checked in order turns, tokens, cost, time,
+/// The reference: each limit, checked in order turns, tokens, time,
 /// reached when the value meets or passes it.
 pub fn reference(
     limits: &Limits,
@@ -86,10 +86,6 @@ pub fn reference(
     [
         (limits.max_turns.map(|m| turns >= m), LimitKind::Turns),
         (limits.max_tokens.map(|m| tokens >= m), LimitKind::Tokens),
-        (
-            limits.max_usd.map(|m| usage.cost.total >= m),
-            LimitKind::Usd,
-        ),
         (limits.timeout.map(|m| elapsed >= m), LimitKind::Time),
     ]
     .into_iter()

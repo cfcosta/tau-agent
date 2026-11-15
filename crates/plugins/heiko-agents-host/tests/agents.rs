@@ -96,7 +96,7 @@ struct Host {
     secrets: std::sync::OnceLock<SecretStore>,
     settings: Mutex<BTreeMap<String, Settings>>,
     /// What the agent's repository was charged, and when.
-    charges: Mutex<Vec<(i64, f64)>>,
+    charges: Mutex<Vec<(i64, u64)>>,
     /// What each tool answers next, in turn; none is a failure.
     answers: Mutex<BTreeMap<String, VecDeque<Result<Value, String>>>>,
     /// The tools called outside a run: where, which, with what.
@@ -142,20 +142,20 @@ impl Env for Host {
         Box::pin(async { Ok(()) })
     }
 
-    fn spent_since(
+    fn used_since(
         &self,
         _agent: &str,
         since: i64,
-    ) -> HostFuture<'_, anyhow::Result<f64>> {
-        let spent = self
+    ) -> HostFuture<'_, anyhow::Result<u64>> {
+        let used = self
             .charges
             .lock()
             .unwrap()
             .iter()
             .filter(|(at, _)| *at >= since)
-            .map(|(_, usd)| usd)
+            .map(|(_, tokens)| tokens)
             .sum();
-        Box::pin(async move { Ok(spent) })
+        Box::pin(async move { Ok(used) })
     }
 
     fn conversations(&self) -> Option<Arc<dyn Conversations>> {
@@ -458,40 +458,44 @@ fn a_turn_that_does_not_start_keeps_its_events_and_tries_again() {
 #[test]
 fn at_its_cap_it_waits_until_the_person_allows_more() {
     let f = Fixture::new();
-    // What it spent before the day began does not count.
+    // What it used before the day began does not count.
     f.host
         .charges
         .lock()
         .unwrap()
-        .push((MONDAY_EIGHT - 9 * 3600, 4.0));
+        .push((MONDAY_EIGHT - 9 * 3600, 4_000_000));
     f.tick();
-    assert_eq!(f.agent().spend_today, 0.0);
-    f.host.charges.lock().unwrap().push((MONDAY_EIGHT, 1.25));
+    assert_eq!(f.agent().used_today, 0);
+    f.host
+        .charges
+        .lock()
+        .unwrap()
+        .push((MONDAY_EIGHT, 1_250_000));
     f.command("ada");
     f.clock.advance(30);
     f.tick();
     assert!(f.turns().is_empty());
     let agent = f.agent();
     assert_eq!(agent.status, Status::AtCap);
-    assert_eq!(agent.spend_today, 1.25);
-    assert_eq!(agent.cap_today, 1.0);
+    assert_eq!(agent.used_today, 1_250_000);
+    assert_eq!(agent.cap_today, 1_000_000);
     assert_eq!(agent.queued, 1, "events keep waiting");
 
     block_on_io(f.agents.act(Act::AllowMore {
         agent: "greet".into(),
-        amount: 1.0,
     }))
     .unwrap();
-    assert_eq!(f.agent().cap_today, 2.0);
+    // As much again as its cap.
+    assert_eq!(f.agent().cap_today, 2_000_000);
     f.tick();
     assert_eq!(f.turns().len(), 1);
 
-    // A new day: its spend starts over, and so does its cap.
+    // A new day: its use starts over, and so does its cap.
     f.clock.advance(86_400);
     f.tick();
     let agent = f.agent();
-    assert_eq!(agent.spend_today, 0.0);
-    assert_eq!(agent.cap_today, 1.0);
+    assert_eq!(agent.used_today, 0);
+    assert_eq!(agent.cap_today, 1_000_000);
 }
 
 #[test]
@@ -522,7 +526,7 @@ fn making_an_agent_lists_it_and_starts_its_conversation() {
         name: "pr-triage".into(),
         purpose: "Label new pull requests.".into(),
         model: None,
-        daily_cap: Some(2.5),
+        daily_cap: Some(2_500_000),
         window_secs: None,
         servers: vec!["github".into()],
     }))
@@ -530,7 +534,7 @@ fn making_an_agent_lists_it_and_starts_its_conversation() {
     assert_eq!(answer, Some(json!({ "repo": "pr-triage" })));
     assert_eq!(*f.host.conversation.listed.lock().unwrap(), ["pr-triage"]);
     let settings = f.host.settings("pr-triage");
-    assert_eq!(settings.daily_cap, 2.5);
+    assert_eq!(settings.daily_cap, 2_500_000);
     assert_eq!(settings.window_secs, 30);
     let turns = f.turns();
     assert_eq!(turns.len(), 1);

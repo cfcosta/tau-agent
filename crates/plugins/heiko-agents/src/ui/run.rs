@@ -21,7 +21,7 @@ use super::{
     button,
     events,
     gap,
-    page::{MORE, ruled},
+    page::ruled,
     state_mark,
 };
 use crate::{Act, Agent, Status, event::Message};
@@ -132,11 +132,10 @@ pub fn panel_tree(
     ];
     if agent.status == Status::AtCap {
         today.push(Node::row([act_button(
-            "allow more today",
+            super::ALLOW_MORE,
             Kind::Hot,
             &Act::AllowMore {
                 agent: agent.name.clone(),
-                amount: MORE,
             },
         )]));
     }

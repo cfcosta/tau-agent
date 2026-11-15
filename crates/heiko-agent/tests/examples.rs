@@ -175,7 +175,7 @@ fn supervisor_with_sub_agents() {
                 ))
                 .limits(
                     Limits::default()
-                        .max_usd(5.0)
+                        .max_tokens(2_000_000)
                         .timeout(Duration::from_secs(1800)),
                 );
 

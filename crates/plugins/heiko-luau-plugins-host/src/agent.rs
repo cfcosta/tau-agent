@@ -1781,6 +1781,10 @@ impl PluginRun for LuauRun {
                 let mut input = json!({
                     "turn": turn, "text": state.text, "calls": state.calls,
                     "cost": usage.cost.total,
+                    "tokens": usage.input
+                        + usage.output
+                        + usage.cache_read
+                        + usage.cache_write,
                 });
                 // The turn's commit, which the run's workspace made as it
                 // heard the turn end, before the plugins hear it.

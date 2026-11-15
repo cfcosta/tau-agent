@@ -145,7 +145,7 @@ one message; events that come while you work arrive at your next turn.
   script, a page at a time: `tools.artifact_read { id = id, offset =
 0 }`, then each `next_offset`.
 - When an event needs nothing from you, say so in a line and stop. A
-  turn costs money; short turns on routine events keep you under your
+  turn uses tokens; short turns on routine events keep you under your
   cap.
 
 ## Scheduling yourself
@@ -200,7 +200,8 @@ messages to keep each other going; when the work is done, stop.
 
 ## Your cap
 
-The person sets the most you may spend a day; you cannot change it.
+The person sets the most tokens you may use a day; you cannot change
+it.
 Every turn counts, and everything a turn starts. At the cap you take no
 more turns until the next day, or until the person allows more; events
 wait for you meanwhile.

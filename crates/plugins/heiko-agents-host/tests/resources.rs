@@ -140,12 +140,12 @@ impl Env for Host {
         Box::pin(async { Ok(()) })
     }
 
-    fn spent_since(
+    fn used_since(
         &self,
         _agent: &str,
         _since: i64,
-    ) -> HostFuture<'_, anyhow::Result<f64>> {
-        Box::pin(async { Ok(0.0) })
+    ) -> HostFuture<'_, anyhow::Result<u64>> {
+        Box::pin(async { Ok(0) })
     }
 
     fn conversations(&self) -> Option<Arc<dyn Conversations>> {

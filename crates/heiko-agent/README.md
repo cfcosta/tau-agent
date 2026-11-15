@@ -97,7 +97,7 @@ let agent = Agent::new(llm)
     .name("counter")
     .instructions("Answer with a number.")
     .tool(typed(LineCount))
-    .limits(Limits::default().max_turns(5).max_usd(0.50));
+    .limits(Limits::default().max_turns(5).max_tokens(50_000));
 
 let store = heiko_store_sqlite::open("runs.db").await?;
 let outcome = agent.run("How long is Cargo.toml?", &store).await?;

@@ -250,11 +250,14 @@ impl SqliteStore {
             .await.map_err(database)?;
         }
 
-        if usage.cost_usd != 0.0 {
+        let tokens =
+            i64::from(usage.input_tokens) + i64::from(usage.output_tokens);
+        if tokens != 0 || usage.cost_usd != 0.0 {
             sqlx::query!(
-                "INSERT INTO spend (run_id, at, cost_usd)
-                 VALUES (?1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?2)",
+                "INSERT INTO spend (run_id, at, tokens, cost_usd)
+                 VALUES (?1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?2, ?3)",
                 run,
+                tokens,
                 usage.cost_usd,
             )
             .execute(&mut *tx)
@@ -900,10 +903,10 @@ impl Backend for SqliteStore {
         .map_err(database)?)
     }
 
-    async fn spent_since(&self, runs: &[String], since: &str) -> Result<f64> {
+    async fn tokens_since(&self, runs: &[String], since: &str) -> Result<u64> {
         let runs = serde_json::to_string(runs)?;
-        Ok(sqlx::query_scalar!(
-            r#"SELECT COALESCE(sum(cost_usd), 0.0) AS "usd!: f64"
+        let tokens = sqlx::query_scalar!(
+            r#"SELECT COALESCE(sum(tokens), 0) AS "tokens!: i64"
                FROM spend
                WHERE run_id IN (SELECT value FROM json_each(?1)) AND at >= ?2"#,
             runs,
@@ -911,7 +914,8 @@ impl Backend for SqliteStore {
         )
         .fetch_one(&self.reader)
         .await
-        .map_err(database)?)
+        .map_err(database)?;
+        Ok(u64::try_from(tokens).unwrap_or_default())
     }
 }
 

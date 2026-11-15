@@ -6,7 +6,7 @@
 //! and its queue is looked at. Its events wait a coalescing window from the
 //! oldest, then go to its conversation as one message from heiko, unless
 //! a turn of it is going (they wait for the next), the person paused it,
-//! or it spent its day's cap. An event leaves the queue once the turn
+//! or it used its day's cap. An event leaves the queue once the turn
 //! that hears it started: heiko closed before then delivers it again.
 //!
 //! Polls run beside the ticks, each in a task of its own, so a slow one
@@ -70,8 +70,8 @@ const TICK: Duration = Duration::from_secs(1);
 /// How long a turn that did not start waits to be tried again.
 const RETRY: i64 = 30;
 
-/// How long a day's spend, as counted, is good for.
-const SPEND_FOR: i64 = 30;
+/// How long a day's use, as counted, is good for.
+const USE_FOR: i64 = 30;
 
 /// How long reading a poll's items in its agent's Luau may take.
 const ITEMS_LIMIT: Duration = Duration::from_secs(2);
@@ -92,8 +92,8 @@ struct Inner {
     /// The agents whose kept changes wait to be written
     /// ([`Agents::with_kept_soon`]).
     unsaved: std::sync::Mutex<BTreeSet<String>>,
-    /// Each agent's spend today, as last counted, and when.
-    spend: Mutex<BTreeMap<String, (f64, i64)>>,
+    /// The tokens each agent used today, as last counted, and when.
+    used: Mutex<BTreeMap<String, (u64, i64)>>,
     /// What the registry tells agents: their versions that failed.
     told: Mutex<mpsc::UnboundedReceiver<(String, Event)>>,
     /// Makes each command's event id its own.
@@ -202,7 +202,7 @@ impl Agents {
             store: Store::at(dir.join("agents")),
             kept: Mutex::default(),
             unsaved: std::sync::Mutex::default(),
-            spend: Mutex::default(),
+            used: Mutex::default(),
             told: Mutex::new(told),
             commands: AtomicU64::new(0),
             polling: Mutex::default(),
@@ -279,10 +279,10 @@ impl Agents {
             changed |= self.fire_schedules(&name, &read, now).await;
             changed |= self.fire_scheduled(&name, now).await;
             changed |= self.start_polls(&name, &read, now).await;
-            let counted = self.0.spend.lock().await.get(&name).copied();
-            if counted.is_none_or(|(_, at)| now - at >= SPEND_FOR) {
-                let before = counted.map(|(spend, _)| spend);
-                changed |= Some(self.count_spend(&name, now).await) != before;
+            let counted = self.0.used.lock().await.get(&name).copied();
+            if counted.is_none_or(|(_, at)| now - at >= USE_FOR) {
+                let before = counted.map(|(used, _)| used);
+                changed |= Some(self.count_used(&name, now).await) != before;
             }
             changed |= self.deliver(&name, now).await;
         }
@@ -634,29 +634,29 @@ impl Agents {
         poll::items(found)
     }
 
-    /// Counts what `agent` spent today: everything in its repository
-    /// since the host's local midnight.
-    async fn count_spend(&self, agent: &str, now: i64) -> f64 {
+    /// Counts the tokens `agent` used today: everything in its
+    /// repository since the host's local midnight.
+    async fn count_used(&self, agent: &str, now: i64) -> u64 {
         let since = clock::midnight(self.0.clock.as_ref(), now);
-        let spend = match self.0.env.spent_since(agent, since).await {
-            Ok(spend) => spend,
+        let used = match self.0.env.used_since(agent, since).await {
+            Ok(used) => used,
             Err(error) => {
-                eprintln!("{NAME}: cannot count {agent}'s spend: {error:#}");
+                eprintln!("{NAME}: cannot count {agent}'s tokens: {error:#}");
                 return self
                     .0
-                    .spend
+                    .used
                     .lock()
                     .await
                     .get(agent)
-                    .map_or(0.0, |(spend, _)| *spend);
+                    .map_or(0, |(used, _)| *used);
             }
         };
         self.0
-            .spend
+            .used
             .lock()
             .await
-            .insert(agent.to_owned(), (spend, now));
-        spend
+            .insert(agent.to_owned(), (used, now));
+        used
     }
 
     /// `events` as `agent`'s message holds them: the data of each too
@@ -719,9 +719,9 @@ impl Agents {
         if conversations.running(agent) {
             return false;
         }
-        let spend = self.count_spend(agent, now).await;
+        let used = self.count_used(agent, now).await;
         let day = clock::day(self.0.clock.as_ref(), now);
-        if spend >= settings.cap_on(&day) {
+        if used >= settings.cap_on(&day) {
             return false;
         }
         let batch = self.with_kept(agent, |kept| kept.queue.clone()).await;
@@ -786,13 +786,13 @@ impl Agents {
                         Vec::new()
                     },
                 );
-            let spend = self
+            let used = self
                 .0
-                .spend
+                .used
                 .lock()
                 .await
                 .get(&name)
-                .map_or(0.0, |(spend, _)| *spend);
+                .map_or(0, |(used, _)| *used);
             let cap = settings.cap_on(&day);
             let running = conversations
                 .as_ref()
@@ -803,7 +803,7 @@ impl Agents {
                 },
                 _ if kept.paused => Status::Paused,
                 _ if running => Status::Working,
-                _ if spend >= cap => Status::AtCap,
+                _ if used >= cap => Status::AtCap,
                 _ => Status::Waiting,
             };
             let triggers = read
@@ -873,7 +873,7 @@ impl Agents {
                 status,
                 triggers,
                 versions: read.versions.clone(),
-                spend_today: spend,
+                used_today: used,
                 cap_today: cap,
                 queued: kept.queue.len(),
                 last: kept.last.clone(),
@@ -907,18 +907,16 @@ impl Agents {
                 .await?;
                 return Ok(Some(json!({ "repo": name })));
             }
-            Act::AllowMore { agent, amount } => {
-                anyhow::ensure!(
-                    amount.is_finite() && amount > 0.0,
-                    "Allow a positive amount, not {amount}"
-                );
+            Act::AllowMore { agent } => {
                 let day = clock::day(self.0.clock.as_ref(), now);
                 let mut settings = self.0.env.settings(&agent);
+                let more = settings.daily_cap;
                 if settings.extra_day.as_deref() == Some(day.as_str()) {
-                    settings.extra_today += amount;
+                    settings.extra_today =
+                        settings.extra_today.saturating_add(more);
                 } else {
                     settings.extra_day = Some(day);
-                    settings.extra_today = amount;
+                    settings.extra_today = more;
                 }
                 self.0.env.save_settings(&agent, settings).await?;
             }
@@ -1017,7 +1015,7 @@ impl Agents {
         name: &str,
         purpose: &str,
         model: Option<String>,
-        daily_cap: Option<f64>,
+        daily_cap: Option<u64>,
         window_secs: Option<u64>,
         servers: &[String],
     ) -> anyhow::Result<()> {
@@ -1034,11 +1032,6 @@ impl Agents {
             window_secs: window_secs.unwrap_or(defaults.window_secs),
             ..defaults
         };
-        anyhow::ensure!(
-            settings.daily_cap.is_finite() && settings.daily_cap >= 0.0,
-            "A cap is a number of dollars, not {}",
-            settings.daily_cap
-        );
         let conversations = self
             .0
             .env

@@ -6,7 +6,6 @@
 //! column in a bottom sheet.
 
 use gpui::{Context, Div, Hsla, SharedString, div, prelude::*, rems};
-use heiko_agent::event::LimitKind;
 
 use super::{
     bar,
@@ -256,11 +255,6 @@ fn run_section(
         return run_details(ws, run, body, t, cx);
     }
     let limits = meters.into_iter().map(|meter| {
-        // Money is not shown: a cost limit reads as the share used.
-        let said = match meter.kind {
-            LimitKind::Usd => format!("{:.0}%", meter.share * 100.),
-            _ => meter.value,
-        };
         div()
             .flex()
             .flex_col()
@@ -274,7 +268,7 @@ fn run_section(
                     .items_baseline()
                     .typeset(Type::SMALL)
                     .child(div().flex_1().child(meter.label))
-                    .child(value(said, t.text_soft)),
+                    .child(value(meter.value, t.text_soft)),
             )
             .child(bar(meter.share, 6., t.text_soft, t.hairline))
     });

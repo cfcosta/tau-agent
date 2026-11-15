@@ -534,7 +534,6 @@ impl Folding<'_> {
 pub struct Limits {
     pub max_turns: Option<u32>,
     pub max_tokens: Option<u64>,
-    pub max_usd: Option<f64>,
     pub timeout: Option<Duration>,
     pub elapsed: Duration,
 }
@@ -1768,13 +1767,6 @@ impl RunView {
                 self.usage.tokens as f32 / max as f32,
             ));
         }
-        if let Some(max) = self.limits.max_usd {
-            meters.push(Meter::new(
-                LimitKind::Usd,
-                format!("{} / {}", usd(self.usage.cost), usd(max)),
-                (self.usage.cost / max) as f32,
-            ));
-        }
         if let Some(max) = self.limits.timeout {
             meters.push(Meter::new(
                 LimitKind::Time,
@@ -1801,7 +1793,6 @@ impl Meter {
         let label = match kind {
             LimitKind::Turns => "Turns",
             LimitKind::Tokens => "Tokens",
-            LimitKind::Usd => "Cost",
             LimitKind::Time => "Time",
         };
         Self {

@@ -2,31 +2,29 @@
   "state": {
     "checks": true,
     "goal": {
-      "budget": 2,
+      "budget": 2000000,
       "checks": [
         {
           "continuation": 1,
-          "cost": 0.000017304000000000002,
           "met": false,
           "n": 1,
           "p": 0.03,
-          "spent": 0.12001730399999999,
+          "spent": 120000,
           "turn": 8
         },
         {
           "continuation": 2,
-          "cost": 0.000017304000000000002,
           "met": false,
           "n": 2,
           "p": 0.08,
-          "spent": 0.24003460799999998,
+          "spent": 240000,
           "turn": 10
         }
       ],
       "condition": "All tests in heiko-ai pass and cargo clippy is clean",
       "continuations": 2,
       "max_continuations": 10,
-      "spent": 0.24003460799999998,
+      "spent": 240000,
       "status": "active"
     },
     "held": {

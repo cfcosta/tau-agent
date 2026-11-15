@@ -1,5 +1,5 @@
 //! What the agents reach of the host (ADR 0037): an agent's settings,
-//! what its runs cost, and its conversation. [`HostEnv`] is the host's;
+//! the tokens its runs used, and its conversation. [`HostEnv`] is the host's;
 //! tests give their own.
 
 use std::{path::Path, sync::Arc};
@@ -33,14 +33,15 @@ pub trait Env: Send + Sync {
         settings: Settings,
     ) -> HostFuture<'_, anyhow::Result<()>>;
 
-    /// What everything in `agent`'s repository cost from `since` (in
-    /// seconds since the epoch) on, in dollars: its runs' turns, its
-    /// sub-agents', its compactions and what its plugins charged.
-    fn spent_since(
+    /// The tokens everything in `agent`'s repository used from `since`
+    /// (in seconds since the epoch) on, input, output and cached
+    /// together: its runs' turns, its sub-agents', its compactions and
+    /// what its plugins charged.
+    fn used_since(
         &self,
         agent: &str,
         since: i64,
-    ) -> HostFuture<'_, anyhow::Result<f64>>;
+    ) -> HostFuture<'_, anyhow::Result<u64>>;
 
     /// The host's conversations, when it lets them be driven.
     fn conversations(&self) -> Option<Arc<dyn Conversations>>;
@@ -151,11 +152,11 @@ impl Env for HostEnv {
         })
     }
 
-    fn spent_since(
+    fn used_since(
         &self,
         agent: &str,
         since: i64,
-    ) -> HostFuture<'_, anyhow::Result<f64>> {
+    ) -> HostFuture<'_, anyhow::Result<u64>> {
         let agent = agent.to_owned();
         Box::pin(async move {
             let mut runs: Vec<String> = self
@@ -188,7 +189,7 @@ impl Env for HostEnv {
             Ok(self
                 .0
                 .store
-                .spent_since(&runs, &crate::clock::stamp(since))
+                .tokens_since(&runs, &crate::clock::stamp(since))
                 .await?)
         })
     }

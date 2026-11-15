@@ -16,7 +16,10 @@ out="$root/docs/screenshots"
 heiko="${CARGO_TARGET_DIR:-$root/target}/release/heiko"
 [ -x "$heiko" ] || { echo "build heiko first: cargo build --release -p heiko" >&2; exit 1; }
 
-tools=$(nix build --no-link --print-out-paths nixpkgs#sway nixpkgs#grim nixpkgs#imagemagick nixpkgs#oxipng)
+# Linked, so a garbage collection in the middle of the run leaves them.
+links=$(mktemp -d)
+trap 'rm -rf "$links"' EXIT
+tools=$(nix build --out-link "$links/tool" --print-out-paths nixpkgs#sway nixpkgs#grim nixpkgs#imagemagick nixpkgs#oxipng)
 sway=$(echo "$tools" | grep -- '-sway-' | head -1)/bin/sway
 grim=$(echo "$tools" | grep -- '-grim-' | head -1)/bin/grim
 magick=$(echo "$tools" | grep -- '-imagemagick-' | grep -v -- '-dev' | head -1)/bin/magick

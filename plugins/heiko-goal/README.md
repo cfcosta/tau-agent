@@ -14,15 +14,15 @@ or clear it.
 | ----------------------- | ----------------------------------------------------------------------------- |
 | `GoalPlugin`            | The `Plugin`: `GoalPlugin::new(jev)`; share one across an agent's runs        |
 | `Command`               | A parsed `/goal`: `Set { condition, continuations, budget }` or `Clear`       |
-| `Command::parse`        | Reads `/goal [--continuations N] [--budget USD] <condition>` or `/goal clear` |
+| `Command::parse`        | Reads `/goal [--continuations N] [--budget TOKENS] <condition>` or `/goal clear` |
 | `set_input`             | The input the model gets for a goal: the condition, then `INSTRUCTIONS`       |
 | `set_message`           | The condition of a message that set a goal, read back exactly                 |
 | `Record`                | Everything that happens to a goal, as stored and reported                     |
 | `Goal`                  | A conversation's goal, folded from its records (`Goal::fold`, `apply`)        |
 | `Status`, `Exhausted`   | Active, paused, met or stopped; and why it stopped                            |
-| `Check`                 | One check: Jev's probability, the turn, the continuation, what it cost        |
+| `Check`                 | One check: Jev's probability, the turn, the continuation, the tokens spent    |
 | `DEFAULT_CONTINUATIONS` | 10                                                                            |
-| `DEFAULT_BUDGET`        | $2.00, for the run's turns and the checks from when the goal was set          |
+| `DEFAULT_BUDGET`        | 2m tokens, for the run's turns from when the goal was set                     |
 | `MET_AT`                | 0.7: the probability at or past which the goal counts as met                  |
 | `CONTINUATION_PREFIX`   | `"heiko-goal: "`, how a continuation message starts                             |
 | `GoalUi`, `GoalHost`    | The `UiPlugin` and the `HostHalf` heiko's interface registers                   |
@@ -43,7 +43,7 @@ without a saved TypeSafe key, and it is not in a sub-agent's runs.
 
 ## Usage
 
-`/goal --budget 5 cargo nextest run passes and clippy is clean`
+`/goal --budget 500k cargo nextest run passes and clippy is clean`
 
 A later run that resumes the conversation keeps the goal. `/goal clear`
 removes it, and a new `/goal` replaces it.
@@ -57,7 +57,7 @@ target/release/heiko-plugin test plugins/heiko-goal --bless   # writes its fixtu
 
 `tests/plugin.luau` drives fake runs with a fake Jev, so no TypeSafe
 key or network is needed. `tests/command.luau` holds properties: a
-written `/goal` reads as itself, budgets are finite and not below zero,
+written `/goal` reads as itself, budgets are whole numbers of tokens,
 and any condition reads back from the model's input.
 `tests/fixtures.luau` makes the demo's fixtures, which `heiko-plugin test`
 holds to `fixtures/`.

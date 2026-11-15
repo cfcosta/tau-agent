@@ -117,16 +117,18 @@ CREATE TABLE plugin_costs (
 CREATE TABLE spend (
   run_id   TEXT NOT NULL REFERENCES runs (id),
   at       TEXT NOT NULL,
+  tokens   INTEGER NOT NULL,
   cost_usd REAL NOT NULL
 ) STRICT;
 ```
 
-- What each write added to a run's cost, and when: a turn's reply, a
-  compaction, a plugin's charge. `Store::append_charged` adds the row in
-  the same transaction as the totals, when the cost is not zero.
-- `Store::spent_since` sums it over some runs from a time on: an
-  agent's spend today, every run of its repository since local midnight
-  (ADR 0037).
+- What each write added to a run's tokens and cost, and when: a turn's
+  reply, a compaction, a plugin's charge. `Store::append_charged` adds
+  the row in the same transaction as the totals, when either is not
+  zero.
+- `Store::tokens_since` sums the tokens over some runs from a time on:
+  an agent's use today, every run of its repository since local
+  midnight (ADR 0037).
 
 ## Runs left running
 

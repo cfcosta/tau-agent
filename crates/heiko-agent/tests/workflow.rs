@@ -725,8 +725,6 @@ fn limits_end_the_run_at_the_first_turn_that_reaches_one(tc: TestCase) {
         // cache simulation adds, so a few thousand is often reached.
         max_tokens: tc
             .draw(gs::optional(gs::integers::<u64>().max_value(4_000))),
-        max_usd: tc
-            .draw(gs::optional(gs::sampled_from(vec![0.25, 0.5, 1.0, 2.0]))),
         timeout: None,
         ..Limits::default()
     };

@@ -370,12 +370,12 @@ impl Backend for FusedStore {
         self.inner.workflow_cost(workflow).await
     }
 
-    async fn spent_since(
+    async fn tokens_since(
         &self,
         runs: &[String],
         since: &str,
-    ) -> heiko_store::Result<f64> {
-        self.inner.spent_since(runs, since).await
+    ) -> heiko_store::Result<u64> {
+        self.inner.tokens_since(runs, since).await
     }
 }
 

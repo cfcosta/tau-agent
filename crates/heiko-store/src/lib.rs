@@ -330,8 +330,9 @@ pub trait Backend: Debug + Send + Sync {
     /// Runs and cost per agent in a workflow.
     async fn workflow_cost(&self, workflow: &str) -> Result<Vec<AgentCost>>;
 
-    /// What `runs` cost from `since` on (a time as
-    /// [`RunRecord::created_at`] writes it), in dollars: every write's
-    /// cost, its turns', its compactions' and its plugins' charges.
-    async fn spent_since(&self, runs: &[String], since: &str) -> Result<f64>;
+    /// The tokens `runs` used from `since` on (a time as
+    /// [`RunRecord::created_at`] writes it), input and output together:
+    /// every write's, its turns', its compactions' and its plugins'
+    /// charges.
+    async fn tokens_since(&self, runs: &[String], since: &str) -> Result<u64>;
 }

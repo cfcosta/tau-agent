@@ -2,7 +2,7 @@
 //! waiting for its next turn, when its schedules and polls are due,
 //! what it scheduled for itself,
 //! what each poll saw, where each stream was, what each watched resource
-//! read last, and what its day's spend is counted from.
+//! read last, and what its day's use is counted from.
 //!
 //! Each agent's is a JSON file of its own in heiko-agents' directory,
 //! written whole each time it changes. An agent's queue is short: a

@@ -96,7 +96,7 @@ impl HostHalf for AgentsHost {
         host.overview().await
     }
 
-    /// What the interface asks: an agent made, more spend allowed, an
+    /// What the interface asks: an agent made, more allowed today, an
     /// agent paused or resumed, a command sent to it. Making one answers
     /// `{ "repo": name }`.
     async fn act(

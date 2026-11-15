@@ -212,16 +212,11 @@ blue and pink like the primary action (`wordmark`). Small places show
   window is used ("38% of this 5-hour window") where it showed dollars,
   and the rail's foot is kept for it. Nothing reports it yet: the data
   model has no such figure, so nothing is shown and none is made up.
-- **An agent's daily cap** is set in dollars
-  ([0037](0037-agents.md)).
-- **A run's cost limit** is set in dollars; the interface reads it as a
-  share.
-- **`/goal --budget`** is in dollars, and so is its popover's field
-  ([goal.md](../reference/goal.md)).
-
-The three limits keep working as they are. What they should be set in,
-once plan usage is known or without it (tokens, turns, a share of the
-window), is not decided.
+- **An agent's daily cap** was set in dollars; it is now a number of
+  tokens a day ([0037](0037-agents.md)), so it is no longer open.
+- **`/goal --budget`** was in dollars; it is now a number of tokens,
+  `500k` or `2m`, and so is its popover's field
+  ([goal.md](../reference/goal.md)), so it is no longer open.
 
 ## Steps
 

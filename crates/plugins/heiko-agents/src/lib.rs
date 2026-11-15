@@ -8,7 +8,7 @@
 //! - [`Overview`], [`Agent`], [`Trigger`], [`Version`]: the agents as
 //!   the host last read them, for every interface.
 //! - [`Settings`]: what the person set for an agent, outside its
-//!   repository: its model and the most it may spend a day.
+//!   repository: its model and the most it may use a day.
 //! - [`Act`]: what the interface asks the host.
 //! - [`event`]: the message an agent's events reach it as.
 
@@ -181,7 +181,7 @@ pub enum Status {
     Working,
     /// The person paused it: events queue, no turn starts.
     Paused,
-    /// It spent its day's cap: events queue until tomorrow, or until the
+    /// It used its day's cap: events queue until tomorrow, or until the
     /// person allows more.
     AtCap,
     /// No version of its `src/agent.luau` loads: nothing wakes it.
@@ -208,11 +208,11 @@ pub struct Agent {
     pub triggers: Vec<Trigger>,
     /// Its latest versions, newest first.
     pub versions: Vec<Version>,
-    /// What it spent today, in dollars.
-    pub spend_today: f64,
-    /// What it may spend today: its cap, and what the person allowed on
-    /// top of it.
-    pub cap_today: f64,
+    /// The tokens it used today: input, output and cached together.
+    pub used_today: u64,
+    /// The tokens it may use today: its cap, and what the person allowed
+    /// on top of it.
+    pub cap_today: u64,
     /// Events waiting for its next turn.
     pub queued: usize,
     #[serde(default)]
@@ -340,13 +340,14 @@ pub struct Settings {
     pub model: Option<String>,
     /// Its effort; `None` is [`DEFAULT_EFFORT`].
     pub effort: Option<String>,
-    /// The most it may spend a day, in dollars.
-    pub daily_cap: f64,
+    /// The most it may use a day, in tokens: input, output and cached
+    /// together.
+    pub daily_cap: u64,
     /// How long an event waits for others to come with it, in seconds.
     pub window_secs: u64,
-    /// What the person allowed on top of the cap, for
+    /// The tokens the person allowed on top of the cap, for
     /// [`Self::extra_day`] only.
-    pub extra_today: f64,
+    pub extra_today: u64,
     /// The day, `YYYY-MM-DD` in the host's local time, that
     /// [`Self::extra_today`] is for.
     pub extra_day: Option<String>,
@@ -357,9 +358,9 @@ impl Default for Settings {
         Self {
             model: None,
             effort: None,
-            daily_cap: 1.0,
+            daily_cap: 1_000_000,
             window_secs: 30,
-            extra_today: 0.0,
+            extra_today: 0,
             extra_day: None,
         }
     }
@@ -376,15 +377,15 @@ impl Settings {
         self.effort.as_deref().unwrap_or(DEFAULT_EFFORT)
     }
 
-    /// What it may spend on `day` (`YYYY-MM-DD`): its cap, and what the
-    /// person allowed on top for that day.
-    pub fn cap_on(&self, day: &str) -> f64 {
+    /// The tokens it may use on `day` (`YYYY-MM-DD`): its cap, and what
+    /// the person allowed on top for that day.
+    pub fn cap_on(&self, day: &str) -> u64 {
         let extra = if self.extra_day.as_deref() == Some(day) {
             self.extra_today
         } else {
-            0.0
+            0
         };
-        self.daily_cap + extra
+        self.daily_cap.saturating_add(extra)
     }
 }
 
@@ -401,14 +402,14 @@ pub enum Act {
         #[serde(default)]
         model: Option<String>,
         #[serde(default)]
-        daily_cap: Option<f64>,
+        daily_cap: Option<u64>,
         #[serde(default)]
         window_secs: Option<u64>,
         #[serde(default)]
         servers: Vec<String>,
     },
-    /// Lets `agent` spend `amount` more today.
-    AllowMore { agent: String, amount: f64 },
+    /// Lets `agent` use as much again as its cap today.
+    AllowMore { agent: String },
     /// Stops starting turns for `agent`; its events queue.
     Pause { agent: String },
     /// Starts turns for `agent` again.

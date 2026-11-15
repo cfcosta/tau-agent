@@ -896,9 +896,9 @@ impl Host {
                     .await
                     .map(|meta| format!("{:.1} MB", meta.len() as f64 / 1e6))
                     .unwrap_or_default(),
-                sample_query:
-                    "select agent, sum(cost_usd) from runs group by agent"
-                        .into(),
+                sample_query: "select agent, sum(input_tokens + \
+                               output_tokens) from runs group by agent"
+                    .into(),
             },
             pull_requests: match self.forge() {
                 Some(forge) => forge.signed_in().await.is_some(),

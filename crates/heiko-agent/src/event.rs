@@ -37,22 +37,19 @@ pub enum StopReason {
 pub enum LimitKind {
     Turns,
     Tokens,
-    Usd,
     Time,
 }
 
 impl LimitKind {
     /// Every limit.
-    pub const ALL: [Self; 4] =
-        [Self::Turns, Self::Tokens, Self::Usd, Self::Time];
+    pub const ALL: [Self; 3] = [Self::Turns, Self::Tokens, Self::Time];
 
     /// The limit's name, as the queue's records keep it: `turns`,
-    /// `tokens`, `cost` or `time`.
+    /// `tokens` or `time`.
     pub fn name(self) -> &'static str {
         match self {
             Self::Turns => "turns",
             Self::Tokens => "tokens",
-            Self::Usd => "cost",
             Self::Time => "time",
         }
     }
@@ -441,12 +438,8 @@ mod tests {
                     1 => StopReason::Cancelled,
                     2 => StopReason::Error(text(tc)),
                     _ => StopReason::Limit(
-                        [
-                            LimitKind::Turns,
-                            LimitKind::Tokens,
-                            LimitKind::Usd,
-                            LimitKind::Time,
-                        ][tc.draw(gs::integers::<usize>().max_value(3))],
+                        [LimitKind::Turns, LimitKind::Tokens, LimitKind::Time]
+                            [tc.draw(gs::integers::<usize>().max_value(2))],
                     ),
                 },
                 cost: f64::from(tc.draw(gs::integers::<u32>())) / 1024.0,

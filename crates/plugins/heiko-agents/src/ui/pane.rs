@@ -1,5 +1,5 @@
 //! heiko-agents' settings pane (ADR 0029): an agent's model and effort,
-//! the most it may spend a day, and how long its events gather. Each
+//! the most it may use a day, and how long its events gather. Each
 //! agent keeps them as its repository's copy, in heiko's data, where the
 //! agent cannot change them. A view tree (ADR 0045).
 
@@ -15,8 +15,8 @@ use crate::Settings;
 /// The efforts an agent can run at.
 const EFFORTS: [&str; 3] = ["low", "medium", "high"];
 
-/// What it may spend a day, as the pane offers it.
-const CAPS: [f64; 5] = [0.5, 1.0, 2.0, 5.0, 10.0];
+/// The tokens it may use a day, as the pane offers them.
+const CAPS: [u64; 5] = [250_000, 500_000, 1_000_000, 2_000_000, 5_000_000];
 
 /// How long its events gather, in seconds, as the pane offers it.
 const WINDOWS: [(u64, &str); 4] =
@@ -95,8 +95,8 @@ pub fn pane(settings: &Settings) -> Node {
         .into_iter()
         .map(|cap| {
             choice(
-                format!("${cap:.2}"),
-                (settings.daily_cap - cap).abs() < f64::EPSILON,
+                super::cap_label(cap),
+                settings.daily_cap == cap,
                 Settings {
                     daily_cap: cap,
                     ..settings.clone()
@@ -124,7 +124,7 @@ pub fn pane(settings: &Settings) -> Node {
             row("Effort", "How hard each turn thinks.", efforts),
             Node::Rule,
             row(
-                "Most it may spend a day",
+                "Most it may use a day",
                 "At the cap it stops until tomorrow, or until you allow more.",
                 caps,
             ),

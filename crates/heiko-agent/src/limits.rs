@@ -12,7 +12,6 @@ pub struct Limits {
     pub max_turns: Option<u32>,
     /// Input, output and cached tokens together.
     pub max_tokens: Option<u64>,
-    pub max_usd: Option<f64>,
     pub timeout: Option<Duration>,
     /// How many times plugins may keep a run from stopping
     /// (`PluginRun::before_stop`). Past it, the run stops when the model
@@ -24,13 +23,12 @@ pub struct Limits {
 pub const DEFAULT_MAX_CONTINUATIONS: u32 = 3;
 
 impl Default for Limits {
-    /// No limit on turns, tokens, cost or time, and
+    /// No limit on turns, tokens or time, and
     /// [`DEFAULT_MAX_CONTINUATIONS`] continuations.
     fn default() -> Self {
         Self {
             max_turns: None,
             max_tokens: None,
-            max_usd: None,
             timeout: None,
             max_continuations: DEFAULT_MAX_CONTINUATIONS,
         }
@@ -48,11 +46,6 @@ impl Limits {
         self
     }
 
-    pub fn max_usd(mut self, usd: f64) -> Self {
-        self.max_usd = Some(usd);
-        self
-    }
-
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
         self
@@ -64,7 +57,7 @@ impl Limits {
     }
 
     /// The first limit reached after `turns` turns with `usage` in
-    /// `elapsed`, checked in the order turns, tokens, cost, time.
+    /// `elapsed`, checked in the order turns, tokens, time.
     pub fn reached(
         &self,
         turns: u32,
@@ -78,9 +71,6 @@ impl Limits {
             usage.input + usage.output + usage.cache_read + usage.cache_write;
         if self.max_tokens.is_some_and(|max| tokens >= max) {
             return Some(LimitKind::Tokens);
-        }
-        if self.max_usd.is_some_and(|max| usage.cost.total >= max) {
-            return Some(LimitKind::Usd);
         }
         if self.timeout.is_some_and(|max| elapsed >= max) {
             return Some(LimitKind::Time);

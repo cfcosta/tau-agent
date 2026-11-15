@@ -31,8 +31,8 @@ fn agent(name: &str, triggers: Vec<Trigger>) -> Agent {
         status: Status::Waiting,
         triggers,
         versions: Vec::new(),
-        spend_today: 0.5,
-        cap_today: 1.0,
+        used_today: 500_000,
+        cap_today: 1_000_000,
         queued: 0,
         last: None,
         model: "gpt-6-luna".into(),
@@ -337,33 +337,51 @@ fn what_waits_on_the_person_is_its_notices_and_a_stuck_state() {
     }
 }
 
-/// The share of today's cap spent is the spend over the cap, from 0 to 1;
-/// with no cap to spend, all of it. Caps reach zero and below.
+/// The share of today's cap used is the use over the cap, from 0 to 1;
+/// with no cap to use, all of it.
 #[hegel::test(test_cases = 300)]
-fn the_share_spent_is_the_spend_over_the_cap_at_most_all(tc: hegel::TestCase) {
-    let spend = tc.draw(hegel::one_of!(
-        gs::sampled_from(vec![0.0f64, 1.0, 2.0]),
-        gs::floats::<f64>().min_value(0.0).max_value(10.0),
+fn the_share_used_is_the_use_over_the_cap_at_most_all(tc: hegel::TestCase) {
+    let used = tc.draw(hegel::one_of!(
+        gs::sampled_from(vec![0u64, 1_000_000, 2_000_000]),
+        gs::integers::<u64>().min_value(0).max_value(10_000_000),
     ));
     let cap = tc.draw(hegel::one_of!(
-        gs::sampled_from(vec![-1.0f64, 0.0, 1.0]),
-        gs::floats::<f64>().min_value(0.001).max_value(10.0),
+        gs::sampled_from(vec![0u64, 1_000_000]),
+        gs::integers::<u64>().min_value(1).max_value(10_000_000),
     ));
     let agent = Agent {
-        spend_today: spend,
+        used_today: used,
         cap_today: cap,
         ..agent("a", Vec::new())
     };
-    let expected = if cap <= 0.0 {
+    let expected = if cap == 0 {
         tc.event("no cap");
         1.0
-    } else if spend >= cap {
-        tc.event("spent it all");
+    } else if used >= cap {
+        tc.event("used it all");
         1.0
     } else {
-        (spend / cap) as f32
+        (used as f64 / cap as f64) as f32
     };
-    assert_eq!(agent.spent_share(), expected, "{spend} of {cap}");
+    assert_eq!(agent.used_share(), expected, "{used} of {cap}");
+}
+
+/// The pinned cases: nothing used, half, all, past it, and no cap.
+#[test]
+fn the_share_used_at_its_edges() {
+    let share = |used, cap| {
+        Agent {
+            used_today: used,
+            cap_today: cap,
+            ..agent("a", Vec::new())
+        }
+        .used_share()
+    };
+    assert_eq!(share(0, 1_000_000), 0.0);
+    assert_eq!(share(500_000, 1_000_000), 0.5);
+    assert_eq!(share(1_000_000, 1_000_000), 1.0);
+    assert_eq!(share(3_000_000, 1_000_000), 1.0);
+    assert_eq!(share(0, 0), 1.0);
 }
 
 #[test]
@@ -408,7 +426,7 @@ fn a_form_left_unnamed_takes_its_purpose_s_name() {
         name: String::new(),
         purpose: "watch the advisories feed".into(),
         model: None,
-        daily_cap: 1.0,
+        daily_cap: 1_000_000,
         window_secs: 30,
         servers: Default::default(),
         making: None,
@@ -450,7 +468,7 @@ fn start_asks_once_while_the_agent_is_made() {
         name: "deps".into(),
         purpose: "watch the advisories feed".into(),
         model: None,
-        daily_cap: 1.0,
+        daily_cap: 1_000_000,
         window_secs: 30,
         servers: Default::default(),
         making: None,
@@ -464,4 +482,17 @@ fn start_asks_once_while_the_agent_is_made() {
         ..form
     };
     assert!(making.start(false).is_none());
+}
+
+/// A day's cap reads as tokens: thousands as `k`, whole millions as `M`.
+#[test]
+fn a_cap_reads_as_tokens() {
+    use heiko_agents::ui::cap_label;
+    let labels: Vec<String> =
+        [250_000, 500_000, 1_000_000, 2_000_000, 5_000_000]
+            .into_iter()
+            .map(cap_label)
+            .collect();
+    assert_eq!(labels, ["250k", "500k", "1M", "2M", "5M"]);
+    assert_eq!(cap_label(2_500_000), "2.5M");
 }

@@ -19,8 +19,7 @@ t.machine_of("a goal goes as its status lets it", machine, {
 				p = g.floats({ min = 0, max = 1 }),
 				turn = g.integers({ min = 1, max = 9 }),
 				continuation = g.optional(g.integers({ min = 1, max = 20 })),
-				cost = g.just(0.01),
-				spent = g.floats({ min = 0, max = 5 }),
+				spent = g.integers({ min = 0, max = 5000000 }),
 			}),
 		}),
 		stop = g.records({ why = g.sampled_from({ "budget", "continuations" }) }),
@@ -49,8 +48,8 @@ t.machine_of("a goal goes as its status lets it", machine, {
 -- Pressing Pause on a goal that is met, or stopped, leaves it as it is.
 t.case("only an active goal pauses", function()
 	local state = goal.state({})
-	goal.set(state, "the tests pass", 10, 2)
-	goal.check(state, { n = 1, met = true, p = 0.9, turn = 1, cost = 0, spent = 0.1 })
+	goal.set(state, "the tests pass", 10, 2000000)
+	goal.check(state, { n = 1, met = true, p = 0.9, turn = 1, spent = 100000 })
 	goal.pause(state)
 	t.equal(state.goal.status, "met")
 end)

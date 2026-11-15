@@ -106,7 +106,7 @@
                   "keep": false,
                   "multiline": false,
                   "piece": "input",
-                  "placeholder": "2.00",
+                  "placeholder": "2m",
                   "submit": "heiko.submit"
                 }
               ],
@@ -180,7 +180,7 @@
                   "keep": false,
                   "multiline": false,
                   "piece": "input",
-                  "placeholder": "2.00",
+                  "placeholder": "2m",
                   "submit": "heiko.submit"
                 }
               ],

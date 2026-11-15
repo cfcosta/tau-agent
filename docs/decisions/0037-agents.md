@@ -248,17 +248,18 @@ return heiko.agent {
   repositories, and their stdio servers start inside its sandbox
   (0025's launcher, below).
 
-### The one hard limit: a daily spend cap
+### The one hard limit: a daily token cap
 
 - The cap is the person's, set on the agent's page and kept in heiko's
-  data, outside the repository. The agent cannot raise it. It starts at
-  one dollar a day.
+  data, outside the repository. The agent cannot raise it. It is a
+  number of tokens, input, output and cached together, as heiko runs on
+  a ChatGPT plan and not on dollars. It starts at a million a day.
 - Everything the agent does counts: its turns, its compactions, its
   sub-agents and their turns, and codemode's `infer`.
 - At the cap it takes no more turns until the next day (the host's
   local midnight). Events keep queueing; its row shows "needs you",
   and the person is told as for `ask` (below). The page offers to allow
-  more for today.
+  as much again for today.
 
 ### `bash` runs in a sandbox
 
@@ -334,7 +335,7 @@ return heiko.agent {
   for the person, and asking the same question while it waits only
   says so, so an agent does not ask twice. These tools, and
   `agent_send`, are in an agent's runs and no other.
-- Both, and the spend cap, reach the person three ways: a "needs you"
+- Both, and the daily cap, reach the person three ways: a "needs you"
   pill on its sidebar row and an item on the Agents page; a desktop
   notification (`heiko-ui`'s `notify`, a new kind beside `Asks`); and the
   paired phone, which shows it as an Android notification. heiko-remote
@@ -397,7 +398,7 @@ have three more tools:
   its sub-agents at work folded under it.
 - **The agent's page is its conversation.** Event messages draw as
   compact cards in it. A side panel holds what wakes it (each trigger,
-  its last and next firing, and what it scheduled itself), its spend against its cap, its model,
+  its last and next firing, and what it scheduled itself), its use against its cap, its model,
   its memory, its state, its versions of `agent.luau` with their
   tests, and its secrets by name.
 
@@ -419,7 +420,7 @@ each agent catches up from what it stored:
 
 1. Agent repositories and their registry, the conversation, the stored
    queue and coalescing, the event message, schedule and command
-   triggers, catching up, model per agent, the spend cap, the sidebar
+   triggers, catching up, model per agent, the daily cap, the sidebar
    section, the page, `/agent`, the form and the skill. No `bash` yet.
 2. The `bwrap` launcher and `bash`, `http` and secrets, poll triggers.
 3. Stream triggers, `notify` and `ask` with desktop and phone
@@ -442,7 +443,7 @@ for it.
   should go in parallel.
 - **An Allow on self-edits that reach further**, as plugins have. Safe,
   but an agent that waits on a click to start watching something new is
-  not running on its own. The spend cap and the sandbox are the limits.
+  not running on its own. The daily cap and the sandbox are the limits.
 - **Reaching the person's repositories.** An agent could fix what it
   finds where it finds it, but it would then edit the person's code
   unattended. It works in its own repository, and tells or asks the

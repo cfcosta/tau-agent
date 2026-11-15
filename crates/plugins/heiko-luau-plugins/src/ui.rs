@@ -3250,7 +3250,7 @@ mod tests {
         for (prompt, about) in [
             ("/goal the tests pass", Some("the tests pass")),
             (
-                "/goal --continuations 3 --budget 1.5 the   tests pass",
+                "/goal --continuations 3 --budget 500k the   tests pass",
                 Some("the tests pass"),
             ),
             ("/goal \"clear\"", Some("clear")),

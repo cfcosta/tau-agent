@@ -225,7 +225,7 @@ async fn run_trial(
             arm: key.arm,
             memory: memory.as_deref(),
             context: None,
-            limits: limits(config, budget),
+            limits: limits(config),
             transcript: transcript.clone(),
         },
         scenario.first.prompt,
@@ -277,7 +277,7 @@ async fn run_trial(
             arm: key.arm,
             memory: memory.as_deref(),
             context,
-            limits: limits(config, budget),
+            limits: limits(config),
             transcript: second_transcript.clone(),
         },
         prompt,
@@ -334,15 +334,11 @@ fn started_with_memory(transcript: &[heiko_ai::message::Message]) -> bool {
 /// How heiko-memory fences what it gives a run as it starts.
 const MEMORY_FENCE: &str = "<memory note=\"notes kept from earlier runs";
 
-/// A run's limits: its turns and time, and what is left of the budget.
-fn limits(config: &Config, budget: &Budget) -> Limits {
-    let limits = Limits::default()
+/// A run's limits: its turns and time.
+fn limits(config: &Config) -> Limits {
+    Limits::default()
         .max_turns(config.max_turns)
-        .timeout(config.timeout);
-    match budget.remaining() {
-        Some(left) => limits.max_usd(left),
-        None => limits,
-    }
+        .timeout(config.timeout)
 }
 
 /// Runs the agent on `prompt`; returns its figures, unchecked, and its

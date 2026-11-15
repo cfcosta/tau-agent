@@ -496,7 +496,7 @@ impl Heiko {
         let record = heiko_luau_plugins::Record::State {
             plugin: heiko_luau_plugins::names::GOAL.into(),
             state: serde_json::json!({ "goal": {
-                "condition": goal, "max_continuations": 1, "budget": 1.0,
+                "condition": goal, "max_continuations": 1, "budget": 2000000,
                 "status": "active", "continuations": 0, "spent": 0, "checks": [],
             } }),
         };

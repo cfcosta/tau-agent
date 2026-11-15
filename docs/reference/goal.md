@@ -12,7 +12,7 @@ code in `src/plugin.luau` and `src/goal.luau`. Design:
 A run's input sets it:
 
 ```text
-/goal [--continuations N] [--budget USD] <condition>
+/goal [--continuations N] [--budget TOKENS] <condition>
 /goal clear
 ```
 
@@ -22,13 +22,14 @@ A run's input sets it:
 - A condition written as one quoted string, `"..."`, is read exactly:
   `\"` is a quote, `\\` a backslash, `\n` a line feed and `\r` a
   carriage return. So `/goal "clear"` sets the goal `clear`, and
-  `/goal "--budget 5 is spent"` a goal that starts with `--budget`.
+  `/goal "--budget 5m is spent"` a goal that starts with `--budget`.
   Quotes that do not wrap the whole condition are plain characters.
 - `--continuations` (default 10) is how many times the goal may send
-  the model back. `--budget` (default $2.00) caps what the goal costs:
-  the run's turns and the checks, from when it was set. It is in US
-  dollars, though the interface shows no amounts: what it should be set
-  in is open (ADR 0057).
+  the model back. `--budget` (default `2m`) caps the tokens the goal
+  uses: those of the run's turns from when it was set, input, output
+  and cache read and written together. Jev's checks are not counted.
+  It is a whole number of tokens, as digits or short, `500k` or `2m`
+  in either case; heiko says it short too.
 - The model does not see the command. Its input is `/goal <condition>`
   and a paragraph on how goals work (`goal.INSTRUCTIONS`), which
   `start` gives it in place of the message (`heiko.start{ input }`). The
@@ -62,7 +63,7 @@ by it; the goal's own continuations are what limit it.
 
 The goal is in the run's model (`model.goal`), which a resumed run and
 a fork inherit: `goal` (`condition`, `max_continuations`, `budget`,
-`status`, `continuations`, `spent`, `checks`, `error`), the notes in the
+`status`, `continuations`, tokens `spent`, `checks`, `error`), the notes in the
 transcript, and how the messages it knows draw. The banner's actions
 are its `act` action (`pause`, `edit`, `clear`, and `keep_going` for
 both resume and raise the limit), and the

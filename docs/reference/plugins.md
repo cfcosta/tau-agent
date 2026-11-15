@@ -1432,7 +1432,7 @@ Built: `plugins/heiko-goal`, a Luau plugin heiko comes with (ADR
 
 - **Seams:** `start` (a `/goal` input sets the goal, and gives the
   model its own message), `after_tool_result` (the latest results, as
-  evidence), `turn_end` (what the turns cost), and `before_stop` (the
+  evidence), `turn_end` (the tokens the turns used, its `tokens`), and `before_stop` (the
   check; it declares `continues = 20`).
 - **How:** one `noul` per stop: does the goal hold, judged from the
   model's last answer and its recent tool results. Not yet sends the

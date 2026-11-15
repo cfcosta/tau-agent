@@ -36,10 +36,6 @@ use super::{
 };
 use crate::{Act, Agent, Overview, Status};
 
-/// What a click on "allow more today" lets an agent spend, on top of its
-/// cap.
-pub(super) const MORE: f64 = 1.0;
-
 /// How many agents stand side by side.
 const COLUMNS: usize = 3;
 
@@ -232,11 +228,10 @@ fn needs_you(
                 events(agent.queued),
             ),
             Some(act_button(
-                "allow more today",
+                super::ALLOW_MORE,
                 Kind::Hot,
                 &Act::AllowMore {
                     agent: agent.name.clone(),
-                    amount: MORE,
                 },
             )),
         )),
@@ -525,14 +520,14 @@ pub fn new_agent_tree(form: &Form, servers: &[String], taken: bool) -> Node {
             })
             .collect(),
     });
-    page.push(label("Most it may spend a day"));
+    page.push(label("Most it may use a day"));
     page.push(Node::Row {
-        children: [0.5, 1.0, 2.0, 5.0]
+        children: [250_000, 500_000, 1_000_000, 2_000_000, 5_000_000]
             .into_iter()
-            .map(|cap: f64| {
+            .map(|cap: u64| {
                 set(
-                    &format!("${cap:.2}"),
-                    (form.daily_cap - cap).abs() < f64::EPSILON,
+                    &super::cap_label(cap),
+                    form.daily_cap == cap,
                     CAP,
                     json!(cap),
                 )

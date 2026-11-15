@@ -1598,7 +1598,7 @@ fn a_luau_command_reaches_its_plugin_with_its_drafts(cx: &mut TestAppContext) {
     );
     // heiko-goal sends it, with the popover's limit: on the finished chat,
     // which goes on, and outside a chat, which starts one.
-    let sent = "/goal --continuations 4 --budget 2.00 it ships";
+    let sent = "/goal --continuations 4 --budget 2m it ships";
     let events = events.borrow();
     assert!(
         events.iter().any(|event| matches!(event,

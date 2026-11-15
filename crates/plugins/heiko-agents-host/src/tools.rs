@@ -305,7 +305,7 @@ impl AgentTool for Send {
 
     fn description(&self) -> &str {
         "Send another agent a message. It reaches that agent as a `message` \
-         event, with the others in its next turn, under its own spend cap; \
+         event, with the others in its next turn, under its own daily cap; \
          only an agent whose src/agent.luau declares a `message = true` trigger \
          hears messages. A chain of messages between agents that nothing \
          else wakes stops after a few hops: do not use messages to keep \

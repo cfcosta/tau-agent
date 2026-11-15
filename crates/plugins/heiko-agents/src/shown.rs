@@ -64,12 +64,12 @@ impl Agent {
             .min()
     }
 
-    /// The share of today's cap it spent, from 0 to 1.
-    pub fn spent_share(&self) -> f32 {
-        if self.cap_today <= 0.0 {
+    /// The share of today's cap it used, from 0 to 1.
+    pub fn used_share(&self) -> f32 {
+        if self.cap_today == 0 {
             return 1.0;
         }
-        (self.spend_today / self.cap_today).clamp(0.0, 1.0) as f32
+        (self.used_today as f64 / self.cap_today as f64).min(1.0) as f32
     }
 
     /// Its command triggers: `/command`, with the hint after it.

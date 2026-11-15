@@ -17,7 +17,7 @@ pub mod transcript;
 
 pub use components::*;
 use gpui::{Hsla, SharedString};
-use heiko_agent::event::{LimitKind, StopReason};
+use heiko_agent::event::StopReason;
 pub use heiko_ui_kit::prose::*;
 
 use crate::{
@@ -27,13 +27,11 @@ use crate::{
 };
 
 /// The mark a run's status is shown with: working while it plans or
-/// runs, failing on an error, the limit it stopped at (a cap, when it is
-/// the one the person set on its cost), and idle while it waits for the
-/// person.
+/// runs, failing on an error, the limit it stopped at, and idle while it
+/// waits for the person.
 pub fn status_mark_state(status: &RunStatus) -> State {
     match status {
         RunStatus::Planning | RunStatus::Running => State::Working,
-        RunStatus::Finished(StopReason::Limit(LimitKind::Usd)) => State::Cap,
         RunStatus::Finished(StopReason::Limit(_)) => State::Limit,
         RunStatus::Finished(StopReason::Error(_)) => State::Failing,
         // Waiting for the person, whether it stopped or was stopped.
@@ -65,15 +63,9 @@ pub fn stop_look(stop: &StopReason, t: &Theme) -> (Hsla, SharedString) {
     match stop {
         // A conversation that stopped is not over: it waits for the user.
         StopReason::Stop => (t.muted, "your turn".into()),
-        StopReason::Limit(kind) => (
-            // The cap the person set reads in the cap's own color.
-            if *kind == LimitKind::Usd {
-                t.roles.cost
-            } else {
-                t.red
-            },
-            format!("limit · {kind:?}").to_lowercase().into(),
-        ),
+        StopReason::Limit(kind) => {
+            (t.red, format!("limit · {kind:?}").to_lowercase().into())
+        }
         StopReason::Cancelled => (t.muted, "cancelled".into()),
         StopReason::Error(_) => (t.red, "error".into()),
     }

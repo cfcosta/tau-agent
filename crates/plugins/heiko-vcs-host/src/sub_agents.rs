@@ -38,7 +38,6 @@ fn cut_short(limit: Option<LimitKind>) -> &'static str {
     match limit {
         Some(LimitKind::Turns) => "It stopped at its turn limit. ",
         Some(LimitKind::Tokens) => "It stopped at its token limit. ",
-        Some(LimitKind::Usd) => "It stopped at its cost limit. ",
         Some(LimitKind::Time) => "It stopped at its time limit. ",
         None => "",
     }
@@ -108,7 +107,6 @@ mod tests {
             None,
             Some((LimitKind::Turns, "turn")),
             Some((LimitKind::Tokens, "token")),
-            Some((LimitKind::Usd, "cost")),
             Some((LimitKind::Time, "time")),
         ];
         let limit: usize = tc.draw(gs::integers().max_value(limits.len() - 1));

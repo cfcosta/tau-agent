@@ -8,9 +8,9 @@ local goal = {}
 -- Continuations a goal allows when `/goal` does not say.
 goal.DEFAULT_CONTINUATIONS = 10
 
--- US dollars a goal may cost when `/goal` does not say: the run's turns
--- and the checks, from when it was set.
-goal.DEFAULT_BUDGET = 2.0
+-- Tokens a goal may use when `/goal` does not say: the run's turns,
+-- from when it was set.
+goal.DEFAULT_BUDGET = 2000000
 
 -- The probability at or past which the goal counts as met.
 goal.MET_AT = 0.7
@@ -153,27 +153,41 @@ local function continuations_of(text)
 	return n
 end
 
--- A budget: a finite amount of at least zero, with a `$` or not.
+-- What `k` and `m` after a budget's digits multiply them by.
+local SHORT = { [""] = 1, k = 1000, m = 1000000 }
+
+-- The most tokens a budget says: past it a number is no longer whole.
+local MOST_TOKENS = 2 ^ 53
+
+-- A budget: a whole number of tokens, as digits or short, `500k` or
+-- `2m`, in either case.
 local function budget_of(text)
-	text = string.gsub(text, "^%$+", "")
-	local number = string.match(text, "^[+-]?%d+%.?%d*[eE][+-]?%d+$")
-		or string.match(text, "^[+-]?%d+%.?%d*$")
-		or string.match(text, "^[+-]?%.%d+[eE][+-]?%d+$")
-		or string.match(text, "^[+-]?%.%d+$")
-	if number == nil then
+	local digits, unit = string.match(text, "^(%d+)([kKmM]?)$")
+	if digits == nil then
 		return nil
 	end
-	local amount = tonumber(number)
-	if amount == nil or amount ~= amount or amount == math.huge or amount < 0 then
+	local tokens = tonumber(digits) * SHORT[string.lower(unit)]
+	if tokens > MOST_TOKENS then
 		return nil
 	end
-	return amount
+	return tokens
 end
 
--- Reads `/goal [--continuations N] [--budget USD] <condition>` or `/goal
--- clear`: `{ kind = "set", condition, continuations, budget }`, `{ kind
--- = "clear" }`, or nil for anything else, a budget that is not a finite
--- amount of at least zero included.
+-- A count of tokens as a budget is typed, the shortest that reads back
+-- as the same count: `500k`, `2m`, `1234`.
+function goal.tokens(count)
+	if count > 0 and count % 1000000 == 0 then
+		return string.format("%.0fm", count / 1000000)
+	elseif count > 0 and count % 1000 == 0 then
+		return string.format("%.0fk", count / 1000)
+	end
+	return string.format("%.0f", count)
+end
+
+-- Reads `/goal [--continuations N] [--budget TOKENS] <condition>` or
+-- `/goal clear`: `{ kind = "set", condition, continuations, budget }`,
+-- `{ kind = "clear" }`, or nil for anything else, a budget that is not
+-- a whole number of tokens included.
 --
 -- A condition is its words joined by single spaces, unless it is one
 -- quoted string, `"..."`: that is read exactly as written, with `\"`,
@@ -201,9 +215,9 @@ function goal.parse(input)
 				return nil
 			end
 		elseif word == "--budget" then
-			local usd
-			usd, rest = next_word(after)
-			budget = budget_of(usd)
+			local tokens
+			tokens, rest = next_word(after)
+			budget = budget_of(tokens)
 			if budget == nil then
 				return nil
 			end
@@ -269,7 +283,7 @@ end
 -- The plugin's state, as each hook finds it: `goal`, the conversation's
 -- (`condition`, `max_continuations`, `budget`, `status` one of
 -- "active", "paused", "met" and "stopped", `exhausted` when stopped,
--- `continuations` used, `spent`, `checks` oldest first, `error`); its
+-- `continuations` used, tokens `spent`, `checks` oldest first, `error`); its
 -- `notes` in the transcript by key; `held`, the continuations a check's
 -- note already says; and `said`, how the person's messages it knows
 -- draw, by their text.
@@ -389,7 +403,8 @@ for _, from in ipairs({ "paused", "met", "stopped" }) do
 	goal.machine.on.extend[from] = goal.machine.on.extend.active
 end
 
--- Sets the conversation's goal, anew: what it spends counts from now.
+-- Sets the conversation's goal, anew: the tokens it spends count from
+-- now.
 function goal.set(state, condition, continuations, budget)
 	state.unchecked = 0
 	state.goal = {
@@ -411,7 +426,7 @@ end
 
 -- A check of the goal: its `n`, whether it was `met`, Jev's `p`, the
 -- `turn` the model stopped at, the `continuation` it sent the model
--- back for, if it did, what it `cost` and what the goal `spent` so far.
+-- back for, if it did, and the tokens the goal `spent` so far.
 function goal.check(state, check)
 	state.goal = goal.machine:step(state.goal, { event = "check", check = check })
 	local g = state.goal
@@ -547,8 +562,8 @@ end
 -- does not read as a number.
 function goal.limits(continuations, budget)
 	local n = continuations_of(trim(continuations or ""))
-	local usd = budget_of(trim(budget or ""))
-	return n or goal.DEFAULT_CONTINUATIONS, usd or goal.DEFAULT_BUDGET
+	local tokens = budget_of(trim(budget or ""))
+	return n or goal.DEFAULT_CONTINUATIONS, tokens or goal.DEFAULT_BUDGET
 end
 
 return goal

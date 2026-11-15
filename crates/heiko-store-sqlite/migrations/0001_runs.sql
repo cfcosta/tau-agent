@@ -56,12 +56,13 @@ CREATE TABLE plugin_usage (
 ) STRICT;
 CREATE INDEX plugin_usage_by_plugin ON plugin_usage (plugin, at);
 
--- What each write added to a run's cost, and when: the run's turns, its
--- compactions and what its plugins charged. A day's spend is a sum over
--- it (an agent's daily cap, ADR 0037).
+-- What each write added to a run's tokens and cost, and when: the run's
+-- turns, its compactions and what its plugins charged. A day's use is a
+-- sum over it (an agent's daily cap, ADR 0037).
 CREATE TABLE spend (
   run_id   TEXT NOT NULL REFERENCES runs (id),
   at       TEXT NOT NULL,
+  tokens   INTEGER NOT NULL,
   cost_usd REAL NOT NULL
 ) STRICT;
 CREATE INDEX spend_by_run ON spend (run_id, at);

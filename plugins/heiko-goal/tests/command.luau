@@ -1,5 +1,5 @@
 -- How `/goal` reads: a command written out with its limits reads back as
--- itself, a budget is a finite amount of at least zero, and the
+-- itself, a budget is a whole number of tokens, short or not, and the
 -- condition a command set reads back from the input the model gets;
 -- what is not a command reads as none.
 local heiko = require("heiko")
@@ -15,8 +15,8 @@ local GAP = g.sampled_from({ " ", "  ", "\t", "\n", " \n " })
 -- Gives the text and the command it should read as.
 local function written(draw)
 	local continuations = draw(g.optional(g.integers({ min = 0, max = 4294967295 })))
-	local budget = draw(g.optional(g.floats({ min = 0, max = 1e12 })))
-	local dollar = draw(g.booleans())
+	local budget = draw(g.optional(g.integers({ min = 0, max = 4000000000 })))
+	local upper = draw(g.booleans())
 	local budget_first = draw(g.booleans())
 	-- The first word cannot be a limit, so every shrunk command has a
 	-- condition.
@@ -36,7 +36,7 @@ local function written(draw)
 		table.insert(limits, "--continuations" .. draw(GAP) .. continuations)
 	end
 	if budget ~= nil then
-		table.insert(limits, "--budget" .. draw(GAP) .. (dollar and "$" or "") .. string.format("%.17g", budget))
+		table.insert(limits, "--budget" .. draw(GAP) .. (upper and string.upper(goal.tokens(budget)) or goal.tokens(budget)))
 	end
 	if budget_first and #limits == 2 then
 		limits = { limits[2], limits[1] }
@@ -70,30 +70,42 @@ t.property("a written command reads as itself", function(draw)
 	end
 end)
 
--- A `--budget` is taken exactly when it is a finite number of at least
--- zero: `nan`, `inf`, an overflow and negative amounts make the input
--- not a command.
-t.property("a budget is a finite amount not below zero", function(draw)
+-- A `--budget` is taken exactly when it is a whole number of tokens:
+-- digits, or digits and `k` or `m` in either case. A `$`, a sign, a
+-- fraction and an exponent make the input not a command.
+t.property("a budget is a whole number of tokens", function(draw)
 	local cases = {
-		{ "nan", nil },
-		{ "NaN", nil },
-		{ "inf", nil },
-		{ "-inf", nil },
-		{ "infinity", nil },
-		{ "-3", nil },
-		{ "-0.5", nil },
-		{ "-0", 0 },
-		{ "1e400", nil },
 		{ "0", 0 },
-		{ "0.25", 0.25 },
-		{ "1e3", 1000 },
+		{ "1234", 1234 },
+		{ "500k", 500000 },
+		{ "500K", 500000 },
+		{ "2m", 2000000 },
+		{ "2M", 2000000 },
+		{ "0k", 0 },
+		{ "$5", nil },
+		{ "$500k", nil },
+		{ "-3", nil },
+		{ "+3", nil },
+		{ "0.25", nil },
+		{ "1.5m", nil },
+		{ "1e3", nil },
 		{ "0x10", nil },
-		{ "5.", 5 },
-		{ ".5", 0.5 },
+		{ "k", nil },
+		{ "2mk", nil },
+		{ "2g", nil },
+		{ "nan", nil },
+		{ "inf", nil },
+		{ "99999999999999999999", nil },
 	}
 	local drawn = draw(g.one_of({
-		g.floats({ min = -1e9, max = 1e9 }):map(function(x)
-			return { string.format("%.17g", x), x >= 0 and x or nil }
+		g.integers({ min = 0, max = 4000000000 }):map(function(n)
+			return { tostring(n), n }
+		end),
+		g.integers({ min = 0, max = 4000000 }):map(function(n)
+			return { n .. "k", n * 1000 }
+		end),
+		g.integers({ min = 0, max = 4000 }):map(function(n)
+			return { n .. "M", n * 1000000 }
 		end),
 		g.sampled_from(cases),
 	}))
@@ -103,6 +115,13 @@ t.property("a budget is a finite amount not below zero", function(draw)
 		t.equal(command, nil, amount)
 	else
 		t.equal(command and command.budget, expected, amount)
+	end
+end)
+
+-- A budget is said the shortest way that reads back as the same count.
+t.case("a budget is said short", function()
+	for _, case in ipairs({ { 0, "0" }, { 1234, "1234" }, { 500000, "500k" }, { 1500000, "1500k" }, { 2000000, "2m" } }) do
+		t.equal(goal.tokens(case[1]), case[2])
 	end
 end)
 
@@ -137,7 +156,7 @@ local function condition(draw)
 	elseif way == 3 and #words > 1 then
 		return table.concat(words, draw(g.sampled_from({ "\n", "\r\n", "\t", "\u{a0}" }))), false
 	elseif way == 4 then
-		return draw(g.sampled_from({ "--budget 5", "--continuations 3", "--budget $0.5" })) .. " " .. joined, false
+		return draw(g.sampled_from({ "--budget 5", "--continuations 3", "--budget 500k" })) .. " " .. joined, false
 	elseif way == 5 then
 		return "clear", false
 	elseif way == 6 then

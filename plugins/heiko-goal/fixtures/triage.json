@@ -2,30 +2,28 @@
   "state": {
     "checks": true,
     "goal": {
-      "budget": 2,
+      "budget": 2000000,
       "checks": [
         {
           "continuation": 1,
-          "cost": 0.000016548,
           "met": false,
           "n": 1,
           "p": 0.2,
-          "spent": 0.120016548,
+          "spent": 120000,
           "turn": 6
         },
         {
-          "cost": 0.000016548,
           "met": true,
           "n": 2,
           "p": 0.96,
-          "spent": 0.240033096,
+          "spent": 240000,
           "turn": 9
         }
       ],
       "condition": "Every mutant in retry.rs is caught",
       "continuations": 1,
       "max_continuations": 10,
-      "spent": 0.240033096,
+      "spent": 240000,
       "status": "met"
     },
     "held": {

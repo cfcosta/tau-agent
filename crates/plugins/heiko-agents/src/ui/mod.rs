@@ -156,7 +156,8 @@ pub struct Form {
     pub purpose: String,
     /// Its model; `None` is the default.
     pub model: Option<String>,
-    pub daily_cap: f64,
+    /// The most it may use a day, in tokens.
+    pub daily_cap: u64,
     pub window_secs: u64,
     /// The person's MCP servers it starts with.
     pub servers: std::collections::BTreeSet<String>,
@@ -182,7 +183,7 @@ impl Form {
             model: text(MODEL),
             daily_cap: view
                 .ui_value(CAP)
-                .and_then(Value::as_f64)
+                .and_then(Value::as_u64)
                 .unwrap_or(defaults.daily_cap),
             window_secs: view
                 .ui_value(WINDOW)
@@ -696,18 +697,30 @@ pub(crate) fn events(count: usize) -> String {
     }
 }
 
+/// What lets an agent at its cap use as much again today.
+pub(crate) const ALLOW_MORE: &str = "allow as much again today";
+
+/// A day's cap as its choice reads: `250k`, `1M`.
+pub fn cap_label(tokens: u64) -> String {
+    if tokens >= 1_000_000 && tokens.is_multiple_of(1_000_000) {
+        format!("{}M", tokens / 1_000_000)
+    } else {
+        heiko_ui_kit::format::tokens(tokens)
+    }
+}
+
 /// How many ticks a day's allowance is drawn with.
 const ALLOWANCE_TICKS: u32 = 25;
 
 /// How much of the day's allowance `agent` used, as a percentage: `41%`.
 pub(crate) fn allowance_share(agent: &Agent) -> String {
-    format!("{:.0}%", agent.spent_share() * 100.)
+    format!("{:.0}%", agent.used_share() * 100.)
 }
 
 /// The day's allowance as a strip of ticks, those `agent` used lit, red
 /// once it is all used.
 pub(crate) fn allowance_ticks(agent: &Agent) -> tree::Node {
-    let share = agent.spent_share();
+    let share = agent.used_share();
     let lit = (share * ALLOWANCE_TICKS as f32).round() as u32;
     tree::Node::Ticks {
         lit: if share > 0. { lit.max(1) } else { 0 },

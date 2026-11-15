@@ -1,6 +1,6 @@
 -- Keeps a conversation going until its goal holds (ADR 0050;
 -- docs/reference/goal.md). `/goal <condition>` sets it, with
--- `--continuations N` and `--budget USD` before the condition; the model
+-- `--continuations N` and `--budget TOKENS` before the condition; the model
 -- gets the condition and how goals work. Each time the model would
 -- stop, Jev says whether the goal holds, from its last answer and its
 -- recent tool results; not yet, and the model is sent back with the
@@ -239,7 +239,7 @@ local function popover(jev)
 			limit(CONTINUATIONS, tostring(goal.DEFAULT_CONTINUATIONS)),
 			ui.toned("continuations", "neutral"),
 			ui.toned("budget", "neutral"),
-			limit(BUDGET, string.format("%.2f", goal.DEFAULT_BUDGET)),
+			limit(BUDGET, goal.tokens(goal.DEFAULT_BUDGET)),
 		})
 	)
 	return ui.stack(children)
@@ -256,7 +256,7 @@ end
 -- The goal set, as `/goal` writes it with its limits for a new message.
 local function command_text(condition, continuations, budget)
 	local line = string.match(goal.set_input(condition), "^/goal ([^\n]*)")
-	return "/goal --continuations " .. continuations .. " --budget " .. string.format("%.2f", budget) .. " " .. line
+	return "/goal --continuations " .. continuations .. " --budget " .. goal.tokens(budget) .. " " .. line
 end
 
 return heiko.plugin({
@@ -271,8 +271,8 @@ return heiko.plugin({
 		state.checks = env.run.jev == true and env.run.kind ~= "sub_agent"
 		state.live = env.run.id
 		state.evidence = {}
-		-- What runs cost that no check counted yet goes on counting: a
-		-- run whose stop went unchecked still spent it.
+		-- The tokens runs used that no check counted yet go on counting:
+		-- a run whose stop went unchecked still spent them.
 		state.unchecked = state.unchecked or 0
 		state.turn = 0
 		if not state.checks then
@@ -307,11 +307,11 @@ return heiko.plugin({
 		end
 	end,
 
-	-- What each turn cost counts toward the goal.
+	-- The tokens each turn used count toward the goal.
 	turn_end = function(turn, model)
 		local state = goal.state(model)
 		state.turn = turn.turn
-		state.unchecked = (state.unchecked or 0) + (turn.cost or 0)
+		state.unchecked = (state.unchecked or 0) + (turn.tokens or 0)
 	end,
 
 	-- Each time the model would stop: does the goal hold? Not yet, and
@@ -323,7 +323,7 @@ return heiko.plugin({
 			return nil
 		end
 		local asked, checked = g.condition, #g.checks
-		local ok, answers, cost = pcall(heiko.await, cmd.jev.ask({
+		local ok, answers = pcall(heiko.await, cmd.jev.ask({
 			state = {
 				goal = asked,
 				final_answer = stop.text,
@@ -342,14 +342,13 @@ return heiko.plugin({
 			goal.failed(state, "Jev could not check the goal: " .. tostring(answers))
 			return nil
 		end
-		cost = cost or 0
 		local verdict = type(answers) == "table" and answers.met or nil
 		if type(verdict) ~= "table" or type(verdict.probability) ~= "number" then
 			goal.failed(state, "Jev gave no verdict on the goal")
 			return nil
 		end
 		local p = verdict.probability
-		local spent = g.spent + (state.unchecked or 0) + cost
+		local spent = g.spent + (state.unchecked or 0)
 		state.unchecked = 0
 		local met = p >= goal.MET_AT
 		local exhausted
@@ -366,7 +365,6 @@ return heiko.plugin({
 			p = p,
 			turn = state.turn or stop.turn,
 			continuation = continuation,
-			cost = cost,
 			spent = spent,
 		})
 		if exhausted ~= nil then

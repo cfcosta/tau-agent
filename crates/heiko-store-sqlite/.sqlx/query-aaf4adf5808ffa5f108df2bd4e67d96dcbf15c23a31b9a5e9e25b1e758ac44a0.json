@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COALESCE(sum(tokens), 0) AS \"tokens!: i64\"\n               FROM spend\n               WHERE run_id IN (SELECT value FROM json_each(?1)) AND at >= ?2",
+  "describe": {
+    "columns": [
+      {
+        "name": "tokens!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "aaf4adf5808ffa5f108df2bd4e67d96dcbf15c23a31b9a5e9e25b1e758ac44a0"
+}

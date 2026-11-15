@@ -525,11 +525,11 @@ fn charged_usage_counts() {
             ..Probe::named("judge")
         };
         let agent = Agent::new(model.clone())
-            .limits(Limits::default().max_usd(1.0))
+            .limits(Limits::default().max_tokens(1000))
             .plugin(probe);
         let store = heiko_store_sqlite::memory().await.unwrap();
         let outcome = agent.run("go", &store).await.unwrap();
-        assert_eq!(outcome.stop, StopReason::Limit(LimitKind::Usd));
+        assert_eq!(outcome.stop, StopReason::Limit(LimitKind::Tokens));
         assert_eq!(outcome.usage.cost.total, 1.25);
         assert!(outcome.usage.input >= 1000);
         assert_eq!(model.requests().len(), 1, "the limit ends the run");

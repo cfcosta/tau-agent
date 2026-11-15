@@ -85,7 +85,6 @@ pub fn retry_after() -> RunView {
     view.limits = Limits {
         max_turns: Some(20),
         max_tokens: Some(1_000_000),
-        max_usd: Some(2.0),
         timeout: Some(Duration::from_secs(600)),
         elapsed: Duration::ZERO,
     };
@@ -111,7 +110,7 @@ pub const GOAL: &str = "All tests in heiko-ai pass and cargo clippy is clean";
 pub fn history() -> Vec<RunView> {
     let mut runs = vec![rotation_jitter(), backoff_fork()];
     let stop = || StopReason::Stop;
-    let limit = || StopReason::Limit(heiko_agent::event::LimitKind::Usd);
+    let limit = || StopReason::Limit(heiko_agent::event::LimitKind::Tokens);
     // (repo, title, started, stop, turns, tokens, cost); no stop is live.
     // Each repository's main chat, then its chats.
     let stubs = [
@@ -1346,13 +1345,16 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
                     ws.apply(HostUpdate::catalog(catalog), cx);
                 });
             }
-            // The demo's store answers every query with its runs' costs.
+            // The demo's store answers every query with its runs' tokens.
             WorkspaceEvent::Query { .. } => {
                 let table = heiko_store::Table {
-                    columns: vec!["agent".into(), "sum(cost_usd)".into()],
+                    columns: vec![
+                        "agent".into(),
+                        "sum(input_tokens + output_tokens)".into(),
+                    ],
                     rows: vec![
-                        vec!["coder".into(), "4.312".into()],
-                        vec!["reviewer".into(), "0.206".into()],
+                        vec!["coder".into(), "4312000".into()],
+                        vec!["reviewer".into(), "206000".into()],
                     ],
                     truncated: false,
                 };
@@ -1546,7 +1548,7 @@ pub fn catalog() -> Catalog {
         store: StoreInfo {
             path: "runs.db".into(),
             size: "18.4 MB".into(),
-            sample_query: "select agent, sum(cost_usd) from runs where created_at > date('now', '-7 days') group by agent".into(),
+            sample_query: "select agent, sum(input_tokens + output_tokens) from runs where created_at > date('now', '-7 days') group by agent".into(),
         },
         pull_requests: true,
         forge: Some("GitHub".into()),
