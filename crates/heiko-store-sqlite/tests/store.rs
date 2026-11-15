@@ -1041,7 +1041,7 @@ fn a_write_stamped_at_the_time_asked_from_counts() {
         clock.store(5, Ordering::SeqCst);
         store.append_turn("main", &[], cost(250)).await.unwrap();
         store
-            .append_charged("chat", &[], cost(500), &[("jev", cost(500))])
+            .append_charged("chat", &[], cost(500), &[("decide", cost(500))])
             .await
             .unwrap();
         store.append_turn("other", &[], cost(8000)).await.unwrap();

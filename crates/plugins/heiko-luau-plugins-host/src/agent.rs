@@ -54,7 +54,7 @@ use heiko_ai::{
     responses::request::ReasoningEffort,
 };
 use heiko_codemode_host::{ToolCall as ScriptCall, ToolEntry, ToolReply};
-use heiko_jev::Jev;
+use heiko_decide::Decider;
 
 use crate::{
     NAME,
@@ -125,7 +125,7 @@ struct Inner {
     /// `{ kind, repo, model }`: what `ctx.run` says besides the run's id
     /// and turn.
     run: Value,
-    jev: Option<Arc<dyn Jev>>,
+    decide: Option<Arc<dyn Decider>>,
     /// heiko's configuration directory, where each plugin's secrets are.
     config: Option<std::path::PathBuf>,
     /// Each plugin's store in each repository (`uses.store`).
@@ -216,17 +216,17 @@ pub struct Dispatch {
 
 impl LuauPlugins {
     /// The plugins `active`, always. `run` is `{ kind, repo, model }`;
-    /// `jev` is what plugins that use Jev ask.
+    /// `decide` is what plugins that use the decider ask.
     pub fn new(
         active: Vec<Active>,
         run: Value,
-        jev: Option<Arc<dyn Jev>>,
+        decide: Option<Arc<dyn Decider>>,
     ) -> Self {
         Self(Arc::new(Inner {
             active: Mutex::new(Arc::new(active.clone())),
             versions: Arc::new(Fixed(active)),
             run,
-            jev,
+            decide,
             config: None,
             stores: None,
             archive: std::env::temp_dir(),
@@ -325,14 +325,14 @@ impl LuauPlugins {
     pub async fn live(
         versions: Arc<dyn Versions>,
         run: Value,
-        jev: Option<Arc<dyn Jev>>,
+        decide: Option<Arc<dyn Decider>>,
     ) -> Self {
         let active = versions.now().await;
         Self(Arc::new(Inner {
             active: Mutex::new(Arc::new(active)),
             versions,
             run,
-            jev,
+            decide,
             config: None,
             stores: None,
             archive: std::env::temp_dir(),
@@ -377,7 +377,7 @@ impl Inner {
             .cloned()
     }
 
-    /// What `active`'s run hooks reach (ADR 0050): the model and Jev,
+    /// What `active`'s run hooks reach (ADR 0050): the model and the decider,
     /// when its `uses` names them, charged to the run, and the run's
     /// conversation, `transcript`, where the hook has it and `uses`
     /// names it; else nothing.
@@ -462,7 +462,7 @@ impl Inner {
             .filter(|_| uses.transcript)
             .map(|transcript| Arc::from(transcript.to_vec()));
         if !uses.infer
-            && !uses.jev
+            && !uses.decide
             && !uses.archive
             && transcript.is_none()
             && rewriting.is_none()
@@ -471,7 +471,7 @@ impl Inner {
         }
         Arc::new(RunReach {
             plugin: ctx.clone(),
-            jev: self.jev.clone(),
+            decide: self.decide.clone(),
             named: uses.model.clone(),
             run_model: self.run["model"].as_str().unwrap_or_default().into(),
             transcript,
@@ -492,9 +492,9 @@ impl Inner {
             info.insert("id".into(), json!(run.0.as_ref()));
             info.insert("turn".into(), json!(state.turn));
             // As an action of the run sees them: the run goes on, and
-            // whether Jev answers.
+            // whether the decider answers.
             info.insert("live".into(), json!(true));
-            info.insert("jev".into(), json!(self.jev.is_some()));
+            info.insert("decide".into(), json!(self.decide.is_some()));
         }
         let name = &active.loaded.declaration.name;
         Context {
@@ -1947,7 +1947,7 @@ impl AgentTool for LuauTool {
         let reach: Arc<dyn Reach> = Arc::new(ToolReach {
             ctx: ctx.clone(),
             plugin: plugin.clone(),
-            jev: inner.jev.clone(),
+            decide: inner.decide.clone(),
             files,
         });
         let failures = failures_of(&state.failures, &self.plugin);
@@ -2113,7 +2113,7 @@ impl LuauTool {
                 ask.args,
                 dispatch.chats.as_deref(),
                 // What a call the person allowed does is the tool's,
-                // with no Jev of its own.
+                // with no decider of its own.
                 None,
             )
             .await
@@ -2219,11 +2219,11 @@ impl LuauTool {
 }
 
 /// What a plugin's tool handler reaches: the run's tools, through the
-/// loop, and Jev.
+/// loop, and the decider.
 struct ToolReach {
     ctx: ToolCtx,
     plugin: PluginCtx,
-    jev: Option<Arc<dyn Jev>>,
+    decide: Option<Arc<dyn Decider>>,
     /// What `ctx.files` and `ctx.blobs` reach, with `uses.files`.
     files: Option<Arc<crate::files::Files>>,
 }
@@ -2268,8 +2268,8 @@ impl Reach for ToolReach {
         }
     }
 
-    fn jev(&self) -> Option<Arc<dyn Jev>> {
-        self.jev.clone()
+    fn decide(&self) -> Option<Arc<dyn Decider>> {
+        self.decide.clone()
     }
 
     fn charge(&self, usage: &Usage) {
@@ -2278,10 +2278,10 @@ impl Reach for ToolReach {
 }
 
 /// What a run hook reaches besides a tool's call (ADR 0050): the model,
-/// as `infer`, and Jev, both charged to the run and cancelled with it.
+/// as `infer`, and the decider, both charged to the run and cancelled with it.
 struct RunReach {
     plugin: PluginCtx,
-    jev: Option<Arc<dyn Jev>>,
+    decide: Option<Arc<dyn Decider>>,
     /// The model `uses.model` names, if it names one.
     named: Option<String>,
     /// The run's model: what `infer` asks when neither the call nor
@@ -2405,8 +2405,8 @@ impl Reach for RunReach {
         Ok(ToolReply::success(reply))
     }
 
-    fn jev(&self) -> Option<Arc<dyn Jev>> {
-        self.jev.clone()
+    fn decide(&self) -> Option<Arc<dyn Decider>> {
+        self.decide.clone()
     }
 
     fn charge(&self, usage: &Usage) {

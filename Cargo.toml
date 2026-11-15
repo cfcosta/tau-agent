@@ -157,7 +157,7 @@ heiko-perf = { path = "crates/heiko-perf", version = "0.1.0" }
 heiko-scripted = { path = "crates/heiko-scripted", version = "0.1.0" }
 heiko-luau-plugins = { path = "crates/plugins/heiko-luau-plugins", version = "0.1.0" }
 heiko-luau-plugins-host = { path = "crates/plugins/heiko-luau-plugins-host", version = "0.1.0" }
-heiko-jev = { path = "crates/plugins/heiko-jev", version = "0.1.0" }
+heiko-decide = { path = "crates/plugins/heiko-decide", version = "0.1.0" }
 heiko-mcp = { path = "crates/plugins/heiko-mcp", version = "0.1.0" }
 heiko-mcp-host = { path = "crates/plugins/heiko-mcp-host", version = "0.1.0" }
 heiko-ai = { path = "crates/heiko-ai", version = "0.1.0" }

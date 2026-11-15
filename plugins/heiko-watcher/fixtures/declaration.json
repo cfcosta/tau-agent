@@ -3,7 +3,7 @@
   "description": "Every 6th step a side request reads the run and, rarely, offers one note you likely missed",
   "uses": {
     "tools": [],
-    "jev": false,
+    "decide": false,
     "infer": true,
     "network": [],
     "secrets": [],

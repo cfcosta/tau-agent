@@ -49,13 +49,13 @@ pub const HEIKO_MODULE: &str = include_str!("heiko.luau");
 pub const HEIKO_ACTOR_MODULE: &str = include_str!("heiko_actor.luau");
 
 /// The package whose files are the standard part of `heiko`
-/// (`heiko.text`, `heiko.count`, `heiko.values`, `heiko.store`, `heiko.jev`,
+/// (`heiko.text`, `heiko.count`, `heiko.values`, `heiko.store`, `heiko.decide`,
 /// `heiko.infer`, `heiko.now`; ADR 0058), in heiko's packages folder.
 pub const STD: &str = "heiko-std";
 /// Its parts: `src/<part>.luau` there, installed into `heiko` as the
 /// module `heiko_<part>`. No plugin may name a file of its own so.
 pub const STD_PARTS: [&str; 7] =
-    ["text", "count", "values", "store", "jev", "infer", "clock"];
+    ["text", "count", "values", "store", "decide", "infer", "clock"];
 
 /// The `heiko_test` module the tests run with: `heiko.test`, apart from
 /// `heiko`, which every hook loads.
@@ -68,7 +68,7 @@ pub struct Uses {
     #[serde(default)]
     pub tools: Vec<String>,
     #[serde(default)]
-    pub jev: bool,
+    pub decide: bool,
     #[serde(default)]
     pub infer: bool,
     /// The hosts its HTTP requests may reach, by name: `ntfy.sh`.
@@ -192,8 +192,8 @@ impl Uses {
         if self.archive && !before.archive {
             grown.push("files of what it cuts".into());
         }
-        if self.jev && !before.jev {
-            grown.push("Jev".into());
+        if self.decide && !before.decide {
+            grown.push("The decider".into());
         }
         if self.infer && !before.infer {
             grown.push("`infer`".into());
@@ -391,12 +391,12 @@ pub struct CommandSpec {
     pub popover: Option<CommandPopover>,
 }
 
-/// A command's popover: its pieces with a Jev key saved and without.
+/// A command's popover: its pieces with a decider key saved and without.
 /// Their inputs' drafts reach the command's `run` as `ctx.drafts`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandPopover {
-    pub jev: Value,
-    pub no_jev: Value,
+    pub decide: Value,
+    pub no_decide: Value,
 }
 
 /// Its entry under each repository in the sidebar, which opens one of
@@ -519,7 +519,7 @@ pub struct Declaration {
     /// Its entry under each repository in the sidebar.
     #[serde(default)]
     pub repo_nav: Option<RepoNav>,
-    /// What the effort picker's Auto says, with a Jev key saved and
+    /// What the effort picker's Auto says, with a decider key saved and
     /// without (`picker_auto`).
     #[serde(default)]
     pub picker_auto: Option<PickerAuto>,
@@ -554,15 +554,15 @@ pub const KEYS: &[&str] = &["ctrl-2"];
 /// effort says them.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PickerAuto {
-    /// With a Jev key saved.
-    pub jev: String,
+    /// With a decider key saved.
+    pub decide: String,
     /// Without one.
-    pub no_jev: String,
+    pub no_decide: String,
 }
 
 impl Declaration {
     /// What `self` reaches that `before` did not: its new tools to call,
-    /// Jev, `infer`, and the seams that block or continue. Empty when a
+    /// The decider, `infer`, and the seams that block or continue. Empty when a
     /// version may activate by itself.
     pub fn grown_from(&self, before: &Declaration) -> Vec<String> {
         let mut grown = self.uses.grown_from(&before.uses, &self.name);
@@ -792,9 +792,9 @@ pub enum Act {
         plugin: String,
         page: String,
         params: BTreeMap<String, String>,
-        /// Whether a Jev key is saved, as the interface sees it.
+        /// Whether a decider key is saved, as the interface sees it.
         #[serde(default)]
-        jev: bool,
+        decide: bool,
         /// What the inputs its `drafts` names hold, by id.
         #[serde(default)]
         drafts: BTreeMap<String, String>,
@@ -852,9 +852,9 @@ pub enum Act {
         /// Whether the run is going on, as the interface sees it.
         #[serde(default)]
         live: bool,
-        /// Whether a Jev key is saved, as the interface sees it.
+        /// Whether a decider key is saved, as the interface sees it.
         #[serde(default)]
-        jev: bool,
+        decide: bool,
     },
 }
 
@@ -1109,13 +1109,13 @@ mod overview {
 mod tests {
     use super::*;
 
-    fn declaring(tools: &[&str], jev: bool, before_tool: bool) -> Declaration {
+    fn declaring(tools: &[&str], decide: bool, before_tool: bool) -> Declaration {
         Declaration {
             name: "p".into(),
             description: String::new(),
             uses: Uses {
                 tools: tools.iter().map(|t| t.to_string()).collect(),
-                jev,
+                decide,
                 infer: false,
                 network: Vec::new(),
                 secrets: Vec::new(),
@@ -1152,7 +1152,7 @@ mod tests {
         }
     }
 
-    /// A version reaches further when it calls a new tool, asks Jev, or
+    /// A version reaches further when it calls a new tool, asks the decider, or
     /// gains a seam that blocks; dropping any of them is not growth.
     #[test]
     fn growth_is_what_a_version_newly_reaches() {
@@ -1161,7 +1161,7 @@ mod tests {
         let after = declaring(&["exec_command", "read"], true, true);
         assert_eq!(
             after.grown_from(&before),
-            ["the `read` tool", "Jev", "`before_tool`"]
+            ["the `read` tool", "The decider", "`before_tool`"]
         );
         assert!(before.grown_from(&after).is_empty());
     }

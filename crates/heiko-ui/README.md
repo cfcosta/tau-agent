@@ -17,7 +17,7 @@ It is a library: the `heiko` app (`crates/heiko`) is the binary.
 | `accounts`    | `Credentials`: where sign-ins are kept; heiko-chatgpt signs in                                           |
 | `mirror`      | The window as phones mirror it: what crosses, what a phone may ask, the `heiko.app` service              |
 | `notify`      | When to notify while the window is not focused (`Notifier`), through the `heiko.notify` slot (`Slotted`) |
-| `metered`     | Jev requests counted for the Plugins screen: `Metered`                                                 |
+| `metered`     | decider requests counted for the Plugins screen: `Metered`                                                 |
 
 `Host` owns a tokio runtime beside GPUI's executor. A new run starts on that
 runtime; a task reads its events and sends them to the workspace on the UI

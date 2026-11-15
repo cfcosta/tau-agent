@@ -1,7 +1,7 @@
 [package]
 autotests = false
 name = "heiko-codemode-host"
-description = "The codemode tool: a Luau sandbox that calls heiko's tools and Jev, as a plugin; codemode's host half."
+description = "The codemode tool: a Luau sandbox that calls heiko's tools and the decider, as a plugin; codemode's host half."
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
@@ -20,7 +20,7 @@ serde_json.workspace = true
 heiko-agent = { workspace = true, features = ["serde"] }
 heiko-ai.workspace = true
 heiko-codemode.workspace = true
-heiko-jev.workspace = true
+heiko-decide.workspace = true
 heiko-ui-plugin.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
 tokio-util.workspace = true

@@ -1,4 +1,4 @@
--- Asking Jev what each tool call is still worth.
+-- Asking the decider what each tool call is still worth.
 --
 -- Ported from `tamaratran/fast-jev-compaction` by way of
 -- `joelhooks/pi-fast-jev-compaction` (`src/core/decide.ts`), with the
@@ -18,9 +18,9 @@ local decide = {}
 -- result go.
 decide.ACTIONS = { keep = 1, drop_result = 2, drop_call = 3 }
 
--- A Noul question's JSON text, as Jev's request writes it.
-function decide.noul_json(instructions, yes, no)
-	local fields = { { "type", '"noul"' }, { "instructions", state.string(instructions) } }
+-- A Predicate question's JSON text, as the decider's request writes it.
+function decide.predicate_json(instructions, yes, no)
+	local fields = { { "type", '"predicate"' }, { "instructions", state.string(instructions) } }
 	if yes ~= nil or no ~= nil then
 		local criteria = {}
 		if yes ~= nil then
@@ -34,7 +34,7 @@ function decide.noul_json(instructions, yes, no)
 	return state.object(fields)
 end
 
--- Questions' JSON text, by id in order, as Jev's request writes them:
+-- Questions' JSON text, by id in order, as the decider's request writes them:
 -- `questions` is a list of `{ id, json }`.
 function decide.questions_json(questions)
 	local sorted = table.clone(questions)
@@ -71,7 +71,7 @@ function decide.questions_for(call)
 		},
 	}
 	for _, question in ipairs(questions) do
-		question.json = decide.noul_json(question.instructions)
+		question.json = decide.predicate_json(question.instructions)
 	end
 	return questions
 end
@@ -200,28 +200,28 @@ function decide.requests(entries, calls, goal, max_state, max_request)
 	return { requests = requests, segments = #segments, state_tokens = state_tokens }
 end
 
--- The probability Jev gave the Noul `id`, or nil and why.
-function decide.noul(answers, id)
+-- The probability the decider gave the Predicate `id`, or nil and why.
+function decide.predicate(answers, id)
 	local answer = answers[id]
 	if type(answer) ~= "table" or type(answer.probability) ~= "number" then
-		return nil, "Jev gave no yes/no answer for `" .. id .. "`"
+		return nil, "The decider gave no yes/no answer for `" .. id .. "`"
 	end
 	if answer.probability < 0 or answer.probability > 1 then
-		return nil, "Jev's answer for `" .. id .. "` is out of range: " .. answer.probability
+		return nil, "The decider's answer for `" .. id .. "` is out of range: " .. answer.probability
 	end
 	return answer.probability
 end
 
--- Sends `requests` to Jev together, at most as many at once as Jev
+-- Sends `requests` to the decider together, at most as many at once as Decider
 -- takes: each one's answers, or nil and the first failure. What it cost.
 function decide.ask(requests)
 	local commands = {}
 	for _, request in ipairs(requests) do
 		local questions = {}
 		for _, question in ipairs(request.questions) do
-			questions[question.id] = { kind = "noul", question = question.instructions, yes = question.yes, no = question.no }
+			questions[question.id] = { kind = "predicate", question = question.instructions, yes = question.yes, no = question.no }
 		end
-		table.insert(commands, heiko.cmd.jev.ask({ state_json = request.state, questions = questions }))
+		table.insert(commands, heiko.cmd.decide.ask({ state_json = request.state, questions = questions }))
 	end
 	local answers = heiko.all(commands)
 	local results = {}
@@ -249,7 +249,7 @@ end
 -- Decisions for every call, and how the asking went: a pinned call is
 -- kept without asking; so is a call some segment was not asked about.
 -- Otherwise each answer is its largest over the segments: a keep in any
--- segment keeps. Nil and why on any failure; what Jev cost either way.
+-- segment keeps. Nil and why on any failure; what the decider cost either way.
 function decide.decide(entries, calls, settings)
 	local planned, why = decide.requests(
 		entries,
@@ -269,11 +269,11 @@ function decide.decide(entries, calls, settings)
 	for at, request in ipairs(planned.requests) do
 		for _, index in ipairs(request.asked) do
 			local id = calls[index].id
-			local keep_call, missing = decide.noul(results[at].answers, "call_" .. id)
+			local keep_call, missing = decide.predicate(results[at].answers, "call_" .. id)
 			if keep_call == nil then
 				return nil, missing, spent
 			end
-			local keep_result, wrong = decide.noul(results[at].answers, "result_" .. id)
+			local keep_result, wrong = decide.predicate(results[at].answers, "result_" .. id)
 			if keep_result == nil then
 				return nil, wrong, spent
 			end

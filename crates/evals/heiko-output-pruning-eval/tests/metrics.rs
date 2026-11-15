@@ -34,7 +34,7 @@ fn trial(tc: &TestCase) -> Trial {
         tokens_after,
         replaced: tc.draw(gs::booleans()),
         requests: tc.draw(gs::integers::<usize>().max_value(12)),
-        jev_input_tokens: 0,
+        decide_input_tokens: 0,
         cost_usd: tc.draw(gs::integers::<u32>().max_value(10_000)) as f64 / 1e6,
         answers: Bands {
             noise: tc.draw(gs::integers::<usize>().max_value(200)),
@@ -48,7 +48,7 @@ fn trial(tc: &TestCase) -> Trial {
         archive: None,
         error: tc
             .draw(gs::booleans())
-            .then(|| "Jev answered with status 503".to_owned()),
+            .then(|| "The decider answered with status 503".to_owned()),
     }
 }
 

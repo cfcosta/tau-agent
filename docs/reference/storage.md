@@ -17,7 +17,7 @@ Credentials are not in the database. heiko keeps them in
 sign-ins in `chatgpt/` (see
 [`chatgpt-sign-in.md`](chatgpt-sign-in.md#storage)), GitHub's token as
 heiko-github's `github` secret, in `secrets/plugins/heiko-github.json` (a Luau
-plugin's secrets), TypeSafe's key in `typesafe-key` (heiko-jev's), and model choices (with
+plugin's secrets), TypeSafe's key in `typesafe-key` (heiko-decide's), and model choices (with
 whether the plan note was read) in `models.json`. The old `codex.json`
 and `openai-key` are no longer read, and heiko does not delete them
 ([0012](../decisions/0012-chatgpt-sign-in-only.md)).

@@ -25,7 +25,7 @@ use heiko_agent::{
 };
 use heiko_ai::message::{InputBlock, Message, ToolResultMessage, UserContent};
 use heiko_codemode_host::{CancellationToken, Codemode, PLUGIN};
-use heiko_jev::fake::FakeJev;
+use heiko_decide::fake::FakeDecider;
 use heiko_store::{Entry, Store};
 use heiko_testing::{block_on, scripted::ScriptedModel};
 use serde_json::{Value, json};
@@ -391,22 +391,22 @@ return { t.echo, failed.echo, plain, ok, err }
     });
 }
 
-/// Jev's usage is charged to the run: it reaches the run's total and is
+/// The decider's usage is charged to the run: it reaches the run's total and is
 /// stored as the plugin's cost.
 #[test]
-fn jev_usage_reaches_the_run() {
+fn decide_usage_reaches_the_run() {
     block_on(async {
         let store = heiko_store_sqlite::memory().await.unwrap();
-        let jev = FakeJev::nouls(|_| 0.25);
+        let decide = FakeDecider::predicates(|_| 0.25);
         let agent = Agent::new(model(&[
-            "return jev.noul({ state = 1, question = 'odd?' }).probability",
+            "return decide.predicate({ state = 1, question = 'odd?' }).probability",
         ]))
-        .plugin(Codemode::new(Some(Arc::new(jev.clone()))));
+        .plugin(Codemode::new(Some(Arc::new(decide.clone()))));
         let outcome = agent.run("go", &store).await.unwrap();
 
         let result = only_result(&store, &outcome.run.0).await;
         assert_eq!(items(&result), ["0.25"]);
-        assert_eq!(jev.requests().len(), 1);
+        assert_eq!(decide.requests().len(), 1);
         let costs = store.plugin_costs(&outcome.run.0).await.unwrap();
         assert_eq!(costs.len(), 1);
         assert_eq!(costs[0].plugin, PLUGIN);
@@ -417,24 +417,24 @@ fn jev_usage_reaches_the_run() {
     });
 }
 
-/// A Jev request makes no run events of its own: the codemode call
+/// A decider request makes no run events of its own: the codemode call
 /// reports its row in its own updates, as it starts and as it ends,
 /// before the call ends, so the card shows it live.
 #[test]
-fn jev_requests_reach_the_run_as_updates() {
+fn decide_requests_reach_the_run_as_updates() {
     block_on(async {
         let store = heiko_store_sqlite::memory().await.unwrap();
         let recorder = Recorder::default();
         let agent = Agent::new(model(&[
-            "tools.echo({ text = 'a' })\nreturn jev.noul({ state = 1, question = 'odd?' }).probability",
+            "tools.echo({ text = 'a' })\nreturn decide.predicate({ state = 1, question = 'odd?' }).probability",
         ]))
         .tool(Echo::new("echo"))
-        .plugin(Codemode::new(Some(Arc::new(FakeJev::nouls(|_| 0.25)))))
+        .plugin(Codemode::new(Some(Arc::new(FakeDecider::predicates(|_| 0.25)))))
         .plugin(recorder.clone());
         agent.run("go", &store).await.unwrap();
 
         let events = recorder.events.lock().unwrap().clone();
-        let updates: Vec<(usize, heiko_codemode::live::JevUpdate)> = events
+        let updates: Vec<(usize, heiko_codemode::live::DecideUpdate)> = events
             .iter()
             .enumerate()
             .filter_map(|(at, event)| match event {
@@ -445,7 +445,7 @@ fn jev_requests_reach_the_run_as_updates() {
                     ..
                 } if call_id == FIRST => Some((
                     at,
-                    heiko_codemode::live::JevUpdate::from_details(
+                    heiko_codemode::live::DecideUpdate::from_details(
                         partial.details.as_ref()?,
                     )?,
                 )),
@@ -459,7 +459,7 @@ fn jev_requests_reach_the_run_as_updates() {
             })
             .collect();
         assert_eq!(statuses, [("running", 1), ("ok", 1)]);
-        assert_eq!(updates[0].1.row["id"], format!("{FIRST}/jev/1"));
+        assert_eq!(updates[0].1.row["id"], format!("{FIRST}/decide/1"));
         let end = events
             .iter()
             .position(|event| {
@@ -471,12 +471,12 @@ fn jev_requests_reach_the_run_as_updates() {
 }
 
 /// The tool's description is the fixed one for whether the run has a
-/// Jev: with one it teaches `jev`, without one it says there is none.
+/// The decider: with one it teaches `decide`, without one it says there is none.
 #[test]
-fn the_tool_description_follows_whether_there_is_a_jev() {
+fn the_tool_description_follows_whether_there_is_a_decide() {
     use heiko_codemode::description::description;
     assert_eq!(Codemode::new(None).tool().description(), description(false));
-    let plugin = Codemode::new(Some(Arc::new(FakeJev::nouls(|_| 0.5))));
+    let plugin = Codemode::new(Some(Arc::new(FakeDecider::predicates(|_| 0.5))));
     assert_eq!(plugin.tool().description(), description(true));
 }
 

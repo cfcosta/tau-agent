@@ -23,7 +23,7 @@ local OUTPUTS = {
 	},
 }
 
--- What Jev decided of each judged call: its action, and the odds that
+-- What the decider decided of each judged call: its action, and the odds that
 -- the call and its result matter.
 local DECIDED = {
 	{ "c2", "grep", "keep", 0.64, 0.22 },
@@ -95,7 +95,7 @@ local function demo_states()
 				results_dropped = 3,
 				calls_dropped = 0,
 				reduction_ratio = 0.53,
-				detail = "7 calls judged in 1 Jev request · 3 results cut, 0 calls dropped · −53% · Jev read 18k tokens of history, whole",
+				detail = "7 calls judged in 1 decider request · 3 results cut, 0 calls dropped · −53% · the decider read 18k tokens of history, whole",
 				window = 272000,
 			},
 		},
@@ -106,7 +106,7 @@ end
 t.fixture("run", function()
 	local steps = array({})
 	for _, state in ipairs(demo_states()) do
-		local run = t.run({ id = "demo", settings = {}, jev = {}, state = table.clone(state) })
+		local run = t.run({ id = "demo", settings = {}, decide = {}, state = table.clone(state) })
 		table.insert(steps, { state = state, view = run:view() })
 	end
 	return steps

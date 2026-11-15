@@ -3,7 +3,7 @@
   "description": "Folds older context into one-line summaries the agent can zoom into",
   "uses": {
     "tools": [],
-    "jev": false,
+    "decide": false,
     "infer": true,
     "network": [],
     "secrets": [],

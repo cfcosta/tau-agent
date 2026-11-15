@@ -714,7 +714,7 @@ silent bug costs the most:
 - `heiko-ai`: the delta rule, the lane state and the event processor;
 - `heiko-agent`: the loop, plugins, runs (typed results, forks,
   sub-agents), coercion and the strict schema rewrite;
-- `heiko-jev`: answer checking;
+- `heiko-decide`: answer checking;
 - `heiko-store-sqlite`: the append and transcript queries;
 - `heiko-tools-host`: `edit`, which rewrites files, and truncation.
 

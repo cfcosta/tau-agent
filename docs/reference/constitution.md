@@ -1,6 +1,6 @@
 # heiko-constitution
 
-Checks a run's tool calls and final answer against rules, asking Jev
+Checks a run's tool calls and final answer against rules, asking the decider
 (TypeSafe's System One model) how likely each rule is broken. It is a
 Luau plugin heiko comes with (ADR 0050): its code is the Luau in
 `plugins/heiko-constitution/` (`src/plugin.luau`, and
@@ -23,7 +23,7 @@ handled, and the latest calls and answers to try a rule on.
   that key in the call's arguments, however deep, so `edit.newText`
   covers each edit) or `final answer`, in any case. Text is trimmed of
   white space as Unicode has it.
-- **`on_error`** decides what happens when Jev cannot answer: `allow`
+- **`on_error`** decides what happens when the decider cannot answer: `allow`
   (the default) or `block`.
 - **`max_holds`** is how many times one run's final answer may be sent
   back (3 by default, up to 10 on the page). The plugin declares
@@ -43,11 +43,11 @@ handled, and the latest calls and answers to try a rule on.
 | Tool call    | ≥ `review`                  | Runs, flagged for review.                                                                                                           |
 | Final answer | ≥ `block`                   | Sent back with the rule (`heiko.continue`), up to `max_holds` times.                                                                  |
 | Final answer | ≥ `review`, or past the cap | Stands, flagged.                                                                                                                    |
-| Jev fails    | —                           | `on_error`: `allow` lets the call run or the answer stand; `block` refuses the call, or sends the answer back while holds are left. |
+| The decider fails    | —                           | `on_error`: `allow` lets the call run or the answer stand; `block` refuses the call, or sends the answer back while holds are left. |
 
-Jev sees only the fields a rule names, as the model wrote them: never
+The decider sees only the fields a rule names, as the model wrote them: never
 tool output or file content, which could try to steer it. All rules on
-one call go in one request, one `noul` per rule (`rule-0`, `rule-1`…);
+one call go in one request, one `predicate` per rule (`rule-0`, `rule-1`…);
 its cost is charged to the run. A Luau table keeps no order, so where a
 field is found under several keys of one object, its values come in
 the keys' sorted order.
@@ -56,15 +56,15 @@ the keys' sorted order.
 
 Each check makes records, as the Rust plugin did: a `checked` record
 (the call and tool, none for the final answer, each rule asked with its
-score, and what Jev cost), then a verdict per rule past its review mark
+score, and what the decider cost), then a verdict per rule past its review mark
 (`blocked`, `flagged` or `held`: the rule, its text, the score, its
 marks, the call and tool, the reason given, and for a hold which one it
-is out of `max_holds`), or an `error` when Jev failed (the message,
+is out of `max_holds`), or an `error` when the decider failed (the message,
 `on_error`, and for a final answer whether it was sent back). They are
 folded into the run's state (`checks.fold`), which is stored with the
 run, so history shows it again:
 
-- `stats`: calls and answers checked, questions asked, failures, Jev's
+- `stats`: calls and answers checked, questions asked, failures, the decider's
   cost, and the rules behind each block, flag and hold;
 - `calls`: each checked call's scores and verdict, by call id;
 - `notes`: a note for each failure and each verdict on the answer;
@@ -86,33 +86,33 @@ run, so history shows it again:
     the rule; places are picked from a list, or any `tool.field` typed
     and entered. Lenient / Balanced / Strict thresholds (flag/block at
     0.5/0.9, 0.3/0.8, 0.2/0.6) or steps of 0.05, and **Try it** (try
-    on recent calls): Jev is asked about the repository's latest calls
+    on recent calls): the decider is asked about the repository's latest calls
     and answers the rule reads, with the same question and state a
     check uses, one request each, and nothing runs again; each trial's
-    score is a stamp. The page's actions await the host's Jev
-    (`cmd.jev`).
+    score is a stamp. The page's actions await the host's decider
+    (`cmd.decide`).
   - **Review:** flagged calls and answers, with the rule and the score
     as ticks against its thresholds; looks fine takes one off the queue,
     adjust rule opens the rule in the editor, and open in run opens its
     run (`heiko.open_run`). Next to it, what the rules handled on their
     own, each with a stamp of what was done.
-  - **Settings:** what happens when Jev cannot answer (`on_error`: let
+  - **Settings:** what happens when the decider cannot answer (`on_error`: let
     through or refuse), and how many times one run's answer may be sent
     back (`max_holds`, 0 to 10, as numbered squares).
   - **Rules that cannot be read:** why, and that runs in the repository
     fail at start until they can (once there is a TypeSafe key). No edit
     can fix them, so the banner offers to remove them, once confirmed, to
     start again.
-  - Without a TypeSafe key the page says so and links to heiko-jev's key
-    page; it knows from `env.run.jev`.
-- Checks need a TypeSafe key, added in heiko-jev's section of the Models
-  screen and kept by heiko-jev in heiko's config directory (`typesafe-key`),
+  - Without a TypeSafe key the page says so and links to heiko-decide's key
+    page; it knows from `env.run.decide`.
+- Checks need a TypeSafe key, added in heiko-decide's section of the Models
+  screen and kept by heiko-decide in heiko's config directory (`typesafe-key`),
   readable only by the user. Without one, runs are not checked and the
   status line says so.
 - On a call's line in the transcript (the view's `calls`): a flagged
   call shows its rule, score and a review link at the line's end, and
   is marked flagged; a blocked one stands under the plugin's mark for a
-  block (止) with the rule, its text, and Jev's score as a strip of
+  block (止) with the rule, its text, and the decider's score as a strip of
   ticks with the rule's flag and block marks on it, and is marked
   blocked with the reason the model got; a call that passed shows each
   rule's score. Live and in history.
@@ -122,5 +122,5 @@ run, so history shows it again:
   "Flagged for review".
 - The inspector says what the checks did in the run (calls and answers
   checked, questions asked, blocks, flags and holds with their rules),
-  and a finished run's links to its first flagged call's rule. Jev's
+  and a finished run's links to its first flagged call's rule. The decider's
   cost is kept in the state and not shown.

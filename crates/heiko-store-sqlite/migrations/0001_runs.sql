@@ -35,7 +35,7 @@ CREATE TABLE messages (
 ) STRICT;
 
 -- What each plugin charged to a run, part of the run's own totals: the
--- usage of its side requests (a Jev check, a summary).
+-- usage of its side requests (a decider check, a summary).
 CREATE TABLE plugin_costs (
   run_id        TEXT    NOT NULL REFERENCES runs (id),
   plugin        TEXT    NOT NULL,

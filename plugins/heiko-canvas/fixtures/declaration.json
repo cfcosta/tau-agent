@@ -3,7 +3,7 @@
   "description": "What a run makes for you to look at, in a pane beside it",
   "uses": {
     "tools": [],
-    "jev": false,
+    "decide": false,
     "infer": false,
     "network": [],
     "secrets": [],

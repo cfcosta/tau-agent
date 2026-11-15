@@ -15,10 +15,10 @@ goal.DEFAULT_BUDGET = 2000000
 -- The probability at or past which the goal counts as met.
 goal.MET_AT = 0.7
 
--- How many of the latest tool results Jev sees.
+-- How many of the latest tool results the decider sees.
 goal.EVIDENCE = 6
 
--- How much of a tool result Jev sees: its end, where results and
+-- How much of a tool result the decider sees: its end, where results and
 -- summaries are.
 goal.OUTPUT_CHARS = 1500
 
@@ -387,7 +387,7 @@ function goal.clear(state)
 	state.goal = nil
 end
 
--- A check of the goal: its `n`, whether it was `met`, Jev's `p`, the
+-- A check of the goal: its `n`, whether it was `met`, the decider's `p`, the
 -- `turn` the model stopped at, the `continuation` it sent the model
 -- back for, if it did, and the tokens the goal `spent` so far.
 function goal.check(state, check)
@@ -431,7 +431,7 @@ function goal.resume(state)
 	end
 end
 
--- Jev gave no answer; the run stopped unchecked.
+-- The decider gave no answer; the run stopped unchecked.
 function goal.failed(state, message)
 	state.goal = goal.machine:step(state.goal, { event = "fail", message = message })
 	note(state, message, "not checked", "bad", "failed")
@@ -494,7 +494,7 @@ function goal.tone(g)
 end
 
 -- Why nothing checks a goal still to be met, if nothing does: the run
--- it was last kept in started without Jev.
+-- it was last kept in started without the decider.
 function goal.unchecked(g, checks)
 	if g.status ~= "active" and g.status ~= "paused" then
 		return nil

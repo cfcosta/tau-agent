@@ -16,8 +16,8 @@ planned: memory, reasoning selection, rule checks and pruning.
 - Core crates stay in `crates/`: `heiko-ai`, `heiko-agent`, `heiko-store` and
   `heiko-testing`.
 - Each plugin is a crate in `crates/plugins/<plugin>`, named
-  `heiko-<plugin>`. A library that only plugins use, such as the Jev
-  client `heiko-jev`, lives there too.
+  `heiko-<plugin>`. A library that only plugins use, such as the decider
+  client `heiko-decide`, lives there too.
 - Core crates never depend on a plugin. A plugin depends on `heiko-agent`
   and uses only its public API, the same API a plugin outside this
   repository gets.

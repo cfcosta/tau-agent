@@ -18,7 +18,7 @@ heiko-direnv = { path = "../plugins/heiko-direnv", default-features = false }
 heiko-phones = { path = "../plugins/heiko-phones", default-features = false }
 heiko-sqlite = { path = "../plugins/heiko-sqlite", default-features = false }
 heiko-chatgpt = { path = "../plugins/heiko-chatgpt", default-features = false }
-heiko-jev.workspace = true
+heiko-decide.workspace = true
 heiko-luau-plugins.workspace = true
 heiko-agents.workspace = true
 heiko-mcp.workspace = true

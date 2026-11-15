@@ -31,7 +31,7 @@ use heiko_codemode_host::{
     ToolEntry,
     ToolReply,
 };
-use heiko_jev::Jev;
+use heiko_decide::Decider;
 use heiko_luau_plugins::{HEIKO_TEST_MODULE, TestKind};
 use tokio_util::sync::CancellationToken;
 
@@ -615,12 +615,12 @@ impl Hook {
     }
 
     /// How long it may run for `declaration`: a run hook of a plugin
-    /// whose `uses` names `infer` or `jev` may call them, and has a
+    /// whose `uses` names `infer` or `decide` may call them, and has a
     /// tool's time for it (ADR 0050), `rewrite_context` ten minutes;
     /// `on_event` never does.
     pub fn limit_for(&self, declaration: &Declaration) -> Duration {
-        // An action may ask Jev too, through the host's.
-        if matches!(self, Self::Action(_)) && declaration.uses.jev {
+        // An action may ask the decider too, through the host's.
+        if matches!(self, Self::Action(_)) && declaration.uses.decide {
             return Self::Tool(String::new()).limit();
         }
         let run_hook = matches!(
@@ -636,7 +636,7 @@ impl Hook {
                 | Self::RunEnd
         );
         let uses = &declaration.uses;
-        if !run_hook || !(uses.infer || uses.jev) {
+        if !run_hook || !(uses.infer || uses.decide) {
             return self.limit();
         }
         // A compaction asks for many summaries, or a long one, while the
@@ -761,7 +761,7 @@ pub fn secrets_of(
 }
 
 /// What a hook may reach beyond the VM: the tools its plugin's `uses`
-/// names, Jev. A tool handler gets tools; other hooks, none.
+/// names, the decider. A tool handler gets tools; other hooks, none.
 #[async_trait]
 pub trait Reach: Send + Sync {
     /// The tools there are to call; the host keeps those `uses` names.
@@ -773,7 +773,7 @@ pub trait Reach: Send + Sync {
         Err(format!("`{}` cannot be called from this hook", call.name))
     }
 
-    fn jev(&self) -> Option<Arc<dyn Jev>> {
+    fn decide(&self) -> Option<Arc<dyn Decider>> {
         None
     }
 
@@ -808,8 +808,8 @@ impl Reach for WithFiles {
         self.reach.call(call).await
     }
 
-    fn jev(&self) -> Option<Arc<dyn Jev>> {
-        self.reach.jev()
+    fn decide(&self) -> Option<Arc<dyn Decider>> {
+        self.reach.decide()
     }
 
     fn charge(&self, usage: &Usage) {
@@ -832,12 +832,12 @@ pub fn package_dir(plugin: &str) -> Option<std::path::PathBuf> {
         .then(|| dir.join(plugin))
 }
 
-/// What an action reaches outside a run (ADR 0050): the host's Jev, for
+/// What an action reaches outside a run (ADR 0050): the host's decider, for
 /// a plugin whose `uses` names it.
-pub struct ActionReach(pub Option<Arc<dyn Jev>>);
+pub struct ActionReach(pub Option<Arc<dyn Decider>>);
 
 impl Reach for ActionReach {
-    fn jev(&self) -> Option<Arc<dyn Jev>> {
+    fn decide(&self) -> Option<Arc<dyn Decider>> {
         self.0.clone()
     }
 }
@@ -1136,7 +1136,7 @@ pub fn plan_models() -> Value {
     )
 }
 
-/// How long `rewrite_context` may run when it reaches the model or Jev.
+/// How long `rewrite_context` may run when it reaches the model or the decider.
 pub const REWRITE_LIMIT: Duration = Duration::from_secs(600);
 
 /// How long a test file may run.
@@ -1692,7 +1692,7 @@ struct Reaches {
     name: String,
     tools: Vec<String>,
     infer: bool,
-    jev: bool,
+    decide: bool,
     network: Option<Network>,
     store: Option<SessionRef>,
     /// The run's conversation (`uses.transcript`).
@@ -1727,7 +1727,7 @@ impl Reaches {
             name: declaration.name.clone(),
             tools: uses.tools.clone(),
             infer: uses.infer,
-            jev: uses.jev,
+            decide: uses.decide,
             network: (!uses.network.is_empty()).then(|| Network {
                 hosts: uses.network.clone(),
                 secrets: uses.secrets.clone(),
@@ -1747,7 +1747,7 @@ impl Reaches {
             name: name.to_owned(),
             tools: Vec::new(),
             infer: false,
-            jev: false,
+            decide: false,
             network: None,
             store: None,
             transcript: false,
@@ -1780,7 +1780,7 @@ async fn run(
         reach,
         tools: reaches.tools,
         infer: reaches.infer,
-        jev: reaches.jev,
+        decide: reaches.decide,
         network: reaches.network,
         store: reaches.store,
         transcript: reaches.transcript,
@@ -1843,7 +1843,7 @@ struct PluginHost {
     /// The tools `uses` names.
     tools: Vec<String>,
     infer: bool,
-    jev: bool,
+    decide: bool,
     network: Option<Network>,
     store: Option<SessionRef>,
     /// Whether it reads the run's conversation (`uses.transcript`).
@@ -1976,15 +1976,15 @@ impl PluginHost {
 
 impl PluginHost {
     /// The command `op` with `args` (ADR 0056): the values it answers
-    /// with. Jev answers with two, its answer and what it cost; every
+    /// with. The decider answers with two, its answer and what it cost; every
     /// other op is a host call, answering with one.
     async fn command(
         &self,
         op: &str,
         args: &Value,
     ) -> Result<Vec<Value>, String> {
-        if op == "jev" {
-            return self.jev_command(args).await;
+        if op == "decide" {
+            return self.decide_command(args).await;
         }
         let call = ToolCall {
             id: format!("plugin:{op}"),
@@ -1998,23 +1998,23 @@ impl PluginHost {
         }
     }
 
-    /// `jev` with `{ fn, request }`, `fn` one of `ask`, `noul`, `choice`
+    /// `decide` with `{ fn, request }`, `fn` one of `ask`, `predicate`, `choice`
     /// and `score`: the request shaped as the function asks, the usage
     /// charged, and the answer shaped back, with its cost.
-    async fn jev_command(&self, args: &Value) -> Result<Vec<Value>, String> {
+    async fn decide_command(&self, args: &Value) -> Result<Vec<Value>, String> {
         let function = args["fn"].as_str().unwrap_or("ask");
-        let Some(client) = self.reach.jev().filter(|_| self.jev) else {
-            return Err("Jev is not available in this run".into());
+        let Some(client) = self.reach.decide().filter(|_| self.decide) else {
+            return Err("The decider is not available in this run".into());
         };
         let (request, shape) =
-            heiko_codemode_host::jev::request(function, &args["request"])?;
+            heiko_codemode_host::decide::request(function, &args["request"])?;
         let response = client
             .ask(&request)
             .await
             .map_err(|error| error.to_string())?;
         let usage = response.usage();
         self.reach.charge(&usage);
-        let answer = heiko_codemode_host::jev::answer(&shape, &response)
+        let answer = heiko_codemode_host::decide::answer(&shape, &response)
             .map_err(|error| error.to_string())?;
         Ok(vec![answer, json!(usage.cost.total)])
     }
@@ -2244,8 +2244,8 @@ impl Host for PluginHost {
         self.reach.call(call).await
     }
 
-    fn jev(&self) -> Option<Arc<dyn Jev>> {
-        self.jev.then(|| self.reach.jev()).flatten()
+    fn decide(&self) -> Option<Arc<dyn Decider>> {
+        self.decide.then(|| self.reach.decide()).flatten()
     }
 
     fn charge(&self, usage: &Usage) {
@@ -2460,7 +2460,7 @@ impl Executor {
             reach: self.reach.clone(),
             tools: reaches.tools,
             infer: reaches.infer,
-            jev: reaches.jev,
+            decide: reaches.decide,
             network: reaches.network,
             store: session.clone(),
             transcript: reaches.transcript,

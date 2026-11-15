@@ -131,7 +131,7 @@ async fn a_plugin_declares_what_it_is() {
         declared.uses,
         Uses {
             tools: vec!["exec_command".into()],
-            jev: false,
+            decide: false,
             infer: false,
             network: Vec::new(),
             secrets: Vec::new(),
@@ -756,7 +756,7 @@ return heiko.plugin { commands = {
       description = "Marks the run shipped",
       args = "<version>",
       icon = "rocket",
-      popover = { jev = heiko.ui.input("channel", { submit = "heiko.submit" }) },
+      popover = { decide = heiko.ui.input("channel", { submit = "heiko.submit" }) },
       run = function(text, model, env)
         model.shipped = text
         model.channel = env.drafts.channel
@@ -767,7 +767,7 @@ return heiko.plugin { commands = {
 "#;
 
 /// A plugin's command is declared with what it does and takes, its icon
-/// and its popover, the same without a Jev key when it gives no other;
+/// and its popover, the same without a decider key when it gives no other;
 /// and it runs as its action `/name`, given the text after it and what
 /// the popover's inputs say.
 #[tokio::test(flavor = "multi_thread")]
@@ -790,8 +790,8 @@ async fn a_command_runs_as_its_action() {
         ("ship", "Marks the run shipped", "<version>", "rocket")
     );
     let popover = command.popover.clone().expect("its popover");
-    assert_eq!(popover.jev["piece"], "input");
-    assert_eq!(popover.no_jev, popover.jev);
+    assert_eq!(popover.decide["piece"], "input");
+    assert_eq!(popover.no_decide, popover.decide);
     let out = loaded
         .call(
             &Hook::Action("/ship".into()),
@@ -805,7 +805,7 @@ async fn a_command_runs_as_its_action() {
     assert_eq!(out.state, json!({ "shipped": "1.2", "channel": "beta" }));
 }
 
-/// A run hook of a plugin whose `uses` names the model or Jev has a
+/// A run hook of a plugin whose `uses` names the model or the decider has a
 /// tool's time to call them (ADR 0050); one that names neither keeps its
 /// short limit, and `on_event`, which runs for every event, always does.
 #[test]
@@ -813,7 +813,7 @@ fn a_hook_that_may_call_the_model_has_the_time_for_it() {
     use heiko_luau_plugins::Declaration;
     let plain = Declaration::default();
     let mut reaching = Declaration::default();
-    reaching.uses.jev = true;
+    reaching.uses.decide = true;
     let tool = Hook::Tool("t".into()).limit();
     for hook in [
         Hook::Start,
@@ -844,25 +844,25 @@ fn a_hook_that_may_call_the_model_has_the_time_for_it() {
     );
 }
 
-/// An action of a plugin that uses Jev asks the host's, through what an
+/// An action of a plugin that uses the decider asks the host's, through what an
 /// action reaches; one that does not use it has none.
 #[tokio::test(flavor = "multi_thread")]
-async fn an_action_asks_jev_when_its_plugin_uses_it() {
+async fn an_action_asks_decide_when_its_plugin_uses_it() {
     const TRIES: &str = r#"
 local heiko = require("heiko")
-return heiko.plugin { uses = { jev = USES },
+return heiko.plugin { uses = { decide = USES },
   actions = {
     try = function(args, model, env)
-      local answers, why = heiko.jev.ask({ state = { x = 1 }, questions = { it = { kind = "noul", question = "Is it?" } } })
-      if answers == nil then return "no jev" end
+      local answers, why = heiko.decide.ask({ state = { x = 1 }, questions = { it = { kind = "predicate", question = "Is it?" } } })
+      if answers == nil then return "no decide" end
       return answers.it.probability
     end,
   },
 }
 "#;
-    let jev: std::sync::Arc<dyn heiko_jev::Jev> =
-        std::sync::Arc::new(heiko_jev::fake::FakeJev::nouls(|_| 0.25));
-    for (uses, want) in [("true", json!(0.25)), ("false", json!("no jev"))] {
+    let decide: std::sync::Arc<dyn heiko_decide::Decider> =
+        std::sync::Arc::new(heiko_decide::fake::FakeDecider::predicates(|_| 0.25));
+    for (uses, want) in [("true", json!(0.25)), ("false", json!("no decide"))] {
         let files = Files {
             source: TRIES.replace("USES", uses),
             ..Files::named("tries")
@@ -875,13 +875,13 @@ return heiko.plugin { uses = { jev = USES },
                 &context("Monday"),
                 std::sync::Arc::new(
                     heiko_luau_plugins_host::runtime::ActionReach(Some(
-                        jev.clone(),
+                        decide.clone(),
                     )),
                 ),
                 CancellationToken::new(),
             )
             .await;
         assert_eq!(out.error, None);
-        assert_eq!(out.value, want, "uses.jev = {uses}");
+        assert_eq!(out.value, want, "uses.decide = {uses}");
     }
 }

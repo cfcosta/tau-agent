@@ -1,4 +1,4 @@
-//! Jev, counted: every request the plugins make this session, what it
+//! The decider, counted: every request the plugins make this session, what it
 //! cost and how long it took, for the Plugins screen.
 
 use std::{
@@ -8,9 +8,9 @@ use std::{
 
 use async_trait::async_trait;
 
-use crate::{Jev, JevError, Request, Response};
+use crate::{Decider, DecideError, Request, Response};
 
-/// What Jev did this session.
+/// What the decider did this session.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Meter {
     pub requests: u64,
@@ -31,21 +31,21 @@ impl Meter {
     }
 }
 
-/// A Jev that counts what goes through it into a shared [`Meter`].
+/// A decider that counts what goes through it into a shared [`Meter`].
 pub struct Metered {
-    inner: Arc<dyn Jev>,
+    inner: Arc<dyn Decider>,
     meter: Arc<Mutex<Meter>>,
 }
 
 impl Metered {
-    pub fn new(inner: Arc<dyn Jev>, meter: Arc<Mutex<Meter>>) -> Self {
+    pub fn new(inner: Arc<dyn Decider>, meter: Arc<Mutex<Meter>>) -> Self {
         Self { inner, meter }
     }
 }
 
 #[async_trait]
-impl Jev for Metered {
-    async fn ask(&self, request: &Request) -> Result<Response, JevError> {
+impl Decider for Metered {
+    async fn ask(&self, request: &Request) -> Result<Response, DecideError> {
         let started = Instant::now();
         let answer = self.inner.ask(request).await;
         let mut meter = self.meter.lock().expect("not poisoned");
@@ -74,15 +74,15 @@ impl Jev for Metered {
 )]
 mod tests {
     use super::*;
-    use crate::{JevError, fake::FakeJev};
+    use crate::{DecideError, fake::FakeDecider};
 
     #[test]
     fn requests_are_counted_answered_or_not() {
         let meter = Arc::new(Mutex::new(Meter::default()));
         let answering =
-            Metered::new(Arc::new(FakeJev::nouls(|_| 0.5)), meter.clone());
+            Metered::new(Arc::new(FakeDecider::predicates(|_| 0.5)), meter.clone());
         let failing = Metered::new(
-            Arc::new(FakeJev::new(|_| Err(JevError::Status(503)))),
+            Arc::new(FakeDecider::new(|_| Err(DecideError::Status(503)))),
             meter.clone(),
         );
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -90,7 +90,7 @@ mod tests {
             .unwrap();
         runtime.block_on(async {
             let request =
-                Request::new("state").question("q", crate::Question::noul("?"));
+                Request::new("state").question("q", crate::Question::predicate("?"));
             answering.ask(&request).await.unwrap();
             answering.ask(&request).await.unwrap();
             failing.ask(&request).await.unwrap_err();
@@ -98,6 +98,6 @@ mod tests {
         let meter = meter.lock().unwrap();
         assert_eq!((meter.requests, meter.failed), (3, 1));
         assert!(meter.input_tokens > 0 && meter.spent > 0.0);
-        assert_eq!(meter.model.as_deref(), Some("jev-fake"));
+        assert_eq!(meter.model.as_deref(), Some("decide-fake"));
     }
 }

@@ -65,7 +65,7 @@ is the fork's.
   in the first message's context, never in the instructions.
 - **Sticky effort.** heiko-reasoning keeps the effort a conversation last
   ran at when a run goes on with or inherits a prefix of 20k tokens or
-  more, even when Jev is sure of another, unless the person chose one.
+  more, even when the decider is sure of another, unless the person chose one.
   Its choice records the tokens that kept.
 
 ## Consequences
@@ -79,7 +79,7 @@ is the fork's.
 - heiko may keep up to 8 idle sockets open for up to 55 minutes.
 - A model sees `delegate`, `vcs_land` and `ask` where they only refuse,
   at the cost of a wasted call when it tries one.
-- An effort Jev would have changed on a long conversation stays; the
+- An effort the decider would have changed on a long conversation stays; the
   person can still choose one.
 - Parallel forks get one cached first request between them; the others
   open new connections.

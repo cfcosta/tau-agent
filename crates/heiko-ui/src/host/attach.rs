@@ -1148,7 +1148,7 @@ impl Host {
                     action,
                     asker,
                 } => {
-                    // On the host: an action may ask Jev, or the store.
+                    // On the host: an action may ask the decider, or the store.
                     let (job_plugin, plugin, action, asker) =
                         (plugin.clone(), plugin.clone(), action.clone(), *asker);
                     let failed = alert(format!("{plugin} could not do that"));
@@ -1575,7 +1575,7 @@ impl Host {
         let workspace = workspace.downgrade();
         cx.spawn(async move |cx| {
             while let Some(event) = events.recv().await {
-                // The run may have asked Jev: the Plugins screen's count
+                // The run may have asked the decider: the Plugins screen's count
                 // follows.
                 if matches!(event, RunEvent::RunEnd { .. }) {
                     host.catalog_changed();

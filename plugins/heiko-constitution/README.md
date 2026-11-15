@@ -1,7 +1,7 @@
 # heiko-constitution
 
 Checks a heiko run's tool calls and final answer against the repository's
-rules, asking Jev how likely each rule is broken. A call past a rule's
+rules, asking the decider how likely each rule is broken. A call past a rule's
 block mark is refused with the rule, so the model can fix it; one
 between its marks runs, flagged for a person; a final answer that
 breaks a rule goes back, up to `max_holds` times. It is a Luau plugin
@@ -24,7 +24,7 @@ The Luau, under `src/`:
 | ----------------- | --------------------------------------------------------------------------------- |
 | `plugin.luau`     | The plugin: `start`, `before_tool`, `before_stop`, its view, its page and actions |
 | `lib/rules.luau`  | Rules: targets, checking a rule, reading one back, editing, what a rule reads     |
-| `lib/checks.luau` | What Jev is asked, the records a check makes, their fold, the counts              |
+| `lib/checks.luau` | What the decider is asked, the records a check makes, their fold, the counts              |
 | `lib/page.luau`   | The repository's page: the editor's draft, Try it, and the page's tree            |
 | `tests/*.luau`    | Its tests: cases, properties and a state machine, against fake runs               |
 
@@ -53,7 +53,7 @@ cargo nextest run --release -p heiko-built-in-tests -E 'test(/^constitution::/)'
 `tests/fixtures.luau` makes the demo's fixtures, which it holds to
 `fixtures/`; a case there checks the demo run's stats and marks, and the
 store's review item and answers.
-`heiko-built-in-tests/tests/constitution/live.rs` asks the real Jev and is
+`heiko-built-in-tests/tests/constitution/live.rs` asks the real decider and is
 ignored without `TYPESAFE_API_KEY` (`--run-ignored only`). heiko-ui's
 `tests/constitution.rs` runs it in a host.
 

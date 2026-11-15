@@ -71,7 +71,7 @@ fn every_part_is_in_the_heiko_a_plugin_requires() {
 local heiko = require("heiko")
 local t = heiko.test
 t.case("the standard is there", function()
-  for _, name in ipairs({ "text", "count", "values", "store", "jev" }) do
+  for _, name in ipairs({ "text", "count", "values", "store", "decide" }) do
     t.equal(type(heiko[name]), "table", name)
   end
   t.equal(type(heiko.infer), "function")

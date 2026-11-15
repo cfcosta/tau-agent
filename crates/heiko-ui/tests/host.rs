@@ -2175,7 +2175,7 @@ fn memory_notes_are_kept_shown_and_marked_stale_by_commits() {
             plugin: heiko_luau_plugins::names::MEMORY.into(),
             page: "notes".into(),
             params: [("repo".to_owned(), REPO.to_owned())].into(),
-            jev: false,
+            decide: false,
             drafts: Default::default(),
         };
         host.block_on(host.plugin_act(

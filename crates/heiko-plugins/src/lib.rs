@@ -13,7 +13,7 @@ pub fn plugins() -> Registry {
         .with(heiko_chatgpt::ChatGptUi)
         .with(heiko_codemode::CodemodeUi)
         .with(heiko_direnv::DirenvUi)
-        .with(heiko_jev::JevUi)
+        .with(heiko_decide::DecideUi)
         .with(heiko_luau_plugins::LuauPluginsUi)
         .with(heiko_mcp::McpUi)
         .with(heiko_phones::PhonesUi)

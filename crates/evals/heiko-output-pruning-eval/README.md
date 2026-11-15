@@ -2,9 +2,9 @@
 
 The retention evaluation of fast compaction's output pruning. It checks
 whether `heiko-fast-compaction` keeps the lines a task needs when it trims
-a long command output, how much smaller the output gets, and what Jev
+a long command output, how much smaller the output gets, and what the decider
 costs. It runs the real plugin, the Luau one heiko comes with (ADR 0050),
-against the real Jev.
+against the real decider.
 
 ## What it measures
 
@@ -44,9 +44,9 @@ Per trial (`metrics::Trial`) it records:
   for what `exec_command` alone would have shown;
 - estimated tokens before (what `exec_command` alone shows) and after, the
   reduction, and the reduction against the whole output;
-- whether the result was replaced, Jev requests, input tokens, cost and
+- whether the result was replaced, decider requests, input tokens, cost and
   latency;
-- Jev's answers by band: noise (at most 0.1), uncertain, and needed (0.5
+- The decider's answers by band: noise (at most 0.1), uncertain, and needed (0.5
   or more, so the chunk stays), and each chunk's largest answer, to
   replay another keep rule offline.
 
@@ -63,7 +63,7 @@ flat keys, such as `output_chunk_lines` or `output_keep_threshold`.
 
 ## How it fits
 
-It builds on `heiko-fast-compaction` (the plugin's Luau) and `heiko-jev` for
+It builds on `heiko-fast-compaction` (the plugin's Luau) and `heiko-decide` for
 the system under test. It runs them as the app does with
 `heiko-luau-plugins-host` (which loads and runs the Luau),
 `heiko-luau-plugins` (its records), `heiko-agent`, `heiko-ai`, `heiko-testing`
@@ -81,7 +81,7 @@ TYPESAFE_API_KEY=… cargo run -p heiko-output-pruning-eval -- \
 | ------------------ | ----------------------------------------------------------------- |
 | `--workload NAME`  | Only these workloads (repeat, or comma-separated)                 |
 | `--seeds N`        | Seeds 0 to N-1 of each workload (default 1)                       |
-| `--budget-usd USD` | Stop once Jev's spend passes this                                 |
+| `--budget-usd USD` | Stop once the decider's spend passes this                                 |
 | `--json PATH`      | Also write every trial and summary to `PATH`                      |
 | `--whole`          | `exec_command` returns every output whole, with no truncation     |
 | `--work DIR`       | Where archives go (default: a temp directory, removed afterwards) |
@@ -92,7 +92,7 @@ It needs `TYPESAFE_API_KEY`; without it, it refuses to run. Each trial's
 progress goes to standard error. Standard output gets a table per
 workload, the total spent, and the reason when it stopped early.
 
-Jev costs about $0.042 per million input tokens. A workload costs about
+The decider costs about $0.042 per million input tokens. A workload costs about
 half a cent, so three seeds of all eight cost about $0.13.
 
 ## Testing
@@ -101,11 +101,11 @@ half a cent, so three seeds of all eight cost about $0.13.
 cargo nextest run --release -p heiko-output-pruning-eval
 ```
 
-The tests use fake Jevs and need no key, and run on real time: a Luau
+The tests use fake deciders and need no key, and run on real time: a Luau
 hook's limit is a timer that paused time lets run out. `tests/workloads.rs` checks,
 with Hegel properties, that generation is deterministic and that each
 needle is where it is claimed, exactly once. `tests/runner.rs` runs the
-real plugin with a ground-truth Jev, one that keeps nothing, and one
+real plugin with a ground-truth the decider, one that keeps nothing, and one
 that fails, checks it against `measure`'s render, and checks the budget
 stop. `tests/metrics.rs` checks the
 summaries against a reference.
@@ -114,4 +114,4 @@ summaries against a reference.
 
 - [fast-compaction.md](../../../docs/reference/fast-compaction.md):
   "Evaluation" has the workloads, the measures and the latest results
-  against the real Jev
+  against the real decider

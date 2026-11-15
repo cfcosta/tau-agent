@@ -691,7 +691,7 @@
                     "children": [
                       {
                         "piece": "text",
-                        "text": "When Jev can't answer"
+                        "text": "When the decider can't answer"
                       },
                       {
                         "piece": "spacer"
@@ -1704,7 +1704,7 @@
           },
           {
             "piece": "text",
-            "text": "Pick at least one place, or Jev has nothing to check."
+            "text": "Pick at least one place, or the decider has nothing to check."
           }
         ],
         "piece": "row"
@@ -1796,7 +1796,7 @@
             "to": {
               "page": "key",
               "params": {},
-              "plugin": "heiko-jev"
+              "plugin": "heiko-decide"
             }
           }
         ],

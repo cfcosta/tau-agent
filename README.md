@@ -158,7 +158,7 @@ What the built-in plugins add:
 
   ![A repository's memory notes](docs/screenshots/memory.png)
 
-- **The constitution.** A repository's rules. Jev checks every tool
+- **The constitution.** A repository's rules. The decider checks every tool
   call and final answer against them, and a call that breaks one is
   blocked and sent back to the model, as in the first screenshot.
 
@@ -170,7 +170,7 @@ What the built-in plugins add:
   ![A repository's MCP servers](docs/screenshots/mcp.png)
 
 - **Fast compaction.** Prunes large tool outputs and stale tool history
-  with Jev, keeping what stays word for word, and shows what it dropped
+  with the decider, keeping what stays word for word, and shows what it dropped
   and why. Tree compaction and summarizing compaction take over when
   pruning is not enough.
 
@@ -187,7 +187,7 @@ What the built-in plugins add:
   ![A skill the model loaded](docs/screenshots/skill.png)
 
 - **`/goal`.** Keeps a run going until a condition holds, checked with
-  Jev, within a budget you set.
+  The decider, within a budget you set.
 
   ![A goal on a run, not met yet](docs/screenshots/goal.png)
 
@@ -197,11 +197,11 @@ What the built-in plugins add:
   ![The watcher's note on what changed](docs/screenshots/watcher.png)
 
 - **Reasoning.** Picks each message's reasoning effort from its task,
-  with Jev.
+  with the decider.
 
   ![The reasoning effort picked for a message, and the memory notes recalled for it](docs/screenshots/reasoning.png)
 
-Several plugins ask Jev, TypeSafe's System One model, for small and
+Several plugins ask the decider, TypeSafe's System One model, for small and
 cheap decisions.
 
 ### Finding your way
@@ -220,7 +220,7 @@ search reaches any run, chat or action.
   x86_64.
 - A ChatGPT plan that allows use through Sign in with ChatGPT.
 - A GitHub account. heiko works only in repositories cloned from GitHub.
-- For the plugins that ask Jev: `TYPESAFE_API_KEY` in the environment.
+- For the plugins that ask the decider: `TYPESAFE_API_KEY` in the environment.
 - `git` on `PATH`, since pushes go through it. The Nix package brings
   its own.
 

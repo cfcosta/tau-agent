@@ -1,5 +1,5 @@
 //! The replay example's run through the plugin: a stored run replays
-//! request by request, Jev scoring the message, a lease that holds
+//! request by request, the decider scoring the message, a lease that holds
 //! skipping a request, and a failed tool ending it; each decision says
 //! what the stored request went out at.
 
@@ -28,14 +28,14 @@ use heiko_ai::message::{
     UserContent,
     UserMessage,
 };
-use heiko_jev::{Answer, fake::FakeJev};
+use heiko_decide::{Answer, fake::FakeDecider};
 use heiko_testing::block_on_io;
 
-/// A Jev that answers each request in turn with a level, sure of it,
+/// A decider that answers each request in turn with a level, sure of it,
 /// and a lease.
-fn scripted(answers: Vec<(usize, &'static str)>) -> FakeJev {
+fn scripted(answers: Vec<(usize, &'static str)>) -> FakeDecider {
     let answers = Arc::new(std::sync::Mutex::new(answers.into_iter()));
-    FakeJev::new(move |request| {
+    FakeDecider::new(move |request| {
         let (level, lease) =
             answers.lock().unwrap().next().expect("an answer left");
         let mut answers = BTreeMap::from([(
@@ -56,7 +56,7 @@ fn scripted(answers: Vec<(usize, &'static str)>) -> FakeJev {
                 },
             );
         }
-        Ok(heiko_jev::fake::response(answers, request))
+        Ok(heiko_decide::fake::response(answers, request))
     })
 }
 
@@ -112,12 +112,12 @@ fn a_stored_run_replays_through_the_plugin() {
         Entry::Message(result("c2", true)),
         Entry::Message(answer(vec![AssistantBlock::Text(text("done"))])),
     ];
-    let jev = scripted(vec![(1, "tool_chain"), (4, "tool_chain")]);
+    let decide = scripted(vec![(1, "tool_chain"), (4, "tool_chain")]);
     let decisions = block_on_io(async {
         let plugin = plugin().await;
         replay(
             &plugin,
-            Arc::new(jev),
+            Arc::new(decide),
             "gpt-6-sol",
             json!({ "redecide": true, "threshold": 0.7 }),
             &timeline,

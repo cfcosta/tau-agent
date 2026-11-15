@@ -45,7 +45,7 @@ use heiko_codemode_host::{
     options,
     run,
 };
-use heiko_jev::{Jev, fake::FakeJev};
+use heiko_decide::{Decider, fake::FakeDecider};
 use heiko_store::{Entry, NewRun, RunKind, TurnUsage};
 use heiko_testing::block_on_io;
 use heiko_ui_plugin::{
@@ -527,28 +527,28 @@ impl Folded {
 
 /// A host that keeps what heiko-ui would fold for its calls: each call's
 /// start, then its end with the output the loop reports; and the
-/// script's updates, its Jev rows.
+/// script's updates, its decider rows.
 ///
 /// - `echo` returns its arguments;
 /// - `fail` fails with its `msg`;
-/// - `jev.noul` answers 0.5, and a question `bad` gets 1.5, which is out
+/// - `decide.predicate` answers 0.5, and a question `bad` gets 1.5, which is out
 ///   of range.
 struct CardHost {
     folded: Mutex<Vec<Folded>>,
-    jev: Arc<dyn Jev>,
+    decide: Arc<dyn Decider>,
 }
 
 impl Default for CardHost {
     fn default() -> Self {
         Self {
             folded: Mutex::default(),
-            jev: Arc::new(FakeJev::new(|request| {
-                // nouls() receives question IDs, not instruction text.
+            decide: Arc::new(FakeDecider::new(|request| {
+                // predicates() receives question IDs, not instruction text.
                 let answers = request.questions.iter().map(|(id, question)| {
-                    let bad = matches!(question, heiko_jev::Question::Noul { instructions, .. } if instructions == &json!("bad"));
-                    (id.clone(), heiko_jev::Answer::Noul { noul: if bad { 1.5 } else { 0.5 } })
+                    let bad = matches!(question, heiko_decide::Question::Predicate { instructions, .. } if instructions == &json!("bad"));
+                    (id.clone(), heiko_decide::Answer::Predicate { predicate: if bad { 1.5 } else { 0.5 } })
                 }).collect();
-                Ok(heiko_jev::fake::response(answers, request))
+                Ok(heiko_decide::fake::response(answers, request))
             })),
         }
     }
@@ -656,8 +656,8 @@ impl Host for CardHost {
         result
     }
 
-    fn jev(&self) -> Option<Arc<dyn Jev>> {
-        Some(self.jev.clone())
+    fn decide(&self) -> Option<Arc<dyn Decider>> {
+        Some(self.decide.clone())
     }
 
     fn update(&self, details: Value) {
@@ -711,8 +711,8 @@ enum Call {
     Fail(String),
     /// A readable structured error, still failed in the call row.
     Typed(String),
-    /// `jev.noul`; a bad one gets an answer out of range and raises.
-    Jev(bool),
+    /// `decide.predicate`; a bad one gets an answer out of range and raises.
+    Decider(bool),
     /// An inference with two reported attempts in the real integration.
     Infer(bool),
 }
@@ -733,8 +733,8 @@ impl Call {
             Self::Typed(text) => format!(
                 "function() return tools.typed({{ msg = \"{text}\" }}) end"
             ),
-            Self::Jev(bad) => format!(
-                "function() return jev.noul({{ state = 1, question = \"{}\" }}) end",
+            Self::Decider(bad) => format!(
+                "function() return decide.predicate({{ state = 1, question = \"{}\" }}) end",
                 if *bad { "bad" } else { "ok" }
             ),
             Self::Infer(fails) => format!(
@@ -745,12 +745,12 @@ impl Call {
     }
 }
 
-/// Property inventory: mixed tools, Jev, and infer retain independently
+/// Property inventory: mixed tools, Decider, and infer retain independently
 /// expected statuses and infer costs through live and stored row folds.
 /// Generator plan: the Call enum constructs valid scripts; short vectors
 /// shrink by removing whole calls, while short strings shrink arguments.
 /// CI uses the workspace hegel.toml profile.
-/// Whatever calls a script makes, tools and Jev, in turn or at once,
+/// Whatever calls a script makes, tools and the decider, in turn or at once,
 /// failing or not, the rows its card draws while it runs are the rows
 /// its result's details list once it ends, which is all a stored run
 /// has; and the card reads the script's output and failure back from
@@ -830,7 +830,7 @@ fn live_rows_are_the_stored_rows(tc: hegel::TestCase) {
             Call::Echo(_) => ("echo", "ok"),
             Call::Fail(_) => ("fail", "error"),
             Call::Typed(_) => ("typed", "error"),
-            Call::Jev(bad) => ("jev.noul", if *bad { "error" } else { "ok" }),
+            Call::Decider(bad) => ("decide.predicate", if *bad { "error" } else { "ok" }),
             Call::Infer(fails) => {
                 ("infer", if *fails { "error" } else { "ok" })
             }
@@ -894,15 +894,15 @@ fn live_rows_are_the_stored_rows(tc: hegel::TestCase) {
     assert_eq!(failure.is_some(), raise);
 }
 
-/// A Jev request shows on the card as soon as it starts, before any
+/// A decider request shows on the card as soon as it starts, before any
 /// tool call the script makes after it, and its row updates in place
 /// when it ends.
 #[test]
-fn a_jev_request_shows_while_it_runs() {
+fn a_decide_request_shows_while_it_runs() {
     let host = Arc::new(CardHost::default());
-    let code = "pcall(function() return jev.noul({ state = 1, question = 'ok' }) end)\n\
+    let code = "pcall(function() return decide.predicate({ state = 1, question = 'ok' }) end)\n\
                 tools.echo({ s = 'a' })\n\
-                jev.noul({ state = 2, question = 'ok' })";
+                decide.predicate({ state = 2, question = 'ok' })";
     block_on_io(script(&host, code));
     let folded = host.folded.lock().unwrap().clone();
     // Only the first update: the request has started, nothing else.
@@ -912,7 +912,7 @@ fn a_jev_request_shows_while_it_runs() {
     assert_eq!(rows.len(), 1);
     assert_eq!(
         (rows[0].id.as_str(), rows[0].name.as_str(), rows[0].status),
-        ("call_1/jev/1", "jev.noul", CallStatus::Running)
+        ("call_1/decide/1", "decide.predicate", CallStatus::Running)
     );
     // Everything: the rows in the order the script made the calls.
     let data = host.data();
@@ -924,9 +924,9 @@ fn a_jev_request_shows_while_it_runs() {
     assert_eq!(
         names,
         [
-            ("call_1/jev/1", CallStatus::Ok),
+            ("call_1/decide/1", CallStatus::Ok),
             ("call_1/1", CallStatus::Ok),
-            ("call_1/jev/2", CallStatus::Ok),
+            ("call_1/decide/2", CallStatus::Ok),
         ]
     );
     assert!(rows[0].cost.is_some_and(|cost| cost > 0.0));

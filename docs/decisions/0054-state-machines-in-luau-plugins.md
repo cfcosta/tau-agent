@@ -186,7 +186,7 @@ ways in, on the fake run `t.run` already gives: a run's hooks (`start`,
 `after_tool_result`, `before_stop`, `run_end` and the rest), its actions
 and acts, and its jobs' ticks, with the inputs `spec` draws for each.
 
-A hook that waits (on Jev, the model, a tool, the network) is split in
+A hook that waits (on the decider, the model, a tool, the network) is split in
 two: one rule starts it and runs it to its wait, another lets one waiting
 hook go on with an answer `spec` draws, or a failure. So two of them can
 be under way at once, in any order, as on the host. What they share
@@ -216,7 +216,7 @@ the case to keep is written from those notes.
   checked against `effects` when the machine declares them.
 - `t.machine_of` and `t.hooks` are in `heiko_test.luau`, on `t.machine`.
   `t.hooks` splits a wait with a coroutine: the functions of `spec.run`'s
-  `jev`, `tools`, `http` and `infer` yield when a hook calls them, and the
+  `decide`, `tools`, `http` and `infer` yield when a hook calls them, and the
   rules `answer` (the function called with `draw` after its arguments)
   and `fail` let one go on. A hook that raises fails the test unless
   `spec.may_fail(hook, why)`. Each way in gets the world as a third
@@ -234,7 +234,7 @@ the case to keep is written from those notes.
 - `tests/machines.rs` holds them: a stray field, the missing `failed`
   edge of heiko-github's sign-in (three events, its case noted), an impure
   transition, store hooks taking turns (they lose a write without turns),
-  a failed wait, and a Pause pressed while a check waits on Jev, which the
+  a failed wait, and a Pause pressed while a check waits on the decider, which the
   check's state then overwrote, as the host's did then (see below: the
   run now carries such an action out again).
 
@@ -270,7 +270,7 @@ the case to keep is written from those notes.
   state the hook began on, which readers took, and carries each out again
   on the hook's state, as an interface does on a live run. The fake run
   does the same, so `t.hooks` keeps a Pause pressed under a check in every
-  order. An action that reaches Jev, its store or the network does that
+  order. An action that reaches the decider, its store or the network does that
   again too, until actions are pure. heiko-goal's Pause during a check is
   kept, which a heiko-ui test holds.
 

@@ -1,4 +1,4 @@
-//! A [`Jev`] that answers from a function, for tests.
+//! A [`Decider`] that answers from a function, for tests.
 
 use std::{
     collections::BTreeMap,
@@ -7,22 +7,22 @@ use std::{
 
 use async_trait::async_trait;
 
-use crate::{Answer, Jev, JevError, JevUsage, Request, Response};
+use crate::{Answer, Decider, DecideError, DecideUsage, Request, Response};
 
 type Answerer =
-    dyn Fn(&Request) -> Result<Response, JevError> + Send + Sync + 'static;
+    dyn Fn(&Request) -> Result<Response, DecideError> + Send + Sync + 'static;
 
 /// Answers every request with a function, and records the requests.
 /// Clones share the record.
 #[derive(Clone)]
-pub struct FakeJev {
+pub struct FakeDecider {
     answer: Arc<Answerer>,
     requests: Arc<Mutex<Vec<Request>>>,
 }
 
-impl FakeJev {
+impl FakeDecider {
     pub fn new(
-        answer: impl Fn(&Request) -> Result<Response, JevError>
+        answer: impl Fn(&Request) -> Result<Response, DecideError>
         + Send
         + Sync
         + 'static,
@@ -33,14 +33,14 @@ impl FakeJev {
         }
     }
 
-    /// Answers every Noul question with `noul(id)`, and any other
+    /// Answers every Predicate question with `predicate(id)`, and any other
     /// question with an error.
-    pub fn nouls(noul: impl Fn(&str) -> f64 + Send + Sync + 'static) -> Self {
+    pub fn predicates(predicate: impl Fn(&str) -> f64 + Send + Sync + 'static) -> Self {
         Self::new(move |request| {
             let answers = request
                 .questions
                 .keys()
-                .map(|id| (id.clone(), Answer::Noul { noul: noul(id) }))
+                .map(|id| (id.clone(), Answer::Predicate { predicate: predicate(id) }))
                 .collect();
             Ok(response(answers, request))
         })
@@ -62,9 +62,9 @@ pub fn response(
         .expect("requests serialize")
         .len() as u64;
     Response {
-        model: "jev-fake".to_owned(),
+        model: "decide-fake".to_owned(),
         answers,
-        usage: JevUsage {
+        usage: DecideUsage {
             input_tokens,
             output_tokens: 0,
         },
@@ -72,8 +72,8 @@ pub fn response(
 }
 
 #[async_trait]
-impl Jev for FakeJev {
-    async fn ask(&self, request: &Request) -> Result<Response, JevError> {
+impl Decider for FakeDecider {
+    async fn ask(&self, request: &Request) -> Result<Response, DecideError> {
         self.requests
             .lock()
             .expect("not poisoned")

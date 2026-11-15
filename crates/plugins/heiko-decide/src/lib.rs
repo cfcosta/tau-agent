@@ -1,21 +1,21 @@
-//! A client for Jev, TypeSafe's System One model
-//! (<https://docs.typesafe.ai>), for heiko plugins.
+//! Decisions for heiko's plugins, and the client that makes them today:
+//! TypeSafe's System One model (<https://docs.typesafe.ai>).
 //!
-//! Jev does not generate text. It takes a `state` (text or JSON) and a
+//! A decider does not generate text. It takes a `state` (text or JSON) and a
 //! map of typed questions, and answers each one with a structured value:
 //!
-//! - [`Question::Noul`]: the probability that a yes/no statement holds;
+//! - [`Question::Predicate`]: the probability that a yes/no statement holds;
 //! - [`Question::Choice`]: one option from a set, with a probability for
 //!   each and a confidence;
 //! - [`Question::Score`]: a position on ordered levels, with a
 //!   probability for each level and a confidence.
 //!
-//! Plugins depend on the [`Jev`] trait, not on the HTTP client, so tests
-//! answer with [`fake::FakeJev`] and production uses [`TypeSafe`].
+//! Plugins depend on the [`Decider`] trait, not on the HTTP client, so tests
+//! answer with [`fake::FakeDecider`] and production uses [`TypeSafe`].
 //!
-//! It is a plugin too (ADR 0045): [`JevUi`] keeps the TypeSafe key in
-//! the Models screen, and [`JevHost`] gives the plugins that declare the
-//! `heiko.jev` service a client, counted ([`Metered`]), while there is
+//! It is a plugin too (ADR 0045): [`DecideUi`] keeps the TypeSafe key in
+//! the Models screen, and [`DecideHost`] gives the plugins that declare the
+//! `heiko.decide` service a client, counted ([`Metered`]), while there is
 //! one.
 //! Every answer is checked before a plugin sees it: a missing answer, an
 //! answer of the wrong kind, or a probability outside `[0, 1]` is an
@@ -31,34 +31,34 @@ use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 pub use client::{API_KEY_VAR, MissingApiKey, TypeSafe, api_key};
-pub use half::{JevHost, Upstream};
+pub use half::{DecideHost, Upstream};
 pub use metered::{Meter, Metered};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use heiko_ai::message::{Usage, UsageCost};
-pub use ui::{JevUi, NO_KEY, key_page, keyed, needs_jev};
+pub use ui::{DecideUi, NO_KEY, key_page, keyed, needs_decide};
 
 /// The plugin's name.
-pub const NAME: &str = "heiko-jev";
+pub const NAME: &str = "heiko-decide";
 
-/// The name of the service it gives: the Jev to ask, counted, while
+/// The name of the service it gives: the decider to ask, counted, while
 /// there is a key (`heiko_ui_plugin::Services`).
-pub const SERVICE: &str = "heiko.jev";
+pub const SERVICE: &str = "heiko.decide";
 
-/// The model most requests should use: TypeSafe's latest stable Jev.
-pub const DEFAULT_MODEL: &str = "jev-latest";
+/// The model most requests should use: TypeSafe's latest stable the decider.
+pub const DEFAULT_MODEL: &str = "decide-latest";
 
 /// The System One endpoint.
 pub const SYSTEM_ONE_URL: &str = "https://api.typesafe.ai/v1/systemone";
 
-/// US dollars per million input tokens for Jev 1.13. Output tokens are
+/// US dollars per million input tokens for the decider 1.13. Output tokens are
 /// free. Used for every model: it is the only price TypeSafe publishes.
 pub const PRICE_PER_MILLION_INPUT: f64 = 0.042;
 
-/// Asks Jev questions about a state.
+/// Asks the decider questions about a state.
 #[async_trait]
-pub trait Jev: Send + Sync + 'static {
-    async fn ask(&self, request: &Request) -> Result<Response, JevError>;
+pub trait Decider: Send + Sync + 'static {
+    async fn ask(&self, request: &Request) -> Result<Response, DecideError>;
 }
 
 /// One request: a state, and the questions to answer about it. The
@@ -94,10 +94,12 @@ impl Request {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Question {
-    Noul {
+    /// TypeSafe's name for it, on the wire, is `predicate`.
+    #[serde(rename = "predicate")]
+    Predicate {
         instructions: Value,
         #[serde(skip_serializing_if = "Option::is_none")]
-        criteria: Option<NoulCriteria>,
+        criteria: Option<PredicateCriteria>,
     },
     Choice {
         instructions: Value,
@@ -112,9 +114,9 @@ pub enum Question {
     },
 }
 
-/// What counts as yes and as no for a [`Question::Noul`].
+/// What counts as yes and as no for a [`Question::Predicate`].
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct NoulCriteria {
+pub struct PredicateCriteria {
     #[serde(rename = "true", skip_serializing_if = "Option::is_none")]
     pub yes: Option<Value>,
     #[serde(rename = "false", skip_serializing_if = "Option::is_none")]
@@ -123,8 +125,8 @@ pub struct NoulCriteria {
 
 impl Question {
     /// A yes/no question.
-    pub fn noul(instructions: impl Into<Value>) -> Self {
-        Self::Noul {
+    pub fn predicate(instructions: impl Into<Value>) -> Self {
+        Self::Predicate {
             instructions: instructions.into(),
             criteria: None,
         }
@@ -156,21 +158,24 @@ impl Question {
     }
 }
 
-/// Jev's answers to one request.
+/// The decider's answers to one request.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Response {
     /// The versioned model that answered, such as `jev-1.13.0`.
     pub model: String,
     pub answers: BTreeMap<String, Answer>,
-    pub usage: JevUsage,
+    pub usage: DecideUsage,
 }
 
 /// One answer, of the kind its question asked for.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Answer {
-    Noul {
-        noul: f64,
+    /// TypeSafe's name for it, and for its probability, is `predicate`.
+    #[serde(rename = "predicate")]
+    Predicate {
+        #[serde(rename = "predicate")]
+        predicate: f64,
     },
     Choice {
         choice: String,
@@ -185,31 +190,31 @@ pub enum Answer {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
-pub struct JevUsage {
+pub struct DecideUsage {
     pub input_tokens: u64,
     #[serde(default)]
     pub output_tokens: u64,
 }
 
 impl Response {
-    /// The probability of yes for the Noul under `id`.
-    pub fn noul(&self, id: &str) -> Result<f64, JevError> {
+    /// The probability of yes for the Predicate under `id`.
+    pub fn predicate(&self, id: &str) -> Result<f64, DecideError> {
         match self.answer(id)? {
-            Answer::Noul { noul } => probability(id, *noul),
-            _ => Err(JevError::WrongAnswer {
+            Answer::Predicate { predicate } => probability(id, *predicate),
+            _ => Err(DecideError::WrongAnswer {
                 id: id.to_owned(),
-                expected: "noul",
+                expected: "predicate",
             }),
         }
     }
 
     /// The option picked for the Choice under `id`, and its confidence.
-    pub fn choice(&self, id: &str) -> Result<(&str, f64), JevError> {
+    pub fn choice(&self, id: &str) -> Result<(&str, f64), DecideError> {
         match self.answer(id)? {
             Answer::Choice {
                 choice, confidence, ..
             } => Ok((choice.as_str(), probability(id, *confidence)?)),
-            _ => Err(JevError::WrongAnswer {
+            _ => Err(DecideError::WrongAnswer {
                 id: id.to_owned(),
                 expected: "choice",
             }),
@@ -219,22 +224,22 @@ impl Response {
     /// The score for the Score under `id` (0 for the lowest level), and
     /// its confidence. JSON has no non-finite numbers, so a score is
     /// always a number.
-    pub fn score(&self, id: &str) -> Result<(f64, f64), JevError> {
+    pub fn score(&self, id: &str) -> Result<(f64, f64), DecideError> {
         match self.answer(id)? {
             Answer::Score {
                 score, confidence, ..
             } => Ok((*score, probability(id, *confidence)?)),
-            _ => Err(JevError::WrongAnswer {
+            _ => Err(DecideError::WrongAnswer {
                 id: id.to_owned(),
                 expected: "score",
             }),
         }
     }
 
-    fn answer(&self, id: &str) -> Result<&Answer, JevError> {
+    fn answer(&self, id: &str) -> Result<&Answer, DecideError> {
         self.answers
             .get(id)
-            .ok_or_else(|| JevError::MissingAnswer(id.to_owned()))
+            .ok_or_else(|| DecideError::MissingAnswer(id.to_owned()))
     }
 
     /// The request's usage as heiko counts it: input tokens, and their
@@ -256,20 +261,20 @@ impl Response {
     }
 }
 
-fn probability(id: &str, value: f64) -> Result<f64, JevError> {
+fn probability(id: &str, value: f64) -> Result<f64, DecideError> {
     if (0.0..=1.0).contains(&value) {
         Ok(value)
     } else {
-        Err(JevError::OutOfRange {
+        Err(DecideError::OutOfRange {
             id: id.to_owned(),
             value,
         })
     }
 }
 
-/// Why Jev gave no usable answer.
+/// Why the decider gave no usable answer.
 #[derive(Debug, Clone, PartialEq)]
-pub enum JevError {
+pub enum DecideError {
     /// The request could not be sent, or no response came back.
     Transport(String),
     /// TypeSafe answered with an error status. The body is not kept: it
@@ -289,27 +294,27 @@ pub enum JevError {
     },
 }
 
-impl std::fmt::Display for JevError {
+impl std::fmt::Display for DecideError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Transport(message) => {
-                write!(f, "Jev request failed: {message}")
+                write!(f, "Decider request failed: {message}")
             }
             Self::Status(status) => {
-                write!(f, "Jev answered with status {status}")
+                write!(f, "The decider answered with status {status}")
             }
             Self::Malformed(message) => {
-                write!(f, "Jev's response is malformed: {message}")
+                write!(f, "The decider's response is malformed: {message}")
             }
-            Self::MissingAnswer(id) => write!(f, "Jev gave no answer for {id}"),
+            Self::MissingAnswer(id) => write!(f, "The decider gave no answer for {id}"),
             Self::WrongAnswer { id, expected } => {
-                write!(f, "Jev's answer for {id} is not a {expected}")
+                write!(f, "The decider's answer for {id} is not a {expected}")
             }
             Self::OutOfRange { id, value } => {
-                write!(f, "Jev's answer for {id} is out of range: {value}")
+                write!(f, "The decider's answer for {id} is out of range: {value}")
             }
         }
     }
 }
 
-impl std::error::Error for JevError {}
+impl std::error::Error for DecideError {}

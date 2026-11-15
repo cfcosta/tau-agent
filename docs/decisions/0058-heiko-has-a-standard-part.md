@@ -12,7 +12,7 @@ So what several plugins need, each wrote. On 2026-11-15 the built-in
 plugins held the same table of Unicode white space seven times, nine
 `trim`s in five styles, eight cuts with an ellipsis, three ways to write
 a count of tokens (`184k`, rounded or not), four wrappers that await the
-store, four that ask Jev under `pcall`, and three that unwrap the
+store, four that ask the decider under `pcall`, and three that unwrap the
 model's answer. The copies had drifted: two plugins rounded the same
 number differently on the same screen.
 
@@ -24,7 +24,7 @@ it. Or heiko could give more.
 ### `require("heiko")` gives a standard part
 
 `heiko` gains `heiko.text`, `heiko.count`, `heiko.values`, `heiko.store`,
-`heiko.jev`, `heiko.infer` and `heiko.now`. A function goes in when
+`heiko.decide`, `heiko.infer` and `heiko.now`. A function goes in when
 several plugins wrote it by hand and it has one right answer. What one
 plugin needs, what is a plugin's domain (a status's tone, a command's
 arguments), and how things look stay out: the look is a question for the
@@ -68,8 +68,8 @@ each function, and `heiko.text.is_space` against Rust's
   outputs changed: heiko-reasoning's token counts round down, as
   heiko-fast-compaction's did, and a count of a million or more shows a
   tenth rounded down.
-- `heiko.contains` is `heiko.values.contains`. `cmd.jev.noul`, `choice`
-  and `score` are gone: no plugin used them, and `cmd.jev.ask` takes
+- `heiko.contains` is `heiko.values.contains`. `cmd.decide.predicate`, `choice`
+  and `score` are gone: no plugin used them, and `cmd.decide.ask` takes
   questions of each kind.
 - `heiko.flag`, `heiko.change` and `uses.change_args` are gone with
   them: no plugin flagged a call or changed its arguments from
@@ -78,6 +78,6 @@ each function, and `heiko.text.is_space` against Rust's
   call (`calls[id].mark`).
 - heiko does not start agents without the standard's files, as it
   does not without a built-in plugin.
-- What stays copied is what was left out on purpose: batched Jev and
+- What stays copied is what was left out on purpose: batched the decider and
   model calls through `heiko.all`, heiko-todo's buffered writes, and the
   layouts plugins repeat.

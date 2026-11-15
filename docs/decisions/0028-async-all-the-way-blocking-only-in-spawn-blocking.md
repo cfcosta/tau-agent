@@ -28,7 +28,7 @@ On 2026-10-05, 190 `block_on` calls sat in heiko's non-test code:
   `draining` is held for a whole landing.
 - The plugins' host half (`heiko-ui-plugin`: `starting`, `catalog`,
   `repo_data`, `act`) is synchronous and gets a runtime handle, so
-  plugins `block_on` the store and Jev in it.
+  plugins `block_on` the store and the decider in it.
 - Sign-in and GitHub calls run on threads of their own, each with its
   own runtime.
 

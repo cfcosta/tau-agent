@@ -108,8 +108,8 @@ function heiko._commands(commands)
 			args = command.args or "",
 			icon = command.icon or "",
 			popover = command.popover and {
-				jev = command.popover.jev,
-				no_jev = command.popover.no_jev or command.popover.jev,
+				decide = command.popover.decide,
+				no_decide = command.popover.no_decide or command.popover.decide,
 			} or json.null,
 		})
 	end
@@ -1284,7 +1284,7 @@ function heiko._describe(plugin)
 	return {
 		uses = {
 			tools = uses.tools or array({}),
-			jev = uses.jev == true,
+			decide = uses.decide == true,
 			infer = uses.infer == true,
 			network = uses.network or array({}),
 			secrets = uses.secrets or array({}),
@@ -1354,8 +1354,8 @@ function heiko._describe(plugin)
 		drafts = plugin.drafts and heiko._strings(plugin.drafts, "drafts") or nil,
 		keys = plugin.keys and heiko._keys(plugin.keys, plugin.pages) or nil,
 		picker_auto = plugin.picker_auto and {
-			jev = tostring(plugin.picker_auto.jev),
-			no_jev = tostring(plugin.picker_auto.no_jev),
+			decide = tostring(plugin.picker_auto.decide),
+			no_decide = tostring(plugin.picker_auto.no_decide),
 		} or json.null,
 		continues = heiko._continues(plugin.continues),
 	}
@@ -1630,8 +1630,8 @@ end
 require("heiko_actor")(heiko, { tool_text = tool_text })
 
 -- The standard part (`plugins/heiko-std`): `heiko.text`, `heiko.count`,
--- `heiko.values`, `heiko.store`, `heiko.jev`, `heiko.infer` and `heiko.now`.
-for _, part in ipairs({ "text", "count", "values", "store", "jev", "infer", "clock" }) do
+-- `heiko.values`, `heiko.store`, `heiko.decide`, `heiko.infer` and `heiko.now`.
+for _, part in ipairs({ "text", "count", "values", "store", "decide", "infer", "clock" }) do
 	require("heiko_" .. part)(heiko)
 end
 

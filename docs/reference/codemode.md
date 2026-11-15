@@ -19,7 +19,7 @@ Related reference pages: [evaluation](codemode-evaluation.md),
 - Date: 2026-10-01
 
 `codemode` is a tool whose input is a Luau script. The script runs in
-a sandbox in the harness and calls the agent's other tools, and Jev,
+a sandbox in the harness and calls the agent's other tools, and the decider,
 as functions. The model uses it to chain calls, to run them in
 parallel, and to filter large results down before it reads them.
 
@@ -57,7 +57,7 @@ heiko differs from pi, it says so.
 
 - **Execution mode:** `Parallel`. Two codemode calls in one batch run
   side by side in separate VMs.
-- **The plugin:** `Codemode::new(jev: Option<Arc<dyn Jev>>)`, named
+- **The plugin:** `Codemode::new(decide: Option<Arc<dyn Decider>>)`, named
   `codemode`, adds the tool with `Plugin::tools`. The tool needs the
   plugin's `PluginCtx` (`ToolCtx::plugin`), so it runs only as the
   plugin's tool; anywhere else it fails with a message saying so.
@@ -133,16 +133,16 @@ search_tools(query, { limit = 8, namespace = "mcp__linear" })
 describe_tool(name)             --> its description and Luau signature, or nil
 describe_namespace(name)        --> { name, description, instructions, tools }, or nil
 
--- Jev (only when the run has it).
-jev.noul({ state = s, question = "...", yes = "...", no = "..." })
+-- The decider (only when the run has it).
+decide.predicate({ state = s, question = "...", yes = "...", no = "..." })
     --> { probability = 0.93 }
-jev.choice({ state = s, question = "...", options = { bug = "...", feature = "..." } })
+decide.choice({ state = s, question = "...", options = { bug = "...", feature = "..." } })
     --> { choice = "bug", confidence = 0.8, probabilities = { ... } }
-jev.score({ state = s, question = "...", levels = { "low", "mid", "high" } })
+decide.score({ state = s, question = "...", levels = { "low", "mid", "high" } })
     --> { score = 2, confidence = 0.7, probabilities = { ... } }
-jev.ask({ state = s, questions = { a = { kind = "noul", question = "..." }, ... } })
+decide.ask({ state = s, questions = { a = { kind = "predicate", question = "..." }, ... } })
     --> { a = { probability = ... }, ... }   -- one round trip
--- Each also gives what it cost, in US dollars: local answer, cost = jev.noul(...)
+-- Each also gives what it cost, in US dollars: local answer, cost = decide.predicate(...)
 
 -- JSON shapes.
 json.null          -- JSON null inside a table
@@ -211,7 +211,7 @@ b` appends each value that is not `nil`. A return value JSON cannot
   ends with calls still running has them cancelled. pi's sequential
   rule holds: among one script's calls, a `Sequential` tool's call
   waits for the others and runs alone.
-  Jev requests are limited to 4 in flight, as pi limits classifier
+  Decider requests are limited to 4 in flight, as pi limits classifier
   calls.
 - The first error `parallel` raises is the first in argument order.
   `exit()` in one of its functions ends the script at once, and the
@@ -251,18 +251,18 @@ b` appends each value that is not `nil`. A return value JSON cannot
   same branch rule as pi.
 - `load` returns a copy: changing it does not change the store.
 
-### Jev
+### The decider
 
-- `jev` exists when the plugin was built with a Jev (in heiko-ui, a
-  metered Jev when a TypeSafe key is saved). Without one, `jev` is nil,
+- `decide` exists when the plugin was built with a decider (in heiko-ui, a
+  metered decider when a TypeSafe key is saved). Without one, `decide` is nil,
   and the description says so.
 - `state` is any JSON value; `question` is the instructions. The
-  question kinds and limits are heiko-jev's (at most 255 choice options,
-  2 to 10 score levels). Answers are checked as heiko-jev checks them.
+  question kinds and limits are heiko-decide's (at most 255 choice options,
+  2 to 10 score levels). Answers are checked as heiko-decide checks them.
 - Each request's usage is charged to the run
   (`PluginCtx::charge`), so it counts toward the run's limits and the
   plugin's cost. The call rows in `details` carry it; their ids are
-  `<parent>/jev/<n>`, apart from the tools' `<parent>/<n>`. Each
+  `<parent>/decide/<n>`, apart from the tools' `<parent>/<n>`. Each
   request is reported while it runs (see "Events").
 - A failed request raises a Lua error with the error's text.
 
@@ -345,7 +345,7 @@ Globals:
 
 ```
 
-Then, when the plugin has Jev, a `Jev:` section with the `jev`
+Then, when the plugin has the decider, a `Decide:` section with the `decide`
 functions and their Luau types. Then:
 
 ```
@@ -381,7 +381,7 @@ inference and free its concurrency slot. See
 [inference budget](codemode-inference-budget.md) and
 [inference request](codemode-inference-request.md) for the exact limits.
 
-These limits apply to `tools.infer`. Jev has its separate legacy concurrency
+These limits apply to `tools.infer`. The decider has its separate legacy concurrency
 and run accounting rules below.
 
 ### Signatures in the run's context
@@ -465,7 +465,7 @@ A hand-written renderer over `serde_json::Value`, after pi's
     false past the cap. The interface draws the card from these.
     Compaction reads them for the files a script read or changed.
   - `store`: the writes, when the script succeeded.
-  - `usage`: Jev's usage, summed.
+  - `usage`: the decider's usage, summed.
   - `wall_ms`: the script's wall time, in milliseconds.
 
 ## Events
@@ -476,11 +476,11 @@ Each nested call has `ToolStart` and `ToolEnd` with
 calls. Its updates are `ToolUpdate`s under its own id, with the same
 `parent`. The interface puts them inside the codemode card, live.
 
-A Jev request is not a call through the loop, so it makes no events
+A decider request is not a call through the loop, so it makes no events
 of its own. The codemode call reports it instead, as its own
 `ToolUpdate`s (`parent: None`, no content): one when the request
 starts and one when it ends, before the call's `ToolEnd`. Their
-details are `{ "jev": <row>, "after": n }` (`heiko_codemode::live`):
+details are `{ "decide": <row>, "after": n }` (`heiko_codemode::live`):
 the row as `details.calls` would list it then (`running` until it
 ends), and `n`, the tool calls the script had started before it,
 which places it among them. A request past the rows' cap is not
@@ -492,15 +492,15 @@ reported, as it is not listed.
 it after the other plugins: a plugin that adds tools in its `start`
 (heiko-mcp) goes before it, so the signatures list them.
 
-- **Per run:** `agent_plugins` builds `Codemode::new(jev)` with the
-  run's metered Jev when a TypeSafe key is saved, else without Jev.
+- **Per run:** `agent_plugins` builds `Codemode::new(decide)` with the
+  run's metered decider when a TypeSafe key is saved, else without the decider.
   Codemode runs either way.
-- **Catalog:** "Runs Luau scripts that call tools, with Jev", or,
+- **Catalog:** "Runs Luau scripts that call tools, with the decider", or,
   without a key, "Runs Luau scripts that call tools; with a TypeSafe
-  key (Models), scripts ask Jev too". Seams `start` and `tools`.
+  key (Models), scripts ask the decider too". Seams `start` and `tools`.
 - **The card** (`CARD`, for `codemode` calls): the script's first line
   (not its options line) in the header, and `N calls · X.X s · $cost`
-  (Jev's cost, from `details.usage`) once it ended. The body has the
+  (the decider's cost, from `details.usage`) once it ended. The body has the
   script as a `luau` code block, a row per call (status, tool, the
   arguments' preview, time or `cancelled`, cost, the error, and
   plugins' verdicts: `blocked by <plugin>: <reason>`, `flagged by
@@ -511,12 +511,12 @@ it after the other plugins: a plugin that adds tools in its `start`
 - **Rows, live and stored.** While the script runs, its rows come
   from the nested calls heiko-ui folds into the card's `CallData`
   (`plugins.md`, "In heiko-ui"): only the script's own calls, with the
-  same argument and error cuts as `details.calls`; and its Jev rows
+  same argument and error cuts as `details.calls`; and its decider rows
   from the call's updates (`CallData::updates`), the latest of each
   standing, each after the `n` tool calls its update names. Rows are
   placed by their ids and by `n`, not by when their events came, so
   the nested calls' events and the call's updates may interleave any
-  way. The header counts the calls so far and adds what Jev has cost
+  way. The header counts the calls so far and adds what the decider has cost
   so far. Once it ends they
   come from `details.calls`, which is all a stored run has, and
   heiko-ui has dropped the live rows: a live card and a stored one draw
@@ -555,11 +555,11 @@ holds for every input:
   running at the end are cancelled.
 - **In the loop** (`heiko-testing::ScriptedModel`): a codemode call
   makes one transcript result however many nested calls it makes; a
-  plugin's `before_tool` blocks a nested call; Jev's usage reaches the
-  run's total; a Jev request reaches the run as the call's updates,
+  plugin's `before_tool` blocks a nested call; the decider's usage reaches the
+  run's total; a decider request reaches the run as the call's updates,
   before its end; the store holds across runs and follows forks.
 - **Interface** (`tests/ui.rs`): for any generated script, its tool
-  calls and Jev requests in turn or in `parallel_settled`, failing or
+  calls and decider requests in turn or in `parallel_settled`, failing or
   not, the rows folded from its nested calls' events and its updates
   as heiko-ui folds them, merged in any order that keeps each channel's
   own, equal the rows its details list; the output and failure read back from the result; the store

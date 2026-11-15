@@ -2,8 +2,8 @@
 local heiko = require("heiko")
 local t = heiko.test
 
--- A Jev that answers each check with the next of `answers`.
-local function jev(answers)
+-- A decider that answers each check with the next of `answers`.
+local function decide(answers)
 	local n = 0
 	return {
 		ask = function()
@@ -17,10 +17,10 @@ local function jev(answers)
 	}
 end
 
--- A run on `command` that stops after each of `turns` with Jev's
+-- A run on `command` that stops after each of `turns` with the decider's
 -- answers, then ends: the state it leaves, and the view drawn from it.
 local function goal_run(command, answers, turns)
-	local r = t.run({ id = "demo", jev = jev(answers) })
+	local r = t.run({ id = "demo", decide = decide(answers) })
 	r:start({ input = command })
 	for _, turn in ipairs(turns) do
 		r:turn_end({ turn = turn, text = "", calls = array({}), cost = 0, tokens = 120000 })

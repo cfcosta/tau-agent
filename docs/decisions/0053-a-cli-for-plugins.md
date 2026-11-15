@@ -22,7 +22,7 @@ and the screenshots draw, are built by code of its own in
 `heiko-built-in-tests` (`canvas/luau.rs` and nine more), written anew with
 `BLESS_FIXTURES=1 cargo nextest ...`. What a plugin does in a real loop
 (compaction, tree-compaction, fast-compaction, canvas) is Rust too: an
-`Agent` with `ScriptedModel`, an in-memory store, sometimes a `FakeJev` or
+`Agent` with `ScriptedModel`, an in-memory store, sometimes a `FakeDecider` or
 a fake tool. About 5,200 lines, for 13 plugins. A person's plugin can have
 none of it, and nothing writes a package or puts one in the plugins
 repository (ADR 0027) but a chat there.
@@ -137,7 +137,7 @@ package, one per failure, and with `--verbose` one per thing:
      `t.png(w, h)`.
    - `settings`, over the plugin's defaults, and the run's `kind` and
      `repo`.
-   - `jev`: a fake Jev, `{ error = 503 }` or rules answering each
+   - `decide`: a fake decider, `{ error = 503 }` or rules answering each
      question by the first that matches its id's prefix or a text in
      what the request holds of it. The host cannot call back into the
      test's Luau while the loop runs, so the answers are data.
@@ -145,14 +145,14 @@ package, one per failure, and with `--verbose` one per thing:
      answers, as text or a list taken in order, `{name}` in it being the
      call's argument `name` and `{x*name}` `x` that many times.
    - `then`: forks, each from where the run before it ended, with its
-     own `prompt`, `steer`, `settings` and `jev`.
+     own `prompt`, `steer`, `settings` and `decide`.
 
    `run` holds what the Rust tests read: `results`, each call's text and
    whether it failed; `outcome` (`text`, `stop`, `usage`); `events`;
    `state`, the plugin's last; from the store, the context's `rewrites`
    and the plugin's `logs`; `charged`; `archive`, each file the plugin
    archived with its permission bits; and on the first run `forks`,
-   `requests` (what the model was sent each turn), `jev` (what Jev was
+   `requests` (what the model was sent each turn), `decide` (what the decider was
    asked), `workspace` (each file as written) and `blobs` (each blob the
    state names, read back). A file's VM registers its loops; the host
    runs each one itself, with a limit of 60 s, then runs the file again
@@ -165,8 +165,8 @@ package, one per failure, and with `--verbose` one per thing:
    `heiko-scripted`, on `heiko-ai` alone, which `heiko-testing` re-exports; it
    and `heiko-store-sqlite` become normal dependencies of
    `heiko-luau-plugins-host`, behind no feature, since a person's tests use
-   them in the app too. `heiko-testing` stays a dev-dependency. `FakeJev`
-   is already `heiko_jev::fake`.
+   them in the app too. `heiko-testing` stays a dev-dependency. `FakeDecider`
+   is already `heiko_decide::fake`.
 
 4. Nothing else: a test file that declares nothing fails, as now.
 
@@ -265,7 +265,7 @@ passes_its_tests`;
   built-in (now `packages.rs`, below); heiko-todo's store under a fuse, its model, the `br` oracle and
   the providers' schema rules; heiko-reasoning's stored runs; heiko-schedule
   waking a chat through the real host; heiko-constitution against the real
-  Jev; and the one-binary and package checks.
+  decider; and the one-binary and package checks.
 - **A fix it found.** Changing a README changed heiko-tree-compaction's
   digest, so one property drew new cases, and with mlua 0.12.1 its
   script slept until its limit about one run in two: the interrupt's

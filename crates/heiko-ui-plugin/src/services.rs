@@ -1,5 +1,5 @@
 //! What the host hands plugins by type: a run's workspace, the person's
-//! model, what a plugin provides others (such as heiko-jev's Jev), anything
+//! model, what a plugin provides others (such as heiko-decide's decider), anything
 //! a host adds later. The set is open: a host puts
 //! in what it has, and a plugin takes what it needs, so a new service
 //! needs no change to the interface.

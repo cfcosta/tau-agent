@@ -6,11 +6,11 @@ local t = heiko.test
 -- gpt-5.5's levels.
 local EFFORTS = { "none", "low", "medium", "high", "xhigh" }
 
--- What Jev charges per million bytes of a request, as heiko's fake Jev
+-- What the decider charges per million bytes of a request, as heiko's fake decider
 -- counts them: one token a byte.
 local PRICE_PER_MILLION_INPUT = 0.042
 
--- The request as Jev gets it: each question as `{ type, instructions,
+-- The request as Decider gets it: each question as `{ type, instructions,
 -- criteria }`.
 local function wire(request)
 	local questions = {}
@@ -25,7 +25,7 @@ local function wire(request)
 					criteria[name] = description
 				end
 			end
-		elseif q.kind == "noul" then
+		elseif q.kind == "predicate" then
 			criteria = (q.yes ~= nil or q.no ~= nil) and { ["true"] = q.yes, ["false"] = q.no } or nil
 		end
 		questions[id] = { type = q.kind, instructions = q.question, criteria = criteria }
@@ -33,9 +33,9 @@ local function wire(request)
 	return { state = request.state, questions = questions }
 end
 
--- A Jev `confidence` sure of `probabilities`, one per level, charging
+-- A decider `confidence` sure of `probabilities`, one per level, charging
 -- for the bytes of the request it gets.
-local function jev(probabilities, confidence)
+local function decide(probabilities, confidence)
 	return {
 		ask = function(request)
 			local p = {}
@@ -53,7 +53,7 @@ local function run(id, state, fake)
 		id = id,
 		settings = { redecide = false, threshold = 0.7 },
 		state = state,
-		jev = fake,
+		decide = fake,
 	})
 end
 
@@ -74,18 +74,18 @@ end
 
 -- High picked as the run starts.
 t.fixture("chose", function()
-	local r = run("demo", {}, jev({ 0.01, 0.02, 0.09, 0.84, 0.04 }, 0.84))
+	local r = run("demo", {}, decide({ 0.01, 0.02, 0.09, 0.84, 0.04 }, 0.84))
 	r:start(message("Fix the flaky retry test", 0))
 	return drawn(r)
 end)
 
--- A later message of a 48k-token conversation keeps medium over Jev's
+-- A later message of a 48k-token conversation keeps medium over the decider's
 -- high.
 t.fixture("kept", function()
-	local earlier = run("earlier", {}, jev({ 0.01, 0.03, 0.9, 0.05, 0.01 }, 0.9))
+	local earlier = run("earlier", {}, decide({ 0.01, 0.03, 0.9, 0.05, 0.01 }, 0.9))
 	earlier:start(message("Design the retry pool", 0))
 	earlier:run_end({ stop = "Stop", turns = 3, cost = 0, text = "Done." })
-	local r = run("demo", earlier.state, jev({ 0.01, 0.03, 0.11, 0.81, 0.04 }, 0.81))
+	local r = run("demo", earlier.state, decide({ 0.01, 0.03, 0.11, 0.81, 0.04 }, 0.81))
 	r:start(message("Fix the flaky retry test", 48213))
 	return drawn(r)
 end)

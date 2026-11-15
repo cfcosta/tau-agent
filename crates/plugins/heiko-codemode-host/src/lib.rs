@@ -1,6 +1,6 @@
 //! Codemode (`docs/reference/codemode.md`): a tool whose input is a
 //! Luau script. The script runs in a sandbox in the harness and calls
-//! the run's other tools, and Jev, as functions: it chains calls, runs
+//! the run's other tools, and the decider, as functions: it chains calls, runs
 //! them in parallel, and filters large results before the model reads
 //! them.
 //!
@@ -15,7 +15,7 @@
 //!   that fit the run's context; [`heiko_codemode::description`] is the
 //!   tool's text.
 //! - [`heiko_codemode::live`] is what a call reports while its script
-//!   runs: its Jev requests, which make no run events of their own.
+//!   runs: its decider requests, which make no run events of their own.
 //! - [`heiko_codemode::store`] folds the store's records and keeps a
 //!   script's writes.
 //! - [`Codemode`] is the plugin, and [`CodemodeTool`] its tool.
@@ -30,7 +30,7 @@ mod half;
 pub mod host;
 pub mod inference;
 pub mod inference_budget;
-pub mod jev;
+pub mod decide;
 pub mod json;
 mod module_tests;
 mod module_tools;

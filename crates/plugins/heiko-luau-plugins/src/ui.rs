@@ -920,7 +920,7 @@ fn luau_action(
         state,
         settings: view.settings.plugins.get(plugin).cloned(),
         live,
-        jev: heiko_jev::keyed(view),
+        decide: heiko_decide::keyed(view),
     });
 }
 
@@ -1136,7 +1136,7 @@ impl UiPlugin for LuauPluginsUi {
                 heiko_ui_plugin::services::names::CONVERSATIONS,
                 // Each turn's commit, for `turn_end` (ADR 0050, gap L).
                 heiko_ui_plugin::services::names::TURN_HOOKS,
-                heiko_jev::SERVICE,
+                heiko_decide::SERVICE,
             ])
     }
 
@@ -1214,14 +1214,14 @@ impl UiPlugin for LuauPluginsUi {
             })
             .contribute(points::PLAN, |_: &AtRun, view| plan_field(view.state?))
             .contribute(points::PICKER_AUTO, |_: &AtApp, view| {
-                let keyed = heiko_jev::keyed(view);
+                let keyed = heiko_decide::keyed(view);
                 view.data.plugins.iter().find_map(|entry| {
                     let auto =
                         entry.declaration.as_ref()?.picker_auto.as_ref()?;
                     Some(if keyed {
-                        auto.jev.clone()
+                        auto.decide.clone()
                     } else {
-                        auto.no_jev.clone()
+                        auto.no_decide.clone()
                     })
                 })
             })
@@ -1551,16 +1551,16 @@ fn command_of<'a>(
 }
 
 /// The popover of `command` while it is written: its pieces, as there
-/// is a Jev key or not.
+/// is a decider key or not.
 fn command_popover(
     command: &str,
     _args: &str,
     view: &mut ViewCx<'_, LuauPluginsUi>,
 ) -> Option<Node> {
-    let keyed = heiko_jev::keyed(view);
+    let keyed = heiko_decide::keyed(view);
     let (plugin, spec) = command_of(view.data, command)?;
     let popover = spec.popover.as_ref()?;
-    let pieces = if keyed { &popover.jev } else { &popover.no_jev };
+    let pieces = if keyed { &popover.decide } else { &popover.no_decide };
     Some(embed(pieces, plugin))
 }
 
@@ -1591,8 +1591,8 @@ fn drafts(
 ) -> serde_json::Map<String, Value> {
     let mut ids = Vec::new();
     if let Some(popover) = &spec.popover {
-        input_ids(&popover.jev, &mut ids);
-        input_ids(&popover.no_jev, &mut ids);
+        input_ids(&popover.decide, &mut ids);
+        input_ids(&popover.no_decide, &mut ids);
     }
     ids.into_iter()
         .filter_map(|id| {
@@ -1839,12 +1839,12 @@ fn repo_page(
         .map(Value::to_string)
         .unwrap_or_default();
     let params = view.params.clone();
-    // Whether a Jev key is saved, as the page's `ctx.run.jev`.
-    let jev = heiko_jev::keyed(view);
+    // Whether a decider key is saved, as the page's `ctx.run.decide`.
+    let decide = heiko_decide::keyed(view);
     let drafts = page_drafts(plugin, view);
     Node::Fetched {
         key: format!(
-            "luau-repo-page/{plugin}/{}/{kept}/{jev}/{}",
+            "luau-repo-page/{plugin}/{}/{kept}/{decide}/{}",
             json!(params),
             json!(drafts)
         ),
@@ -1852,7 +1852,7 @@ fn repo_page(
             plugin: plugin.to_owned(),
             page: page.to_owned(),
             params,
-            jev,
+            decide,
             drafts,
         }),
     }
@@ -1874,11 +1874,11 @@ fn app_page(
         .map(|app| app.value.to_string())
         .unwrap_or_default();
     let params = view.params.clone();
-    let jev = heiko_jev::keyed(view);
+    let decide = heiko_decide::keyed(view);
     let drafts = page_drafts(plugin, view);
     Node::Fetched {
         key: format!(
-            "luau-app-page/{plugin}/{}/{kept}/{jev}/{}",
+            "luau-app-page/{plugin}/{}/{kept}/{decide}/{}",
             json!(params),
             json!(drafts)
         ),
@@ -1886,7 +1886,7 @@ fn app_page(
             plugin: plugin.to_owned(),
             page: page.to_owned(),
             params,
-            jev,
+            decide,
             drafts,
         }),
     }
@@ -2193,8 +2193,8 @@ fn reaches(uses: &Uses) -> Vec<String> {
         .iter()
         .map(|tool| format!("the {tool} tool"))
         .collect();
-    if uses.jev {
-        reach.push("Jev".to_owned());
+    if uses.decide {
+        reach.push("The decider".to_owned());
     }
     if uses.infer {
         reach.push("infer".to_owned());
@@ -3457,8 +3457,8 @@ mod tests {
             app_page_link("rules-plugin", "rules").param("note", "a")
         );
         assert_eq!(
-            to(link(json!({ "repo": "docbert" }), json!("heiko-jev"))).plugin,
-            Some("heiko-jev".into())
+            to(link(json!({ "repo": "docbert" }), json!("heiko-decide"))).plugin,
+            Some("heiko-decide".into())
         );
     }
 

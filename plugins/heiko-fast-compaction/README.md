@@ -1,6 +1,6 @@
 # heiko-fast-compaction
 
-Keeps a heiko run's context lean with Jev, TypeSafe's System One model, as
+Keeps a heiko run's context lean with the decider, TypeSafe's System One model, as
 a plugin. It never summarizes: what stays is verbatim, and what goes is
 archived to a file or can be re-run. When pruning cannot free enough,
 the tree or the summary (`heiko-tree-compaction`, `heiko-compaction`, after
@@ -9,11 +9,11 @@ it) takes over.
 It works in two stages:
 
 - Output pruning, at `after_tool_result`. A large `exec_command` or `write_stdin` result is
-  trimmed to the chunks of lines Jev says the task still needs, before
+  trimmed to the chunks of lines the decider says the task still needs, before
   the model first sees it. The whole output is archived to a file the
   model can read. Nothing already sent changes, so it costs no resend.
 - History pruning, between turns. Once the context passes a share of the
-  window, and on overflow, Jev decides for each tool call that is not
+  window, and on overflow, the decider decides for each tool call that is not
   pinned whether the call and its full result still matter. Each call is
   kept, has its result cut to a head and a note naming its archive, or
   goes with its result. When the pass saves enough, the pruned
@@ -42,7 +42,7 @@ Its rules are in
 | `DEMO_DECLARATION` | What it declares, as the demo lists it, as JSON        |
 | `DEMO_RUN`         | The demo run's three steps, as it keeps and draws them |
 
-`heiko-output-pruning-eval` measures output pruning against the real Jev.
+`heiko-output-pruning-eval` measures output pruning against the real decider.
 
 ## Testing
 
@@ -59,5 +59,5 @@ of output pruning's gate, chunks, plan, answers and render;
 `heiko-plugin test` loads the plugin as heiko does and runs them;
 `tests/fixtures.luau` makes the demo's fixtures, which it holds to
 `fixtures/`. `tests/loop.luau` and `tests/output_loop.luau` run it in a
-real agent loop (`t.loop`) on a scripted model and a fake Jev: passes, cooldowns, forks, overflows,
+real agent loop (`t.loop`) on a scripted model and a fake decider: passes, cooldowns, forks, overflows,
 failures and archives, and outputs pruned, kept and left alone.

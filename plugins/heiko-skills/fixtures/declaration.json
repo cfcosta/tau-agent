@@ -3,7 +3,7 @@
   "description": "Instructions the agent loads when a task calls for them: your skills, and those heiko ships",
   "uses": {
     "tools": [],
-    "jev": false,
+    "decide": false,
     "infer": false,
     "network": [],
     "secrets": [],

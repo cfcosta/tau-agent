@@ -77,7 +77,7 @@ fn kinds_keep_their_promises(tc: TestCase) {
     }
 
     // needle-error's error is in neither end chunk, which pruning keeps
-    // whatever Jev says, so only Jev's answer can keep it.
+    // whatever the decider says, so only the decider's answer can keep it.
     let error = generate(Kind::NeedleError, seed);
     let lines = measure::lines(&error.output).len();
     let chunks = measure::chunks(lines, default("output_chunk_lines"));

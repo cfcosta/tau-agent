@@ -324,7 +324,7 @@ they link its host half already.
 They collapse into one crate, `crates/heiko-built-in-tests`, with **one
 test binary** (`tests/main.rs`, a module per row, `autotests = false`),
 so 20 links become one. Its dev-dependencies are the union of the
-carriers': heiko-agent, heiko-ai, heiko-codemode-host, heiko-jev,
+carriers': heiko-agent, heiko-ai, heiko-codemode-host, heiko-decide,
 heiko-luau-plugins, heiko-luau-plugins-host, heiko-store, heiko-store-sqlite,
 heiko-testing, async-trait, futures-util, hegeltest, jsonschema, schemars,
 serde, serde_json, tempfile, tokio and tokio-util.

@@ -469,8 +469,8 @@ async fn discovery_finds_tools_and_namespaces() {
 }
 
 #[tokio::test]
-async fn jev_is_nil_without_one() {
-    let outcome = script(&host(), "return jev == nil").await;
+async fn decide_is_nil_without_one() {
+    let outcome = script(&host(), "return decide == nil").await;
     assert_eq!(texts(&outcome), ["true"]);
 }
 

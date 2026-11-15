@@ -24,7 +24,7 @@ pub struct Trial {
     pub lines: usize,
     /// Lines of the output the model saw, when the result was replaced.
     pub kept_lines: Option<usize>,
-    /// Chunks the output went into, and how many stayed, when Jev was
+    /// Chunks the output went into, and how many stayed, when the decider was
     /// asked (the plugin's report), replaced or not.
     pub chunks: Option<usize>,
     pub kept_chunks: Option<usize>,
@@ -38,9 +38,9 @@ pub struct Trial {
     /// Whether pruning replaced the result.
     pub replaced: bool,
     pub requests: usize,
-    pub jev_input_tokens: u64,
+    pub decide_input_tokens: u64,
     pub cost_usd: f64,
-    /// Jev's answers about the chunks, by band.
+    /// The decider's answers about the chunks, by band.
     pub answers: Bands,
     /// Each chunk of the whole output's largest answer, when it was
     /// asked about; its estimated tokens; and the chunk each needle is
@@ -91,7 +91,7 @@ pub struct Summary {
     pub replaced: usize,
     pub errors: usize,
     pub requests: usize,
-    /// Jev's answers about chunks, by band, summed.
+    /// The decider's answers about chunks, by band, summed.
     pub answers: Bands,
     pub cost_usd: f64,
     pub mean_latency_ms: f64,
@@ -171,7 +171,7 @@ fn ratio(value: Option<f64>, retained: usize, needles: usize) -> String {
 
 /// The summaries as a plain-text table. `reduction` is against what
 /// `exec_command` alone shows, `of whole` against the whole output. `answers
-/// n/u/y` counts Jev's answers about chunks: confident noise (at most
+/// n/u/y` counts the decider's answers about chunks: confident noise (at most
 /// 0.1), uncertain, and needed (0.5 or more).
 pub fn table(summaries: &[Summary]) -> String {
     let mut table = format!(

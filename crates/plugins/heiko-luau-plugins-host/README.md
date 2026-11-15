@@ -18,7 +18,7 @@ uses.
 | `runtime::load`             | Reads what a folder declares, in a fresh VM, and checks it       |
 | `runtime::Loaded`           | A checked plugin: `call` runs a hook, `test` runs its tests      |
 | `runtime::Hook`             | A hook as the host calls it, with its time limit (`Hook::limit`) |
-| `runtime::Reach`, `NoReach` | What a hook may reach beyond its VM: tools, Jev                  |
+| `runtime::Reach`, `NoReach` | What a hook may reach beyond its VM: tools, the decider                  |
 | `registry::Registry`        | The active plugins, read from the repository's trunk             |
 | `testing::PluginTesting`    | Adds the `plugin_test` tool to a run                             |
 | `skill`                     | The `heiko-plugins` skill: `render`, `install`, `EXAMPLES`         |
@@ -52,13 +52,13 @@ This is the host half (decisions 0027 and 0030). Its partner is
 `Record`, the Plugins page and the view drawing.
 
 It builds on `heiko-agent`, `heiko-codemode` and `heiko-codemode-host` (the
-sandbox), `heiko-jev`, `heiko-ui-plugin` (`SHIPPED_SKILLS`, where the skill
+sandbox), `heiko-decide`, `heiko-ui-plugin` (`SHIPPED_SKILLS`, where the skill
 is installed) and `heiko-vcs-host` (reading trunk). Because it links Luau
 through `heiko-codemode-host`, only the `heiko` app depends on it: it
 registers `LuauPluginsHost` in `crates/heiko/src/lib.rs`.
 
 `LuauPluginsHost` gives each run the active plugins with the person's
-settings over their defaults, and Jev when the run has it. A run in the
+settings over their defaults, and the decider when the run has it. A run in the
 plugins repository also gets `PluginTesting`.
 
 ## Usage
@@ -84,7 +84,7 @@ let settings = loaded.declaration.default_settings();
 let plugins = LuauPlugins::new(
     vec![Active { loaded, settings }],
     json!({ "kind": "main", "repo": "my-repo", "model": "gpt-5.5" }),
-    None, // no Jev
+    None, // no decider
 );
 let agent = Agent::new(llm.clone()).plugin(plugins);
 ```

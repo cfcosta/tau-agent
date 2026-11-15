@@ -199,8 +199,8 @@ fn the_catalog_fits_its_budget_and_accounts_for_every_tool(tc: TestCase) {
     }
 }
 
-/// The description is fixed: the intro, then the `Jev:` section or the
-/// line saying there is no Jev, then the closing paragraph, which is
+/// The description is fixed: the intro, then the `Decide:` section or the
+/// line saying there is no decider, then the closing paragraph, which is
 /// the one `docs/reference/codemode.md` gives, word for word.
 #[test]
 fn the_description_is_fixed() {
@@ -210,11 +210,11 @@ fn the_description_is_fixed() {
         .expect("the doc gives the closing paragraph");
     let (closing, _) = after.split_once("\n```").unwrap();
     assert_eq!(description::NOT_DECLARED, closing);
-    for (has_jev, middle) in
-        [(true, description::JEV), (false, description::NO_JEV)]
+    for (has_decide, middle) in
+        [(true, description::DECIDE), (false, description::NO_DECIDE)]
     {
         assert_eq!(
-            description(has_jev),
+            description(has_decide),
             format!("{}\n\n{middle}\n\n{closing}", description::INTRO)
         );
     }

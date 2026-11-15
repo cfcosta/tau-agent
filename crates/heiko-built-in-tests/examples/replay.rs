@@ -1,5 +1,5 @@
 //! Replays the latest stored runs through heiko-reasoning with the real
-//! Jev, and prints what it would pick next to what the runs went out at.
+//! The decider, and prints what it would pick next to what the runs went out at.
 //! Needs `TYPESAFE_API_KEY` and the network:
 //!
 //! ```sh
@@ -24,7 +24,7 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use heiko_ai::message::{InputBlock, Message, UserContent};
 use heiko_codemode_host::{ToolCall, ToolEntry, ToolReply};
-use heiko_jev::Jev;
+use heiko_decide::Decider;
 use heiko_luau_plugins_host::runtime::{Context, Hook, Loaded, Reach, load};
 use tokio_util::sync::CancellationToken;
 
@@ -47,7 +47,7 @@ pub struct Decision {
     /// The effort the stored request went out at, as the run's records
     /// say.
     pub recorded: Option<String>,
-    /// What Jev answered, when the plugin asked: its choice, or why it
+    /// What the decider answered, when the plugin asked: its choice, or why it
     /// failed; `None` when a lease held.
     pub asked: Option<Result<Value, String>>,
     /// The effort the plugin sends the request at.
@@ -65,9 +65,9 @@ pub async fn plugin() -> Loaded {
         .expect("it loads")
 }
 
-/// What the hooks reach in the replay: Jev, and the conversation so far.
+/// What the hooks reach in the replay: the decider, and the conversation so far.
 struct Replaying {
-    jev: Arc<dyn Jev>,
+    decide: Arc<dyn Decider>,
     transcript: Value,
 }
 
@@ -91,8 +91,8 @@ impl Reach for Replaying {
         }
     }
 
-    fn jev(&self) -> Option<Arc<dyn Jev>> {
-        Some(self.jev.clone())
+    fn decide(&self) -> Option<Arc<dyn Decider>> {
+        Some(self.decide.clone())
     }
 }
 
@@ -100,7 +100,7 @@ impl Reach for Replaying {
 /// plugin's (`redecide`, `threshold`).
 pub async fn replay(
     plugin: &Loaded,
-    jev: Arc<dyn Jev>,
+    decide: Arc<dyn Decider>,
     model: &str,
     settings: Value,
     timeline: &[Entry],
@@ -138,14 +138,14 @@ pub async fn replay(
                 let choices = count(&state["choices"]);
                 let notes = count(&state["notes"]);
                 let reach = Arc::new(Replaying {
-                    jev: jev.clone(),
+                    decide: decide.clone(),
                     transcript: heiko_luau_plugins_host::rewrite::transcript(
                         &transcript,
                     ),
                 });
                 let context = |state: &Value| Context {
-                    // Jev is there, as the host says of a run with a key.
-                    run: json!({ "id": "replay", "kind": "main", "model": model, "jev": true }),
+                    // The decider is there, as the host says of a run with a key.
+                    run: json!({ "id": "replay", "kind": "main", "model": model, "decide": true }),
                     now: json!({}),
                     settings: settings.clone(),
                     state: state.clone(),
@@ -196,7 +196,7 @@ pub async fn replay(
                         state["choices"].as_array().and_then(|all| all.last());
                     Some(Ok(choice.cloned().unwrap_or(Value::Null)))
                 } else if count(&state["notes"]) > notes {
-                    Some(Err("Jev could not score".to_owned()))
+                    Some(Err("The decider could not score".to_owned()))
                 } else {
                     None
                 };
@@ -275,7 +275,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let path = args.next().ok_or("usage: replay <runs.db> [runs]")?;
     let limit: u32 = args.next().map_or(Ok(20), |n| n.parse())?;
-    let jev: Arc<dyn Jev> = Arc::new(heiko_jev::TypeSafe::from_env()?);
+    let decide: Arc<dyn Decider> = Arc::new(heiko_decide::TypeSafe::from_env()?);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
@@ -303,7 +303,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .collect();
             let decisions = replay(
                 &plugin,
-                jev.clone(),
+                decide.clone(),
                 &run.model,
                 settings.clone(),
                 &timeline,
@@ -349,7 +349,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         println!(
-            "\n{requests} requests; Jev asked {asked} times (${cost:.4}); \
+            "\n{requests} requests; the decider asked {asked} times (${cost:.4}); \
              {changed} would go out at another effort"
         );
         for ((from, to), count) in moves {

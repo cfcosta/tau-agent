@@ -34,7 +34,7 @@ pub fn halves(plugins: Registry) -> Registry {
         .host(heiko_direnv::DirenvHost)
         .host(heiko_mcp_host::McpHost)
         .host(heiko_phones::PhonesHost)
-        .host(heiko_jev::JevHost)
+        .host(heiko_decide::DecideHost)
         .host(heiko_sqlite::SqliteHost)
         .host(heiko_chatgpt::ChatGptHost)
 }

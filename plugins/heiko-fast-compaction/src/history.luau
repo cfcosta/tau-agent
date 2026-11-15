@@ -1,4 +1,4 @@
--- The conversation as Jev sees it, whole: split in order into segments
+-- The conversation as Decider sees it, whole: split in order into segments
 -- that each fit a budget, never truncated and never left out.
 --
 -- Ported from `tamaratran/jev-pruner` (`src/history.ts`,

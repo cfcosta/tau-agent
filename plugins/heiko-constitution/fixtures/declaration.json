@@ -1,9 +1,9 @@
 {
   "name": "heiko-constitution",
-  "description": "Checks tool calls and final answers against each repository's rules, with Jev",
+  "description": "Checks tool calls and final answers against each repository's rules, with the decider",
   "uses": {
     "tools": [],
-    "jev": true,
+    "decide": true,
     "infer": false,
     "network": [],
     "secrets": [],

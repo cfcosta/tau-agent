@@ -9,7 +9,7 @@ mod infer_tool;
 mod inference;
 mod inference_budget;
 mod inference_trace;
-mod jev;
+mod decide;
 mod json;
 mod map;
 mod mapping;

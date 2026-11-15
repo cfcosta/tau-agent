@@ -1,4 +1,4 @@
-//! heiko-constitution against the real Jev: a rule tells a call that
+//! heiko-constitution against the real decider: a rule tells a call that
 //! breaks it from one that keeps it. Its Luau tests and fixtures are
 //! `heiko-plugin test`'s (ADR 0053).
 
@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use serde_json::{Value, json};
-use heiko_jev::Jev;
+use heiko_decide::Decider;
 use heiko_luau_plugins_host::{
     runtime::{Context, Hook, Loaded, NoReach, Reach, StoreRef, load},
     store::{Fuse, Kv},
@@ -26,10 +26,10 @@ fn loaded() -> Loaded {
     block_on_io(load(heiko_luau_plugins::names::CONSTITUTION, files)).unwrap()
 }
 
-struct WithJev(Arc<dyn Jev>);
+struct WithDecider(Arc<dyn Decider>);
 
-impl Reach for WithJev {
-    fn jev(&self) -> Option<Arc<dyn Jev>> {
+impl Reach for WithDecider {
+    fn decide(&self) -> Option<Arc<dyn Decider>> {
         Some(self.0.clone())
     }
 }
@@ -48,17 +48,17 @@ fn store(values: &[(&str, Value)]) -> StoreRef {
 }
 
 /// What `hook` does with `input`, from `state`, in the demo's run on
-/// `store`, with `jev` or none: the state it left and its answer.
+/// `store`, with `decide` or none: the state it left and its answer.
 fn call(
     loaded: &Loaded,
     hook: Hook,
     input: Value,
     state: &Value,
     store: &StoreRef,
-    jev: Option<&Arc<dyn Jev>>,
+    decide: Option<&Arc<dyn Decider>>,
 ) -> (Value, Value) {
     let context = Context {
-        run: json!({ "id": "demo", "kind": "main", "repo": "heiko-agent", "jev": jev.is_some() }),
+        run: json!({ "id": "demo", "kind": "main", "repo": "heiko-agent", "decide": decide.is_some() }),
         now: json!({}),
         settings: json!({}),
         state: state.clone(),
@@ -66,8 +66,8 @@ fn call(
         store: Some(store.clone()),
         job: None,
     };
-    let reach: Arc<dyn Reach> = match jev {
-        Some(jev) => Arc::new(WithJev(jev.clone())),
+    let reach: Arc<dyn Reach> = match decide {
+        Some(decide) => Arc::new(WithDecider(decide.clone())),
         None => Arc::new(NoReach),
     };
     let outcome = block_on_io(loaded.call(
@@ -83,10 +83,10 @@ fn call(
 
 #[test]
 #[ignore = "needs TYPESAFE_API_KEY and the network"]
-fn the_real_jev_tells_a_broken_rule_from_a_kept_one() {
+fn the_real_decide_tells_a_broken_rule_from_a_kept_one() {
     let loaded = loaded();
-    let jev: Arc<dyn Jev> =
-        Arc::new(heiko_jev::TypeSafe::from_env().expect("TYPESAFE_API_KEY"));
+    let decide: Arc<dyn Decider> =
+        Arc::new(heiko_decide::TypeSafe::from_env().expect("TYPESAFE_API_KEY"));
     let rules = json!({ "on_error": "allow", "max_holds": 3, "rules": [{
         "id": "R1",
         "text": "Library code never calls unwrap() or expect(); it returns errors with ?.",
@@ -104,7 +104,7 @@ fn the_real_jev_tells_a_broken_rule_from_a_kept_one() {
             write(content),
             &json!({}),
             &store,
-            Some(&jev),
+            Some(&decide),
         );
         println!("{content}: {}", state["calls"]["c1"]);
         decision

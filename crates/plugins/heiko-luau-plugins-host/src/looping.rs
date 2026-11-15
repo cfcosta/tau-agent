@@ -1,6 +1,6 @@
 //! `t.loop` (ADR 0053): a package's plugin in a real agent loop, from its
 //! tests. The test gives the run as data, its `spec`; the host runs it
-//! with a scripted model, the fake tools and Jev the spec names, the
+//! with a scripted model, the fake tools and the decider the spec names, the
 //! run's workspace and blobs in a folder of its own, an in-memory store
 //! and real time, and gives back what the run came to for the test's
 //! check, with the workspace as written and the blobs its state names.
@@ -27,17 +27,17 @@
 //!   a text, or a list taken in order, the last kept; `{ error }` fails.
 //!   In a text, `{name}` is the call's argument `name`, and `{x*name}` is
 //!   `x` that many times.
-//! - `jev`: a fake Jev, `{ error = 503 }` failing every request, or rules
+//! - `decide`: a fake decider, `{ error = 503 }` failing every request, or rules
 //!   answering each question by the first that matches: `id` a prefix of
 //!   the question's id, `has` a text in what the request's state holds
-//!   of it (the object there whose `id` is the question's), then `noul`,
+//!   of it (the object there whose `id` is the question's), then `predicate`,
 //!   `choice` (with `probabilities`) or `score`.
 //! - `data` and `repository`: what heiko's data folder and its folder for
 //!   the run's repository hold as the run starts (`uses.files`' `data`
 //!   and `repository`), written as `files` is; `commits`: the commit a
 //!   turn leaves, `{ turn, change, paths }` each, which `turn_end` is
 //!   given (ADR 0050, gap L).
-//! - `then`: steps after the run, each with its own `settings` and `jev`:
+//! - `then`: steps after the run, each with its own `settings` and `decide`:
 //!   a fork from where the run before it ended, with its `prompt` and
 //!   `steer`; `{ resume = true, prompt }`, the same run going on; or
 //!   `{ idle = true }`, the finished run compacted as it waits, from its
@@ -56,7 +56,7 @@
 //! `state` and `logs`. The first run's also has `forks` (each step's),
 //! `requests` (each request's `settings`, its fields, and its
 //! `messages`), `most_at_once` (the most responses going on at once),
-//! `jev` (what Jev was asked), `workspace` and `blobs`, and `data` and
+//! `decide` (what the decider was asked), `workspace` and `blobs`, and `data` and
 //! `repository`: each file of those folders as the loop left them, its
 //! path to its text.
 
@@ -79,7 +79,7 @@ use heiko_agent::{
     tool::{AgentTool, ToolCtx, ToolOutput},
 };
 use heiko_ai::message::StopReason;
-use heiko_jev::{Answer, JevError, fake::FakeJev};
+use heiko_decide::{Answer, DecideError, fake::FakeDecider};
 use heiko_scripted::{ScriptedModel, TurnBuilder};
 
 use crate::{
@@ -123,7 +123,7 @@ pub async fn run(files: &Files, spec: &Value) -> Result<Value, String> {
         dir: dir.path().to_owned(),
         counted: Counted::new(llm.clone()),
         llm,
-        jev: spec.get("jev").map(Rules::new).transpose()?,
+        decide: spec.get("decide").map(Rules::new).transpose()?,
         repo: spec["repo"].as_str().unwrap_or("test").to_owned(),
         spec: spec.clone(),
     };
@@ -150,7 +150,7 @@ pub async fn run(files: &Files, spec: &Value) -> Result<Value, String> {
 }
 
 /// One loop's run and the steps that follow it, on one scripted model,
-/// one fake Jev and one folder.
+/// one fake decider and one folder.
 struct Looped {
     name: String,
     loaded: crate::runtime::Loaded,
@@ -160,7 +160,7 @@ struct Looped {
     llm: ScriptedModel,
     /// `llm`, counting the responses going on at once.
     counted: Counted,
-    jev: Option<Rules>,
+    decide: Option<Rules>,
     repo: String,
     spec: Value,
 }
@@ -176,7 +176,7 @@ impl Looped {
     /// The run, then each step of `then`: a fork from where the one before
     /// it ended (`fork`, the default), the same run going on (`resume`),
     /// or the finished run compacted as it waits (`idle`). The first's
-    /// account, with the steps' under `forks`, and what the model and Jev
+    /// account, with the steps' under `forks`, and what the model and the decider
     /// were asked over all of them.
     async fn all(self, store: &heiko_store::Store) -> Result<Value, String> {
         let agent = self.agent(&self.spec["settings"]);
@@ -185,8 +185,8 @@ impl Looped {
         let (mut came, mut last) = self.account(run, store).await;
         let mut forks = Vec::new();
         for step in self.spec["then"].as_array().into_iter().flatten() {
-            if let (Some(jev), Some(rules)) = (&self.jev, step.get("jev")) {
-                jev.replace(rules)?;
+            if let (Some(decide), Some(rules)) = (&self.decide, step.get("decide")) {
+                decide.replace(rules)?;
             }
             let settings = if step["settings"].is_object() {
                 &step["settings"]
@@ -247,7 +247,7 @@ impl Looped {
         came["forks"] = Value::Array(forks);
         came["requests"] = requests(&self.llm);
         came["most_at_once"] = json!(self.counted.most());
-        came["jev"] = self.jev.as_ref().map_or(json!([]), Rules::asked);
+        came["decide"] = self.decide.as_ref().map_or(json!([]), Rules::asked);
         came["repo"] = json!(self.repo);
         Ok(came)
     }
@@ -257,7 +257,7 @@ impl Looped {
     }
 
     /// The agent: the plugin with `settings` over its defaults, and the
-    /// other plugins after it; the fake tools, Jev, the spec's reasoning,
+    /// other plugins after it; the fake tools, Decider, the spec's reasoning,
     /// clock and retries, each a millisecond apart.
     fn agent(&self, given: &Value) -> Agent {
         let over = |loaded: &crate::runtime::Loaded, given: &Value| {
@@ -284,9 +284,9 @@ impl Looped {
         let plugins = LuauPlugins::new(
             active,
             run,
-            self.jev
+            self.decide
                 .as_ref()
-                .map(|jev| Arc::new(jev.fake.clone()) as Arc<dyn heiko_jev::Jev>),
+                .map(|decide| Arc::new(decide.fake.clone()) as Arc<dyn heiko_decide::Decider>),
         )
         .with_files(Some(self.dir.join("work")), self.dir.join("blobs"))
         .with_skills(
@@ -836,10 +836,10 @@ fn model(turns: &Value) -> Result<ScriptedModel, String> {
     Ok(llm)
 }
 
-/// The fake Jev a loop's `jev` gives: its rules, which a step may
+/// The fake decider a loop's `decide` gives: its rules, which a step may
 /// replace, and every request it was asked.
 struct Rules {
-    fake: FakeJev,
+    fake: FakeDecider,
     rules: Arc<Mutex<Vec<Value>>>,
     failing: Arc<Mutex<Option<u16>>>,
 }
@@ -849,9 +849,9 @@ impl Rules {
         let rules: Arc<Mutex<Vec<Value>>> = Arc::default();
         let failing: Arc<Mutex<Option<u16>>> = Arc::default();
         let (answering, status) = (rules.clone(), failing.clone());
-        let fake = FakeJev::new(move |request| {
+        let fake = FakeDecider::new(move |request| {
             if let Some(status) = *status.lock().expect("not poisoned") {
-                return Err(JevError::Status(status));
+                return Err(DecideError::Status(status));
             }
             let rules = answering.lock().expect("not poisoned").clone();
             let mut answers = BTreeMap::new();
@@ -866,11 +866,11 @@ impl Rules {
                             .is_none_or(|text| held.contains(text))
                 });
                 let Some(rule) = rule else {
-                    return Err(JevError::MissingAnswer(id.clone()));
+                    return Err(DecideError::MissingAnswer(id.clone()));
                 };
                 answers.insert(id.clone(), answer(rule));
             }
-            Ok(heiko_jev::fake::response(answers, request))
+            Ok(heiko_decide::fake::response(answers, request))
         });
         let made = Self {
             fake,
@@ -958,8 +958,8 @@ fn answer(rule: &Value) -> Answer {
             confidence: rule["confidence"].as_f64().unwrap_or(1.0),
         };
     }
-    Answer::Noul {
-        noul: rule["noul"].as_f64().unwrap_or(0.5),
+    Answer::Predicate {
+        predicate: rule["predicate"].as_f64().unwrap_or(0.5),
     }
 }
 

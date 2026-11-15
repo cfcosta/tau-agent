@@ -1,6 +1,6 @@
 -- The checks in a run: a call a rule forbids is refused with the rule,
 -- a doubtful one runs and is flagged, a final answer that breaks a rule
--- goes back up to the cap, `on_error` decides wherever Jev fails, an
+-- goes back up to the cap, `on_error` decides wherever the decider fails, an
 -- edit applies from the next call, and rules that cannot be read fail
 -- the run; and what the view and the store make of every check.
 local heiko = require("heiko")
@@ -24,9 +24,9 @@ local function constitution(on_error, max_holds)
 	}
 end
 
--- A Jev scoring every question `score(request)`, keeping each request
+-- A decider scoring every question `score(request)`, keeping each request
 -- in `asked`; a score that is an error string fails the request.
-local function jev(score)
+local function decide(score)
 	local asked = {}
 	return {
 		ask = function(request)
@@ -45,7 +45,7 @@ local function jev(score)
 end
 
 local function run(fake, stored)
-	local r = t.run({ jev = fake, store = { constitution = stored or constitution() } })
+	local r = t.run({ decide = fake, store = { constitution = stored or constitution() } })
 	r:start({ input = "fix it" })
 	return r
 end
@@ -63,7 +63,7 @@ local function has(text, part)
 end
 
 t.case("a call that breaks a rule is refused with the rule", function()
-	local fake, asked = jev(function(request)
+	local fake, asked = decide(function(request)
 		return string.find(json.encode(request.state), "unwrap", 1, true) and 0.95 or 0.05
 	end)
 	local r = run(fake)
@@ -72,7 +72,7 @@ t.case("a call that breaks a rule is refused with the rule", function()
 	t.equal(has(decision.reason, "Blocked by heiko-constitution"), true, decision.reason)
 	t.equal(has(decision.reason, "rule R2"), true)
 	t.equal(has(decision.reason, "No unwrap or expect"), true)
-	-- Jev saw the tool and only the field the rule names.
+	-- The decider saw the tool and only the field the rule names.
 	t.equal(asked[1].state, { tool = "write", arguments = { content = "let x = y.unwrap();" } })
 	local questions = 0
 	for _ in pairs(asked[1].questions) do
@@ -86,7 +86,7 @@ t.case("a call that breaks a rule is refused with the rule", function()
 	local stats = r.state.stats
 	t.equal({ stats.calls, stats.answers, stats.questions, #stats.blocked }, { 1, 1, 2, 1 })
 	t.equal(stats.blocked[1], "R2")
-	t.equal(stats.cost > 0, true, "Jev's cost is counted")
+	t.equal(stats.cost > 0, true, "The decider's cost is counted")
 	t.equal(r.state.calls.c1.scores, { { rule = "R2", score = 0.95 } })
 	t.equal(r.state.calls.c1.verdict.kind, "blocked")
 	-- The card shows it, and the store keeps what the page shows.
@@ -113,7 +113,7 @@ t.property("verdicts follow the rules' thresholds", function(draw)
 	local on_call = draw(near(0.3, 0.8))
 	local on_answer = draw(near(0.4, 0.75))
 	local answered = false
-	local fake = jev(function(request)
+	local fake = decide(function(request)
 		if request.state.tool then
 			return on_call
 		elseif not answered then
@@ -159,7 +159,7 @@ end, { cases = 200 })
 
 t.case("a final answer that breaks a rule goes back until the cap", function()
 	-- The first answer breaks R6; the second follows it.
-	local fake = jev(function(_, n)
+	local fake = decide(function(_, n)
 		return n == 1 and 0.9 or 0.1
 	end)
 	local r = run(fake)
@@ -175,7 +175,7 @@ t.case("a final answer that breaks a rule goes back until the cap", function()
 	t.equal(r:view().messages[held.message], heiko.ui.stack({}))
 
 	-- Past the cap, a broken answer stands, flagged.
-	local capped = run(jev(function()
+	local capped = run(decide(function()
 		return 0.9
 	end), constitution("allow", 1))
 	t.equal(capped:before_stop(stop("Done.")).decision, "continue")
@@ -188,14 +188,14 @@ t.case("a final answer that breaks a rule goes back until the cap", function()
 	t.equal(capped:before_stop(stop("Done again.")).decision, "continue")
 end)
 
-t.property("on_error decides wherever Jev fails", function(draw)
+t.property("on_error decides wherever the decider fails", function(draw)
 	local block = draw(g.booleans())
 	local max_holds = draw(g.integers({ min = 0, max = 3 }))
-	-- Whether each of Jev's requests fails; past the list, they pass.
+	-- Whether each of the decider's requests fails; past the list, they pass.
 	local fails = draw(g.lists(g.booleans(), { max = 8 }))
 	local writes = draw(g.integers({ min = 0, max = 2 }))
 	local failed = 0
-	local fake = jev(function(_, n)
+	local fake = decide(function(_, n)
 		if fails[n] then
 			failed += 1
 			return "offline"
@@ -252,13 +252,13 @@ t.property("on_error decides wherever Jev fails", function(draw)
 	end
 end, { cases = 200 })
 
-t.case("checks Jev could not answer say what on_error did", function()
+t.case("checks the decider could not answer say what on_error did", function()
 	local state = checks.state({})
 	for _, r in ipairs({
-		{ kind = "error", call_id = "c1", tool = "write", message = "Jev could not check the call: offline", on_error = "block", held = false },
-		{ kind = "error", call_id = "c2", tool = "write", message = "Jev could not check the call: offline", on_error = "allow", held = false },
-		{ kind = "error", message = "Jev could not check the final answer: offline", on_error = "block", held = true },
-		{ kind = "error", message = "Jev could not check the final answer: offline", on_error = "allow", held = false },
+		{ kind = "error", call_id = "c1", tool = "write", message = "The decider could not check the call: offline", on_error = "block", held = false },
+		{ kind = "error", call_id = "c2", tool = "write", message = "The decider could not check the call: offline", on_error = "allow", held = false },
+		{ kind = "error", message = "The decider could not check the final answer: offline", on_error = "block", held = true },
+		{ kind = "error", message = "The decider could not check the final answer: offline", on_error = "allow", held = false },
 	}) do
 		checks.fold(state, r)
 	end
@@ -272,7 +272,7 @@ t.case("checks Jev could not answer say what on_error did", function()
 end)
 
 t.case("an edit applies from the next tool call", function()
-	local fake = jev(function()
+	local fake = decide(function()
 		return 0.9
 	end)
 	local r = run(fake, rules.default())
@@ -287,7 +287,7 @@ t.case("an edit applies from the next tool call", function()
 end)
 
 t.case("a run says what it watches, and rules that cannot be read fail it", function()
-	local fake = jev(function()
+	local fake = decide(function()
 		return 0
 	end)
 	local function starting(spec)
@@ -296,15 +296,15 @@ t.case("a run says what it watches, and rules that cannot be read fail it", func
 		return answer, r.state.starting
 	end
 	t.equal({ starting({ store = { constitution = constitution() } }) }, { nil, checks.NO_KEY })
-	t.equal({ starting({ jev = fake, store = { constitution = constitution() } }) }, { nil, "watching 2 rules" })
-	t.equal({ starting({ jev = fake, store = {} }) }, { nil, "no rules" })
+	t.equal({ starting({ decide = fake, store = { constitution = constitution() } }) }, { nil, "watching 2 rules" })
+	t.equal({ starting({ decide = fake, store = {} }) }, { nil, "no rules" })
 	local one = constitution()
 	table.remove(one.rules)
-	t.equal({ starting({ jev = fake, store = { constitution = one } }) }, { nil, "watching 1 rule" })
+	t.equal({ starting({ decide = fake, store = { constitution = one } }) }, { nil, "watching 1 rule" })
 	-- Flagged past where it blocks: it does not check.
 	local broken = constitution()
 	broken.rules[1].review = 0.95
-	local failed, said = starting({ jev = fake, store = { constitution = broken } })
+	local failed, said = starting({ decide = fake, store = { constitution = broken } })
 	t.equal(said, "the rules cannot be read")
 	t.equal(failed, heiko.fail(rules.errors.invalid("test", "Rule R2: review (0.95) is above block (0.8)")))
 	-- Without a key nothing is checked, so nothing fails yet.
@@ -332,7 +332,7 @@ t.property("a constitution comes back from the store as saved", function(draw)
 	end
 	local back = rules.from_stored(json.decode(json.encode(saved)))
 	t.equal(back, saved)
-	local r = t.run({ jev = jev(function()
+	local r = t.run({ decide = decide(function()
 		return 0
 	end), store = { constitution = json.decode(json.encode(saved)) } })
 	r:start({ input = "go" })
@@ -475,7 +475,7 @@ t.case("a verdict marks its call, and every call shows its scores", function()
 	local view = heiko.test.load().view(state, {})
 	t.equal(view.calls.c1.mark, "blocked")
 	t.equal(view.calls.c1.reason, "Rule R1 forbids it")
-	-- Under a blocked one, a row: the rule, a link to it, then Jev's
+	-- Under a blocked one, a row: the rule, a link to it, then the decider's
 	-- score on a strip. The call's line has the mark already.
 	t.equal(view.calls.c1.body.piece, "row")
 	t.equal(#view.calls.c1.body.children, 2)

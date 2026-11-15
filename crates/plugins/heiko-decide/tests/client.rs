@@ -13,7 +13,7 @@ use std::{
 
 use serde_json::{Value, json};
 use heiko_ai::retry::RetryPolicy;
-use heiko_jev::{Jev, JevError, Question, Request, TypeSafe};
+use heiko_decide::{Decider, DecideError, Question, Request, TypeSafe};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
@@ -125,7 +125,7 @@ fn fast_retries() -> RetryPolicy {
 
 fn request() -> Request {
     Request::new(json!({"ticket": "refund please"}))
-        .question("refund", Question::noul("Does this ask for a refund?"))
+        .question("refund", Question::predicate("Does this ask for a refund?"))
         .question(
             "team",
             Question::choice(
@@ -140,7 +140,7 @@ fn answers() -> Value {
     json!({
         "model": "jev-1.13.0",
         "answers": {
-            "refund": {"type": "noul", "noul": 0.97},
+            "refund": {"type": "predicate", "predicate": 0.97},
             "team": {"type": "choice", "choice": "billing", "probabilities": {"billing": 0.9, "support": 0.1}, "confidence": 0.8},
             "urgency": {"type": "score", "score": 0.6, "probabilities": {"0": 0.4, "1": 0.6}, "confidence": 0.2},
         },
@@ -155,9 +155,9 @@ fn answers() -> Value {
 fn a_request_round_trips() {
     runtime().block_on(async {
         let (url, seen) = serve(vec![ok(answers())]).await;
-        let jev = TypeSafe::new("sk-test").url(url).model("jev-preview");
-        let response = jev.ask(&request()).await.unwrap();
-        assert_eq!(response.noul("refund").unwrap(), 0.97);
+        let decide = TypeSafe::new("sk-test").url(url).model("decide-preview");
+        let response = decide.ask(&request()).await.unwrap();
+        assert_eq!(response.predicate("refund").unwrap(), 0.97);
         assert_eq!(response.choice("team").unwrap(), ("billing", 0.8));
         assert_eq!(response.score("urgency").unwrap(), (0.6, 0.2));
         assert_eq!(
@@ -185,10 +185,10 @@ fn a_request_round_trips() {
         assert_eq!(
             seen[0].body,
             json!({
-                "model": "jev-preview",
+                "model": "decide-preview",
                 "state": {"ticket": "refund please"},
                 "questions": {
-                    "refund": {"type": "noul", "instructions": "Does this ask for a refund?"},
+                    "refund": {"type": "predicate", "instructions": "Does this ask for a refund?"},
                     "team": {"type": "choice", "instructions": "Which team?", "criteria": {"billing": "money", "support": "rest"}},
                     "urgency": {"type": "score", "instructions": "How urgent?", "criteria": ["low", "high"]},
                 },
@@ -208,8 +208,8 @@ fn overload_is_retried_under_the_policy() {
             ok(answers()),
         ])
         .await;
-        let jev = TypeSafe::new("k").url(url).retry(fast_retries());
-        assert!(jev.ask(&request()).await.is_ok());
+        let decide = TypeSafe::new("k").url(url).retry(fast_retries());
+        assert!(decide.ask(&request()).await.is_ok());
         assert_eq!(seen.lock().unwrap().len(), 3);
 
         let (url, seen) = serve(vec![
@@ -218,8 +218,8 @@ fn overload_is_retried_under_the_policy() {
             status(529, vec![]),
         ])
         .await;
-        let jev = TypeSafe::new("k").url(url).retry(fast_retries());
-        assert_eq!(jev.ask(&request()).await, Err(JevError::Status(529)));
+        let decide = TypeSafe::new("k").url(url).retry(fast_retries());
+        assert_eq!(decide.ask(&request()).await, Err(DecideError::Status(529)));
         assert_eq!(seen.lock().unwrap().len(), 3);
     });
 }
@@ -229,9 +229,9 @@ fn overload_is_retried_under_the_policy() {
 fn other_errors_fail_at_once() {
     runtime().block_on(async {
         let (url, seen) = serve(vec![status(401, vec![]), ok(answers())]).await;
-        let jev = TypeSafe::new("bad").url(url).retry(fast_retries());
-        let error = jev.ask(&request()).await.unwrap_err();
-        assert_eq!(error, JevError::Status(401));
+        let decide = TypeSafe::new("bad").url(url).retry(fast_retries());
+        let error = decide.ask(&request()).await.unwrap_err();
+        assert_eq!(error, DecideError::Status(401));
         assert!(!error.to_string().contains("echoes"));
         assert_eq!(seen.lock().unwrap().len(), 1);
     });
@@ -247,15 +247,15 @@ fn malformed_responses_are_errors() {
             body: "{\"answers\": 3}".into(),
         }])
         .await;
-        let jev = TypeSafe::new("k").url(url);
+        let decide = TypeSafe::new("k").url(url);
         assert!(matches!(
-            jev.ask(&request()).await,
-            Err(JevError::Malformed(_))
+            decide.ask(&request()).await,
+            Err(DecideError::Malformed(_))
         ));
     });
 }
 
-/// A probability as Jev may send one: at and just past either end of
+/// A probability as Decider may send one: at and just past either end of
 /// `[0, 1]`, inside, outside, or not a number.
 fn probability() -> impl hegel::generators::PrintableGenerator<f64> {
     use hegel::generators as gs;
@@ -275,7 +275,7 @@ fn probability() -> impl hegel::generators::PrintableGenerator<f64> {
     )
 }
 
-/// Answers are checked when read: a Noul's probability, and a choice's
+/// Answers are checked when read: a Predicate's probability, and a choice's
 /// or a score's confidence, reads back when it is from 0 to 1 and is
 /// out of range otherwise; an answer of another kind, or none, is an
 /// error.
@@ -283,12 +283,12 @@ fn probability() -> impl hegel::generators::PrintableGenerator<f64> {
 fn answers_are_read_only_within_range(tc: hegel::TestCase) {
     use std::collections::BTreeMap;
 
-    use heiko_jev::Answer;
+    use heiko_decide::Answer;
     let value = tc.draw(probability());
     // NaN clamps to itself and equals nothing, so it is not within.
     let within = value.clamp(0.0, 1.0) == value;
     let answers = BTreeMap::from([
-        ("noul".to_owned(), Answer::Noul { noul: value }),
+        ("predicate".to_owned(), Answer::Predicate { predicate: value }),
         (
             "choice".to_owned(),
             Answer::Choice {
@@ -306,19 +306,19 @@ fn answers_are_read_only_within_range(tc: hegel::TestCase) {
             },
         ),
     ]);
-    let response = heiko_jev::fake::response(answers, &request());
-    let out_of_range = |result: Result<f64, JevError>, id: &str| match result {
+    let response = heiko_decide::fake::response(answers, &request());
+    let out_of_range = |result: Result<f64, DecideError>, id: &str| match result {
         Ok(read) => {
             assert!(within, "{id}: {value} read as {read}");
             assert_eq!(read.to_bits(), value.to_bits(), "{id}");
         }
-        Err(JevError::OutOfRange { id: at, value: got }) => {
+        Err(DecideError::OutOfRange { id: at, value: got }) => {
             assert!(!within, "{id}: {value} refused");
             assert_eq!((at.as_str(), got.to_bits()), (id, value.to_bits()));
         }
         Err(other) => panic!("{id}: {other:?}"),
     };
-    out_of_range(response.noul("noul"), "noul");
+    out_of_range(response.predicate("predicate"), "predicate");
     out_of_range(
         response.choice("choice").map(|(choice, confidence)| {
             assert_eq!(choice, "billing");
@@ -335,20 +335,20 @@ fn answers_are_read_only_within_range(tc: hegel::TestCase) {
     );
 
     assert!(matches!(
-        response.noul("choice"),
-        Err(JevError::WrongAnswer { .. })
+        response.predicate("choice"),
+        Err(DecideError::WrongAnswer { .. })
     ));
     assert!(matches!(
         response.choice("score"),
-        Err(JevError::WrongAnswer { .. })
+        Err(DecideError::WrongAnswer { .. })
     ));
     assert!(matches!(
-        response.score("noul"),
-        Err(JevError::WrongAnswer { .. })
+        response.score("predicate"),
+        Err(DecideError::WrongAnswer { .. })
     ));
     assert!(matches!(
-        response.noul("gone"),
-        Err(JevError::MissingAnswer(_))
+        response.predicate("gone"),
+        Err(DecideError::MissingAnswer(_))
     ));
 }
 
@@ -360,7 +360,7 @@ fn the_key_stays_secret(tc: hegel::TestCase) {
     // Long enough not to occur in the rest by chance.
     let key =
         tc.draw(gs::from_regex("sk-[A-Za-z0-9_-]{16,40}").fullmatch(true));
-    let model = tc.draw(gs::from_regex("jev-[a-z0-9.]{1,12}").fullmatch(true));
+    let model = tc.draw(gs::from_regex("decide-[a-z0-9.]{1,12}").fullmatch(true));
     let shown =
         format!("{:?}", TypeSafe::new(key.as_str()).model(model.as_str()));
     assert!(!shown.contains(&key), "{shown}");
@@ -376,7 +376,7 @@ fn the_key_stays_secret(tc: hegel::TestCase) {
 #[hegel::test(test_cases = 500)]
 fn keys_come_trimmed_or_not_at_all(tc: hegel::TestCase) {
     use hegel::generators as gs;
-    use heiko_jev::{MissingApiKey, api_key};
+    use heiko_decide::{MissingApiKey, api_key};
     let space = || {
         gs::text()
             .alphabet(" \t\n\r\u{a0}\u{2028}\u{3000}")

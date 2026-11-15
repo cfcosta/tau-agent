@@ -27,10 +27,10 @@ end
 -- gives `check` what the run came to. The spec and the run's fields are
 -- heiko-luau-plugins-host's `looping` module's: `prompt`, `steer`, `model`
 -- (the turns), `settings`, `reasoning`, `clock`, `retry`, `plugins`,
--- `files`, `tools`, `jev` and `then` (forks, resumes, idle compaction);
+-- `files`, `tools`, `decide` and `then` (forks, resumes, idle compaction);
 -- `results`, `outcome`, `state`, `rewrites`, `logs`, `charged`,
 -- `record`, `transcript`, `archive`, `forks`, `requests`, `most_at_once`,
--- `jev`, `workspace` and `blobs`.
+-- `decide`, `workspace` and `blobs`.
 local loops = array({})
 
 function test.loop(name, spec, check)
@@ -208,7 +208,7 @@ end
 -- `settings`, `state`, `store` (a table of keys, shared by the runs
 -- given the same one), `tools` (a function or a value per tool name),
 -- `transcript` (the messages `ctx.transcript()` gives), `models` (what
--- `ctx.models` lists), `jev` (what `ctx.jev` is: functions as Jev's),
+-- `ctx.models` lists), `decide` (what `ctx.decide` is: functions as the decider's),
 -- `files` (what `ctx.files` reads, by path: text, or `{ text, size,
 -- image = { mime, width, height } }`; a blob is its path),
 -- `offset` (the host's seconds from UTC, 0 by default), `stores` (by
@@ -272,12 +272,12 @@ function test.run(spec)
 			return fake
 		end
 	end
-	-- Jev, as `spec.jev` answers it: `{ fn, request }`, answered by the
+	-- The decider, as `spec.decide` answers it: `{ fn, request }`, answered by the
 	-- function `fn`, with the answer and its cost.
-	fakes.jev = function(args)
-		local f = spec.jev and spec.jev[args.fn]
+	fakes.decide = function(args)
+		local f = spec.decide and spec.decide[args.fn]
 		if f == nil then
-			error("Jev is not available in this run", 0)
+			error("The decider is not available in this run", 0)
 		end
 		return f(args.request)
 	end
@@ -649,8 +649,8 @@ function test.run(spec)
 		notices = notices,
 		logs = {},
 		data = {
-			-- `live` and `jev`, as an action sees them: `spec.live`, and
-			-- whether there is `spec.jev`.
+			-- `live` and `decide`, as an action sees them: `spec.live`, and
+			-- whether there is `spec.decide`.
 			run = {
 				id = spec.id or "test",
 				kind = spec.kind or "main",
@@ -658,7 +658,7 @@ function test.run(spec)
 				model = "test",
 				turn = 1,
 				live = spec.live == true,
-				jev = spec.jev ~= nil,
+				decide = spec.decide ~= nil,
 			},
 			now = {
 				unix = unix_of(now),
@@ -1446,7 +1446,7 @@ end
 -- `spec.hooks` (a function of the fake run, `draw` and the world, or `{
 -- weight, run }`) is a rule that starts that way in: a hook, an action, a
 -- job's tick.
--- What it waits on pauses it: each function of `spec.run`'s `jev`,
+-- What it waits on pauses it: each function of `spec.run`'s `decide`,
 -- `tools`, `http` and `infer`, called from a hook, waits until the rule
 -- `answer` calls it, with `draw` after its arguments, or `fail` fails
 -- it. So ways in can be under way at once, as on the host (ADR 0056):
@@ -1550,7 +1550,7 @@ function test.hooks(name, spec, opts)
 	test.machine(name, {
 		init = function()
 			local given = table.clone(spec.run or {})
-			given.jev = paused(given.jev, "jev")
+			given.decide = paused(given.decide, "decide")
 			given.tools = paused(given.tools, "tool")
 			if type(given.http) == "function" then
 				given.http = waiting("http", given.http)

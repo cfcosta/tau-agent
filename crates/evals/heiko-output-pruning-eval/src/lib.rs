@@ -6,7 +6,7 @@
 //! (needles) among noise. The runner ([`runner`]) drives it through the
 //! agent loop with the real plugin, the Luau one heiko comes with, as the
 //! app prunes, and measures ([`metrics`]) whether every needle reached
-//! the model verbatim, how much smaller the result got, and what Jev
+//! the model verbatim, how much smaller the result got, and what the decider
 //! cost. [`measure`] is its own copy of how the plugin chunks an output
 //! and estimates tokens.
 

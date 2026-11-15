@@ -2,9 +2,9 @@
 //!
 //! A script's tool calls go through the loop, so they make run events
 //! of their own, which heiko-ui folds into the card's
-//! `CallData::nested`. Jev requests do not: the engine asks Jev itself.
-//! So each Jev request is reported as the codemode call's own
-//! `ToolUpdate`, whose details are a [`JevUpdate`]: its row as it
+//! `CallData::nested`. Decider requests do not: the engine asks the decider itself.
+//! So each decider request is reported as the codemode call's own
+//! `ToolUpdate`, whose details are a [`DecideUpdate`]: its row as it
 //! stands, once when it starts and once when it ends, and how many tool
 //! calls the script had started before it, which places it among them
 //! as the result's `details.calls` does.
@@ -17,9 +17,9 @@ use serde_json::{Value, json};
 
 use crate::result::CallRow;
 
-/// One Jev request's row, as a `ToolUpdate`'s details carry it.
+/// One decider request's row, as a `ToolUpdate`'s details carry it.
 #[derive(Debug, Clone, PartialEq)]
-pub struct JevUpdate {
+pub struct DecideUpdate {
     /// The row as `details.calls` would list it now: `running` until
     /// it ends.
     pub row: Value,
@@ -27,7 +27,7 @@ pub struct JevUpdate {
     pub after: usize,
 }
 
-impl JevUpdate {
+impl DecideUpdate {
     pub fn new(row: &CallRow, after: usize) -> Self {
         Self {
             row: row.to_json(),
@@ -35,15 +35,15 @@ impl JevUpdate {
         }
     }
 
-    /// `{ "jev": <row>, "after": n }`.
+    /// `{ "decide": <row>, "after": n }`.
     pub fn to_details(&self) -> Value {
-        json!({ "jev": self.row, "after": self.after })
+        json!({ "decide": self.row, "after": self.after })
     }
 
     /// The update a partial's details carry, if they are one.
     pub fn from_details(details: &Value) -> Option<Self> {
         Some(Self {
-            row: details.get("jev")?.clone(),
+            row: details.get("decide")?.clone(),
             after: usize::try_from(details.get("after")?.as_u64()?).ok()?,
         })
     }

@@ -37,7 +37,7 @@ outcome on the Plugins screen:
 
 - **Active**: its tests pass, and it reaches nothing it did not before.
 - **Waiting**: it reaches further than the version the person allowed:
-  a new tool in `uses`, `jev` or `infer`, or a new `before_tool` or
+  a new tool in `uses`, `decide` or `infer`, or a new `before_tool` or
   `before_stop`. The person clicks Allow; until then, the version
   before stays active. Say so when you commit such a change.
 - **Failing**: its tests fail; the version before stays active.
@@ -65,7 +65,7 @@ local heiko = require("heiko")
 local ui = heiko.ui
 
 return heiko.plugin {
-  uses = { tools = { "exec_command" }, jev = false, infer = false,
+  uses = { tools = { "exec_command" }, decide = false, infer = false,
            network = { "ntfy.sh" }, secrets = { "ntfy" },
            transcript = false, archive = false, chats = false,
            files = { "workspace" } },
@@ -200,7 +200,7 @@ order, json }`, `json` the arguments as the model wrote them; a
   Plugins screen. Having `rewrite_context` at all is new reach. One
   that errors, when none rewrites, tells the run why: on an overflow,
   the run fails with it. It has ten minutes when it reaches the model
-  or Jev, as a compaction's summaries take.
+  or the decider, as a compaction's summaries take.
 
 - A plugin may fill four of heiko's slots, named in `fills`. Filling one
   is new reach, and heiko-luau-plugins must be the slot's pick on the
@@ -261,7 +261,7 @@ order, json }`, `json` the arguments as the model wrote them; a
   values: the model is what heiko stores, and what a restart starts from.
 - Hooks have no clock and no randomness: `os.time`, `os.clock`,
   `os.date` and `math.random` are not there. The time is `env.now`.
-- A plugin whose `uses` names `infer` or `jev` may await them from every
+- A plugin whose `uses` names `infer` or `decide` may await them from every
   run hook but `on_event` (`start`, `before_tool`, `before_request`,
   `after_tool_result`, `rewrite_context`, `rewritten`, `before_stop`,
   `turn_end`, `run_end`), and those hooks then have 60 s, as a tool's
@@ -283,7 +283,7 @@ made by `heiko.cmd`, which heiko carries out:
 - A failure raises the command's own message. Catch it with `pcall`
   where the hook goes on without the answer:
   `local ok, values = pcall(heiko.await, cmd.http.request(request))`.
-  `heiko.jev.ask` and `heiko.infer` do it for Jev and the model.
+  `heiko.decide.ask` and `heiko.infer` do it for the decider and the model.
 
 ```luau
 local cmd = heiko.cmd
@@ -309,9 +309,9 @@ before_stop = function(stop, model)
   if asked == nil or asked.status ~= "active" then
     return nil
   end
-  local answers = heiko.await(cmd.jev.ask({ state = { goal = asked.condition, final_answer = stop.text },
+  local answers = heiko.await(cmd.decide.ask({ state = { goal = asked.condition, final_answer = stop.text },
                                           questions = { met = QUESTION } }))
-  -- The model as it is now: a Pause may have come while Jev answered.
+  -- The model as it is now: a Pause may have come while the decider answered.
   local g = model.goal
   if g == nil or g.status ~= "active" or g.condition ~= asked.condition then
     return nil
@@ -333,7 +333,7 @@ why it failed. One that fails does not raise.
 
 | Field          | What it is                                                                                                                                                                                  |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `env.run`      | `{ id, kind = "main" or "chat" or "sub_agent", repo, model, turn }`; in a tool's `call`, `call` too; in an action, `{ id, live, jev }`: whether the run is going on, and a Jev key is saved |
+| `env.run`      | `{ id, kind = "main" or "chat" or "sub_agent", repo, model, turn }`; in a tool's `call`, `call` too; in an action, `{ id, live, decide }`: whether the run is going on, and a decider key is saved |
 | `env.now`      | `{ unix, iso, weekday, local, offset, ms }`; `weekday` is `"Monday"` and so on, `local` the host's time as `YYYY-MM-DD HH:MM`, `offset` its seconds from UTC, `ms` milliseconds since 1970  |
 | `env.settings` | what the person set, over `settings.default`; per repository when one keeps its own copy                                                                                                    |
 | `env.models`   | the plan's models, newest of each family: `{ id, family, efforts }`                                                                                                                         |
@@ -345,7 +345,7 @@ The commands, in `heiko.cmd`:
 | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cmd.tool(name, args)`                                                     | in a tool's `call`: one of the tools `uses.tools` names, as `cmd.tool("read", { path = "a" })`; awaited, it gives the tool's answer                                                                                                 |
 | `cmd.infer(request)`                                                       | with `uses.infer`: the person's model (below); awaited                                                                                                                                                                              |
-| `cmd.jev.ask(request)`                                                     | with `uses.jev`: Jev, in a tool's `call` and every run hook but `on_event`, booked to the run; awaited, it gives the answer and what it cost: `local answers, cost = heiko.await(cmd.jev.ask(req))`                                   |
+| `cmd.decide.ask(request)`                                                     | with `uses.decide`: the decider, in a tool's `call` and every run hook but `on_event`, booked to the run; awaited, it gives the answer and what it cost: `local answers, cost = heiko.await(cmd.decide.ask(req))`                                   |
 | `cmd.http.request(request)`                                                | with `uses.network`: an HTTP request (below); awaited                                                                                                                                                                               |
 | `cmd.store.get(key)`, `list(prefix)`; `put(key, value)`, `delete(key)`     | with `uses.store`: the plugin's store in the repository the hook works in (below); reads awaited, writes given                                                                                                                      |
 | `cmd.transcript()`                                                         | with `uses.transcript`, in `before_request`, `after_tool_result` and `rewrite_context`: the run's conversation, whole (below); in `rewritten`, what the rewrite replaced; in `run_end`, the run's conversation as it ended; awaited |
@@ -465,7 +465,7 @@ model to read back: tell the model the path. It writes only a path
 `cmd.archive.path` gave, and never writes one twice. `uses.archive` is
 new reach: the plugin writes files on the computer.
 
-A Jev request's `state_json`, JSON text, may stand for its `state`:
+A decider request's `state_json`, JSON text, may stand for its `state`:
 its keys keep the order the text gives them, which a table cannot
 keep.
 
@@ -491,7 +491,7 @@ so far, to count steps without reading it.
 - `heiko.cmd`, the commands; `heiko.await(command)`, `heiko.all(commands)`,
   `heiko.give(command)` and `heiko.log(text)` (above).
 - `heiko.secret(name)`: a secret in an HTTP request (above).
-- `heiko.text`, `heiko.count`, `heiko.values`, `heiko.store`, `heiko.jev`,
+- `heiko.text`, `heiko.count`, `heiko.values`, `heiko.store`, `heiko.decide`,
   `heiko.infer` and `heiko.now`: the standard part (below).
 - `heiko.machine(spec)`: a lifecycle as data (below).
 
@@ -519,13 +519,13 @@ What most plugins need and should not write again. It is part of
 | `heiko.store.put(key, value)`, `delete`   | writes, given: they land when the step ends                                                                 |
 | `heiko.store.bump()`                      | adds one to `rev`, which a repository's pages draw again on                                                 |
 | `heiko.store.of(repo)`                    | the same five on another repository's store, in a job                                                       |
-| `heiko.jev.ask(request)`                  | with `uses.jev`: the answers and what they cost, or `nil` and why; it never raises                          |
-| `heiko.jev.scores(request, ids)`          | each of `ids`' probability, in order, and the cost; or `nil` and why when one is missing                    |
+| `heiko.decide.ask(request)`                  | with `uses.decide`: the answers and what they cost, or `nil` and why; it never raises                          |
+| `heiko.decide.scores(request, ids)`          | each of `ids`' probability, in order, and the cost; or `nil` and why when one is missing                    |
 | `heiko.infer(request)`                    | with `uses.infer`: `{ ok, value, error, reason }`; with `tools`, `value` is `{ text, calls }`               |
 | `heiko.now(env)`                          | the step's time, in Unix seconds                                                                            |
 
 The text functions count characters, not bytes. `heiko.store`,
-`heiko.jev` and `heiko.infer` await, so only a hook may call them, and
+`heiko.decide` and `heiko.infer` await, so only a hook may call them, and
 what they answer may be stale by the next await.
 
 ### `heiko.ui`: what views are made of
@@ -706,8 +706,8 @@ await. What it returns goes in these places:
 - `plan_steps`: pieces shown as the plugin's step on the Plan screen.
 
 A plugin that picks the effort says so under the effort picker's Auto
-(`picker_auto`) with `picker_auto = { jev = "...", no_jev = "..." }` in its
-declaration: the first with a Jev key saved, the second without.
+(`picker_auto`) with `picker_auto = { decide = "...", no_decide = "..." }` in its
+declaration: the first with a decider key saved, the second without.
 
 A button whose action starts with `heiko.` asks heiko, not the plugin, on
 the run the tree is drawn in (or its page shows):
@@ -732,14 +732,14 @@ text` takes its title from `text`, its leading `--flag value` pairs
 dropped.
 
 While a command is written, its `popover` shows above the composer:
-`popover = { jev = pieces, no_jev = pieces }`, the second without a
-Jev key (it defaults to the first). What its inputs say reaches `run`
+`popover = { decide = pieces, no_decide = pieces }`, the second without a
+decider key (it defaults to the first). What its inputs say reaches `run`
 as `env.drafts`, by input id; an input whose `submit` is `"heiko.submit"`
 sends the composer on Enter and keeps what it says. In tests,
 `run:action("/name", { text = "...", drafts = { id = "..." } })`.
 
-An action of a plugin with `uses.jev`, a button's or a page's, may
-await `cmd.jev` too, the host's, and has a tool's time for it.
+An action of a plugin with `uses.decide`, a button's or a page's, may
+await `cmd.decide` too, the host's, and has a tool's time for it.
 
 A plugin's `jobs` are work it does by itself while heiko runs: each
 `run(_, model, env)` once `every` seconds passed since it last ran (at least 1),
@@ -793,7 +793,7 @@ end
 
 `pages` are the plugin's pages of a repository: each `page(params,
 model, env)` returns a view tree, `params.repo` the repository, its
-store in `cmd.store`, and `env.run.jev` whether a Jev key is saved. A
+store in `cmd.store`, and `env.run.decide` whether a decider key is saved. A
 page is a hook: it may await its store and files. A run's view
 links to one of them with `params.repo`:
 `ui.link("Review", "rules", { params = { repo = env.run.repo } })`. `repo_nav`, `{ label, page, icon? }`, is its entry under
@@ -1013,7 +1013,7 @@ model.gate = gate:step(model.gate, { event = "ask", change = "v1.2" })
   of names or `{ name, ... }` tables. The hook that stepped carries them
   out as commands: the machine decides, the hook does the asking and the
   writing.
-- When an effect waits (on the model, on Jev, on HTTP), step its answer
+- When an effect waits (on the model, on the decider, on HTTP), step its answer
   on the state as it is after the await, read again, never on the one
   from before it. A Stop pressed meanwhile has moved the state, and the
   answer is an event that state has no arm for: it changes nothing, and
@@ -1059,7 +1059,7 @@ t.case("what it checks", function()
     store = { ... },               -- the store's keys to start from
     transcript = { ... },          -- what cmd.transcript() answers, with uses.transcript
     models = { ... },              -- env.models, else none
-    jev = { ask = function(req) return answers, cost end },  -- what cmd.jev answers, else it fails
+    decide = { ask = function(req) return answers, cost end },  -- what cmd.decide answers, else it fails
     http = function(request) return { status = 200, json = { ... } } end,  -- cmd.http.request
     secrets = { github = true },   -- which secrets are set
     offset = 3 * 3600,             -- the host's seconds from UTC, else 0
@@ -1162,7 +1162,7 @@ effects)` holds after each. A failure notes its events as a `t.case`
 - `t.hooks(name, spec)` drives the plugin through its ways in, in any
   order: each of `spec.hooks` (a function of the run, `draw` and the
   world) starts one, on a fake run made from `spec.run`. An await on
-  what `spec.run`'s `jev`, `tools`, `http` or `infer` answer pauses the
+  what `spec.run`'s `decide`, `tools`, `http` or `infer` answer pauses the
   hook, until the rule `answer` (which calls the fake with `draw` after
   its arguments) or `fail` lets it go on. Meanwhile any other way in
   takes its steps on the same model and store, as on heiko: a job's tick
@@ -1174,7 +1174,7 @@ effects)` holds after each. A failure notes its events as a `t.case`
 
   ```luau
   t.hooks("a Pause pressed during a check is kept", {
-    run = { jev = { ask = function(_, draw)
+    run = { decide = { ask = function(_, draw)
       return { met = { probability = draw(g.floats({ min = 0, max = 0.8 })) } }, 0.001
     end } },
     hooks = {
@@ -1239,11 +1239,11 @@ end)
   model's id), `settings`, `kind`, `repo`, `files` (text,
   `t.bytes(base64)` or `t.png(w, h)`), `tools` (fake tools: a name to a
   text, a list taken in order, or `{ error }`; `{path}` in a text is the
-  call's argument, `{x*size}` is `x` that many times), `jev` (rules,
-  first match answers: `{ id = "call_", noul = 0.9 }`,
-  `{ has = "error[", noul = 0.95 }`, or `{ error = 503 }`), and `then`
+  call's argument, `{x*size}` is `x` that many times), `decide` (rules,
+  first match answers: `{ id = "call_", predicate = 0.9 }`,
+  `{ has = "error[", predicate = 0.95 }`, or `{ error = 503 }`), and `then`
   (forks, each from where the run before it ended, with its own
-  `prompt`, `steer`, `settings` and `jev`), `data` and `repository`
+  `prompt`, `steer`, `settings` and `decide`), `data` and `repository`
   (what heiko's data folder and its folder for the repository hold, as
   `files`), and `commits` (`{ turn, change, paths }`, the commit a turn
   leaves, for `turn_end`).
@@ -1252,7 +1252,7 @@ end)
   `rewrites` (the context's, by plugin), `logs`, `charged`, `archive`
   (each archived file's `text` and `mode`), and for the first run
   `forks`, `requests` (each request the model got: its `messages`,
-  `instructions`, `tools`), `jev` (what Jev was asked), `workspace`,
+  `instructions`, `tools`), `decide` (what the decider was asked), `workspace`,
   `blobs`, and `data` and `repository` (each file there as the loop left
   it, by path).
 - A loop runs for 60 s at most; its check, like a case, 10 s.

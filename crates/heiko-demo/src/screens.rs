@@ -523,13 +523,13 @@ pub static SCREENS: &[(&str, Screen)] = &[
     ("rule-editor", |ws, _, cx| rules_at(ws, "rule-editor", cx)),
     ("rule-missing", |ws, _, cx| rules_at(ws, "rule-missing", cx)),
     ("rules-review", |ws, _, cx| rules_at(ws, "rules-review", cx)),
-    // Rules that cannot be read; and none, with no Jev to try them.
+    // Rules that cannot be read; and none, with no decider to try them.
     ("rules-broken", |ws, _, cx| rules_at(ws, "rules-broken", cx)),
     ("rules-empty", |ws, host, cx| {
         let mut catalog = host.catalog(ws.catalog().clone());
         catalog.plugin_data.insert(
-            heiko_jev::NAME.into(),
-            heiko_ui_plugin::PluginValue::typed(heiko_jev::ui::Data::default()),
+            heiko_decide::NAME.into(),
+            heiko_ui_plugin::PluginValue::typed(heiko_decide::ui::Data::default()),
         );
         ws.apply(HostUpdate::catalog(catalog), cx);
         rules_at(ws, "rules-empty", cx);
@@ -563,7 +563,7 @@ pub static SCREENS: &[(&str, Screen)] = &[
             format!("{}/note-n0.open", heiko_luau_plugins::names::REASONING);
         ws.set_plugin_ui(heiko_luau_plugins::NAME, open, Some(json!(true)), cx);
     }),
-    // heiko-reasoning keeping a long conversation's effort over Jev's
+    // heiko-reasoning keeping a long conversation's effort over the decider's
     // pick: its note, then its choices page.
     ("effort-kept", |ws, _, cx| {
         ws.navigate(Route::Run(run_id()), cx);
@@ -1716,7 +1716,7 @@ fn rules_at(
     }
 }
 
-/// A message of the demo run that kept medium reasoning over Jev's pick
+/// A message of the demo run that kept medium reasoning over the decider's pick
 /// of high, its conversation's prefix being 48k tokens: heiko-reasoning's
 /// state and view from its fixture (ADR 0050).
 fn effort_kept(workspace: &mut Workspace, cx: &mut Context<Workspace>) {

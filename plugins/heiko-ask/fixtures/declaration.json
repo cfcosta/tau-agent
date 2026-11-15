@@ -3,7 +3,7 @@
   "description": "Lets the agent ask you questions and waits for your answers",
   "uses": {
     "tools": [],
-    "jev": false,
+    "decide": false,
     "infer": false,
     "network": [],
     "secrets": [],

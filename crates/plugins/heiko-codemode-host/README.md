@@ -2,7 +2,7 @@
 
 The `codemode` tool, as a plugin. The tool's input is a Luau script. The
 script runs in a sandbox inside the harness and calls the run's other
-tools, and Jev, as functions. The model uses it to chain calls, run them
+tools, and the decider, as functions. The model uses it to chain calls, run them
 in parallel, and filter large results before it reads them. This crate
 is Codemode's host half: the engine, the plugin and what the host does
 for it.
@@ -23,7 +23,7 @@ for it.
 | `search`                 | BM25 over the callable tools, for `search_tools`             |
 | `inference`              | `InferRequest`, the nested `infer` tool's request            |
 | `inference_budget`       | `Budget` and `Limits` shared by one run's `infer` attempts   |
-| `jev`                    | The `jev` global's requests and answers, as JSON             |
+| `decide`                    | The `decide` global's requests and answers, as JSON             |
 | `json`, `value`          | Bounded JSON text, and JSON to Luau values and back          |
 | `repository_modules`     | `RepositoryModules`: module versions kept per repository     |
 
@@ -32,7 +32,7 @@ memory limit (`MEMORY_LIMIT`) and an interrupt that checks the deadline
 and the cancel, yielding every `YIELD_EVERY` ticks. Output stops at
 `MAX_OUTPUT_BYTES`. A script cannot reach files, processes or the
 network. The globals that reach out (`tools`, `parallel`, `map`,
-`search_tools`, `jev`, `require` and the rest) all go through `Host`.
+`search_tools`, `decide`, `require` and the rest) all go through `Host`.
 The plugin also adds fixed nested tools that only scripts call: `infer`
 and the `module_*` tools.
 
@@ -43,7 +43,7 @@ the interface half, which holds the card, the records and their folds.
 This crate re-exports the shapes its API returns: `Outcome`, `Rendered`,
 `CallRow`, `CallStatus`, `Failure`, `Item` and `PLUGIN`.
 
-It builds on `heiko-agent`, `heiko-ai`, `heiko-codemode`, `heiko-jev` and
+It builds on `heiko-agent`, `heiko-ai`, `heiko-codemode`, `heiko-decide` and
 `heiko-ui-plugin`. `mlua` compiles Luau's C++, which is slow, so of the
 apps only `heiko` links this crate; `heiko-ui` builds without it.
 
@@ -55,7 +55,7 @@ Used by:
 - `heiko-codemode-eval` (`crates/evals`);
 - `heiko-mcp-host`, in its tests and its `live` example.
 
-`CodemodeHost` builds `Codemode::new(jev)` with the run's Jev, when there
+`CodemodeHost` builds `Codemode::new(decide)` with the run's decider, when there
 is one, and with `with_repository` pointed at the repository's private
 `codemode-modules` directory.
 
@@ -71,7 +71,7 @@ use heiko_tools_host::{path::Root, plugin::CodingTools};
 
 let agent = Agent::new(llm.clone())
     .plugin(CodingTools::new(Root::new("/path/to/repo")))
-    // `None`: no Jev, so `jev` is nil in scripts.
+    // `None`: no decider, so `decide` is nil in scripts.
     .plugin(Codemode::new(None).with_inference_limits(Limits {
         max_calls: 8,
         ..Limits::default()

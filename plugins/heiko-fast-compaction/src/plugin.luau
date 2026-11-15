@@ -1,8 +1,8 @@
--- Keeps a run's context lean with Jev, in two stages
+-- Keeps a run's context lean with the decider, in two stages
 -- (docs/reference/fast-compaction.md, ADR 0050):
 --
 -- - output pruning, at `after_tool_result`: a large `exec_command` or
---   `write_stdin` result is trimmed to the chunks of lines Jev says the
+--   `write_stdin` result is trimmed to the chunks of lines the decider says the
 --   task still needs, before the model first sees it, with the whole
 --   output archived to a file the model can read; after
 --   `tamaratran/jev-pruner`;
@@ -10,7 +10,7 @@
 --   dropped or cut, as a context rewrite; a port of
 --   `joelhooks/pi-fast-jev-compaction` (see THIRD_PARTY_NOTICES.md).
 --
--- Without Jev it does nothing.
+-- Without the decider it does nothing.
 local heiko = require("heiko")
 local ui = heiko.ui
 local estimate = require("estimate")
@@ -73,7 +73,7 @@ local function window_of(view, settings)
 end
 
 -- Whether a pass is due between turns: past the share of the window, and
--- past the cooldown since the last pass that asked Jev.
+-- past the cooldown since the last pass that asked the decider.
 local function due(model, tokens, window, settings)
 	if window == nil or window <= 0 then
 		return false
@@ -88,18 +88,18 @@ local function overfull(tokens, window, settings)
 	return window ~= nil and window > 0 and tokens > math.max(window - settings.start_reserve_tokens, 0)
 end
 
--- What a pass judged: `12 calls judged in 1 Jev request · …`.
+-- What a pass judged: `12 calls judged in 1 decider request · …`.
 local function detail(stats)
 	return heiko.count.plural(stats.calls - stats.pinned, "call")
 		.. " judged in "
-		.. heiko.count.plural(stats.requests, "Jev request")
+		.. heiko.count.plural(stats.requests, "decider request")
 		.. " · "
 		.. heiko.count.plural(stats.results_dropped, "result")
 		.. " cut, "
 		.. heiko.count.plural(stats.calls_dropped, "call")
 		.. " dropped · −"
 		.. string.format("%.0f", stats.reduction_ratio * 100)
-		.. "% · Jev read "
+		.. "% · the decider read "
 		.. heiko.count.tokens(stats.state_tokens)
 		.. " tokens of history, "
 		.. stats.state_stage
@@ -148,7 +148,7 @@ local function argument(input)
 	return fields[1] and args[fields[1]] or input
 end
 
--- A pass between turns: asks Jev about every unpinned call, merges the
+-- A pass between turns: asks the decider about every unpinned call, merges the
 -- decisions into the ledger, and rewrites the transcript when that saves
 -- enough. Nothing when there is nothing to ask or too little to save;
 -- nil and why on a failure.
@@ -163,13 +163,13 @@ local function pass(view, model, settings)
 	if not unpinned then
 		return nil
 	end
-	-- Unlike pi, the cooldown starts only with a pass that asks Jev.
+	-- Unlike pi, the cooldown starts only with a pass that asks the decider.
 	model.last_pass = view.tokens
 	local decided, why, spent = decide.decide(entries, calls, settings)
 	if decided == nil then
 		return nil, why
 	end
-	-- The ledger as it is now, after Jev answered.
+	-- The ledger as it is now, after the decider answered.
 	local staged = ledger.of(model.decisions)
 	ledger.merge(staged, decided.decisions)
 	local archives = ledger.assign_archives(staged, view.messages, settings.head_chars, function(kind)
@@ -272,10 +272,10 @@ local function pass(view, model, settings)
 	return heiko.rewrite(rewrite)
 end
 
--- Prunes one output that passed the gate: plans the requests, asks Jev,
+-- Prunes one output that passed the gate: plans the requests, asks the decider,
 -- renders what stays, and writes the archive. The pruned text, when it
 -- saves at least the ratio of the output; nil and why on a failure.
--- Reports how it went whenever Jev was asked.
+-- Reports how it went whenever the decider was asked.
 local function prune(result, full, model, settings)
 	local entries = state.entries(heiko.await(heiko.cmd.transcript()))
 	local task = state.goal_or_prompts(settings.goal, entries)
@@ -481,7 +481,7 @@ local function ledger_page(state_now)
 end
 
 return heiko.plugin({
-	uses = { jev = true, transcript = true, archive = true },
+	uses = { decide = true, transcript = true, archive = true },
 	settings = {
 		schema = SCHEMA,
 		default = DEFAULT,
@@ -491,10 +491,10 @@ return heiko.plugin({
 	},
 	-- Whether it can prune: there is a TypeSafe key.
 	start = function(input, model, env)
-		model.on = env.run.jev == true
+		model.on = env.run.decide == true
 	end,
 	rewrite_context = function(view, model, env)
-		if not env.run.jev then
+		if not env.run.decide then
 			return nil
 		end
 		local settings = settings_of(env)
@@ -529,7 +529,7 @@ return heiko.plugin({
 	end,
 	after_tool_result = function(result, model, env)
 		local settings = settings_of(env)
-		if not env.run.jev or not settings.output_enabled or result.nested then
+		if not env.run.decide or not settings.output_enabled or result.nested then
 			return nil
 		end
 		local full = output.gate(result, settings.output_min_tokens)

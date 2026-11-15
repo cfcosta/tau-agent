@@ -160,7 +160,7 @@ local TITLES = {
 	"the cache is keyed by model",
 	"retries back off",
 	"forks start from a turn",
-	"rules are checked with jev",
+	"rules are checked with decide",
 }
 local PATHS = { "src/a.rs", "src/b.rs", "docs/c.md" }
 

@@ -27,7 +27,7 @@ interface follows each change.
 
 heiko-codemode already runs Luau safely: a fresh VM per call, a memory
 cap, a deadline and cancel interrupt, no files, processes or network,
-and globals (`tools.*`, `jev.*`, `infer`, the store) that go back
+and globals (`tools.*`, `decide.*`, `infer`, the store) that go back
 through the run's loop, so rules and other plugins still see each
 call. Its modules are content-addressed, tested with fake tool calls,
 and promoted into a repository only with the person's approval.
@@ -91,7 +91,7 @@ return heiko.plugin {
 
   -- What it may reach. The host refuses anything else, and a change
   -- here is what needs the person's click (see Activation).
-  uses = { tools = { "bash" }, jev = false, infer = false },
+  uses = { tools = { "bash" }, decide = false, infer = false },
 
   -- What the person can set; the Plugins screen draws a form from it.
   settings = {
@@ -159,7 +159,7 @@ return heiko.plugin {
 | `ctx.settings` | the person's settings, defaults filled in                                             |
 | `ctx.state`    | the plugin's state for this run; what a hook changes is kept (below)                  |
 | `ctx.tools`    | in a tool's `call`: the tools `uses` names, as codemode calls them, through the loop  |
-| `ctx.jev`      | Jev, when `uses.jev` and the run has a key; charged to the run                        |
+| `ctx.decide`      | the decider, when `uses.decide` and the run has a key; charged to the run                        |
 | `infer`        | codemode's global, when `uses.infer`; charged to the run                              |
 | `ctx.log`      | `ctx.log(text)`: a line in the plugin's log on its page, never in the model's context |
 
@@ -241,7 +241,7 @@ the plugin's page.
 A version activates when trunk reaches it and its tests pass, unless it
 needs the person:
 
-- **Its `uses` grew** (a new tool, Jev, `infer`) or it gained a seam it
+- **Its `uses` grew** (a new tool, the decider, `infer`) or it gained a seam it
   did not have (`before_tool`, `before_stop`): the Plugins screen and
   the chat that changed it show "no-friday-deploys wants to use `bash`
   · Allow", with the diff of its declaration. Until then the previous

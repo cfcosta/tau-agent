@@ -374,24 +374,24 @@ fn only_of(source: &str, tests: &str) -> TestResult {
     results.remove(0)
 }
 
-/// A check that waits on Jev, as heiko-goal's does, and a Pause.
+/// A check that waits on the decider, as heiko-goal's does, and a Pause.
 const CHECKING: &str = r#"
 local heiko = require("heiko")
 local cmd = heiko.cmd
 return heiko.plugin({
-  uses = { jev = true },
+  uses = { decide = true },
   actions = {
     pause = function(_, model) model.paused = true end,
   },
   before_stop = function(_, model)
     model.checks = (model.checks or 0) + 1
-    heiko.await(cmd.jev.ask({ questions = {} }))
+    heiko.await(cmd.decide.ask({ questions = {} }))
     return nil
   end,
 })
 "#;
 
-/// A Pause pressed while a check waits on Jev is taken at once, on the
+/// A Pause pressed while a check waits on the decider is taken at once, on the
 /// one model, as on the host (ADR 0056): every order `t.hooks` tries
 /// keeps it.
 #[test]
@@ -401,12 +401,12 @@ fn an_action_while_a_hook_awaits_is_kept() {
         r#"
 local t = require("heiko").test
 t.hooks("a pause is kept", {
-  run = { jev = { ask = function() return {}, 0 end } },
+  run = { decide = { ask = function() return {}, 0 end } },
   hooks = {
     stop = function(run) run:before_stop({ text = "done" }) end,
     pause = function(run, _, world) run:action("pause") world.paused = true end,
   },
-  -- A check whose Jev fails raises.
+  -- A check whose decider fails raises.
   may_fail = function(hook) return hook == "stop" end,
   invariant = function(world)
     if world.paused then
@@ -432,10 +432,10 @@ fn counting(read_again: bool) -> String {
 local heiko = require("heiko")
 local cmd = heiko.cmd
 return heiko.plugin({{
-  uses = {{ jev = true, store = true }},
+  uses = {{ decide = true, store = true }},
   before_stop = function()
     local n = heiko.await(cmd.store.get("n")) or 0
-    heiko.await(cmd.jev.ask({{ questions = {{}} }}))
+    heiko.await(cmd.decide.ask({{ questions = {{}} }}))
     {after_wait}
     heiko.give(cmd.store.put("n", n + 1))
     return nil
@@ -448,7 +448,7 @@ return heiko.plugin({{
 const EVERY_CHECK_COUNTS: &str = r#"
 local t = require("heiko").test
 t.hooks("every check counts", {
-  run = { jev = { ask = function() return {}, 0 end } },
+  run = { decide = { ask = function() return {}, 0 end } },
   hooks = {
     stop = function(run, _, world)
       run:before_stop({ text = "done" })
@@ -488,7 +488,7 @@ fn a_failed_wait_raises_unless_the_hook_may_fail() {
             r#"
 local t = require("heiko").test
 t.hooks("checks", {{
-  run = {{ jev = {{ ask = function() return {{}}, 0 end }} }},
+  run = {{ decide = {{ ask = function() return {{}}, 0 end }} }},
   hooks = {{ stop = function(run) run:before_stop({{ text = "done" }}) end }},
   {may_fail}
 }})

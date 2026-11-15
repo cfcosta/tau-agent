@@ -87,7 +87,7 @@ impl CallStatus {
     }
 }
 
-/// One nested call: a tool call, or a Jev request (`jev.noul`, ...).
+/// One nested call: a tool call, or a decider request (`decide.predicate`, ...).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallRow {
     pub id: String,
@@ -98,7 +98,7 @@ pub struct CallRow {
     pub ms: u64,
     /// Cut at [`MAX_ERROR_CHARS`].
     pub error: Option<String>,
-    /// Reported US dollars for Jev or all admitted infer attempts.
+    /// Reported US dollars for the decider or all admitted infer attempts.
     pub cost: Option<f64>,
     /// Reported cost may be partial when an inference attempt has no final usage.
     pub usage_uncertain: bool,
@@ -165,7 +165,7 @@ pub struct Outcome {
     pub calls_total: usize,
     /// The script's store writes; `None` when it failed.
     pub store: Option<Writes>,
-    /// Jev and returned inference usage for display, summed once each.
+    /// The decider and returned inference usage for display, summed once each.
     pub usage: Usage,
 }
 

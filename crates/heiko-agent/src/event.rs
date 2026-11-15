@@ -167,7 +167,7 @@ pub enum RunEvent {
         body: Value,
     },
     /// A plugin charged usage to the run (`PluginCtx::charge`): a side
-    /// request of its own, such as a Jev check. It is already part of
+    /// request of its own, such as a decider check. It is already part of
     /// the run's totals; this says whose it is. Comes before the event
     /// that follows the charge.
     PluginCharged {

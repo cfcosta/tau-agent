@@ -1,7 +1,7 @@
 # Fast compaction
 
 `heiko-fast-compaction` (`plugins/heiko-fast-compaction`) keeps a run's
-context lean with Jev, TypeSafe's System One model, in two stages. It is
+context lean with the decider, TypeSafe's System One model, in two stages. It is
 a Luau plugin heiko comes with (ADR 0050): `src/` holds the rules,
 and `src/plugin.luau` the hooks and what it draws. It never summarizes: what stays is verbatim, and what goes is archived or
 can be re-run. When pruning cannot free enough, summarizing compaction
@@ -28,10 +28,10 @@ heiko-luau-plugins runs it first of the compactions, before the tree and
 heiko-compaction, as heiko comes with them. Context plugins are offered the
 context in order, and the first that rewrites wins: when pruning
 declines, the next one can take the turn. It needs a TypeSafe key: the
-run's Jev. Without one it does nothing, and its status line says so.
+run's decider. Without one it does nothing, and its status line says so.
 
 An agent of its own adds it with `Active::built_in` in a
-`LuauPlugins`, with a Jev, before heiko-compaction. `with_archive` names
+`LuauPlugins`, with a decider, before heiko-compaction. `with_archive` names
 the archive directory; heiko's is `archive` in the repository's data
 directory, and the default is the temporary directory.
 
@@ -52,7 +52,7 @@ the transcript the model had seen when it made the call
 - The output is the result's text, which those tools already cut to
   the last 2,000 lines or 50 KB.
 - Only an output estimated over `output_min_tokens` (10,000) is touched.
-  Anything smaller passes untouched: no Jev call, no archive, no
+  Anything smaller passes untouched: no decider call, no archive, no
   history read.
 - An output holding a NUL byte or an image is left as it is.
 - An output over 256 KiB is left as it is: the hook gets only its
@@ -66,7 +66,7 @@ the transcript the model had seen when it made the call
    then the lines go in runs of `output_chunk_lines` (20), merged so there
    are at most 200 chunks. With two chunks or fewer, nothing could go,
    and the output is left as it is.
-2. **Builds the state** Jev sees: what the state is (its `context`), the
+2. **Builds the state** the decider sees: what the state is (its `context`), the
    task (the `goal` setting, or the user's last three prompts), the
    **complete history** so far (the user's and the assistant's text,
    every tool call with its input, and every tool result verbatim), the
@@ -77,7 +77,7 @@ the transcript the model had seen when it made the call
    for a segment becomes continuations, each labeled with the field's
    name and the character offset it starts at. The history keeps at
    least half the room the rest of the state leaves.
-4. **Asks** one yes/no question (Noul) per chunk: does any line in it
+4. **Asks** one yes/no question (Predicate) per chunk: does any line in it
    need to remain available for the ongoing task. Yes: an error,
    warning, failure, summary or final result, or a value the task or
    history asks for. No: only routine progress, install logging, a
@@ -110,11 +110,11 @@ needed)]`. The archive is a new
    result is not flagged as changed by a plugin: what it keeps is
    verbatim.
 
-Whenever Jev was asked, the plugin adds an entry to `outputs` in its
+Whenever the decider was asked, the plugin adds an entry to `outputs` in its
 state: the call, the output's lines, the chunks and how many stayed,
 the lines dropped, the segments, the requests, the estimated tokens
 before and after, whether the result was replaced, the archive, and
-what Jev cost (`cost`, also charged to the run). The state is stored
+what the decider cost (`cost`, also charged to the run). The state is stored
 with the run, so an interface shows it again when it reloads the run
 from history. The plugin's view puts a pruned output on its call
 (`calls[id].cut`): heiko-ui shows it as two tabs, the terminal and the
@@ -125,7 +125,7 @@ outputs saved, in tokens. The interface shows no cost (ADR 0057).
 ### Safeguards
 
 No rule guesses what a line means: no command categories, no patterns
-for diagnostics or results, no document or secret detectors. Jev
+for diagnostics or results, no document or secret detectors. The decider
 decides, and the structure protects:
 
 - the first and last chunks always stay;
@@ -135,20 +135,20 @@ decides, and the structure protects:
 
 ### Failure
 
-A Jev error (after its client's retries), a missing or malformed
+A decider error (after its client's retries), a missing or malformed
 answer, a task and command that leave no room for the history, an
 archive that cannot be written, or a cancel leaves the result untouched
 and is written to the plugin's log. The run goes on.
 
 ### Cost
 
-- Every Jev request is charged to the run, under heiko-luau-plugins,
+- Every decider request is charged to the run, under heiko-luau-plugins,
   including the answered ones of a pruning that then failed.
 - Pruning at `after_tool_result` changes only the result being added, so the
   next request is still a delta
   ([openai-websocket.md](openai-websocket.md)): no resend.
 - The requests for one output are sent together, so a pruned call takes
-  about one Jev round trip longer.
+  about one decider round trip longer.
 - The requests grow with the output's size and its number of chunks:
   in the evaluation, 3 to 8 requests for outputs of 21,000 to 96,000
   estimated tokens, $0.0035 to $0.0076 each output. At those rates the
@@ -191,8 +191,8 @@ records:
 - estimated tokens before (what `exec_command` alone shows) and after, and the
   **reduction**;
 - the reduction against the whole output too (**of whole**);
-- whether the result was replaced, Jev requests, input tokens, cost,
-  latency, and Jev's answers by band: confident noise (at most 0.1),
+- whether the result was replaced, decider requests, input tokens, cost,
+  latency, and the decider's answers by band: confident noise (at most 0.1),
   uncertain, and needed (0.5 or more: the chunk stays);
 - in the JSON, each chunk's largest answer, its estimated tokens, and
   the chunks holding needles, to replay another keep rule offline on
@@ -204,12 +204,12 @@ TYPESAFE_API_KEY=… cargo run -p heiko-output-pruning-eval -- \
 ```
 
 `--workload NAME` picks workloads, `--list` lists them, and
-`--budget-usd` stops once Jev's spend passes it. At $0.042 per million
+`--budget-usd` stops once the decider's spend passes it. At $0.042 per million
 input tokens, a workload costs about half a cent, so three seeds of all
 eight cost about $0.13. Without `TYPESAFE_API_KEY` it refuses to run.
-Its tests use fake Jevs and need no key.
+Its tests use fake deciders and need no key.
 
-Results against the real Jev, three seeds of each workload (24 outputs
+Results against the real decider, three seeds of each workload (24 outputs
 of 21,000 to 96,000 estimated tokens, 3–8 requests each). They were
 measured with `bash`, which spilled the whole output to a file for
 pruning to read ([0038](../decisions/0038-commands-run-in-the-background.md)
@@ -233,8 +233,8 @@ Every needle's chunk was answered 0.90 or more; noise mostly under
 among hashes like the one asked for), which stay at little cost. About
 $0.005 per pruned output.
 
-Before these settings, the question told Jev that uncertain means
-needed and every chunk above 0.1 stayed: Jev answered nearly every
+Before these settings, the question told the decider that uncertain means
+needed and every chunk above 0.1 stayed: the decider answered nearly every
 noise chunk between 0.1 and 0.5, so nothing was replaced (0 of 24,
 recall equal to tail recall). A more balanced question without the
 floor, then the question's shared guidance moved into the `context`
@@ -245,9 +245,9 @@ floor, then the question's shared guidance moved into the `context`
 - **No heuristics.** jev-pruner leaves JSON, XML, YAML, diffs, and the
   output of `cat`, `jq`, `git diff` and the like untouched; keeps
   diagnostic and result lines and their neighbors by pattern; sorts
-  commands into categories with guidance for Jev; tells Jev each
+  commands into categories with guidance for the decider; tells the decider each
   chunk's information category; and shrinks oversized kept chunks line
-  by line. heiko leaves all of that to Jev and the structural safeguards;
+  by line. heiko leaves all of that to the decider and the structural safeguards;
   only the binary check remains.
 - **Any failure keeps the output whole,** where jev-pruner retries with
   half the state on `max_tokens_exceeded`.
@@ -258,7 +258,7 @@ floor, then the question's shared guidance moved into the `context`
   output, and must not outgrow what the model would otherwise see;
   jev-pruner has no such floor.
 - **No floor under the threshold.** jev-pruner also keeps any chunk
-  answered above 0.1. Against the real Jev, noise answers sit between
+  answered above 0.1. Against the real decider, noise answers sit between
   0.1 and 0.5 (see "Evaluation"), so that floor kept every chunk.
 - **The question is short;** its shared guidance is in the state's
   `context`. jev-pruner repeats it in every question, which about
@@ -275,7 +275,7 @@ floor, then the question's shared guidance moved into the `context`
     the context window; the window is the `window` setting when it is
     over 0, else the model registry's;
   - the context has grown by `cooldown_percent` (10%) of the window
-    since the last pass that asked Jev.
+    since the last pass that asked the decider.
 - **As a run starts on a transcript it inherited** (a fork, a
   sub-agent, a resumed run), only when the estimate is within
   `start_reserve_tokens` (16,384, summarizing compaction's reserve) of
@@ -292,7 +292,7 @@ floor, then the question's shared guidance moved into the `context`
 1. **Pins** the first message and the last `preserve_recent` (6; at
    least 1). A call is pinned when its call or its result is. Pinned
    calls are always kept.
-2. **Builds the state** Jev sees: the goal (the `goal` setting, or the
+2. **Builds the state** the decider sees: the goal (the `goal` setting, or the
    user's last three prompts), and the history, whole, with each tool
    call's name, input and a note of its result's size and status.
    **Never the result itself.**
@@ -301,7 +301,7 @@ floor, then the question's shared guidance moved into the `context`
    in order, into segments that fit, never abridged; oversized fields
    become labeled continuations. Each segment's state then also lists
    the calls it asks about.
-4. **Asks** two yes/no questions (Nouls) per unpinned call, against
+4. **Asks** two yes/no questions (Predicates) per unpinned call, against
    every segment, in batches that fit `max_request_tokens` (30,000) with
    the state, sent together (four at a time):
    - does knowing the call was made, with its input, still matter;
@@ -333,7 +333,7 @@ floor, then the question's shared guidance moved into the `context`
 
 ### Cost
 
-- Every Jev request is charged to the run, under heiko-luau-plugins, at
+- Every decider request is charged to the run, under heiko-luau-plugins, at
   $0.042 per million input tokens, so it counts toward the run's limits
   and cost. A request that was answered is charged even when another
   failed.
@@ -347,7 +347,7 @@ floor, then the question's shared guidance moved into the `context`
 ### Failure
 
 Any failure ends the pass without a rewrite and is written to the
-plugin's log: a Jev error (after its client's retries), an answer
+plugin's log: a decider error (after its client's retries), an answer
 that is missing, of the wrong kind or out of range, a goal that leaves
 no room for the history, an archive that cannot be written, or a
 cancel. The run goes on with its transcript as it was. On an overflow
@@ -362,7 +362,7 @@ pointing at the messages it kept and followed by the ones it cut
 the archive of each cut result, and the pass's stats: calls, pinned,
 kept, results and calls dropped, requests, the largest state's size and
 `state_stage` (`whole`, or `N segments`), the characters before and
-after, the reduction, and what Jev cost for the pass (`cost`).
+after, the reduction, and what the decider cost for the pass (`cost`).
 
 The ledger and each pass are also in the plugin's state, which is
 stored with the run and which a fork inherits, so a fork goes on from
@@ -379,7 +379,7 @@ from history:
 - the ledger page: what the last pass judged in a line, the context
   before and after it as the same two strips, how many calls are
   pinned, kept, result dropped and call dropped as figures, and each
-  call's row: tool, input, size, Jev's two answers (still matters,
+  call's row: tool, input, size, the decider's two answers (still matters,
   verbatim) as ticks with the probability, and the decision as a
   square and its name. No cost is shown.
 
@@ -395,7 +395,7 @@ from history:
   tokens. Each rewrite costs a full resend, and on a large window a
   long run grows 8,000 tokens in a few turns, so pi's cooldown let it
   pay for a resend every few turns.
-- **The cooldown starts only with a pass that asked Jev.** pi starts it
+- **The cooldown starts only with a pass that asked the decider.** pi starts it
   with any pass, so a pass with everything pinned held the next useful
   one back.
 - **A message holding only thinking stays** unless pruning emptied it;
@@ -411,7 +411,7 @@ from history:
 ## Token estimate
 
 Both stages estimate tokens as jev-pruner does (`src/jev.ts`),
-calibrated there against the usage Jev reports for real transcripts,
+calibrated there against the usage the decider reports for real transcripts,
 where it lands 2–18% above the true count: a word of ASCII letters is
 one token per six letters, rounded up; a digit half a token; any other
 character that is not a space nine tenths of a token, per UTF-16 unit.
@@ -429,20 +429,20 @@ output pruning's, the latter named `output_*`:
 | Setting                      | Default |                                                               |
 | ---------------------------- | ------- | ------------------------------------------------------------- |
 | `goal`                       | empty   | the task, else the user's last three prompts                  |
-| `keep_threshold`             | 0.5     | a Noul at or above keeps                                      |
+| `keep_threshold`             | 0.5     | a Predicate at or above keeps                                      |
 | `preserve_recent`            | 6       | the newest messages pinned                                    |
 | `max_state_tokens`           | 25,000  | per state                                                     |
 | `max_request_tokens`         | 30,000  | per request                                                   |
 | `head_chars`                 | 300     | what stays of a cut result                                    |
 | `compact_at_percent`         | 60      | where a pass runs between turns                               |
 | `min_reduction_ratio`        | 0.25    | of the transcript                                             |
-| `cooldown_percent`           | 10      | of the window, between passes that asked Jev                  |
+| `cooldown_percent`           | 10      | of the window, between passes that asked the decider                  |
 | `start_reserve_tokens`       | 16,384  | what a start keeps free                                       |
 | `window`                     | 0       | for a model the registry does not know; 0 is the model's      |
 | `output_enabled`             | `true`  |                                                               |
 | `output_min_tokens`          | 10,000  | the gate                                                      |
 | `output_chunk_lines`         | 20      | lines per chunk                                               |
-| `output_keep_threshold`      | 0.5     | a Noul at or above keeps                                      |
+| `output_keep_threshold`      | 0.5     | a Predicate at or above keeps                                      |
 | `output_max_state_tokens`    | 25,000  | per state                                                     |
 | `output_max_request_tokens`  | 30,000  | per request                                                   |
 | `output_max_requests`        | 12      | per output                                                    |

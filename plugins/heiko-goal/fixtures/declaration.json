@@ -3,7 +3,7 @@
   "description": "Keeps a conversation going until its /goal holds",
   "uses": {
     "tools": [],
-    "jev": true,
+    "decide": true,
     "infer": false,
     "network": [],
     "secrets": [],
@@ -54,7 +54,7 @@
       "args": "<condition>",
       "icon": "target",
       "popover": {
-        "jev": {
+        "decide": {
           "children": [
             {
               "children": [
@@ -114,7 +114,7 @@
           ],
           "piece": "stack"
         },
-        "no_jev": {
+        "no_decide": {
           "children": [
             {
               "children": [
@@ -138,7 +138,7 @@
                 },
                 {
                   "piece": "text",
-                  "text": "Goals are checked with Jev: add a TypeSafe key (Models)."
+                  "text": "Goals are checked with the decider: add a TypeSafe key (Models)."
                 }
               ],
               "piece": "row"

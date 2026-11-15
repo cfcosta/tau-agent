@@ -1,7 +1,7 @@
 # heiko-goal
 
 Keeps a heiko run going until a goal holds. A run whose input is
-`/goal <condition>` sets the goal. Each time the model would stop, Jev
+`/goal <condition>` sets the goal. Each time the model would stop, the decider
 is asked whether the goal holds, judged from the model's last answer and
 its recent tool results. If not, the model is sent back with the goal,
 within the goal's continuations and budget. The goal lives in the run's
@@ -12,7 +12,7 @@ or clear it.
 
 | Item                    | What it is                                                                    |
 | ----------------------- | ----------------------------------------------------------------------------- |
-| `GoalPlugin`            | The `Plugin`: `GoalPlugin::new(jev)`; share one across an agent's runs        |
+| `GoalPlugin`            | The `Plugin`: `GoalPlugin::new(decide)`; share one across an agent's runs        |
 | `Command`               | A parsed `/goal`: `Set { condition, continuations, budget }` or `Clear`       |
 | `Command::parse`        | Reads `/goal [--continuations N] [--budget TOKENS] <condition>` or `/goal clear` |
 | `set_input`             | The input the model gets for a goal: the condition, then `INSTRUCTIONS`       |
@@ -20,7 +20,7 @@ or clear it.
 | `Record`                | Everything that happens to a goal, as stored and reported                     |
 | `Goal`                  | A conversation's goal, folded from its records (`Goal::fold`, `apply`)        |
 | `Status`, `Exhausted`   | Active, paused, met or stopped; and why it stopped                            |
-| `Check`                 | One check: Jev's probability, the turn, the continuation, the tokens spent    |
+| `Check`                 | One check: the decider's probability, the turn, the continuation, the tokens spent    |
 | `DEFAULT_CONTINUATIONS` | 10                                                                            |
 | `DEFAULT_BUDGET`        | 2m tokens, for the run's turns from when the goal was set                     |
 | `MET_AT`                | 0.7: the probability at or past which the goal counts as met                  |
@@ -38,7 +38,7 @@ controls a goal by storing a record with the run.
 ## How it fits
 
 It is a Luau plugin heiko comes with (ADR 0050, 0051): `src/plugin.luau` and
-`src/goal.luau`, loaded as always active. It reaches Jev, so it does nothing
+`src/goal.luau`, loaded as always active. It reaches the decider, so it does nothing
 without a saved TypeSafe key, and it is not in a sub-agent's runs.
 
 ## Usage
@@ -55,7 +55,7 @@ target/release/heiko-plugin test plugins/heiko-goal   # its Luau tests, no compi
 target/release/heiko-plugin test plugins/heiko-goal --bless   # writes its fixtures anew
 ```
 
-`tests/plugin.luau` drives fake runs with a fake Jev, so no TypeSafe
+`tests/plugin.luau` drives fake runs with a fake decider, so no TypeSafe
 key or network is needed. `tests/command.luau` holds properties: a
 written `/goal` reads as itself, budgets are whole numbers of tokens,
 and any condition reads back from the model's input.

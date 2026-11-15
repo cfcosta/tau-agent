@@ -72,7 +72,7 @@ pub fn text_of(lines: &[Line<'_>], range: Range<usize>) -> String {
     text
 }
 
-/// The id Jev's questions give chunk `index`.
+/// The id the decider's questions give chunk `index`.
 pub fn chunk_id(index: usize) -> String {
     format!("c{}", index + 1)
 }

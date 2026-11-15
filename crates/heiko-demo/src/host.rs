@@ -19,7 +19,7 @@ use std::{
 };
 
 use serde_json::Value;
-use heiko_jev::{Jev, fake::FakeJev};
+use heiko_decide::{Decider, fake::FakeDecider};
 use heiko_ui::hosted::{self, Hosted};
 use heiko_ui_plugin::{
     ConfigDir,
@@ -45,7 +45,7 @@ const SPEND: [(&str, f64); 6] = [
     (heiko_codemode::PLUGIN, 0.002),
 ];
 
-/// Jev's scores as the demo scripts them: one per question, in the
+/// The decider's scores as the demo scripts them: one per question, in the
 /// order they come.
 const SCORES: [f64; 6] = [0.94, 0.41, 0.06, 0.12, 0.33, 0.71];
 
@@ -116,7 +116,7 @@ impl DemoHost {
                 Box::pin(std::future::ready(Ok(())))
             },
         );
-        let jev: Arc<dyn Jev> = Arc::new(scripted_jev());
+        let decide: Arc<dyn Decider> = Arc::new(scripted_decide());
         let skills = dir.path().join("person-skills");
         crate::skills::seed(&skills)?;
         let skills_app =
@@ -129,8 +129,8 @@ impl DemoHost {
             .with(saved)
             .with(ConfigDir(dir.path().join("config")))
             .with(heiko_ui_plugin::SkillsDir(skills))
-            .with(heiko_jev::Upstream(jev.clone()))
-            .with(jev);
+            .with(heiko_decide::Upstream(decide.clone()))
+            .with(decide);
         let (pushes, pushed) = mpsc::unbounded_channel();
         let cx = HostCx::new(
             store,
@@ -365,10 +365,10 @@ impl DemoHost {
     }
 }
 
-/// Jev answering with [`SCORES`], in turn.
-fn scripted_jev() -> FakeJev {
+/// The decider answering with [`SCORES`], in turn.
+fn scripted_decide() -> FakeDecider {
     let next = AtomicUsize::new(0);
-    FakeJev::nouls(move |_| {
+    FakeDecider::predicates(move |_| {
         SCORES[next.fetch_add(1, Ordering::Relaxed) % SCORES.len()]
     })
 }

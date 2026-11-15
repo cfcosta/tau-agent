@@ -4,7 +4,7 @@
 local heiko = require("heiko")
 local t = heiko.test
 
--- What Jev charges per million bytes of a request, as heiko's fake Jev
+-- What the decider charges per million bytes of a request, as heiko's fake decider
 -- counts them: one token a byte.
 local PRICE_PER_MILLION_INPUT = 0.042
 
@@ -34,7 +34,7 @@ local function demo_rules()
 	}
 end
 
--- The request as Jev gets it: each yes/no question as
+-- The request as Decider gets it: each yes/no question as
 -- `{ type, instructions, criteria = { true, false } }`.
 local function wire(request)
 	local questions = {}
@@ -48,11 +48,11 @@ local function wire(request)
 	return { state = request.state, questions = questions }
 end
 
--- A Jev that scores each rule with the next of its `answers` for it,
+-- A decider that scores each rule with the next of its `answers` for it,
 -- the last for every later one, and 0 for a rule it has none for: by
 -- the rule's id, read from the question. It charges for the bytes of
 -- the request it gets.
-local function jev(answers)
+local function decide(answers)
 	local asked = {}
 	return {
 		ask = function(request)
@@ -81,9 +81,9 @@ local function jev(answers)
 end
 
 -- A run in the demo's heiko-agent repository on `store`, with `fake` or
--- no Jev.
+-- no decider.
 local function run(store, fake)
-	return t.run({ id = "demo", repo = "heiko-agent", store = store, jev = fake })
+	return t.run({ id = "demo", repo = "heiko-agent", store = store, decide = fake })
 end
 
 local function edit(text)
@@ -95,7 +95,7 @@ end
 -- next one names its tests. The state and view after each check, and
 -- the store it leaves.
 local function demo_run()
-	local fake = jev({
+	local fake = decide({
 		R1 = { 0.41 },
 		R2 = { 0.95, 0.02 },
 		R3 = { 0.04, 0.03 },
@@ -104,7 +104,7 @@ local function demo_run()
 	})
 	local store = { constitution = demo_rules() }
 	local r = run(store, fake)
-	-- The view is drawn with no Jev.
+	-- The view is drawn with no decider.
 	local viewer = run(store, nil)
 	r:start({ input = "Make the HTTP client honor retry-after on 429s and 503s" })
 	local steps = array({})
@@ -131,16 +131,16 @@ local function demo_run()
 	return steps, store
 end
 
--- What the page `rules` of heiko-agent draws from `store`, a Jev key
+-- What the page `rules` of heiko-agent draws from `store`, a decider key
 -- saved or not.
 local function page_of(store, keyed)
-	local r = run(store, keyed and jev({ new = { 0.82 } }) or nil)
+	local r = run(store, keyed and decide({ new = { 0.82 } }) or nil)
 	return r:page("rules", { repo = "heiko-agent" })
 end
 
--- Carries out the page's `action` with `args` on `store`, with a Jev.
+-- Carries out the page's `action` with `args` on `store`, with a decider.
 local function act(store, action, args)
-	run(store, jev({ new = { 0.82 } })):action(action, args)
+	run(store, decide({ new = { 0.82 } })):action(action, args)
 end
 
 -- The rule the demo's editor writes.

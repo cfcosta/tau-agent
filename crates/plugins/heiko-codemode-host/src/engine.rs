@@ -45,15 +45,15 @@ use mlua::{
 };
 use serde_json::{Value, json};
 use heiko_ai::message::Usage;
-use heiko_jev::Jev;
+use heiko_decide::Decider;
 use tokio::sync::{Notify, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     host::{Host, Namespace, ToolCall, ToolEntry},
     image,
-    jev,
-    live::JevUpdate,
+    decide,
+    live::DecideUpdate,
     modules::{self, Definition},
     options::Source,
     result::{
@@ -356,8 +356,8 @@ struct State {
     by_name: HashMap<String, usize>,
     namespaces: Vec<Namespace>,
     index: Index,
-    jev: Option<Arc<dyn Jev>>,
-    jev_slots: Semaphore,
+    decide: Option<Arc<dyn Decider>>,
+    decide_slots: Semaphore,
     sequential: tokio::sync::Mutex<()>,
     items: Mutex<Vec<Item>>,
     output_bytes: AtomicUsize,
@@ -386,7 +386,7 @@ struct Calls {
     started: Vec<Instant>,
     total: usize,
     tools: usize,
-    jev: usize,
+    decide: usize,
 }
 
 impl State {
@@ -408,7 +408,7 @@ impl State {
             .map(|(i, tool)| (tool.name.clone(), i))
             .collect();
         let index = Index::new(&tools, &namespaces);
-        let jev = host.jev();
+        let decide = host.decide();
         Self {
             host,
             call_id,
@@ -416,8 +416,8 @@ impl State {
             by_name,
             namespaces,
             index,
-            jev,
-            jev_slots: Semaphore::new(jev::MAX_IN_FLIGHT),
+            decide,
+            decide_slots: Semaphore::new(decide::MAX_IN_FLIGHT),
             sequential: tokio::sync::Mutex::new(()),
             items: Mutex::default(),
             output_bytes: AtomicUsize::new(0),
@@ -478,16 +478,16 @@ impl State {
         Ok(())
     }
 
-    /// Starts a row; `jev` rows have their own numbering. A Jev row is
-    /// reported to the host as it starts and as it ends ([`JevUpdate`]):
+    /// Starts a row; `decide` rows have their own numbering. A decider row is
+    /// reported to the host as it starts and as it ends ([`DecideUpdate`]):
     /// its request makes no run events, unlike a tool call.
-    fn begin(&self, name: &str, args: &Value, is_jev: bool) -> CallGuard<'_> {
+    fn begin(&self, name: &str, args: &Value, is_decide: bool) -> CallGuard<'_> {
         let mut calls = self.calls.lock().expect("not poisoned");
         calls.total += 1;
         let after = calls.tools;
-        let id = if is_jev {
-            calls.jev += 1;
-            format!("{}/jev/{}", self.call_id, calls.jev)
+        let id = if is_decide {
+            calls.decide += 1;
+            format!("{}/decide/{}", self.call_id, calls.decide)
         } else {
             calls.tools += 1;
             format!("{}/{}", self.call_id, calls.tools)
@@ -507,8 +507,8 @@ impl State {
             calls.rows.len() - 1
         });
         let update = row.and_then(|row| {
-            if is_jev {
-                Some(JevUpdate::new(&calls.rows[row], after).to_details())
+            if is_decide {
+                Some(DecideUpdate::new(&calls.rows[row], after).to_details())
             } else if name == "infer" {
                 Some(
                     crate::live::InferUpdate::new(&calls.rows[row])
@@ -523,7 +523,7 @@ impl State {
             state: self,
             row,
             id,
-            jev_after: is_jev.then_some(after),
+            decide_after: is_decide.then_some(after),
             done: false,
         };
         if let Some(update) = update {
@@ -583,9 +583,9 @@ struct CallGuard<'a> {
     state: &'a State,
     row: Option<usize>,
     id: String,
-    /// For a Jev row, the tool calls started before it: its row is
+    /// For a decider row, the tool calls started before it: its row is
     /// reported to the host when it ends.
-    jev_after: Option<usize>,
+    decide_after: Option<usize>,
     done: bool,
 }
 
@@ -620,8 +620,8 @@ impl CallGuard<'_> {
         row.cost = cost;
         row.usage_uncertain = usage_uncertain;
         let update = self
-            .jev_after
-            .map(|after| JevUpdate::new(row, after).to_details())
+            .decide_after
+            .map(|after| DecideUpdate::new(row, after).to_details())
             .or_else(|| {
                 (row.name == "infer")
                     .then(|| crate::live::InferUpdate::new(row).to_details())
@@ -1069,16 +1069,16 @@ fn install(lua: &Lua, state: &Arc<State>) -> mlua::Result<()> {
         )?,
     )?;
 
-    // Jev.
-    if state.jev.is_some() {
+    // The decider.
+    if state.decide.is_some() {
         let table = lua.create_table()?;
-        for function in ["noul", "choice", "score", "ask"] {
+        for function in ["predicate", "choice", "score", "ask"] {
             table.set(
                 function,
-                lifted(jev_function(lua, state, function)?, AS_IS)?,
+                lifted(decide_function(lua, state, function)?, AS_IS)?,
             )?;
         }
-        globals.set("jev", table)?;
+        globals.set("decide", table)?;
     }
     Ok(())
 }
@@ -1570,8 +1570,8 @@ async fn evaluate_module(
     Ok(value)
 }
 
-/// `jev.<function>`.
-fn jev_function(
+/// `decide.<function>`.
+fn decide_function(
     lua: &Lua,
     state: &Arc<State>,
     function: &'static str,
@@ -1580,33 +1580,33 @@ fn jev_function(
     lua.create_async_function(move |lua, args: LuaValue| {
         let state = Arc::clone(&state);
         async move {
-            let Some(client) = state.jev.clone() else {
-                return fail(&lua, "Jev is not available in this run");
+            let Some(client) = state.decide.clone() else {
+                return fail(&lua, "The decider is not available in this run");
             };
             let args = match from_lua(&lua, &args) {
                 Ok(json) => json,
                 Err(error) => {
-                    return fail(&lua, format!("jev.{function}: {error}"));
+                    return fail(&lua, format!("decide.{function}: {error}"));
                 }
             };
-            let (request, shape) = match jev::request(function, &args) {
+            let (request, shape) = match decide::request(function, &args) {
                 Ok(parsed) => parsed,
                 Err(error) => return fail(&lua, error),
             };
             if let Some(message) = stopped(&state) {
                 return fail(&lua, message);
             }
-            let Ok(_slot) = state.jev_slots.acquire().await else {
-                return fail(&lua, "Jev is closed");
+            let Ok(_slot) = state.decide_slots.acquire().await else {
+                return fail(&lua, "The decider is closed");
             };
-            let guard = state.begin(&format!("jev.{function}"), &args, true);
+            let guard = state.begin(&format!("decide.{function}"), &args, true);
             let answer = match client.ask(&request).await {
                 Ok(response) => {
                     let usage = response.usage();
                     state.host.charge(&usage);
                     *state.usage.lock().expect("not poisoned") += &usage;
                     let cost = usage.cost.total;
-                    jev::answer(&shape, &response)
+                    decide::answer(&shape, &response)
                         .map(|value| (value, cost))
                         .map_err(|error| (error, Some(cost)))
                 }

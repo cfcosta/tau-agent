@@ -54,7 +54,7 @@ use heiko_ai::{
     },
     responses::request::{ReasoningEffort, Settings},
 };
-use heiko_jev::Jev;
+use heiko_decide::Decider;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -99,11 +99,11 @@ pub struct Codemode {
 }
 
 impl Codemode {
-    /// A plugin whose scripts ask `jev`, when given one; without one,
-    /// `jev` is nil and the description says so.
-    pub fn new(jev: Option<Arc<dyn Jev>>) -> Self {
+    /// A plugin whose scripts ask `decide`, when given one; without one,
+    /// `decide` is nil and the description says so.
+    pub fn new(decide: Option<Arc<dyn Decider>>) -> Self {
         Self {
-            tool: Arc::new(CodemodeTool::new(jev, false)),
+            tool: Arc::new(CodemodeTool::new(decide, false)),
             module_writes: Arc::new(tokio::sync::Mutex::new(())),
             inference_limits: Limits::default(),
             inference_model: None,
@@ -127,7 +127,7 @@ impl Codemode {
     /// Use heiko's private per-repository module directory, outside the checkout.
     pub fn with_repository(mut self, path: impl Into<PathBuf>) -> Self {
         self.repository = Some(RepositoryModules::new(path));
-        self.tool = Arc::new(CodemodeTool::new(self.tool.jev.clone(), true));
+        self.tool = Arc::new(CodemodeTool::new(self.tool.decide.clone(), true));
         self
     }
 
@@ -692,17 +692,17 @@ pub fn context(tools: &[ToolEntry]) -> Option<String> {
 /// The `codemode` tool. Made by [`Codemode`]; it needs the plugin's
 /// context, so it runs only as the plugin's tool.
 pub struct CodemodeTool {
-    jev: Option<Arc<dyn Jev>>,
+    decide: Option<Arc<dyn Decider>>,
     description: String,
     parameters: Value,
     repository_required: bool,
 }
 
 impl CodemodeTool {
-    fn new(jev: Option<Arc<dyn Jev>>, repository_required: bool) -> Self {
+    fn new(decide: Option<Arc<dyn Decider>>, repository_required: bool) -> Self {
         Self {
-            description: description::description(jev.is_some()),
-            jev,
+            description: description::description(decide.is_some()),
+            decide,
             repository_required,
             parameters: json!({
                 "type": "object",
@@ -767,7 +767,7 @@ impl AgentTool for CodemodeTool {
         let host = Arc::new(LoopHost {
             catalog: ctx.catalog(),
             ctx: ctx.clone(),
-            jev: self.jev.clone(),
+            decide: self.decide.clone(),
             plugin: plugin.clone(),
             repository_required: self.repository_required,
         });
@@ -991,7 +991,7 @@ struct LoopHost {
     ctx: ToolCtx,
     /// The callable tools when the script started.
     catalog: Catalog,
-    jev: Option<Arc<dyn Jev>>,
+    decide: Option<Arc<dyn Decider>>,
     plugin: PluginCtx,
     repository_required: bool,
 }
@@ -1050,8 +1050,8 @@ impl Host for LoopHost {
         script_reply_with_usage(has_output_schema, call.name == "infer", result)
     }
 
-    fn jev(&self) -> Option<Arc<dyn Jev>> {
-        self.jev.clone()
+    fn decide(&self) -> Option<Arc<dyn Decider>> {
+        self.decide.clone()
     }
 
     fn charge(&self, usage: &Usage) {

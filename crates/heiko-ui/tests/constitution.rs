@@ -70,7 +70,7 @@ fn project(dir: &Path) -> Project {
 }
 
 /// A host on `llm` keeping its files in `dir`, with one repository, and
-/// a Jev that scores every rule `score`.
+/// a decider that scores every rule `score`.
 fn host_at(
     dir: &Path,
     llm: &ScriptedModel,
@@ -110,26 +110,26 @@ fn host_at(
         );
     let host = match score {
         Some(score) => {
-            host.with_service(heiko_jev::Upstream(Arc::new(jev(score))))
+            host.with_service(heiko_decide::Upstream(Arc::new(decide(score))))
         }
         None => host,
     };
     (host, events)
 }
 
-/// A Jev that scores each rule `score`, and refuses what other plugins
+/// A decider that scores each rule `score`, and refuses what other plugins
 /// ask.
-fn jev(score: f64) -> heiko_jev::fake::FakeJev {
-    heiko_jev::fake::FakeJev::new(move |request| {
+fn decide(score: f64) -> heiko_decide::fake::FakeDecider {
+    heiko_decide::fake::FakeDecider::new(move |request| {
         if !request.questions.keys().all(|id| id.starts_with("rule-")) {
-            return Err(heiko_jev::JevError::Status(400));
+            return Err(heiko_decide::DecideError::Status(400));
         }
         let answers = request
             .questions
             .keys()
-            .map(|id| (id.clone(), heiko_jev::Answer::Noul { noul: score }))
+            .map(|id| (id.clone(), heiko_decide::Answer::Predicate { predicate: score }))
             .collect();
-        Ok(heiko_jev::fake::response(answers, request))
+        Ok(heiko_decide::fake::response(answers, request))
     })
 }
 
@@ -181,7 +181,7 @@ fn page(host: &Host) -> String {
         plugin: heiko_luau_plugins::names::CONSTITUTION.into(),
         page: "rules".into(),
         params: [("repo".to_owned(), REPO.to_owned())].into(),
-        jev: true,
+        decide: true,
         drafts: Default::default(),
     };
     let page = host
@@ -222,11 +222,11 @@ fn write_rule(host: &Host, text: &str, place: &str) {
     page_act(host, "save", json!({}));
 }
 
-/// What heiko-jev says Jev did this session, from its data.
-fn jev_stats(host: &Host) -> heiko_jev::ui::Stats {
+/// What heiko-decide says the decider did this session, from its data.
+fn decide_stats(host: &Host) -> heiko_decide::ui::Stats {
     let catalog = host.block_on(host.catalog());
-    let data = catalog.plugin_data[heiko_jev::NAME].json();
-    serde_json::from_value(data["stats"].clone()).expect("Jev is set up")
+    let data = catalog.plugin_data[heiko_decide::NAME].json();
+    serde_json::from_value(data["stats"].clone()).expect("The decider is set up")
 }
 
 #[test]
@@ -268,8 +268,8 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
     };
     assert!(blocked(&view), "the card shows the block live");
     assert_eq!(checks_of(&view)["stats"]["calls"], 1);
-    // heiko-jev counts the check Jev answered.
-    let stats = jev_stats(&host);
+    // heiko-decide counts the check the decider answered.
+    let stats = decide_stats(&host);
     assert!(stats.requests >= 1, "{stats:?}");
     assert!(stats.input_tokens > 0 && stats.spent > 0.0);
     // And in history, from what the plugin left.
@@ -299,7 +299,7 @@ fn the_constitution_blocks_a_call_that_breaks_a_rule() {
         "{drawn}"
     );
     assert_eq!(kept(&host)["rules"], 1);
-    // Trying a rule asks Jev about the run's call it reads.
+    // Trying a rule asks the decider about the run's call it reads.
     page_act(&host, "open", json!({}));
     page_act(&host, "write", json!({ "text": "No unwrap." }));
     page_act(&host, "place", json!({ "place": "write.content" }));

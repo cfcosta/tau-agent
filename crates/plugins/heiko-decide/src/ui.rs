@@ -1,5 +1,5 @@
-//! heiko-jev's UI half (ADR 0045): whether a TypeSafe key is saved, what
-//! Jev did this session, and where the key goes: a section of the
+//! heiko-decide's UI half (ADR 0045): whether a TypeSafe key is saved, what
+//! The decider did this session, and where the key goes: a section of the
 //! Models screen and a page of its own, which other plugins link to.
 
 use heiko_ui_plugin::{
@@ -17,16 +17,16 @@ use serde_json::Value;
 
 use crate::{NAME, SYSTEM_ONE_URL};
 
-/// What heiko-jev knows across repositories.
+/// What heiko-decide knows across repositories.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Data {
-    /// A TypeSafe key is saved, so the plugins that ask Jev run.
+    /// A TypeSafe key is saved, so the plugins that ask the decider run.
     pub keyed: bool,
-    /// What Jev did this session, once there is a key.
+    /// What the decider did this session, once there is a key.
     pub stats: Option<Stats>,
 }
 
-/// What Jev did this session.
+/// What the decider did this session.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Stats {
     pub model: String,
@@ -47,7 +47,7 @@ pub enum Act {
 }
 
 /// Whether a TypeSafe key is saved, as another plugin's view reads it:
-/// what its rows say when Jev cannot be asked.
+/// what its rows say when the decider cannot be asked.
 pub fn keyed<P: UiPlugin>(view: &ViewCx<'_, P>) -> bool {
     view.data_of(NAME)
         .and_then(|data| data.get("keyed"))
@@ -61,17 +61,17 @@ pub fn key_page() -> Link {
     Link::to(NAME, KEY_PAGE)
 }
 
-/// What a plugin that asks Jev says of itself on the Plugins screen:
+/// What a plugin that asks the decider says of itself on the Plugins screen:
 /// `what` it does, and that it needs a TypeSafe key when there is none.
-pub fn needs_jev(jev: bool, what: &str) -> String {
-    if jev {
-        format!("{what}, with Jev")
+pub fn needs_decide(decide: bool, what: &str) -> String {
+    if decide {
+        format!("{what}, with the decider")
     } else {
         format!("{what}: needs a TypeSafe key (Models)")
     }
 }
 
-/// What a plugin that asks Jev says in a run's plugin list when there is
+/// What a plugin that asks the decider says in a run's plugin list when there is
 /// no TypeSafe key.
 pub const NO_KEY: &str = "off · no TypeSafe key";
 
@@ -81,11 +81,11 @@ const KEY_PAGE: &str = "key";
 const KEY: &str = "key";
 const FORGET: &str = "forget";
 
-/// heiko-jev with its UI.
+/// heiko-decide with its UI.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct JevUi;
+pub struct DecideUi;
 
-impl UiPlugin for JevUi {
+impl UiPlugin for DecideUi {
     type State = ();
     type Data = Data;
     type RepoData = ();
@@ -139,21 +139,21 @@ impl UiPlugin for JevUi {
 
 /// The Models screen's section: whether a key is saved, with Remove, or
 /// the field to save one.
-fn section(_: &AtApp, view: &mut ViewCx<'_, JevUi>) -> Option<Node> {
+fn section(_: &AtApp, view: &mut ViewCx<'_, DecideUi>) -> Option<Node> {
     Some(Node::Card {
         children: key_card(view.data),
     })
 }
 
-/// The key's own page, which plugins that ask Jev link to.
-fn page(view: &mut ViewCx<'_, JevUi>) -> Node {
+/// The key's own page, which plugins that ask the decider link to.
+fn page(view: &mut ViewCx<'_, DecideUi>) -> Node {
     Node::Card {
         children: key_card(view.data),
     }
 }
 
-/// Whether a key is saved and what Jev does with it, the way to remove
-/// it, and what Jev did this session or the field that saves a key.
+/// Whether a key is saved and what the decider does with it, the way to remove
+/// it, and what the decider did this session or the field that saves a key.
 fn key_card(data: &Data) -> Vec<Node> {
     let line = if data.keyed {
         "Saved · picks efforts on auto, prunes the context, checks each \
@@ -172,7 +172,7 @@ fn key_card(data: &Data) -> Vec<Node> {
             count: None,
         },
         Node::Rich {
-            text: "**TypeSafe (Jev)**".into(),
+            text: "**TypeSafe**".into(),
         },
         Node::Spacer,
     ];
@@ -214,7 +214,7 @@ fn key_card(data: &Data) -> Vec<Node> {
     children
 }
 
-/// What Jev did this session, in a line: `jev-1.13 · 3 requests · 1.2k
+/// What the decider did this session, in a line: `jev-1.13 · 3 requests · 1.2k
 /// input tokens · p50 210 ms`.
 pub fn stats_line(stats: &Stats) -> String {
     let mut line = format!(

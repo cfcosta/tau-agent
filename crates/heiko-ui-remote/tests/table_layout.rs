@@ -30,7 +30,7 @@ const ROWS: [[&str; 3]; 3] = [
          summary-compaction plugin to try next.",
     ],
     [
-        "What Jev sees",
+        "What the decider sees",
         "Conversation text, tool inputs, and result size/status—not result \
          contents. Fits that state to a budget and batches questions.",
         "Same approach and default budgets.",

@@ -27,7 +27,7 @@ Each plugin's interface lives in `heiko-ui`, spread over seven places:
   `ResetRules`, which the host carries out.
 
 `view.rs` names the plugins about 70 times and `host.rs` about 40. A
-review of the four plugins that ask Jev (2026-09-30) found about 30
+review of the four plugins that ask the decider (2026-09-30) found about 30
 gaps between what they do and what the interface shows. Most were of
 two kinds:
 
@@ -45,7 +45,7 @@ several places that nothing ties together.
 
 The phone ([0013](0013-phones-connect-to-a-running-heiko.md)) adds one
 constraint. It gets `RunView`s and `RunEvent`s over the wire and draws
-them with the same gpui code, but it has no store, no Jev and no
+them with the same gpui code, but it has no store, no decider and no
 agents.
 
 ## Decision
@@ -60,7 +60,7 @@ but the `UiPlugin` builds it.
 
 This covers every plugin crate: `heiko-tools`, `heiko-vcs`,
 `heiko-compaction`, `heiko-fast-compaction`, `heiko-reasoning`, `heiko-memory`,
-`heiko-constitution` and `heiko-goal`. `heiko-jev` is a library that plugins
+`heiko-constitution` and `heiko-goal`. `heiko-decide` is a library that plugins
 use, not a plugin, and stays as it is.
 
 `heiko-agent` does not change. Its `Plugin` trait has no UI, and no core
@@ -98,7 +98,7 @@ pub trait UiPlugin: 'static {
 ```
 
 - **`agent_plugin`** builds the plugin for one run. `RunCtx` says what
-  the run has: Jev (metered) when there is a key, the repository and
+  the run has: the decider (metered) when there is a key, the repository and
   its directories, and whether it is the main chat or a sub-agent.
   `None` means the plugin is off for the run; its status says why.
 - **`catalog`** is its entry on the Plugins screen, "needs a TypeSafe
@@ -113,7 +113,7 @@ pub trait UiPlugin: 'static {
   interface sends `WorkspaceEvent::Plugin { plugin, action }`, which
   replaces the per-plugin events. `HostCx` is the only part of the
   host a plugin can reach: the store (its records, across runs too),
-  the run's directories, the metered Jev and the key. A failed action
+  the run's directories, the metered decider and the key. A failed action
   comes back to the interface as an alert.
 - **`apply`** folds one of the plugin's records into its state. It is
   plain Rust, with no gpui and no store, so the phone runs it too. It
@@ -369,7 +369,7 @@ the sketch above in these places:
   workspace hooks around jj as it was. Their `agent_plugins` return
   none.
 - **Services.** `RunCtx` and `HostCx` carry a typemap of services: the
-  metered Jev, how memory searches, and `TurnHooks`, through which a
+  metered decider, how memory searches, and `TurnHooks`, through which a
   plugin hears each turn's commit in the run's workspace (memory marks
   notes stale with it). `HostCx` also reaches the plugins' saved
   settings, which a host half reads and saves when an action changes

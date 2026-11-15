@@ -36,16 +36,16 @@ heiko-agent/
 │       │                         # composer's place (ADR 0019; Luau)
 │       ├── heiko-chatgpt/          # the person's ChatGPT plan, filling
 │       │                         # `heiko.provider`
-│       ├── heiko-codemode/         # Luau scripts that call tools and Jev
+│       ├── heiko-codemode/         # Luau scripts that call tools and the decider
 │       ├── heiko-compaction/       # summarizing compaction (Luau)
 │       ├── heiko-compaction-chain/ # pruning, the tree and the summary in
 │       │                         # turn, filling `heiko.compaction` (Luau)
-│       ├── heiko-constitution/     # a repository's rules, checked with Jev (Luau)
+│       ├── heiko-constitution/     # a repository's rules, checked with the decider (Luau)
 │       ├── heiko-direnv/           # agent commands in the repository's
 │       │                         # direnv environment (ADR 0025)
-│       ├── heiko-fast-compaction/  # Jev-driven pruning of tool history (Luau)
+│       ├── heiko-fast-compaction/  # the decider-driven pruning of tool history (Luau)
 │       ├── heiko-goal/             # keeps a chat going until its /goal holds (Luau)
-│       ├── heiko-jev/              # TypeSafe's Jev client, and the plugin that
+│       ├── heiko-decide/              # TypeSafe's decider client, and the plugin that
 │       │                         # keeps its key and gives it to plugins
 │       ├── heiko-luau-plugins/     # plugins written in Luau, run in codemode's
 │       │                         # sandbox (ADR 0027)

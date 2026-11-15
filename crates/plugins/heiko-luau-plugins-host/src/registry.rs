@@ -177,10 +177,10 @@ pub struct ActionCall<'a> {
     pub settings: Option<&'a serde_json::Value>,
     /// What it asks of the chats goes to.
     pub chats: Option<&'a dyn heiko_ui_plugin::Conversations>,
-    /// The host's Jev, for a plugin that uses it.
-    pub jev: Option<Arc<dyn heiko_jev::Jev>>,
-    /// Whether the run is going on, and a Jev key saved, as the
-    /// interface that asked sees them: `ctx.run.live` and `ctx.run.jev`.
+    /// The host's decider, for a plugin that uses it.
+    pub decide: Option<Arc<dyn heiko_decide::Decider>>,
+    /// Whether the run is going on, and a decider key saved, as the
+    /// interface that asked sees them: `ctx.run.live` and `ctx.run.decide`.
     pub live: bool,
     pub keyed: bool,
 }
@@ -657,10 +657,10 @@ impl Registry {
         action: &str,
         args: serde_json::Value,
         chats: Option<&dyn heiko_ui_plugin::Conversations>,
-        jev: Option<Arc<dyn heiko_jev::Jev>>,
+        decide: Option<Arc<dyn heiko_decide::Decider>>,
     ) -> anyhow::Result<serde_json::Value> {
         let hook = |action: String, args: serde_json::Value| {
-            let jev = jev.clone();
+            let decide = decide.clone();
             async move {
                 let active = self
                     .plugin(plugin)
@@ -668,7 +668,7 @@ impl Registry {
                     .ok_or_else(|| format!("{plugin} is not active"))?;
                 let mut context = self.app_context(&active).await;
                 if let Some(run) = context.run.as_object_mut() {
-                    run.insert("jev".into(), serde_json::json!(jev.is_some()));
+                    run.insert("decide".into(), serde_json::json!(decide.is_some()));
                 }
                 let outcome = active
                     .loaded
@@ -679,7 +679,7 @@ impl Registry {
                         self.with_files(
                             &active.loaded.declaration,
                             None,
-                            Arc::new(crate::runtime::ActionReach(jev)),
+                            Arc::new(crate::runtime::ActionReach(decide)),
                         ),
                         CancellationToken::new(),
                     )
@@ -782,15 +782,15 @@ impl Registry {
 
     /// Draws `plugin`'s page `page` of `params` as a fetched tree: of the
     /// repository `repo` among them, its actions carried out there, or
-    /// of the app without one (ADR 0050, gap L). `jev` says whether a Jev
-    /// key is saved, as `ctx.run.jev`; `drafts`, what the inputs its
+    /// of the app without one (ADR 0050, gap L). `decide` says whether a decider
+    /// key is saved, as `ctx.run.decide`; `drafts`, what the inputs its
     /// `drafts` names hold, as `params.drafts`.
     pub async fn page(
         &self,
         plugin: &str,
         page: &str,
         params: &BTreeMap<String, String>,
-        jev: bool,
+        decide: bool,
         drafts: &BTreeMap<String, String>,
     ) -> serde_json::Value {
         let failed = |why: String| {
@@ -806,7 +806,7 @@ impl Registry {
             Some(repo) => self.repo_context(&active, repo).await,
             None => self.app_context(&active).await,
         };
-        context.run["jev"] = serde_json::json!(jev);
+        context.run["decide"] = serde_json::json!(decide);
         let mut input = serde_json::json!(params);
         if !drafts.is_empty() {
             input["drafts"] = serde_json::json!(drafts);
@@ -907,15 +907,15 @@ impl Registry {
         action: &str,
         args: serde_json::Value,
         chats: Option<&dyn heiko_ui_plugin::Conversations>,
-        jev: Option<Arc<dyn heiko_jev::Jev>>,
+        decide: Option<Arc<dyn heiko_decide::Decider>>,
     ) -> anyhow::Result<serde_json::Value> {
         let value = self
-            .repo_hook(plugin, repo, action, args, jev.clone())
+            .repo_hook(plugin, repo, action, args, decide.clone())
             .await?;
         crate::chats::follow(value, chats, Some(repo), |next, args| {
-            let jev = jev.clone();
+            let decide = decide.clone();
             async move {
-                self.repo_hook(plugin, repo, &next, args, jev)
+                self.repo_hook(plugin, repo, &next, args, decide)
                     .await
                     .map_err(|error| format!("{error:#}"))
             }
@@ -932,16 +932,16 @@ impl Registry {
         repo: &str,
         action: &str,
         args: serde_json::Value,
-        jev: Option<Arc<dyn heiko_jev::Jev>>,
+        decide: Option<Arc<dyn heiko_decide::Decider>>,
     ) -> anyhow::Result<serde_json::Value> {
         let active = self
             .plugin(plugin)
             .await
             .ok_or_else(|| anyhow::anyhow!("{plugin} is not active"))?;
         let mut context = self.repo_context(&active, repo).await;
-        // Whether Jev answers here, as a run's `env.run.jev` says: the
+        // Whether the decider answers here, as a run's `env.run.decide` says: the
         // action reaches the one it is given.
-        context.run["jev"] = serde_json::json!(jev.is_some());
+        context.run["decide"] = serde_json::json!(decide.is_some());
         let outcome = active
             .loaded
             .call(
@@ -951,7 +951,7 @@ impl Registry {
                 self.with_files(
                     &active.loaded.declaration,
                     Some(repo),
-                    Arc::new(crate::runtime::ActionReach(jev)),
+                    Arc::new(crate::runtime::ActionReach(decide)),
                 ),
                 CancellationToken::new(),
             )
@@ -1433,7 +1433,7 @@ impl Registry {
             state,
             settings,
             chats,
-            jev,
+            decide,
             live,
             keyed,
         } = call;
@@ -1472,7 +1472,7 @@ impl Registry {
             return done;
         }
         let mut context = Context {
-            run: serde_json::json!({ "id": run, "live": live, "jev": keyed }),
+            run: serde_json::json!({ "id": run, "live": live, "decide": keyed }),
             now: crate::agent::now(),
             settings: heiko_luau_plugins::settings::effective(
                 &loaded.declaration,
@@ -1487,7 +1487,7 @@ impl Registry {
         let reach = self.with_files(
             &loaded.declaration,
             repo,
-            Arc::new(crate::runtime::ActionReach(jev.clone())),
+            Arc::new(crate::runtime::ActionReach(decide.clone())),
         );
         // On a run going on, the action is a message to the run's own
         // mailbox (ADR 0056): it changes the one model, between the steps
@@ -1577,9 +1577,9 @@ impl Registry {
                     chats,
                     Some(repo),
                     |next, args| {
-                        let jev = jev.clone();
+                        let decide = decide.clone();
                         async move {
-                            self.repo_hook(plugin, repo, &next, args, jev)
+                            self.repo_hook(plugin, repo, &next, args, decide)
                                 .await
                                 .map_err(|error| format!("{error:#}"))
                         }

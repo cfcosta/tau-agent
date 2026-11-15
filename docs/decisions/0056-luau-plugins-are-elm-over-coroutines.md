@@ -6,18 +6,18 @@
 ## Context
 
 A Luau plugin today is a table of hooks. Each hook gets a `ctx`, changes
-`ctx.state` in place, and reaches the world through it: `ctx.jev.ask`,
+`ctx.state` in place, and reaches the world through it: `ctx.decide.ask`,
 `ctx.http.request`, `ctx.tools.infer`, `ctx.store.get`, `ctx.files.read`
 and the rest. A reach is a host function that blocks the hook until it
 answers. The host reads the state back when the hook ends and stores it.
 
 That shape caused the bugs the last sweeps found (ADR 0054):
 
-- **A hook that waits holds a copy.** heiko-goal's check asked Jev, and a
+- **A hook that waits holds a copy.** heiko-goal's check asked the decider, and a
   Pause pressed meanwhile was written over when the check stored its
   state. The host now replays such an action on what the hook left
   (`Record::Acted` with its action and args). A replayed action that
-  reaches Jev, its store or the network does that twice, and a slow action
+  reaches the decider, its store or the network does that twice, and a slow action
   still loses its change if a hook moves the state under it (ADR 0050).
 - **State is shared by compare and swap.** An action's result is taken
   only `still_on` the state it began on, so a second key pressed before
@@ -81,11 +81,11 @@ before_stop = function(stop, model)
   if g == nil or g.status ~= "active" then
     return nil
   end
-  local answers, cost = heiko.await(cmd.jev.ask({
+  local answers, cost = heiko.await(cmd.decide.ask({
     state = { goal = g.condition, final_answer = stop.text },
     questions = { met = QUESTION },
   }))
-  -- The model as it is now: a Pause may have come while Jev answered.
+  -- The model as it is now: a Pause may have come while the decider answered.
   g = model.goal
   if g.status ~= "active" then
     return nil
@@ -121,7 +121,7 @@ end,
 | `ctx.files.write` / `remove` / `rename` / `mkdir`    | `cmd.files.*`                                      | nothing         |
 | `ctx.transcript()`, `ctx.measure`, `ctx.secrets.has` | `cmd.transcript`, `cmd.measure`, `cmd.secrets.has` | the host        |
 | `ctx.time.local` / `parse`, the clock                | `cmd.time.*`, or the message's time                | the host        |
-| `ctx.jev.*`, `ctx.http.request`                      | `cmd.jev.*`, `cmd.http.request`                    | the network     |
+| `ctx.decide.*`, `ctx.http.request`                      | `cmd.decide.*`, `cmd.http.request`                    | the network     |
 | `ctx.tools.infer`, `ctx.tools.<tool>`                | `cmd.infer`, `cmd.tool(name, args)`                | a model, a tool |
 | `ctx.chats.wake`, `ctx.desktop.notice`               | `cmd.chats.wake`, `cmd.notice`                     | another run     |
 | `ctx.blobs.put_file`, `ctx.archive.*`                | `cmd.blobs.put_file`, `cmd.archive.*`              | the disk        |
@@ -197,7 +197,7 @@ and writes reads again after the wait, as with the model.
 
   ```lua
   local h = run:hook("before_stop", { text = "done" })
-  t.equal(h.waits.kind, "jev.ask")
+  t.equal(h.waits.kind, "decide.ask")
   run:action("act", { what = "pause" })
   h:answer({ met = { probability = 0.9 } }, 0)
   t.equal(h.returned, nil)
@@ -278,7 +278,7 @@ holds half of it:
   the same steps.
 - **Hooks are `(input, model, env)`**, `view` is `(model, env)` and a
   card's input is `{ call, result }`; drawings read a frozen copy of
-  plain tables. A host tool's command has its name as its op, Jev is an
+  plain tables. A host tool's command has its name as its op, the decider is an
   op like any other (`PluginHost::command`), and only `all` carries
   several. An awaited null reads as nil, an infer's value comes out of
   its envelope, and a failure raises the command's own message.
@@ -342,7 +342,7 @@ them while its `rev` is what it read first; every change bumps `rev`.
 ## Settled at review, 2026-11-14
 
 - **Limits.** A hook's limit counts only its own steps, so its code stays
-  fast. Each waiting command has its own limit (Jev, http and infer as
+  fast. Each waiting command has its own limit (the decider, http and infer as
   today's), and the loop caps how long it waits for a hook's answer.
 - **An idle run's model is made on demand.** When an action, page or
   command comes for a run that is not going on, the registry rebuilds its

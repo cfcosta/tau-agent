@@ -568,8 +568,8 @@ impl Host {
     }
 
     /// Gives every plugin `value` beside the host's own services, as a
-    /// value of the kernel's (`Services::with`): for tests, such as a Jev
-    /// to ask in place of TypeSafe's (`heiko_jev::Upstream`).
+    /// value of the kernel's (`Services::with`): for tests, such as a decider
+    /// to ask in place of TypeSafe's (`heiko_decide::Upstream`).
     pub fn with_service<T: Send + Sync + 'static>(mut self, value: T) -> Self {
         self.given = std::mem::take(&mut self.given).with(value);
         self

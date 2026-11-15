@@ -7,7 +7,7 @@
 //! A card's calls come from one of two places, and agree:
 //!
 //! - while the script runs, from the nested calls heiko-ui folds into the
-//!   card's [`CallData::nested`] from run events, and from the Jev rows
+//!   card's [`CallData::nested`] from run events, and from decider rows
 //!   the call reports in its updates ([`CallData::updates`]);
 //! - once it ends, from its result's `details.calls`, the only record a
 //!   stored run has. heiko-ui empties the live rows then, so a live card
@@ -46,7 +46,7 @@ use crate::{
     PLUGIN,
     description::NAME,
     format::formatted,
-    live::{InferUpdate, JevUpdate},
+    live::{InferUpdate, DecideUpdate},
     modules,
     outline,
     promotion,
@@ -266,7 +266,7 @@ pub fn inference_traces(state: &State) -> BTreeMap<String, TraceView<'_>> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Row {
     pub id: String,
-    /// The tool, or `jev.<function>`.
+    /// The tool, or `decide.<function>`.
     pub name: String,
     /// Compact JSON, cut at [`MAX_ARGS_CHARS`].
     pub args: String,
@@ -275,7 +275,7 @@ pub struct Row {
     pub ms: Option<u64>,
     /// Cut at [`MAX_ERROR_CHARS`].
     pub error: Option<String>,
-    /// Reported US dollars for Jev or all admitted infer attempts.
+    /// Reported US dollars for the decider or all admitted infer attempts.
     pub cost: Option<f64>,
     pub usage_uncertain: bool,
     /// Latest nested infer progress, while its call is still running.
@@ -297,15 +297,15 @@ pub struct Calls {
 ///
 /// - its tool calls, from the nested calls heiko-ui folds into its card.
 ///   Only its own: a call one of them made is that call's business;
-/// - its Jev requests, which make no run events, from the updates the
-///   call reported ([`JevUpdate`]), the latest of each standing. Each
+/// - its decider requests, which make no run events, from the updates the
+///   call reported ([`DecideUpdate`]), the latest of each standing. Each
 ///   goes after the tool calls started before it.
 ///
 /// The order events and updates came in does not matter: rows are
 /// placed by their ids and by what the updates say.
 pub fn live_rows(call_id: &str, data: &CallData) -> Vec<Row> {
     let prefix = format!("{call_id}/");
-    // (tool calls before it, 0 for a tool call and 1 for Jev, its
+    // (tool calls before it, 0 for a tool call and 1 for the decider, its
     // number), with the number of a tool call its own place.
     let mut keyed: Vec<((usize, u8, usize), Row)> = data
         .nested
@@ -342,8 +342,8 @@ pub fn live_rows(call_id: &str, data: &CallData) -> Vec<Row> {
             ((n, 0, 0), row)
         })
         .collect();
-    let mut jev: Vec<((usize, u8, usize), Row)> = Vec::new();
-    for update in data.updates.iter().filter_map(JevUpdate::from_details) {
+    let mut decide: Vec<((usize, u8, usize), Row)> = Vec::new();
+    for update in data.updates.iter().filter_map(DecideUpdate::from_details) {
         let Some(mut row) = row_of(&update.row) else {
             continue;
         };
@@ -353,15 +353,15 @@ pub fn live_rows(call_id: &str, data: &CallData) -> Vec<Row> {
         let n = row
             .id
             .strip_prefix(&prefix)
-            .and_then(|rest| rest.strip_prefix("jev/"))
+            .and_then(|rest| rest.strip_prefix("decide/"))
             .and_then(|n| n.parse().ok())
             .unwrap_or(usize::MAX);
-        match jev.iter_mut().find(|(_, kept)| kept.id == row.id) {
+        match decide.iter_mut().find(|(_, kept)| kept.id == row.id) {
             Some(kept) => *kept = ((update.after, 1, n), row),
-            None => jev.push(((update.after, 1, n), row)),
+            None => decide.push(((update.after, 1, n), row)),
         }
     }
-    keyed.extend(jev);
+    keyed.extend(decide);
     // ToolEnd events and Codemode updates use independent channels. The
     // infer update is the authoritative full row, whichever arrived first.
     for update in data.updates.iter().filter_map(InferUpdate::from_details) {
@@ -613,7 +613,7 @@ impl UiPlugin for CodemodeUi {
                 heiko_ui_plugin::Seam::Tools,
                 heiko_ui_plugin::Seam::Start,
             ])
-            .services(&[heiko_jev::SERVICE])
+            .services(&[heiko_decide::SERVICE])
     }
 
     fn manifest(&self) -> Manifest<Self> {
@@ -730,13 +730,13 @@ fn marked(name: &str, tone: Tone, text: impl Into<String>) -> Node {
     Node::row([icon(name, tone), mono(text)])
 }
 
-/// Its entry on the Plugins screen: Jev is optional.
-pub fn description(jev: bool) -> String {
-    if jev {
-        "Runs Luau scripts that call tools, with Jev".to_owned()
+/// Its entry on the Plugins screen: the decider is optional.
+pub fn description(decide: bool) -> String {
+    if decide {
+        "Runs Luau scripts that call tools, with the decider".to_owned()
     } else {
         "Runs Luau scripts that call tools; with a TypeSafe key (Models), \
-         scripts ask Jev too"
+         scripts ask the decider too"
             .to_owned()
     }
 }

@@ -1,4 +1,4 @@
--- heiko-goal in a run: a run goes on until Jev says the goal holds; a goal
+-- heiko-goal in a run: a run goes on until the decider says the goal holds; a goal
 -- stops when out of continuations or budget; it outlives the run and
 -- takes what the interface changes; no goal means no checks, and a
 -- failed check stops the run; and the banner, the command and the notes
@@ -8,9 +8,9 @@ local t = heiko.test
 local g = t.gen
 local goal = require("goal")
 
--- A Jev answering each check with the next of `answers`, the last for
+-- A decider answering each check with the next of `answers`, the last for
 -- every later one, and keeping each request in `asked`.
-local function jev(answers)
+local function decide(answers)
 	local asked = {}
 	local fake = {
 		ask = function(request)
@@ -26,7 +26,7 @@ local function run(spec)
 	return t.run({
 		id = spec.id or "r1",
 		state = spec.state,
-		jev = spec.jev,
+		decide = spec.decide,
 		kind = spec.kind,
 		live = spec.live,
 	})
@@ -37,9 +37,9 @@ local function stopping(r, text, turn, tokens)
 	return r:before_stop({ text = text, turn = turn, reason = "stop" })
 end
 
-t.case("the run goes on until Jev says the goal holds", function()
-	local fake, asked = jev({ 0.1, 0.6999, goal.MET_AT })
-	local r = run({ jev = fake })
+t.case("the run goes on until the decider says the goal holds", function()
+	local fake, asked = decide({ 0.1, 0.6999, goal.MET_AT })
+	local r = run({ decide = fake })
 	local started = r:start({ input = "/goal --budget 5k the tests pass" })
 	-- The model gets the condition and how goals work, not the command.
 	t.equal(started, heiko.start({ input = goal.set_input("the tests pass") }))
@@ -65,7 +65,7 @@ t.case("the run goes on until Jev says the goal holds", function()
 		table.insert(checks, { check.n, check.met, check.continuation or false })
 	end
 	t.equal(checks, { { 1, false, 1 }, { 2, false, 2 }, { 3, true, false } })
-	t.equal(kept.spent, 1200, "the turns' tokens count toward the goal, Jev's checks do not")
+	t.equal(kept.spent, 1200, "the turns' tokens count toward the goal, the decider's checks do not")
 	-- Each check's note; the continuations they say draw as nothing.
 	local view = r:view()
 	t.equal(view.notes.g2 ~= nil, true)
@@ -74,7 +74,7 @@ t.case("the run goes on until Jev says the goal holds", function()
 end)
 
 t.case("a goal stops when out of continuations or budget", function()
-	local r = run({ jev = jev({ 0.1 }) })
+	local r = run({ decide = decide({ 0.1 }) })
 	r:start({ input = "/goal --continuations 1 the tests pass" })
 	t.equal(stopping(r, "tried", 1).decision, "continue")
 	t.equal(stopping(r, "tried again", 2), nil)
@@ -87,7 +87,7 @@ t.case("a goal stops when out of continuations or budget", function()
 	t.equal(string.find(stopped, "raise the limit", 1, true) ~= nil, true, stopped)
 
 	-- Out of budget: each turn uses 250k tokens of 300k.
-	local b = run({ jev = jev({ 0.1 }) })
+	local b = run({ decide = decide({ 0.1 }) })
 	b:start({ input = "/goal --budget 300k the tests pass" })
 	t.equal(b.state.goal.budget, 300000)
 	t.equal(stopping(b, "tried", 1, 250000).decision, "continue")
@@ -97,8 +97,8 @@ t.case("a goal stops when out of continuations or budget", function()
 end)
 
 t.case("a goal outlives the run and takes what the interface changes", function()
-	local fake, asked = jev({ 0.1, 0.1, 0.9 })
-	local first = run({ jev = fake })
+	local fake, asked = decide({ 0.1, 0.1, 0.9 })
+	local first = run({ decide = fake })
 	first:start({ input = "/goal --continuations 1 it works" })
 	stopping(first, "tried", 1)
 	stopping(first, "tried again", 2)
@@ -112,33 +112,33 @@ t.case("a goal outlives the run and takes what the interface changes", function(
 	t.equal(first.state.goal.max_continuations, 11)
 	-- Paused: the next message is not checked.
 	first:action("act", { what = "pause" })
-	local paused = run({ id = "r2", state = first.state, jev = fake })
+	local paused = run({ id = "r2", state = first.state, decide = fake })
 	paused:start({ input = "look at it again" })
 	t.equal(stopping(paused, "looked", 1), nil)
 	t.equal(#asked, 2)
 
 	-- Resumed: met.
 	paused:action("act", { what = "keep_going" })
-	local resumed = run({ id = "r3", state = paused.state, jev = fake })
+	local resumed = run({ id = "r3", state = paused.state, decide = fake })
 	resumed:start({ input = "keep going" })
 	t.equal(stopping(resumed, "done", 1), nil)
 	t.equal(resumed.state.goal.status, "met")
 	t.equal(#resumed.state.goal.checks, 3)
 
 	-- Cleared from a message: no goal left, and the model is told.
-	local cleared = run({ id = "r4", state = resumed.state, jev = fake })
+	local cleared = run({ id = "r4", state = resumed.state, decide = fake })
 	t.equal(cleared:start({ input = "/goal clear" }), heiko.start({ input = goal.CLEARED }))
 	t.equal(cleared.state.goal, nil)
 end)
 
 t.case("no goal means no checks, and a failed check stops", function()
-	local fake, asked = jev({ 0.1 })
-	local r = run({ jev = fake })
+	local fake, asked = decide({ 0.1 })
+	local r = run({ decide = fake })
 	t.equal(r:start({ input = "hi" }), nil)
 	t.equal(stopping(r, "hello", 1), nil)
 	t.equal(#asked, 0)
 
-	local failing = run({ jev = { ask = function() error("Jev answered 503", 0) end } })
+	local failing = run({ decide = { ask = function() error("The decider answered 503", 0) end } })
 	failing:start({ input = "/goal it works" })
 	t.equal(stopping(failing, "hello", 1), nil)
 	t.equal(failing.state.goal.status, "active", "still set, just unchecked")
@@ -146,17 +146,17 @@ t.case("no goal means no checks, and a failed check stops", function()
 	t.equal(failing:view().notes.g0 ~= nil, true)
 end)
 
-t.case("without Jev, or in a sub-agent, a goal is not set", function()
+t.case("without the decider, or in a sub-agent, a goal is not set", function()
 	local keyless = run({})
 	t.equal(keyless:start({ input = "/goal it works" }), nil)
 	t.equal(keyless.state.goal, nil)
-	local sub = run({ jev = jev({ 0.9 }), kind = "sub_agent" })
+	local sub = run({ decide = decide({ 0.9 }), kind = "sub_agent" })
 	t.equal(sub:start({ input = "/goal it works" }), nil)
 	t.equal(sub.state.goal, nil)
 end)
 
 t.case("a /goal message draws as the goal it set, typed or as the model reads it", function()
-	local r = run({ jev = jev({ 0.9 }) })
+	local r = run({ decide = decide({ 0.9 }) })
 	r:start({ input = "/goal --continuations 3 the tests pass" })
 	local view = r:view()
 	local typed = view.messages["/goal --continuations 3 the tests pass"]
@@ -167,13 +167,13 @@ t.case("a /goal message draws as the goal it set, typed or as the model reads it
 end)
 
 t.case("the command sets the goal of a chat going on, or starts one", function()
-	local live = run({ jev = jev({ 0.9 }), live = true })
+	local live = run({ decide = decide({ 0.9 }), live = true })
 	live:start({ input = "work" })
 	local steer = live:action("/goal", { text = "it ships", drafts = { ["goal-continuations"] = "4" } })
 	t.equal(steer, heiko.interface("steer", { text = goal.set_input("it ships") }))
 	t.equal(live.state.goal.max_continuations, 4)
 	-- Limits typed with the command win over the popover's.
-	local done = run({ jev = jev({ 0.9 }) })
+	local done = run({ decide = decide({ 0.9 }) })
 	local sent = done:action("/goal", { text = "--budget 1m it ships", drafts = { ["goal-budget"] = "9" } })
 	t.equal(sent, heiko.interface("send", { text = "/goal --continuations 10 --budget 1m it ships" }))
 	t.equal(done.state.goal, nil, "the message sets it as it starts")
@@ -198,7 +198,7 @@ t.property("the banner's buttons follow the goal", function(draw)
 	local status = draw(g.sampled_from({ "active", "paused", "met", "stopped" }))
 	state.goal.status = status
 	state.checks = true
-	local r = run({ state = state, jev = jev({ 0.5 }) })
+	local r = run({ state = state, decide = decide({ 0.5 }) })
 	local banner = json.encode(r:view().banner)
 	local labels = {
 		active = { "pause", "edit", "clear" },
@@ -213,7 +213,7 @@ t.property("the banner's buttons follow the goal", function(draw)
 	t.equal(edit, heiko.interface("composer", { text = "/goal " .. (status == "met" and "" or "it works") }))
 end)
 
--- The tokens a run used while its stop went unchecked (Jev failed, or
+-- The tokens a run used while its stop went unchecked (the decider failed, or
 -- the goal was paused) still count toward the goal's budget: each
 -- message's start set the count to nothing, so the budget counted less
 -- than was spent.
@@ -222,12 +222,12 @@ t.case("a run whose stop went unchecked still counts toward the budget", functio
 	local fake = {
 		ask = function()
 			if down then
-				error("Jev is down", 0)
+				error("The decider is down", 0)
 			end
 			return { met = { probability = 0.1 } }, 0.25
 		end,
 	}
-	local r = run({ jev = fake })
+	local r = run({ decide = fake })
 	r:start({ input = "/goal --budget 5m the tests pass" })
 	stopping(r, "done?", 1, 50000)
 	t.equal(#r.state.goal.checks, 0, "not checked")
@@ -237,22 +237,22 @@ t.case("a run whose stop went unchecked still counts toward the budget", functio
 	t.equal(r.state.goal.spent, 50000 + 20000)
 end)
 
--- An answer of Jev's with no verdict is a check that failed, said in a
+-- An answer of the decider's with no verdict is a check that failed, said in a
 -- note, not a failure of the plugin's.
 t.case("an answer with no verdict is a failed check", function()
-	local r = run({ jev = { ask = function() return {}, 0 end } })
+	local r = run({ decide = { ask = function() return {}, 0 end } })
 	r:start({ input = "/goal the tests pass" })
 	t.equal(stopping(r, "done?", 1), nil)
 	t.equal(r.state.goal.error ~= nil, true, "noted")
 	t.equal(#r.state.goal.checks, 0)
 end)
 
--- A Pause pressed while Jev checks the goal is kept: the check that was
+-- A Pause pressed while the decider checks the goal is kept: the check that was
 -- under way records nothing and sends the model nowhere (ADR 0056).
-t.case("a Pause pressed while Jev checks the goal is kept", function()
+t.case("a Pause pressed while the decider checks the goal is kept", function()
 	local r
 	r = run({
-		jev = {
+		decide = {
 			ask = function()
 				r:action("act", { what = "pause" })
 				return { met = { probability = 0.1 } }, 0.001
@@ -266,13 +266,13 @@ t.case("a Pause pressed while Jev checks the goal is kept", function()
 	t.equal(next(r.state.held), nil, "no continuation held")
 end)
 
--- The same in every order: stops checked by Jev, Pause and Resume
+-- The same in every order: stops checked by the decider, Pause and Resume
 -- pressed at any point, and a new goal set. While the goal is paused,
 -- no check is recorded and no stop sends the model back.
 t.hooks("a Pause pressed during a check is kept", {
 	run = {
 		id = "r1",
-		jev = {
+		decide = {
 			ask = function(_, draw)
 				return { met = { probability = draw(g.floats({ min = 0, max = 0.8 })) } }, 0.001
 			end,

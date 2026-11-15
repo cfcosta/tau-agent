@@ -1,6 +1,6 @@
 //! heiko-reasoning in a host: Luau now (ADR 0050), run by heiko-luau-plugins,
 //! so these tests install the app's plugins, the Luau half among them.
-//! On auto, Jev's pick is the effort the model is asked at and the
+//! On auto, the decider's pick is the effort the model is asked at and the
 //! plan's; an effort someone chose is not scored; the Models screen's
 //! settings reach it; and each message is scored again, its notes after
 //! the message they were for.
@@ -69,10 +69,10 @@ fn project() -> Project {
     .unwrap()
 }
 
-/// A host on `llm` with one repository, its Jev `jev`.
+/// A host on `llm` with one repository, its decider `decide`.
 fn host_on(
     llm: &ScriptedModel,
-    jev: heiko_jev::fake::FakeJev,
+    decide: heiko_decide::fake::FakeDecider,
 ) -> (Host, UnboundedReceiver<RunEvent>) {
     install();
     let dir = own_dir();
@@ -107,7 +107,7 @@ fn host_on(
                 Identity::default(),
             )),
         )
-        .with_service(heiko_jev::Upstream(Arc::new(jev)));
+        .with_service(heiko_decide::Upstream(Arc::new(decide)));
     (host, events)
 }
 
@@ -153,26 +153,26 @@ fn note_key(key: &str) -> Option<&str> {
     key.strip_prefix(&format!("note-{}-", heiko_luau_plugins::names::REASONING))
 }
 
-/// A Jev that scores each request with `probabilities`, one per level,
+/// A decider that scores each request with `probabilities`, one per level,
 /// at `confidence`, and leases `lease` when asked.
 fn scoring(
     probabilities: Vec<f64>,
     confidence: f64,
     lease: &'static str,
-) -> heiko_jev::fake::FakeJev {
-    heiko_jev::fake::FakeJev::new(move |request| {
+) -> heiko_decide::fake::FakeDecider {
+    heiko_decide::fake::FakeDecider::new(move |request| {
         let answers = request
             .questions
             .keys()
             .map(|id| {
                 let answer = if id == "lease" {
-                    heiko_jev::Answer::Choice {
+                    heiko_decide::Answer::Choice {
                         choice: lease.into(),
                         probabilities: [(lease.to_owned(), 0.9)].into(),
                         confidence: 0.9,
                     }
                 } else {
-                    heiko_jev::Answer::Score {
+                    heiko_decide::Answer::Score {
                         score: 3.0,
                         probabilities: probabilities
                             .iter()
@@ -185,7 +185,7 @@ fn scoring(
                 (id.clone(), answer)
             })
             .collect();
-        Ok(heiko_jev::fake::response(answers, request))
+        Ok(heiko_decide::fake::response(answers, request))
     })
 }
 
@@ -209,11 +209,11 @@ fn it_is_listed_among_the_luau_plugins() {
 }
 
 #[test]
-fn auto_reasoning_takes_the_effort_jev_picks() {
+fn auto_reasoning_takes_the_effort_decide_picks() {
     let llm = ScriptedModel::new().turn(|t| t.text("done"));
-    // Jev is sure the task wants high.
-    let jev = scoring(vec![0.01, 0.02, 0.09, 0.84, 0.04], 0.84, "one_call");
-    let (host, mut events) = host_on(&llm, jev);
+    // The decider is sure the task wants high.
+    let decide = scoring(vec![0.01, 0.02, 0.09, 0.84, 0.04], 0.84, "one_call");
+    let (host, mut events) = host_on(&llm, decide);
     let auto = ModelChoice::new("gpt-5.5", Effort::Auto);
     let mut view = host
         .block_on(host.start("track down the race", &auto, REPO))
@@ -234,11 +234,11 @@ fn auto_reasoning_takes_the_effort_jev_picks() {
     // History shows it again, from the plugin's record.
     assert!(chosen(&host.block_on(host.history()).unwrap()[0]));
 
-    // An effort someone chose is not scored: Jev is never asked, and
+    // An effort someone chose is not scored: the decider is never asked, and
     // the run asks the model at that effort and ends as it should.
     let llm = ScriptedModel::new().turn(|t| t.text("ok"));
-    let jev = heiko_jev::fake::FakeJev::nouls(|_| 0.5);
-    let (host, mut events) = host_on(&llm, jev.clone());
+    let decide = heiko_decide::fake::FakeDecider::predicates(|_| 0.5);
+    let (host, mut events) = host_on(&llm, decide.clone());
     let low = ModelChoice::new("gpt-5.5", Effort::Low);
     let run = host
         .block_on(host.start("rename a variable", &low, REPO))
@@ -252,7 +252,7 @@ fn auto_reasoning_takes_the_effort_jev_picks() {
         .collect();
     wait_until_done(&host, &run.id);
     assert_eq!(stops, [StopReason::Stop]);
-    assert!(jev.requests().is_empty(), "{:?}", jev.requests());
+    assert!(decide.requests().is_empty(), "{:?}", decide.requests());
     assert_eq!(
         llm.requests()[0].settings.reasoning,
         Some(ReasoningEffort::Low)
@@ -261,14 +261,14 @@ fn auto_reasoning_takes_the_effort_jev_picks() {
 
 /// The settings the person gives heiko-reasoning, as heiko-luau-plugins
 /// keeps them, reach it: asked to decide again between steps, it asks
-/// Jev how long the effort holds; asked for more confidence than Jev
+/// The decider how long the effort holds; asked for more confidence than the decider
 /// has, it keeps the default.
 #[test]
 fn reasoning_settings_reach_the_plugin() {
     let llm = ScriptedModel::new().turn(|t| t.text("done"));
     // 0.84 sure of high, and sure the effort holds for one call.
-    let jev = scoring(vec![0.01, 0.02, 0.09, 0.84, 0.04], 0.84, "one_call");
-    let (host, mut events) = host_on(&llm, jev.clone());
+    let decide = scoring(vec![0.01, 0.02, 0.09, 0.84, 0.04], 0.84, "one_call");
+    let (host, mut events) = host_on(&llm, decide.clone());
     let mut settings = heiko_ui_remote::models::ModelSettings::default();
     settings.plugins.insert(
         heiko_luau_plugins::NAME.into(),
@@ -283,7 +283,7 @@ fn reasoning_settings_reach_the_plugin() {
         .unwrap();
     until_end(&mut events);
     wait_until_done(&host, &view.id);
-    let asked = jev.requests();
+    let asked = decide.requests();
     assert!(
         asked[0].questions.contains_key("lease"),
         "deciding again asks how long the effort holds"
@@ -306,7 +306,7 @@ fn each_message_is_scored_again() {
     // gpt-5.5's levels: none, low, medium, high, xhigh. The first
     // message wants none, the second xhigh.
     let wants = Arc::new(Mutex::new(vec![4, 0]));
-    let jev = heiko_jev::fake::FakeJev::new(move |request| {
+    let decide = heiko_decide::fake::FakeDecider::new(move |request| {
         let level = wants.lock().unwrap().pop().unwrap();
         let answers = request
             .questions
@@ -319,7 +319,7 @@ fn each_message_is_scored_again() {
                     .collect();
                 (
                     id.clone(),
-                    heiko_jev::Answer::Score {
+                    heiko_decide::Answer::Score {
                         score: level as f64,
                         probabilities,
                         confidence: 0.96,
@@ -327,9 +327,9 @@ fn each_message_is_scored_again() {
                 )
             })
             .collect();
-        Ok(heiko_jev::fake::response(answers, request))
+        Ok(heiko_decide::fake::response(answers, request))
     });
-    let (host, mut events) = host_on(&llm, jev);
+    let (host, mut events) = host_on(&llm, decide);
     let auto = ModelChoice::new("gpt-5.5", Effort::Auto);
     let mut view = host
         .block_on(host.start("how are you?", &auto, REPO))

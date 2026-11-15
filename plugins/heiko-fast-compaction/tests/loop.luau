@@ -1,6 +1,6 @@
 -- heiko-fast-compaction's history pruning in a real agent loop (ADR 0053):
 -- a scripted model, a fake `read` whose output names the file it read and
--- is `size` characters long, a fake Jev whose answers each loop chooses,
+-- is `size` characters long, a fake decider whose answers each loop chooses,
 -- an in-memory store and real time.
 local heiko = require("heiko")
 local t = heiko.test
@@ -72,16 +72,16 @@ local function rewritten(events)
 	return out
 end
 
--- Past 60% of the window, the plugin asks Jev about the one unpinned
+-- Past 60% of the window, the plugin asks the decider about the one unpinned
 -- call, and on "the call matters, its output does not", cuts the output
 -- to its head and a note. The next request sends the pruned transcript;
--- the store keeps the rewrite and its ledger; Jev's usage is charged to
--- the run; Jev saw the call, never its output.
+-- the store keeps the rewrite and its ledger; the decider's usage is charged to
+-- the run; the decider saw the call, never its output.
 t.loop(
 	"a stale result is cut",
 	spec(two_reads(), {
 		settings = settings(),
-		jev = { { id = "call_", noul = 0.9 }, { noul = 0.1 } },
+		decide = { { id = "call_", predicate = 0.9 }, { predicate = 0.1 } },
 	}),
 	function(run)
 		t.equal(run.outcome.stop, "Stop")
@@ -94,7 +94,7 @@ t.loop(
 		-- call's usage still counts it.
 		t.equal(rewrites[1].after + 500 < rewrites[1].before, true, json.encode(rewrites))
 
-		-- What Jev cost for the pass is what the run was charged.
+		-- What the decider cost for the pass is what the run was charged.
 		t.equal(run.state.passes[1].results_dropped, 1)
 		t.equal(run.charged > 0, true, "charged")
 		local next = run.requests[3].messages
@@ -107,10 +107,10 @@ t.loop(
 		t.equal(run.archive[archive] and run.archive[archive].text, contents("a.rs", 4000), archive)
 		t.equal(result_text(next[5]), contents("b.rs", 10))
 
-		t.equal(#run.jev, 1)
-		t.equal(run.jev[1].questions, { "call_t1", "result_t1" })
-		local state = json.encode(run.jev[1].state)
-		t.equal(contains(state, string.rep("x", 100)), false, "the output reached Jev")
+		t.equal(#run.decide, 1)
+		t.equal(run.decide[1].questions, { "call_t1", "result_t1" })
+		local state = json.encode(run.decide[1].state)
+		t.equal(contains(state, string.rep("x", 100)), false, "the output reached the decider")
 		t.equal(contains(state, "a.rs"), true, state)
 
 		t.equal(#run.rewrites, 1)
@@ -119,7 +119,7 @@ t.loop(
 		t.equal(details.stats.results_dropped, 1)
 		t.equal(details.stats.reduction_ratio >= 0.25, true, tostring(details.stats.reduction_ratio))
 		t.equal(details.stats.cost, run.charged)
-		t.equal(run.outcome.usage.cost.total > 0, true, "Jev's usage is charged")
+		t.equal(run.outcome.usage.cost.total > 0, true, "The decider's usage is charged")
 	end
 )
 
@@ -127,7 +127,7 @@ t.loop(
 -- result.
 t.loop(
 	"a stale call is dropped",
-	spec(two_reads(), { settings = settings(), jev = { { noul = 0 } } }),
+	spec(two_reads(), { settings = settings(), decide = { { predicate = 0 } } }),
 	function(run)
 		t.equal(run.outcome.text, "done")
 		local next = run.requests[3].messages
@@ -151,12 +151,12 @@ t.loop(
 		{ text = "done" },
 	}, {
 		settings = settings({ window = 100000, min_reduction_ratio = 0.9 }),
-		jev = { { noul = 0 } },
+		decide = { { predicate = 0 } },
 	}),
 	function(run)
 		t.equal(run.outcome.text, "done")
 		t.equal(#rewritten(run.events), 0, "each pass saves too little")
-		t.equal(#run.jev, 2, "passes at 61k and 72k only")
+		t.equal(#run.decide, 2, "passes at 61k and 72k only")
 	end
 )
 
@@ -171,7 +171,7 @@ t.loop(
 		{ text = "done" },
 	}, {
 		settings = settings({ window = 1000000000000 }),
-		jev = { { noul = 0 } },
+		decide = { { predicate = 0 } },
 	}),
 	function(run)
 		t.equal(run.outcome.text, "done")
@@ -182,15 +182,15 @@ t.loop(
 	end
 )
 
--- A Jev failure is in the plugin's log and leaves the run going,
+-- A decider failure is in the plugin's log and leaves the run going,
 -- uncompacted.
 t.loop(
-	"a jev failure is reported",
-	spec(two_reads(), { settings = settings(), jev = { error = 503 } }),
+	"a decide failure is reported",
+	spec(two_reads(), { settings = settings(), decide = { error = 503 } }),
 	function(run)
 		t.equal(run.outcome.text, "done")
 		t.equal(#run.logs, 1, json.encode(run.logs))
-		t.equal(contains(run.logs[1], "Jev answered with status 503"), true, run.logs[1])
+		t.equal(contains(run.logs[1], "The decider answered with status 503"), true, run.logs[1])
 		t.equal(#run.requests[3].messages, 5)
 	end
 )
@@ -212,9 +212,9 @@ t.loop(
 		settings = settings({ start_reserve_tokens = 0 }),
 		-- Before the fork, a.rs's output does not matter; after it, it
 		-- does, and c.rs's does not.
-		jev = { { id = "result_t1", noul = 0.1 }, { id = "result_t3", noul = 0.1 }, { noul = 0.9 } },
+		decide = { { id = "result_t1", predicate = 0.1 }, { id = "result_t3", predicate = 0.1 }, { predicate = 0.9 } },
 		["then"] = {
-			{ prompt = "and now", jev = { { id = "result_t3", noul = 0.1 }, { noul = 0.9 } } },
+			{ prompt = "and now", decide = { { id = "result_t3", predicate = 0.1 }, { predicate = 0.9 } } },
 		},
 	}),
 	function(run)
@@ -232,7 +232,7 @@ t.loop(
 			end
 			return nil
 		end
-		-- Jev's questions name calls `t1`, `t2`… in order; the ledger
+		-- The decider's questions name calls `t1`, `t2`… in order; the ledger
 		-- names them by their ids.
 		t.equal(action("call_2|fc_2"), "drop_result", "c.rs")
 		t.equal(action("call_0|fc_0"), "drop_result", "a.rs")
@@ -257,14 +257,14 @@ for _, case in ipairs({ { reserve = 1000, asked = 0 }, { reserve = 5000, asked =
 		}, {
 			-- The parent never prunes.
 			settings = at(100),
-			jev = { { noul = 0.1 } },
+			decide = { { predicate = 0.1 } },
 			["then"] = { { prompt = "and now", settings = at(nil) } },
 		}),
 		function(run)
-			-- The parent asked Jev nothing: each answer is charged.
-			t.equal(run.charged, 0, "the parent asked Jev")
+			-- The parent asked the decider nothing: each answer is charged.
+			t.equal(run.charged, 0, "the parent asked the decider")
 			t.equal(run.forks[1].outcome.text, "forked")
-			t.equal(#run.jev, case.asked, "reserve " .. case.reserve)
+			t.equal(#run.decide, case.asked, "reserve " .. case.reserve)
 		end
 	)
 end

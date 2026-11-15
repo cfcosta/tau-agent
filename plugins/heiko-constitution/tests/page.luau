@@ -17,8 +17,8 @@ local function said(tree)
 	return json.encode(tree)
 end
 
-local function page_run(store, jev)
-	return t.run({ store = store or {}, jev = jev })
+local function page_run(store, decide)
+	return t.run({ store = store or {}, decide = decide })
 end
 
 t.property("holds stay in bounds", function(draw)
@@ -47,7 +47,7 @@ t.case("rules are written and edited in the editor", function()
 	r:action("save", {})
 	t.equal(r.store.constitution, nil)
 	t.equal(r.store.editor.tried_to_save, true)
-	t.equal(page.problem(r.store.editor), "Pick at least one place, or Jev has nothing to check.")
+	t.equal(page.problem(r.store.editor), "Pick at least one place, or the decider has nothing to check.")
 	t.equal(has(said(r:page("rules", { repo = "docbert" })), "Pick at least one place"), true)
 	-- Places are picked, and any tool's field can be added by name.
 	r:action("place", { place = "exec_command.cmd" })
@@ -111,8 +111,8 @@ t.case("Enter keeps what was typed, and Save saves it", function()
 	t.equal(has(page.problem(r.store.editor), "Write the rule"), true)
 end)
 
--- A Jev scoring each question 0.9, keeping each request.
-local function jev()
+-- A decider scoring each question 0.9, keeping each request.
+local function decide()
 	local asked = {}
 	return {
 		ask = function(request)
@@ -127,7 +127,7 @@ local function jev()
 end
 
 t.case("a rule is tried on what a check would show", function()
-	local fake, asked = jev()
+	local fake, asked = decide()
 	local samples = {
 		calls = {
 			{ tool = "write", args = { path = "a", content = "x.unwrap()" } },
@@ -140,8 +140,8 @@ t.case("a rule is tried on what a check would show", function()
 	local draft = page.draft(nil)
 	draft.text = "No unwrap."
 	draft.places = { "write.content" }
-	-- Trying awaits Jev, so it runs as a hook does.
-	local r = t.run({ jev = fake })
+	-- Trying awaits the decider, so it runs as a hook does.
+	local r = t.run({ decide = fake })
 	local function try(calls, answers)
 		return r:call(function()
 			return { page.try(draft, calls, answers) }
@@ -153,7 +153,7 @@ t.case("a rule is tried on what a check would show", function()
 	local trials, cost = table.unpack(try(calls, answers), 1, 2)
 	t.equal(trials, { { tool = "write", shown = "x.unwrap()", score = 0.9 }, { tool = "write", shown = "Ok(x)", score = 0.9 } })
 	t.equal(cost > 0, true)
-	-- Jev saw what the check sees: the tool and the field, nothing else.
+	-- The decider saw what the check sees: the tool and the field, nothing else.
 	t.equal(#asked, 2)
 	t.equal(asked[1].state, { tool = "write", arguments = { content = "x.unwrap()" } })
 	-- A final-answer rule tries the answers.
@@ -168,7 +168,7 @@ t.case("a rule is tried on what a check would show", function()
 end)
 
 t.case("a rule is tried and says what it would do", function()
-	local fake = jev()
+	local fake = decide()
 	local store = { samples = { calls = { { tool = "exec_command", args = { cmd = "psql prod" } } }, answers = {} } }
 	local r = page_run(store, fake)
 	r:action("open", {})
@@ -196,7 +196,7 @@ end)
 
 t.case("rules that cannot be read are removed only once confirmed", function()
 	local broken = { on_error = "allow", max_holds = 3, rules = { { id = "R1", text = "Name the tests.", on = { "final answer" }, review = 0.9, block = 0.2 } } }
-	local r = page_run({ constitution = broken }, jev())
+	local r = page_run({ constitution = broken }, decide())
 	local drawn = said(r:page("rules", { repo = "heiko-agent" }))
 	t.equal(has(drawn, "can't be read, so runs in heiko-agent fail at start"), true, drawn)
 	t.equal(has(drawn, "Rule R1: review (0.9) is above block (0.2)"), true)
@@ -250,7 +250,7 @@ t.case("what waits for a person, and what was handled", function()
 			return answers, 0.001
 		end,
 	}
-	local r = t.run({ id = "a", jev = fake, store = { constitution = stored } })
+	local r = t.run({ id = "a", decide = fake, store = { constitution = stored } })
 	r:start({ input = "clean up\nand more" })
 	r:before_tool({ id = "c1", name = "exec_command", args = { cmd = "rm -rf /" } })
 	r:before_tool({ id = "c2", name = "write", args = { path = "a.rs", content = "x.unwrap()" } })
@@ -295,17 +295,17 @@ t.case("the page says what there is", function()
 		max_holds = 0,
 		rules = { { id = "R1", text = "No rm.", on = { "exec_command.cmd" }, review = 0.3, block = 0.6 } },
 	}
-	local r = page_run({ constitution = stored }, jev())
+	local r = page_run({ constitution = stored }, decide())
 	local drawn = said(r:page("rules", { repo = "docbert", rule = "R1" }))
 	t.equal(has(drawn, "Rules · 1") and has(drawn, "Nothing checked yet."), true, drawn)
 	t.equal(has(drawn, '"review"') and has(drawn, '"block"'), true, "its thresholds, named on the strip")
-	t.equal(has(drawn, "let through") and has(drawn, "refuse"), true, "what happens when Jev can't answer")
-	t.equal(has(drawn, "When Jev can't answer") and has(drawn, "Answers sent back per run"), true, "the settings")
+	t.equal(has(drawn, "let through") and has(drawn, "refuse"), true, "what happens when the decider can't answer")
+	t.equal(has(drawn, "When the decider can't answer") and has(drawn, "Answers sent back per run"), true, "the settings")
 	t.equal(has(drawn, "Add TypeSafe key"), false)
 	t.equal(r:repo_data().nav.detail, "1 rules")
 end)
 
--- The rule is rewritten while Jev tries it: what Jev said was of the
+-- The rule is rewritten while the decider tries it: what the decider said was of the
 -- rule as it was, so it is not kept as the new rule's (ADR 0056).
 t.case("a rule changed while it is tried keeps no trial", function()
 	local r

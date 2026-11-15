@@ -16,16 +16,16 @@ use heiko_luau_plugins_host::runtime::{Files, load};
 use heiko_testing::block_on_io;
 use tokio_util::sync::CancellationToken;
 
-/// A goal-like plugin: a check that awaits Jev, a pause, and a view.
+/// A goal-like plugin: a check that awaits the decider, a pause, and a view.
 const PLUGIN: &str = r#"
 local heiko = require("heiko")
 local cmd = heiko.cmd
 return heiko.plugin({
-  uses = { jev = true, store = true },
+  uses = { decide = true, store = true },
   before_stop = function(stop, model, env)
     model.checks = (model.checks or 0) + 1
     heiko.log("checking at " .. tostring(env.at))
-    local answers, cost = heiko.await(cmd.jev.ask({ questions = { met = "?" } }))
+    local answers, cost = heiko.await(cmd.decide.ask({ questions = { met = "?" } }))
     if model.paused then
       return "paused"
     end
@@ -84,7 +84,7 @@ fn a_hook_awaits_a_command_and_ends_with_its_answer() {
 t.case("awaits", function()
   local actor = heiko._actor(plugin, {{}})
   local step = actor.deliver({{ kind = "call", id = "h1", path = {{ "before_stop" }}, input = {{}}, env = {{ at = 7 }} }})
-  t.equal(step.waits.h1.op, "jev")
+  t.equal(step.waits.h1.op, "decide")
   t.equal(step.changed, true)
   t.equal(step.logs, {{ "checking at 7" }})
   t.equal(step.ended.h1, nil)
@@ -220,13 +220,13 @@ mod host {
 
     const LIMIT: Duration = Duration::from_secs(2);
 
-    /// A hook awaits Jev in one step and ends in the next with its
+    /// A hook awaits the decider in one step and ends in the next with its
     /// answer; a Pause between them is what it goes on with.
     #[test]
     fn a_hook_awaits_and_goes_on_with_the_model_as_it_is() {
         let actor = actor(super::PLUGIN);
         let step = actor.deliver(&call("h1", &["before_stop"]), LIMIT).unwrap();
-        assert_eq!(step.waits["h1"].op, "jev");
+        assert_eq!(step.waits["h1"].op, "decide");
         assert_eq!(step.logs, ["checking at 1"]);
         assert!(step.changed);
         actor
@@ -304,7 +304,7 @@ return heiko.plugin({
 }
 
 mod mailbox {
-    //! A mailbox on the host's own reaches: a hook awaits Jev outside it,
+    //! A mailbox on the host's own reaches: a hook awaits the decider outside it,
     //! an action taken meanwhile is the model the hook goes on with, and
     //! what a step gives goes into the store with it.
 
@@ -312,7 +312,7 @@ mod mailbox {
 
     use async_trait::async_trait;
     use serde_json::json;
-    use heiko_jev::{Jev, JevError, Request, Response};
+    use heiko_decide::{Decider, DecideError, Request, Response};
     use heiko_luau_plugins_host::{
         actor::{Actor, Ended},
         mailbox::{KeepNothing, Mailbox},
@@ -327,9 +327,9 @@ mod mailbox {
 local heiko = require("heiko")
 local cmd = heiko.cmd
 return heiko.plugin({
-  uses = { jev = true, store = true },
+  uses = { decide = true, store = true },
   before_stop = function(_, model)
-    local answers = heiko.await(cmd.jev.ask({ questions = { done = { kind = "noul", question = "Is it done?" } } }))
+    local answers = heiko.await(cmd.decide.ask({ questions = { done = { kind = "predicate", question = "Is it done?" } } }))
     local p = answers.done
     if model.paused then
       return "paused"
@@ -352,7 +352,7 @@ return heiko.plugin({
 })
 "#;
 
-    /// A Jev that answers 0.75 once let go, and says when it is asked.
+    /// A decider that answers 0.75 once let go, and says when it is asked.
     struct Held {
         asked: Notify,
         go: Notify,
@@ -360,8 +360,8 @@ return heiko.plugin({
     }
 
     #[async_trait]
-    impl Jev for Held {
-        async fn ask(&self, request: &Request) -> Result<Response, JevError> {
+    impl Decider for Held {
+        async fn ask(&self, request: &Request) -> Result<Response, DecideError> {
             if *self.held.lock().await {
                 self.asked.notify_one();
                 self.go.notified().await;
@@ -369,17 +369,17 @@ return heiko.plugin({
             let answers = request
                 .questions
                 .keys()
-                .map(|id| (id.clone(), heiko_jev::Answer::Noul { noul: 0.75 }))
+                .map(|id| (id.clone(), heiko_decide::Answer::Predicate { predicate: 0.75 }))
                 .collect();
-            Ok(heiko_jev::fake::response(answers, request))
+            Ok(heiko_decide::fake::response(answers, request))
         }
     }
 
-    struct WithJev(Arc<Held>);
+    struct WithDecider(Arc<Held>);
 
     #[async_trait]
-    impl Reach for WithJev {
-        fn jev(&self) -> Option<Arc<dyn Jev>> {
+    impl Reach for WithDecider {
+        fn decide(&self) -> Option<Arc<dyn Decider>> {
             Some(self.0.clone())
         }
     }
@@ -400,7 +400,7 @@ return heiko.plugin({
             store: Some(StoreRef(kv.clone())),
             ..Context::default()
         };
-        let jev = Arc::new(Held {
+        let decide = Arc::new(Held {
             asked: Notify::new(),
             go: Notify::new(),
             held: Mutex::new(held),
@@ -408,14 +408,14 @@ return heiko.plugin({
         let executor = Arc::new(Executor::new(
             &loaded,
             &context,
-            Arc::new(WithJev(jev.clone())),
+            Arc::new(WithDecider(decide.clone())),
         ));
         let actor = Actor::new(&modules, "plugin", &json!({})).unwrap();
         (
             Arc::new(Mailbox::new(actor, Arc::new(KeepNothing))),
             executor,
             kv,
-            jev,
+            decide,
         )
     }
 
@@ -423,12 +423,12 @@ return heiko.plugin({
         keys.iter().map(|key| (*key).to_owned()).collect()
     }
 
-    /// The check awaits Jev; a Pause pressed meanwhile is taken at once
+    /// The check awaits the decider; a Pause pressed meanwhile is taken at once
     /// and kept, and the check, going on, sees it.
     #[test]
     fn an_action_while_a_hook_awaits_is_taken_and_kept() {
         block_on_io(async {
-            let (mailbox, executor, _, jev) = set_up(true).await;
+            let (mailbox, executor, _, decide) = set_up(true).await;
             let check = {
                 let (mailbox, executor) = (mailbox.clone(), executor.clone());
                 tokio::spawn(async move {
@@ -445,7 +445,7 @@ return heiko.plugin({
                         .await
                 })
             };
-            jev.asked.notified().await;
+            decide.asked.notified().await;
             let paused = mailbox
                 .call(
                     path(&["actions", "pause"]),
@@ -458,7 +458,7 @@ return heiko.plugin({
                 )
                 .await;
             assert_eq!(paused, Ended::Value { value: json!(null) });
-            jev.go.notify_one();
+            decide.go.notify_one();
             assert_eq!(
                 check.await.unwrap(),
                 Ended::Value {
@@ -548,9 +548,9 @@ return heiko.plugin({
         }
     }
 
-    /// The run stops while the check awaits Jev, after a Pause was taken.
+    /// The run stops while the check awaits the decider, after a Pause was taken.
     /// Made again from its journal, the mailbox has the check under way,
-    /// awaiting Jev as it did, and the Pause in its model; going on, the
+    /// awaiting the decider as it did, and the Pause in its model; going on, the
     /// check ends as it would have.
     #[test]
     fn a_hook_under_way_comes_back_from_the_journal() {
@@ -560,7 +560,7 @@ return heiko.plugin({
                 ..Files::named("checks")
             };
             let modules = files.modules().unwrap();
-            let (_, executor, _, jev) = set_up(true).await;
+            let (_, executor, _, decide) = set_up(true).await;
             let journal = Arc::new(Journal::default());
             let actor = Actor::new(&modules, "plugin", &json!({})).unwrap();
             let mailbox = Arc::new(Mailbox::new(actor, journal.clone()));
@@ -580,7 +580,7 @@ return heiko.plugin({
                         .await
                 })
             };
-            jev.asked.notified().await;
+            decide.asked.notified().await;
             mailbox
                 .call(
                     path(&["actions", "pause"]),
@@ -605,9 +605,9 @@ return heiko.plugin({
                     .unwrap();
             let waiting = again.waiting().await.unwrap();
             assert_eq!(waiting.keys().collect::<Vec<_>>(), ["h1"]);
-            assert_eq!(waiting["h1"].op, "jev");
+            assert_eq!(waiting["h1"].op, "decide");
             assert_eq!(again.model().await.unwrap(), json!({ "paused": true }));
-            jev.go.notify_one();
+            decide.go.notify_one();
             let (_, free, _, _) = set_up(false).await;
             assert_eq!(
                 again

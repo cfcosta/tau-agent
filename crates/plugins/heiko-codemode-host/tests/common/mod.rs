@@ -25,7 +25,7 @@ use heiko_codemode_host::{
     options,
     run,
 };
-use heiko_jev::Jev;
+use heiko_decide::Decider;
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
 
@@ -45,7 +45,7 @@ pub struct FakeHost {
     /// Calls running now, and the most that ever ran at once.
     pub running: Arc<AtomicUsize>,
     pub peak: Arc<AtomicUsize>,
-    pub jev: Option<Arc<dyn Jev>>,
+    pub decide: Option<Arc<dyn Decider>>,
     pub holds: Holds,
 }
 
@@ -92,9 +92,9 @@ pub fn tool(name: &str, description: &str) -> ToolEntry {
 }
 
 impl FakeHost {
-    pub fn with_jev(jev: impl Jev) -> Self {
+    pub fn with_decide(decide: impl Decider) -> Self {
         Self {
-            jev: Some(Arc::new(jev)),
+            decide: Some(Arc::new(decide)),
             ..Self::default()
         }
     }
@@ -227,8 +227,8 @@ impl Host for FakeHost {
         })
     }
 
-    fn jev(&self) -> Option<Arc<dyn Jev>> {
-        self.jev.clone()
+    fn decide(&self) -> Option<Arc<dyn Decider>> {
+        self.decide.clone()
     }
 }
 

@@ -3,7 +3,7 @@
   "description": "Issues the repository keeps for its runs, like beads, and each run's steps.",
   "uses": {
     "tools": [],
-    "jev": false,
+    "decide": false,
     "infer": false,
     "network": [],
     "secrets": [],

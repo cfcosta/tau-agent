@@ -10,7 +10,7 @@
 
 ## 0. What the post says (beyond the summary)
 
-- MCP moved into core because the same machinery (an interpreter sandbox and tool metadata for deferred, codemode-only and direct tools) also serves Jev (a classifier model) and other things.
+- MCP moved into core because the same machinery (an interpreter sandbox and tool metadata for deferred, codemode-only and direct tools) also serves the decider (a classifier model) and other things.
 - "MCP should be much closer to OpenAPI with intelligent tool discovery": tools should return **structured data** and be **discoverable by documentation/description**, not dumped into context.
 - "In a Codemode world one needs to decide if the tool is available to the LLM or only the codemode part of the LLM." Hence the per-tool exposure metadata (`direct` / `deferred` / `codemode` / `hidden`).
 - Codemode "runs where the harness runs" (trusted side, not where bash runs). "Because Codemode also runs on the harness side, its state is also maintained as part of the session transcript instead of the file system."

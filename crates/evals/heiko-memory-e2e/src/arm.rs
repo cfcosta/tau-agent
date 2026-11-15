@@ -4,7 +4,7 @@
 //!
 //! Each arm's agent is built as heiko-ui builds one for a run (the coding
 //! tools on the repository, compaction, the memory plugin), less what
-//! needs the app: version control, Jev, the constitution.
+//! needs the app: version control, Decider, the constitution.
 
 use std::{
     path::{Path, PathBuf},

@@ -1,11 +1,11 @@
-//! The `jev` global's requests and answers, as JSON.
+//! The `decide` global's requests and answers, as JSON.
 //!
-//! - `jev.noul({ state, question, yes?, no? })` → `{ probability }`
-//! - `jev.choice({ state, question, options })` → `{ choice, confidence,
+//! - `decide.predicate({ state, question, yes?, no? })` → `{ probability }`
+//! - `decide.choice({ state, question, options })` → `{ choice, confidence,
 //!   probabilities }`
-//! - `jev.score({ state, question, levels })` → `{ score, confidence,
+//! - `decide.score({ state, question, levels })` → `{ score, confidence,
 //!   probabilities }`
-//! - `jev.ask({ state, questions = { id = { kind, question, ... } } })` →
+//! - `decide.ask({ state, questions = { id = { kind, question, ... } } })` →
 //!   `{ id = answer }`, in one request.
 //!
 //! `state_json`, JSON text, may stand for `state`: its keys keep their
@@ -14,13 +14,13 @@
 use std::collections::BTreeMap;
 
 use serde_json::{Map, Value, json};
-use heiko_jev::{Answer, JevError, NoulCriteria, Question, Request, Response};
+use heiko_decide::{Answer, DecideError, PredicateCriteria, Question, Request, Response};
 
-/// Jev requests a script may have in flight at once, as pi limits its
+/// Decider requests a script may have in flight at once, as pi limits its
 /// classifier calls.
 pub const MAX_IN_FLIGHT: usize = 4;
 
-/// The most options a choice may have (heiko-jev's limit).
+/// The most options a choice may have (heiko-decide's limit).
 pub const MAX_OPTIONS: usize = 255;
 
 /// A score has between this many levels...
@@ -28,13 +28,13 @@ pub const MIN_LEVELS: usize = 2;
 /// ...and this many.
 pub const MAX_LEVELS: usize = 10;
 
-/// The id of the one question `noul`, `choice` and `score` ask.
+/// The id of the one question `predicate`, `choice` and `score` ask.
 const SINGLE: &str = "answer";
 
 /// A question's kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    Noul,
+    Predicate,
     Choice,
     Score,
 }
@@ -42,7 +42,7 @@ pub enum Kind {
 impl Kind {
     pub fn name(self) -> &'static str {
         match self {
-            Self::Noul => "noul",
+            Self::Predicate => "predicate",
             Self::Choice => "choice",
             Self::Score => "score",
         }
@@ -50,7 +50,7 @@ impl Kind {
 
     fn parse(name: &str) -> Option<Self> {
         match name {
-            "noul" => Some(Self::Noul),
+            "predicate" => Some(Self::Predicate),
             "choice" => Some(Self::Choice),
             "score" => Some(Self::Score),
             _ => None,
@@ -65,43 +65,43 @@ pub enum Shape {
     Many(BTreeMap<String, Kind>),
 }
 
-/// One `jev.<function>(args)` call as a request. `function` is `noul`,
+/// One `decide.<function>(args)` call as a request. `function` is `predicate`,
 /// `choice`, `score` or `ask`.
 pub fn request(
     function: &str,
     args: &Value,
 ) -> Result<(Request, Shape), String> {
     let Value::Object(map) = args else {
-        return Err(format!("jev.{function} takes one table"));
+        return Err(format!("decide.{function} takes one table"));
     };
     // A state given as JSON text keeps its keys in the order written: a
     // Luau table keeps none.
     let state = match map.get("state_json") {
         Some(Value::String(text)) => {
             serde_json::from_str(text).map_err(|error| {
-                format!("jev.{function}: `state_json` is not JSON: {error}")
+                format!("decide.{function}: `state_json` is not JSON: {error}")
             })?
         }
         Some(_) => {
-            return Err(format!("jev.{function}: `state_json` is a text"));
+            return Err(format!("decide.{function}: `state_json` is a text"));
         }
         None => map.get("state").cloned().unwrap_or(Value::Null),
     };
     if function == "ask" {
         let Some(Value::Object(questions)) = map.get("questions") else {
             return Err(
-                "jev.ask needs `questions`, a table of questions by id".into(),
+                "decide.ask needs `questions`, a table of questions by id".into(),
             );
         };
         if questions.is_empty() {
-            return Err("jev.ask needs at least one question".into());
+            return Err("decide.ask needs at least one question".into());
         }
         let mut request = Request::new(state);
         let mut kinds = BTreeMap::new();
         for (id, spec) in questions {
             let Value::Object(spec) = spec else {
                 return Err(format!(
-                    "jev.ask: question `{id}` must be a table"
+                    "decide.ask: question `{id}` must be a table"
                 ));
             };
             let kind = spec
@@ -110,12 +110,12 @@ pub fn request(
                 .and_then(Kind::parse)
                 .ok_or_else(|| {
                     format!(
-                        "jev.ask: question `{id}` needs `kind`: \"noul\", \
+                        "decide.ask: question `{id}` needs `kind`: \"predicate\", \
                          \"choice\" or \"score\""
                     )
                 })?;
             let question = question(kind, spec).map_err(|error| {
-                format!("jev.ask: question `{id}`: {error}")
+                format!("decide.ask: question `{id}`: {error}")
             })?;
             request = request.question(id.clone(), question);
             kinds.insert(id.clone(), kind);
@@ -123,9 +123,9 @@ pub fn request(
         return Ok((request, Shape::Many(kinds)));
     }
     let kind = Kind::parse(function)
-        .ok_or_else(|| format!("jev has no function `{function}`"))?;
+        .ok_or_else(|| format!("decide has no function `{function}`"))?;
     let question = question(kind, map)
-        .map_err(|error| format!("jev.{function}: {error}"))?;
+        .map_err(|error| format!("decide.{function}: {error}"))?;
     Ok((
         Request::new(state).question(SINGLE, question),
         Shape::One(kind),
@@ -140,13 +140,13 @@ fn question(kind: Kind, spec: &Map<String, Value>) -> Result<Question, String> {
         Some(value) => value.clone(),
     };
     match kind {
-        Kind::Noul => {
+        Kind::Predicate => {
             let yes = spec.get("yes").filter(|v| !v.is_null()).cloned();
             let no = spec.get("no").filter(|v| !v.is_null()).cloned();
-            Ok(Question::Noul {
+            Ok(Question::Predicate {
                 instructions,
                 criteria: (yes.is_some() || no.is_some())
-                    .then_some(NoulCriteria { yes, no }),
+                    .then_some(PredicateCriteria { yes, no }),
             })
         }
         Kind::Choice => {
@@ -196,8 +196,8 @@ fn question(kind: Kind, spec: &Map<String, Value>) -> Result<Question, String> {
     }
 }
 
-/// The script's value for `response`, checked as heiko-jev checks it.
-pub fn answer(shape: &Shape, response: &Response) -> Result<Value, JevError> {
+/// The script's value for `response`, checked as heiko-decide checks it.
+pub fn answer(shape: &Shape, response: &Response) -> Result<Value, DecideError> {
     match shape {
         Shape::One(kind) => one(*kind, SINGLE, response),
         Shape::Many(kinds) => {
@@ -210,7 +210,7 @@ pub fn answer(shape: &Shape, response: &Response) -> Result<Value, JevError> {
     }
 }
 
-fn one(kind: Kind, id: &str, response: &Response) -> Result<Value, JevError> {
+fn one(kind: Kind, id: &str, response: &Response) -> Result<Value, DecideError> {
     let probabilities = |id: &str| match response.answers.get(id) {
         Some(
             Answer::Choice { probabilities, .. }
@@ -219,7 +219,7 @@ fn one(kind: Kind, id: &str, response: &Response) -> Result<Value, JevError> {
         _ => Value::Null,
     };
     Ok(match kind {
-        Kind::Noul => json!({ "probability": response.noul(id)? }),
+        Kind::Predicate => json!({ "probability": response.predicate(id)? }),
         Kind::Choice => {
             let (choice, confidence) = response.choice(id)?;
             json!({

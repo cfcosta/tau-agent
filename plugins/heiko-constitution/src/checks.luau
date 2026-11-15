@@ -1,4 +1,4 @@
--- What a check asks Jev and decides, as records (`kind`: `checked`,
+-- What a check asks the decider and decides, as records (`kind`: `checked`,
 -- `blocked`, `flagged`, `held`, `error`), and what they come to: a
 -- run's state as its view draws it, and the counts the repository's
 -- page shows.
@@ -35,14 +35,14 @@ checks.FINAL_ANSWER = "this final answer"
 -- The question a check asks about `rule` on `what`.
 function checks.question(rule, what)
 	return {
-		kind = "noul",
+		kind = "predicate",
 		question = "Does " .. what .. " break this rule? Judge only what is shown.\n\nRule " .. rule.id .. ": " .. rule.text,
 		yes = what .. " breaks the rule.",
 		no = what .. " follows the rule, or the rule is not about it.",
 	}
 end
 
--- What Jev is asked about a call to `tool`, given the rules about it
+-- What the decider is asked about a call to `tool`, given the rules about it
 -- (`rules.for_call`): one state for all, the tool and only the fields
 -- the rules name, and a question per rule.
 function checks.call_request(tool, about)
@@ -57,7 +57,7 @@ function checks.call_request(tool, about)
 	return { state = { tool = tool, arguments = fields }, questions = questions }
 end
 
--- What Jev is asked about the final answer `answer`, given its rules.
+-- What the decider is asked about the final answer `answer`, given its rules.
 function checks.answer_request(answer, found)
 	local questions = {}
 	for n, rule in ipairs(found) do
@@ -99,7 +99,7 @@ local function score_list(rules_of, scores)
 end
 
 -- The records of a check of the call `call` (`{ id, name }`), the rules
--- about it `about` scored `scores`, what Jev cost `cost`: the check,
+-- about it `about` scored `scores`, what the decider cost `cost`: the check,
 -- then a verdict per rule past its review mark; and what the call
 -- comes to, `heiko.block`'s reason when a rule is past its block mark.
 function checks.of_call(call, about, scores, cost)
@@ -148,10 +148,10 @@ function checks.of_call(call, about, scores, cost)
 	return records, reason
 end
 
--- The record of a call Jev could not check, `why`, and the reason it is
+-- The record of a call the decider could not check, `why`, and the reason it is
 -- refused when `on_error` blocks.
 function checks.call_failed(call, why, on_error)
-	local message = "Jev could not check the call: " .. why
+	local message = "The decider could not check the call: " .. why
 	local record = { kind = "error", call_id = call.id, tool = call.name, message = message, on_error = on_error, held = false }
 	if on_error == "block" then
 		return record, "Blocked by " .. checks.NAME .. ": " .. message .. ", and it blocks what it cannot check. Try again."
@@ -203,11 +203,11 @@ function checks.of_answer(found, scores, cost, holds, max_holds)
 	return records, table.concat(held, "\n")
 end
 
--- The record of a final answer Jev could not check, `why`, and the
+-- The record of a final answer the decider could not check, `why`, and the
 -- message that sends it back: with `on_error` block, while holds are
 -- left.
 function checks.answer_failed(why, on_error, holds, max_holds)
-	local message = "Jev could not check the final answer: " .. why
+	local message = "The decider could not check the final answer: " .. why
 	local held = on_error == "block" and holds < max_holds
 	local record = { kind = "error", message = message, on_error = on_error, held = held }
 	if not held then
@@ -221,7 +221,7 @@ function checks.answer_failed(why, on_error, holds, max_holds)
 end
 
 -- What the checks did: calls and answers checked, questions asked,
--- checks Jev could not answer, what Jev cost, and the rules behind each
+-- checks the decider could not answer, what the decider cost, and the rules behind each
 -- block, flag and hold, in order.
 function checks.stats()
 	return {
@@ -286,8 +286,8 @@ end
 
 -- What a run's checks say as it starts: off without a key, else how
 -- many rules they watch; `rules` is nil when they cannot be read.
-function checks.starting(jev, count)
-	if not jev then
+function checks.starting(decide, count)
+	if not decide then
 		return checks.NO_KEY
 	elseif count == nil then
 		return "the rules cannot be read"
@@ -333,7 +333,7 @@ local function call_of(state, id, tool, shown)
 end
 
 -- Folds `record` into the run's `state`, as its view draws it: the
--- counts, each call's scores and verdict, and a note for each check Jev
+-- counts, each call's scores and verdict, and a note for each check the decider
 -- could not answer and each verdict on the final answer. `answer` is
 -- the final answer, and `shown` what a call's rules read.
 function checks.fold(state, record, answer, shown)
@@ -412,7 +412,7 @@ function checks.status(state)
 end
 
 -- What a repository's runs say about its rules, from each run's stats:
--- runs, checks, failures, blocks, flags, runs held, what Jev cost, and
+-- runs, checks, failures, blocks, flags, runs held, what the decider cost, and
 -- per rule `{ blocked, flagged, held }`.
 function checks.totals(runs)
 	local totals = { runs = 0, checked = 0, failed = 0, blocked = 0, flagged = 0, held_runs = 0, cost = 0, per_rule = {} }

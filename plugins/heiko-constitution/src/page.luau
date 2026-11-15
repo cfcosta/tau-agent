@@ -122,7 +122,7 @@ function page.problem(draft)
 	if heiko.text.trim(draft.text or "") == "" then
 		return "Write the rule: one sentence, the way you would tell a person, then Enter."
 	elseif #draft.places == 0 then
-		return "Pick at least one place, or Jev has nothing to check."
+		return "Pick at least one place, or the decider has nothing to check."
 	end
 	return nil
 end
@@ -155,10 +155,10 @@ function page.trial_samples(draft, samples)
 	return calls, answers
 end
 
--- Asks Jev what a rule being written makes of past `calls` and
+-- Asks the decider what a rule being written makes of past `calls` and
 -- `answers`, as a check would ask about each, one request each: the
--- trials, `{ tool, shown, score }`, and what Jev cost; else nil and
--- why. Nothing runs again; Jev sees only what a check would show it.
+-- trials, `{ tool, shown, score }`, and what the decider cost; else nil and
+-- why. Nothing runs again; the decider sees only what a check would show it.
 function page.try(draft, calls, answers)
 	for _, place in ipairs(draft.places) do
 		local target, why = rules.target(place)
@@ -186,7 +186,7 @@ function page.try(draft, calls, answers)
 	end
 	local trials, cost = array({}), 0
 	for _, ask in ipairs(asks) do
-		local scores, spent = heiko.jev.scores(ask.request, checks.question_ids(1))
+		local scores, spent = heiko.decide.scores(ask.request, checks.question_ids(1))
 		if scores == nil then
 			return nil, spent
 		end
@@ -257,9 +257,9 @@ end
 
 -- Rules that cannot be read from the store: why, what it means, and
 -- the way out, removing them, once confirmed.
-local function broken(why, repo, jev, confirming)
+local function broken(why, repo, decide, confirming)
 	local title
-	if jev then
+	if decide then
 		title = "The rules for " .. repo .. " can't be read, so runs in " .. repo .. " fail at start"
 	else
 		-- Without a key no run checks rules, so none fails on them yet.
@@ -293,7 +293,7 @@ local function no_key()
 		ui.mark("asks"),
 		ui.heading("Rules aren't checked yet"),
 		ui.spacer(),
-		ui.link("Add TypeSafe key", "key", { plugin = "heiko-jev" }),
+		ui.link("Add TypeSafe key", "key", { plugin = "heiko-decide" }),
 	})
 end
 
@@ -394,7 +394,7 @@ local function rules_list(constitution, totals, caught)
 	return ui.table({}, rows, { widths = WIDTHS })
 end
 
--- How the checks behave beyond each rule: what happens when Jev cannot
+-- How the checks behave beyond each rule: what happens when the decider cannot
 -- answer, the one in force picked; and how many times an answer may go
 -- back, a square each, which sets it to that many.
 local function settings(constitution)
@@ -413,7 +413,7 @@ local function settings(constitution)
 	return ui.stack({
 		ui.header("Settings"),
 		ui.row({
-			ui.text("When Jev can't answer"),
+			ui.text("When the decider can't answer"),
 			ui.spacer(),
 			ui.segments(
 				{ { label = "let through", value = "allow" }, { label = "refuse", value = "block" } },
@@ -492,8 +492,8 @@ local function review(constitution, waiting, handled)
 	return ui.stack(list)
 end
 
--- Trying the rule on the repository's latest calls, with Jev.
-local function try_section(draft, trying, jev)
+-- Trying the rule on the repository's latest calls, with the decider.
+local function try_section(draft, trying, decide)
 	local head = ui.row({
 		ui.heading("Try it"),
 		ui.spacer(),
@@ -501,10 +501,10 @@ local function try_section(draft, trying, jev)
 	})
 	local body
 	if trying == nil then
-		if jev then
+		if decide then
 			return head
 		end
-		body = ui.toned("Trying a rule asks Jev: add a TypeSafe key first.", "neutral")
+		body = ui.toned("Trying a rule asks the decider: add a TypeSafe key first.", "neutral")
 	elseif trying.failed then
 		body = ui.row({ ui.mark("failing"), ui.text(trying.failed) })
 	elseif #trying.trials == 0 then
@@ -532,7 +532,7 @@ end
 
 -- The rule editor, in the page's place while a rule is written: the
 -- rule, where it applies, how strict it is, trying it, and saving it.
-local function editor(draft, trying, jev)
+local function editor(draft, trying, decide)
 	local problem = page.problem(draft)
 	local shown_problem = draft.tried_to_save and problem or nil
 	local title = draft.editing and ("Edit " .. draft.editing) or "New rule"
@@ -611,7 +611,7 @@ local function editor(draft, trying, jev)
 		ui.stack(rule),
 		ui.stack(applies),
 		strictness,
-		try_section(draft, trying, jev),
+		try_section(draft, trying, decide),
 	}
 	if shown_problem then
 		table.insert(body, ui.row({ ui.mark("failing"), ui.text(shown_problem) }))
@@ -620,7 +620,7 @@ local function editor(draft, trying, jev)
 end
 
 -- The page, from what the repository's store holds (`data`): `repo`;
--- `constitution`, or `error` when it cannot be read; `jev`, whether a
+-- `constitution`, or `error` when it cannot be read; `decide`, whether a
 -- key is saved; `focus`, the rule to show; `editor` and `trying`, the
 -- rule being written and what trying it gave; `resetting`, a removal
 -- waiting to be confirmed; `totals`, `waiting`, `handled` and `caught`,
@@ -628,7 +628,7 @@ end
 -- the rules do, what is wrong with them, and the two lists.
 function page.tree(data)
 	if data.editor then
-		return editor(data.editor, data.trying, data.jev)
+		return editor(data.editor, data.trying, data.decide)
 	end
 	local constitution = data.constitution
 	local empty = constitution ~= nil and #constitution.rules == 0
@@ -637,9 +637,9 @@ function page.tree(data)
 		table.insert(parts, intro(data.totals))
 	end
 	if data.error then
-		table.insert(parts, broken(data.error, data.repo, data.jev, data.resetting))
+		table.insert(parts, broken(data.error, data.repo, data.decide, data.resetting))
 	end
-	if not data.jev and data.error == nil then
+	if not data.decide and data.error == nil then
 		table.insert(parts, no_key())
 	end
 	if empty then

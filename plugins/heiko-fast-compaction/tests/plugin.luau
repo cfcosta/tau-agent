@@ -16,7 +16,7 @@ end
 
 local ARCHIVE = "/tmp/a/heiko-"
 
--- A read of `id`, its tool named after it so a fake Jev can tell the
+-- A read of `id`, its tool named after it so a fake decider can tell the
 -- calls apart.
 local function read(id)
 	local args = { path = id .. ".rs" }
@@ -60,14 +60,14 @@ end
 
 local SETTINGS = { preserve_recent = 1, window = 1000 }
 
--- A Jev that answers each call's questions by `actions[call id]`: keep,
+-- A decider that answers each call's questions by `actions[call id]`: keep,
 -- keep only its call, or neither. Asks are counted in `asked.count`.
-local function jev_for(actions, asked, fail)
+local function decide_for(actions, asked, fail)
 	return {
 		ask = function(req)
 			asked.count += 1
 			if fail then
-				error("Jev answered with status 503", 0)
+				error("The decider answered with status 503", 0)
 			end
 			local answers = {}
 			for id, question in pairs(req.questions) do
@@ -86,7 +86,7 @@ local function jev_for(actions, asked, fail)
 	}
 end
 
--- A fake run with Jev answering by `actions`, whose rewrites save half
+-- A fake run with the decider answering by `actions`, whose rewrites save half
 -- the transcript unless `saved` says otherwise, and that keeps the
 -- archives it writes in `written`.
 local function running(actions, spec)
@@ -94,14 +94,14 @@ local function running(actions, spec)
 	local asked = { count = 0 }
 	local written = {}
 	local made = 0
-	local jev = nil
-	if not spec.no_jev then
-		jev = jev_for(actions, asked, spec.fail)
+	local decide = nil
+	if not spec.no_decide then
+		decide = decide_for(actions, asked, spec.fail)
 	end
 	local run = t.run({
 		settings = spec.settings or SETTINGS,
 		state = spec.state,
-		jev = jev,
+		decide = decide,
 		transcript = spec.transcript,
 		tools = {
 			measure = function(rewrite)
@@ -125,7 +125,7 @@ t.case("it says whether it is on", function()
 	on:start({ input = "go" })
 	t.equal(on.state.on, true)
 	t.equal(on:view().status.text, "pruning large outputs · watching the window")
-	local off = running({}, { no_jev = true })
+	local off = running({}, { no_decide = true })
 	off:start({ input = "go" })
 	t.equal(off.state.on, false)
 	t.equal(off:view().status.text, "off · no TypeSafe key")
@@ -135,7 +135,7 @@ t.case("it says whether it is on", function()
 	t.equal(off:after_tool_result({ id = "x", name = "exec_command", args = { cmd = "make" }, ok = true, text = big }), nil)
 end)
 
--- A pass drops a call Jev says is done with, cuts the result of one
+-- A pass drops a call the decider says is done with, cuts the result of one
 -- whose call matters but not its output, keeping that result whole in
 -- an archive, and keeps the rest; the cards say so, and the status says
 -- how many it pruned and by how much.
@@ -320,8 +320,8 @@ end)()
 
 local OUTPUT_SETTINGS = { output_min_tokens = 100 }
 
--- A Jev that keeps only the output's second chunk, or every chunk.
-local function chunk_jev(keep_all, asked)
+-- A decider that keeps only the output's second chunk, or every chunk.
+local function chunk_decide(keep_all, asked)
 	return {
 		ask = function(req)
 			asked.count += 1
@@ -339,7 +339,7 @@ local function output_run(keep_all)
 	local written = {}
 	local run = t.run({
 		settings = OUTPUT_SETTINGS,
-		jev = chunk_jev(keep_all, asked),
+		decide = chunk_decide(keep_all, asked),
 		transcript = { { index = 1, role = "user", text = "build it" } },
 		tools = {
 			archive_path = function(a)
@@ -377,8 +377,8 @@ t.case("a cut output goes on its card", function()
 	t.equal(cut.cost, 0.002 * asked.count)
 end)
 
--- An output Jev keeps whole stays as it was, writes no archive and
--- puts nothing on its card; one the gate stops never reaches Jev.
+-- An output the decider keeps whole stays as it was, writes no archive and
+-- puts nothing on its card; one the gate stops never reaches the decider.
 t.case("an output kept whole or gated changes nothing", function()
 	local run, asked, written = output_run(true)
 	t.equal(run:after_tool_result({ id = "x", name = "exec_command", args = { cmd = "make" }, ok = true, text = BUILD }), nil)
@@ -427,7 +427,7 @@ t.case("overflow always runs", function()
 		return failing:rewrite_context(view_of(messages_of({ "a" })))
 	end)
 	t.equal(ok, false)
-	t.equal(contains(tostring(why), "Jev answered with status 503"), true, tostring(why))
+	t.equal(contains(tostring(why), "The decider answered with status 503"), true, tostring(why))
 	local quiet = running({}, { fail = true })
 	t.equal(quiet:rewrite_context(view_of(messages_of({ "a" }), { trigger = "turn_end", tokens = 900 })), nil)
 	t.equal(#quiet.logs, 1)

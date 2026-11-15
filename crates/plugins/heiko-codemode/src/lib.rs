@@ -3,7 +3,7 @@
 //! itself, which runs Luau scripts in a sandbox, is
 //! `heiko-codemode-host`'s; a phone draws its cards without it (ADR 0030).
 //!
-//! - [`live`] is what a call reports while its script runs: its Jev
+//! - [`live`] is what a call reports while its script runs: its decider
 //!   requests, which make no run events of their own.
 //! - [`store`] folds the store's records and keeps a script's writes.
 //! - [`Outcome`] is what a script returned, as its card reads it.

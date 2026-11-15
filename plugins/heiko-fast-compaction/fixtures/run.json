@@ -241,7 +241,7 @@
           "after": 81000,
           "before": 172000,
           "calls_dropped": 0,
-          "detail": "7 calls judged in 1 Jev request · 3 results cut, 0 calls dropped · −53% · Jev read 18k tokens of history, whole",
+          "detail": "7 calls judged in 1 decider request · 3 results cut, 0 calls dropped · −53% · the decider read 18k tokens of history, whole",
           "reduction_ratio": 0.53,
           "results_dropped": 3,
           "window": 272000
@@ -407,7 +407,7 @@
           {
             "mono": false,
             "piece": "toned",
-            "text": "7 calls judged in 1 Jev request · 3 results cut, 0 calls dropped · −53% · Jev read 18k tokens of history, whole",
+            "text": "7 calls judged in 1 decider request · 3 results cut, 0 calls dropped · −53% · the decider read 18k tokens of history, whole",
             "tone": "neutral"
           },
           {

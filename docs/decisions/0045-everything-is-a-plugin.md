@@ -25,7 +25,7 @@ out of them:
   `exec_command`.
 - **Whole features live in core.** GitHub (sign-in, clone, push, pull
   requests, about 2.8k lines), the ChatGPT account and model screens,
-  Jev's key and metering, phones (about 3k lines), desktop notices, run
+  The decider's key and metering, phones (about 3k lines), desktop notices, run
   titles, idle compaction, AGENTS.md, artifact maintenance, the store's
   SQL box, and the sidebar sections for agents and the plugins
   repository.
@@ -95,7 +95,7 @@ pub const VCS: Slot<dyn Vcs> = Slot::new("heiko.vcs");
 | Slot             | What fills it                                                                   | Default filler                   | When it changes |
 | ---------------- | ------------------------------------------------------------------------------- | -------------------------------- | --------------- |
 | `heiko.provider`   | sign-in, model catalog, `Llm`, plan limits and refusals                         | `heiko-chatgpt` (OpenAI WebSocket) | per run         |
-| `heiko.side-model` | a small model plugins ask (today's `Jev`)                                       | `heiko-jev`                        | per call        |
+| `heiko.side-model` | a small model plugins ask (today's `Decider`)                                       | `heiko-decide`                        | per call        |
 | `heiko.store`      | `Backend`, opened at startup                                                    | `heiko-store-sqlite`               | at startup      |
 | `heiko.loop`       | drives one run: turns, tool calls, seams, stored writes                         | `heiko-agent`'s runner (kernel)    | per run         |
 | `heiko.vcs`        | open and clone repositories, a workspace per run, a commit per turn, land, push | `heiko-vcs` (jj)                   | per repository  |
@@ -253,7 +253,7 @@ uses = {
   tools = { "bash" },
   seams = { "before_tool", "after_tool_result", "rewrite_context" },
   slots = { "heiko.title" },
-  services = { "heiko-jev" },
+  services = { "heiko-decide" },
   store = "own",          -- "own" | "read" (every run, read-only)
   network = { "api.github.com" },
   secrets = { "github" },
@@ -285,7 +285,7 @@ uses = {
 | AGENTS.md                                                  | new `heiko-instructions`                               |
 | GitHub sign-in, clone, pull requests, push screens, `/pr`  | new `heiko-github` (repository kinds, VCS remote)      |
 | ChatGPT sign-in, models screen, plan usage                 | new `heiko-chatgpt`, filling `heiko.provider`            |
-| Jev key, metering, its Models section                      | `heiko-jev` becomes a plugin, filling `heiko.side-model` |
+| The decider key, metering, its Models section                      | `heiko-decide` becomes a plugin, filling `heiko.side-model` |
 | Idle compaction                                            | `heiko.compaction`'s filler                            |
 | Run titles                                                 | new `heiko-titles`, filling `heiko.title`                |
 | Reasoning timer                                            | `heiko-reasoning`                                      |
@@ -315,7 +315,7 @@ largest pieces are:
 | `tool_source`                                | internal only         |
 | `data`, `repo_data`, `act`, `jobs`, `resume` | missing               |
 | Pages, notes, commands, keys, points         | status and cards only |
-| Services, slots, repository kinds, app seams | Jev only              |
+| Services, slots, repository kinds, app seams | the decider only              |
 
 ## Order of work
 
@@ -373,8 +373,8 @@ Each step lands on main by itself and leaves heiko working.
    placeholder. `heiko.store` (`heiko_ui_plugin::store`) is filled by
    heiko-sqlite before any host state is made (`HostHalf::fill_early`),
    and the host opens its store through it. The side model is not a
-   slot: the kernel never calls it, plugins do. heiko-jev is a plugin
-   that keeps the TypeSafe key and gives the service `heiko.jev` to those
+   slot: the kernel never calls it, plugins do. heiko-decide is a plugin
+   that keeps the TypeSafe key and gives the service `heiko.decide` to those
    that declare it, through `HostHalf::provide` (only services the
    declaration names); its Models section and page take the key, and
    other plugins read whether there is one from its data.

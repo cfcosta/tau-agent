@@ -1,9 +1,9 @@
 {
   "name": "heiko-fast-compaction",
-  "description": "Prunes large command outputs as they arrive, and stale tool history, with Jev",
+  "description": "Prunes large command outputs as they arrive, and stale tool history, with the decider",
   "uses": {
     "tools": [],
-    "jev": true,
+    "decide": true,
     "infer": false,
     "network": [],
     "secrets": [],

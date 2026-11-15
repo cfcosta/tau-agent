@@ -1,4 +1,4 @@
-//! The `jev` global against fake Jevs.
+//! The `decide` global against fake deciders.
 
 #![allow(
     clippy::disallowed_methods,
@@ -16,15 +16,15 @@ use std::{
 use async_trait::async_trait;
 use common::{FakeHost, beside, error, script, texts};
 use hegel::generators as gs;
-use heiko_codemode_host::{CallStatus, jev::MAX_IN_FLIGHT};
-use heiko_jev::{
+use heiko_codemode_host::{CallStatus, decide::MAX_IN_FLIGHT};
+use heiko_decide::{
     Answer,
-    Jev,
-    JevError,
+    Decider,
+    DecideError,
     Question,
     Request,
     Response,
-    fake::{FakeJev, response},
+    fake::{FakeDecider, response},
 };
 use heiko_testing::block_on_io;
 use tokio::sync::{mpsc, oneshot};
@@ -32,28 +32,28 @@ use tokio::sync::{mpsc, oneshot};
 use crate::common;
 
 #[tokio::test]
-async fn noul_returns_a_probability_and_charges_its_usage() {
-    let jev = FakeJev::nouls(|_| 0.75);
-    let host = Arc::new(FakeHost::with_jev(jev.clone()));
+async fn predicate_returns_a_probability_and_charges_its_usage() {
+    let decide = FakeDecider::predicates(|_| 0.75);
+    let host = Arc::new(FakeHost::with_decide(decide.clone()));
     let outcome = script(
         &host,
-        "return jev.noul({ state = { n = 1 }, question = 'Is n odd?', yes = 'odd' }).probability",
+        "return decide.predicate({ state = { n = 1 }, question = 'Is n odd?', yes = 'odd' }).probability",
     )
     .await;
     assert_eq!(texts(&outcome), ["0.75"]);
-    let request = &jev.requests()[0];
+    let request = &decide.requests()[0];
     assert_eq!(request.state, serde_json::json!({ "n": 1 }));
     assert!(matches!(
         &request.questions["answer"],
-        Question::Noul { criteria: Some(c), .. } if c.yes == Some("odd".into())
+        Question::Predicate { criteria: Some(c), .. } if c.yes == Some("odd".into())
     ));
     assert!(outcome.usage.input > 0);
     let row = &outcome.calls[0];
     assert_eq!(
         (row.name.as_str(), row.status),
-        ("jev.noul", CallStatus::Ok)
+        ("decide.predicate", CallStatus::Ok)
     );
-    assert_eq!(row.id, "call_1/jev/1");
+    assert_eq!(row.id, "call_1/decide/1");
     assert!(row.cost.unwrap() > 0.0);
 }
 
@@ -61,11 +61,11 @@ async fn noul_returns_a_probability_and_charges_its_usage() {
 /// says it cost.
 #[tokio::test]
 async fn a_call_gives_its_cost_too() {
-    let jev = FakeJev::nouls(|_| 0.75);
-    let host = Arc::new(FakeHost::with_jev(jev));
+    let decide = FakeDecider::predicates(|_| 0.75);
+    let host = Arc::new(FakeHost::with_decide(decide));
     let outcome = script(
         &host,
-        "local answer, cost = jev.noul({ state = 1, question = 'q?' })\n\
+        "local answer, cost = decide.predicate({ state = 1, question = 'q?' })\n\
          return cost",
     )
     .await;
@@ -74,14 +74,14 @@ async fn a_call_gives_its_cost_too() {
     assert_eq!(Some(cost), outcome.calls[0].cost);
 }
 
-fn chooser() -> FakeJev {
-    FakeJev::new(|request: &Request| {
+fn chooser() -> FakeDecider {
+    FakeDecider::new(|request: &Request| {
         let answers = request
             .questions
             .iter()
             .map(|(id, question)| {
                 let answer = match question {
-                    Question::Noul { .. } => Answer::Noul { noul: 0.5 },
+                    Question::Predicate { .. } => Answer::Predicate { predicate: 0.5 },
                     Question::Choice { criteria, .. } => Answer::Choice {
                         choice: criteria.keys().next().unwrap().clone(),
                         probabilities: BTreeMap::new(),
@@ -102,13 +102,13 @@ fn chooser() -> FakeJev {
 
 #[tokio::test]
 async fn choice_score_and_ask() {
-    let host = Arc::new(FakeHost::with_jev(chooser()));
+    let host = Arc::new(FakeHost::with_decide(chooser()));
     let outcome = script(
         &host,
-        "local c = jev.choice({ state = 's', question = 'kind?', options = { bug = 'a bug', feature = 'a feature' } })\n\
-         local s = jev.score({ state = 's', question = 'how bad?', levels = { 'low', 'high' } })\n\
-         local all = jev.ask({ state = 's', questions = {\n\
-             a = { kind = 'noul', question = 'q' },\n\
+        "local c = decide.choice({ state = 's', question = 'kind?', options = { bug = 'a bug', feature = 'a feature' } })\n\
+         local s = decide.score({ state = 's', question = 'how bad?', levels = { 'low', 'high' } })\n\
+         local all = decide.ask({ state = 's', questions = {\n\
+             a = { kind = 'predicate', question = 'q' },\n\
              b = { kind = 'score', question = 'q', levels = { 'x', 'y', 'z' } },\n\
          } })\n\
          return c.choice, c.confidence, s.score, all.a.probability, all.b.confidence",
@@ -120,32 +120,32 @@ async fn choice_score_and_ask() {
 
 #[tokio::test]
 async fn bad_arguments_fail_before_a_request() {
-    let jev = chooser();
-    let host = Arc::new(FakeHost::with_jev(jev.clone()));
+    let decide = chooser();
+    let host = Arc::new(FakeHost::with_decide(decide.clone()));
     let outcome = script(
         &host,
-        "jev.score({ state = 's', question = 'q', levels = { 'only' } })",
+        "decide.score({ state = 's', question = 'q', levels = { 'only' } })",
     )
     .await;
     assert_eq!(
         error(&outcome),
-        "codemode:1: jev.score: `levels` must have 2 to 10 levels; it has 1"
+        "codemode:1: decide.score: `levels` must have 2 to 10 levels; it has 1"
     );
-    assert!(jev.requests().is_empty());
+    assert!(decide.requests().is_empty());
     assert!(outcome.calls.is_empty());
 }
 
 #[tokio::test]
 async fn a_bad_answer_raises() {
-    let host = Arc::new(FakeHost::with_jev(FakeJev::nouls(|_| 1.5)));
+    let host = Arc::new(FakeHost::with_decide(FakeDecider::predicates(|_| 1.5)));
     let outcome = script(
         &host,
-        "local ok, e = pcall(jev.noul, { state = 1, question = 'q' })\nreturn e",
+        "local ok, e = pcall(decide.predicate, { state = 1, question = 'q' })\nreturn e",
     )
     .await;
     assert_eq!(
         texts(&outcome),
-        ["Jev's answer for answer is out of range: 1.5"]
+        ["The decider's answer for answer is out of range: 1.5"]
     );
     assert_eq!(outcome.calls[0].status, CallStatus::Error);
 }
@@ -153,15 +153,15 @@ async fn a_bad_answer_raises() {
 /// Answers once the test lets it, counting requests in flight; each
 /// request says, as it starts, how many were in flight with it.
 #[derive(Clone)]
-struct GatedJev {
+struct GatedDecider {
     running: Arc<AtomicUsize>,
     peak: Arc<AtomicUsize>,
     started: mpsc::UnboundedSender<(usize, oneshot::Sender<()>)>,
 }
 
 #[async_trait]
-impl Jev for GatedJev {
-    async fn ask(&self, request: &Request) -> Result<Response, JevError> {
+impl Decider for GatedDecider {
+    async fn ask(&self, request: &Request) -> Result<Response, DecideError> {
         let now = self.running.fetch_add(1, Ordering::SeqCst) + 1;
         self.peak.fetch_max(now, Ordering::SeqCst);
         let (gate, opened) = oneshot::channel();
@@ -171,7 +171,7 @@ impl Jev for GatedJev {
         let answers = request
             .questions
             .keys()
-            .map(|id| (id.clone(), Answer::Noul { noul: 0.1 }))
+            .map(|id| (id.clone(), Answer::Predicate { predicate: 0.1 }))
             .collect();
         Ok(response(answers, request))
     }
@@ -187,14 +187,14 @@ fn at_most_four_requests_run_at_once(tc: hegel::TestCase) {
     let asked: usize =
         tc.draw(gs::integers::<usize>().min_value(1).max_value(12));
     let (started, mut heard) = mpsc::unbounded_channel();
-    let jev = GatedJev {
+    let decide = GatedDecider {
         running: Arc::default(),
         peak: Arc::default(),
         started,
     };
-    let host = Arc::new(FakeHost::with_jev(jev.clone()));
+    let host = Arc::new(FakeHost::with_decide(decide.clone()));
     let code = format!(
-        "local f = function() return jev.noul({{ state = 1, question = 'q' }}).probability end\n\
+        "local f = function() return decide.predicate({{ state = 1, question = 'q' }}).probability end\n\
          return parallel({})",
         vec!["f"; asked].join(", ")
     );
@@ -217,7 +217,7 @@ fn at_most_four_requests_run_at_once(tc: hegel::TestCase) {
     assert_eq!(outcome.failure, None, "{outcome:?}");
     assert_eq!(outcome.calls.len(), asked);
     assert_eq!(texts(&outcome), vec!["0.1"; asked]);
-    assert_eq!(jev.peak.load(Ordering::SeqCst), asked.min(MAX_IN_FLIGHT));
+    assert_eq!(decide.peak.load(Ordering::SeqCst), asked.min(MAX_IN_FLIGHT));
 }
 
 /// `state_json`, JSON text, stands for `state`, its keys in the order it
@@ -225,21 +225,21 @@ fn at_most_four_requests_run_at_once(tc: hegel::TestCase) {
 /// the call.
 #[tokio::test]
 async fn a_state_given_as_json_keeps_its_order() {
-    let jev = FakeJev::nouls(|_| 0.5);
-    let host = Arc::new(FakeHost::with_jev(jev.clone()));
+    let decide = FakeDecider::predicates(|_| 0.5);
+    let host = Arc::new(FakeHost::with_decide(decide.clone()));
     let outcome = script(
         &host,
-        r#"return jev.noul({ state_json = '{"z":1,"a":[2,{"y":3,"b":4}]}', question = 'q?' }).probability"#,
+        r#"return decide.predicate({ state_json = '{"z":1,"a":[2,{"y":3,"b":4}]}', question = 'q?' }).probability"#,
     )
     .await;
     assert_eq!(texts(&outcome), ["0.5"]);
     assert_eq!(
-        serde_json::to_string(&jev.requests()[0].state).unwrap(),
+        serde_json::to_string(&decide.requests()[0].state).unwrap(),
         r#"{"z":1,"a":[2,{"y":3,"b":4}]}"#
     );
     let broken = script(
         &host,
-        "return jev.noul({ state_json = '{', question = 'q?' })",
+        "return decide.predicate({ state_json = '{', question = 'q?' })",
     )
     .await;
     assert!(

@@ -1,5 +1,5 @@
 -- The history stage's pure parts, over drawn transcripts: the ledger and
--- what it makes of a transcript, the requests that ask Jev about every
+-- what it makes of a transcript, the requests that ask the decider about every
 -- call, the goal, the history, and the archives of cut results.
 local heiko = require("heiko")
 local t = heiko.test

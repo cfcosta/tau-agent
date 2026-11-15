@@ -1,5 +1,5 @@
-//! Runs the output pruning evaluation against the real Jev and prints a
-//! table per workload. Jev costs about $0.042 per million input tokens:
+//! Runs the output pruning evaluation against the real decider and prints a
+//! table per workload. The decider costs about $0.042 per million input tokens:
 //! a full run costs cents.
 //!
 //! See [`USAGE`] for the flags.
@@ -11,7 +11,7 @@ use std::{
     sync::Arc,
 };
 
-use heiko_jev::{Jev, MissingApiKey, TypeSafe};
+use heiko_decide::{Decider, MissingApiKey, TypeSafe};
 use heiko_output_pruning_eval::{
     metrics::{self, Trial},
     runner::{self, Config, EvalError},
@@ -36,7 +36,7 @@ enum CliError {
     #[error("no workload is called {0:?}; see --list")]
     NoWorkload(String),
     #[error(
-        "TYPESAFE_API_KEY is not set: the evaluation asks the real Jev. Set \
+        "TYPESAFE_API_KEY is not set: the evaluation asks the real decider. Set \
          it to a TypeSafe key and run again. Nothing was run."
     )]
     NoKey(#[from] MissingApiKey),
@@ -58,14 +58,14 @@ heiko-output-pruning-eval: how well fast compaction's output pruning keeps
 the lines a task needs. Each workload is a conversation ending in a long
 command output, generated from a seed, with needles (lines the task needs)
 among noise. The real plugin (the Luau one heiko comes with) prunes it
-through the agent loop, asking the real Jev, which costs money (cents
+through the agent loop, asking the real decider, which costs money (cents
 for a full run).
 
 Usage: heiko-output-pruning-eval [options]
 
   --workload NAME   only these workloads (repeat, or comma-separated)
   --seeds N         seeds 0 to N-1 of each workload (default 1)
-  --budget-usd USD  stop once Jev spend passes this
+  --budget-usd USD  stop once the decider spend passes this
   --json PATH       also write every trial and summary to PATH
   --whole           exec_command returns every output whole, as a shell
                     without limits would (default: heiko's, which keeps
@@ -175,7 +175,7 @@ fn run() -> Result<(), CliError> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    let jev: Arc<dyn Jev> = {
+    let decide: Arc<dyn Decider> = {
         // The client must be created inside the runtime.
         let _guard = runtime.enter();
         Arc::new(TypeSafe::from_env()?)
@@ -206,7 +206,7 @@ fn run() -> Result<(), CliError> {
     }
 
     eprintln!(
-        "{} trials against Jev; budget {}",
+        "{} trials against the decider; budget {}",
         config.kinds.len() * config.seeds.len(),
         options
             .budget
@@ -245,7 +245,7 @@ fn run() -> Result<(), CliError> {
         }
     };
     let report =
-        runtime.block_on(runner::evaluate(&config, jev, &mut progress))?;
+        runtime.block_on(runner::evaluate(&config, decide, &mut progress))?;
 
     print!("{}", metrics::table(&report.summaries));
     println!("spent ${:.4}", report.spent_usd);

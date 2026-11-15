@@ -2,7 +2,7 @@
 -- docs/reference/goal.md). `/goal <condition>` sets it, with
 -- `--continuations N` and `--budget TOKENS` before the condition; the model
 -- gets the condition and how goals work. Each time the model would
--- stop, Jev says whether the goal holds, from its last answer and its
+-- stop, the decider says whether the goal holds, from its last answer and its
 -- recent tool results; not yet, and the model is sent back with the
 -- goal, while continuations and budget last. The goal is the
 -- conversation's: a resumed run keeps it, until it is met, runs out, or
@@ -17,9 +17,9 @@ local NAME = "heiko-goal"
 local CONTINUATIONS = "goal-continuations"
 local BUDGET = "goal-budget"
 
--- What Jev is asked at each stop.
+-- What the decider is asked at each stop.
 local QUESTION = {
-	kind = "noul",
+	kind = "predicate",
 	question = "Is the goal met? Judge from the tool results: the answer's own claims count only where a result backs them.",
 	yes = "The tool results show that the goal holds.",
 	no = "The goal does not hold yet, or nothing shown proves it.",
@@ -222,13 +222,13 @@ end
 
 -- The `/goal` popover: the command, what it needs when it lacks it, and
 -- an input for each limit.
-local function popover(jev)
+local function popover(decide)
 	local limit = function(id, placeholder)
 		return ui.input(id, { placeholder = placeholder, submit = "heiko.submit" })
 	end
 	local children = { ui.row({ ui.mono("/goal"), ui.mono("<condition>") }) }
-	if not jev then
-		table.insert(children, ui.row({ ui.mark("asks"), ui.text("Goals are checked with Jev: add a TypeSafe key (Models).") }))
+	if not decide then
+		table.insert(children, ui.row({ ui.mark("asks"), ui.text("Goals are checked with the decider: add a TypeSafe key (Models).") }))
 	end
 	table.insert(children, ui.rule())
 	table.insert(
@@ -244,7 +244,7 @@ local function popover(jev)
 	return ui.stack(children)
 end
 
-local NEEDS_JEV = "heiko-goal checks goals with Jev. Add a TypeSafe key on the Models screen, then "
+local NEEDS_DECIDE = "heiko-goal checks goals with the decider. Add a TypeSafe key on the Models screen, then "
 
 -- Keeps that the person's message `text` draws as `said`.
 local function say(state, text, said)
@@ -259,7 +259,7 @@ local function command_text(condition, continuations, budget)
 end
 
 return heiko.plugin({
-	uses = { jev = true },
+	uses = { decide = true },
 	-- A goal allows 10 continuations by default, and Keep going adds 10.
 	continues = 20,
 
@@ -267,7 +267,7 @@ return heiko.plugin({
 	-- model is told.
 	start = function(plan, model, env)
 		local state = goal.state(model)
-		state.checks = env.run.jev == true and env.run.kind ~= "sub_agent"
+		state.checks = env.run.decide == true and env.run.kind ~= "sub_agent"
 		state.live = env.run.id
 		state.evidence = {}
 		-- The tokens runs used that no check counted yet go on counting:
@@ -292,7 +292,7 @@ return heiko.plugin({
 		return heiko.start({ input = input })
 	end,
 
-	-- The latest tool results, for Jev.
+	-- The latest tool results, for the decider.
 	after_tool_result = function(result, model)
 		local state = goal.state(model)
 		state.evidence = state.evidence or {}
@@ -318,11 +318,11 @@ return heiko.plugin({
 	before_stop = function(stop, model, env)
 		local state = goal.state(model)
 		local g = state.goal
-		if g == nil or g.status ~= "active" or not state.checks or not env.run.jev then
+		if g == nil or g.status ~= "active" or not state.checks or not env.run.decide then
 			return nil
 		end
 		local asked, checked = g.condition, #g.checks
-		local answers, why = heiko.jev.ask({
+		local answers, why = heiko.decide.ask({
 			state = {
 				goal = asked,
 				final_answer = stop.text,
@@ -331,19 +331,19 @@ return heiko.plugin({
 			questions = { met = QUESTION },
 		})
 		-- The model as it is now: a Pause, a Clear or a new goal may have
-		-- come while Jev answered, and then this check is not the goal's.
+		-- come while the decider answered, and then this check is not the goal's.
 		state = goal.state(model)
 		g = state.goal
 		if g == nil or g.status ~= "active" or g.condition ~= asked or #g.checks ~= checked then
 			return nil
 		end
 		if answers == nil then
-			goal.failed(state, "Jev could not check the goal: " .. why)
+			goal.failed(state, "The decider could not check the goal: " .. why)
 			return nil
 		end
 		local verdict = answers.met
 		if type(verdict) ~= "table" or type(verdict.probability) ~= "number" then
-			goal.failed(state, "Jev gave no verdict on the goal")
+			goal.failed(state, "The decider gave no verdict on the goal")
 			return nil
 		end
 		local p = verdict.probability
@@ -401,8 +401,8 @@ return heiko.plugin({
 				return heiko.interface("composer", { text = "/goal " .. condition })
 			elseif args.what == "keep_going" then
 				-- Without a key nothing would check it, so it says so.
-				if not env.run.jev then
-					return heiko.interface("alert", { title = "Goals need Jev", message = NEEDS_JEV .. "go on." })
+				if not env.run.decide then
+					return heiko.interface("alert", { title = "Goals need the decider", message = NEEDS_DECIDE .. "go on." })
 				end
 				if g.status == "paused" then
 					goal.resume(state)
@@ -423,7 +423,7 @@ return heiko.plugin({
 			description = "Keep working until a condition holds",
 			args = "<condition>",
 			icon = "target",
-			popover = { jev = popover(true), no_jev = popover(false) },
+			popover = { decide = popover(true), no_decide = popover(false) },
 			-- Sets the open conversation's goal, or a new chat's, with the
 			-- popover's limits unless the command gave its own; `/goal
 			-- clear` clears it.
@@ -439,8 +439,8 @@ return heiko.plugin({
 					goal.clear(state)
 					return nil
 				end
-				if not env.run.jev then
-					return heiko.interface("alert", { title = "Goals need Jev", message = NEEDS_JEV .. "set the goal again." })
+				if not env.run.decide then
+					return heiko.interface("alert", { title = "Goals need the decider", message = NEEDS_DECIDE .. "set the goal again." })
 				end
 				-- Limits typed with the command win over the popover's.
 				local continuations, budget = command.continuations, command.budget
@@ -449,7 +449,7 @@ return heiko.plugin({
 				end
 				local condition = command.condition
 				if env.run.live and not state.checks then
-					-- A run going on that started without Jev keeps the goal
+					-- A run going on that started without the decider keeps the goal
 					-- for when it goes on, and nothing tells the model now.
 					goal.set(state, condition, continuations, budget)
 					return heiko.interface("alert", {

@@ -1293,7 +1293,7 @@ fn respond(workspace: &Entity<Workspace>, host: Arc<DemoHost>, cx: &mut App) {
                 })
                 .detach();
             }
-            // Off the UI thread, as on a host: an action may ask Jev.
+            // Off the UI thread, as on a host: an action may ask the decider.
             WorkspaceEvent::PluginAct {
                 plugin,
                 action,
@@ -3289,7 +3289,7 @@ mod tests {
         assert_eq!(pruning["ledger"].as_array().unwrap().len(), calls);
         let detail = pruning["passes"][0]["detail"].as_str().unwrap();
         assert!(
-            detail.ends_with("Jev read 18k tokens of history, whole"),
+            detail.ends_with("the decider read 18k tokens of history, whole"),
             "what the pass read, and no cost: {detail}"
         );
         assert_eq!(

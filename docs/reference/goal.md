@@ -1,7 +1,7 @@
 # heiko-goal
 
 Keeps a conversation going until a goal holds. Each time the model
-would stop, Jev (TypeSafe's System One model) is asked whether the
+would stop, the decider (TypeSafe's System One model) is asked whether the
 goal is met; if not, the model is sent back with the goal. It is a
 Luau plugin heiko comes with (ADR 0050): `plugins/heiko-goal`, its
 code in `src/plugin.luau` and `src/goal.luau`. Design:
@@ -27,7 +27,7 @@ A run's input sets it:
 - `--continuations` (default 10) is how many times the goal may send
   the model back. `--budget` (default `2m`) caps the tokens the goal
   uses: those of the run's turns from when it was set, input, output
-  and cache read and written together. Jev's checks are not counted.
+  and cache read and written together. The decider's checks are not counted.
   It is a whole number of tokens, as digits or short, `500k` or `2m`
   in either case; heiko says it short too.
 - The model does not see the command. Its input is `/goal <condition>`
@@ -44,7 +44,7 @@ A run's input sets it:
 
 When the model answers without tool calls, and the goal is active:
 
-1. Jev gets one `noul` question, "is the goal met?", on a state of the
+1. The decider gets one `predicate` question, "is the goal met?", on a state of the
    goal, the model's last answer, and its last 6 tool results (the last
    1,500 characters of each output). The answer's own claims count only
    where a result backs them.
@@ -53,7 +53,7 @@ When the model answers without tool calls, and the goal is active:
    `heiko-goal: ` and names the goal and the continuation. Out of
    continuations, or past the budget, the goal **stops** instead, and
    so does the run.
-4. When Jev gives no answer, the run stops unchecked, and the error is
+4. When the decider gives no answer, the run stops unchecked, and the error is
    kept. The goal stays active for the next stop.
 
 The plugin declares `continues = 20`, the most a run may be kept going
@@ -68,7 +68,7 @@ transcript, and how the messages it knows draw. The banner's actions
 are its `act` action (`pause`, `edit`, `clear`, and `keep_going` for
 both resume and raise the limit), and the
 `/goal` command its command: each changes the model. A check that waits
-on Jev reads the model again once Jev answers: a Pause, an edit or a
+on the decider reads the model again once the decider answers: a Pause, an edit or a
 Clear pressed meanwhile stands, and the answer, which was for a goal no
 longer active, is dropped.
 
@@ -87,14 +87,14 @@ longer active, is dropped.
   spent is not shown.
 - **The inspector's section:** the condition, the continuations as
   ticks, and every check, newest first: its square, what followed
-  (sent back, the run stopped, stopped here), its turn and Jev's
+  (sent back, the run stopped, stopped here), its turn and the decider's
   probability.
 - **Notes:** a goal met or stopped is a note under the mark with its
   checks as squares; a stopped one offers raise the limit and clear
   while the goal still stands stopped. A `/goal` message draws as the
   command and its condition, with a stamp of its continuations.
 - Without a key, `/goal`, resume and raise the limit say a goal needs
-  Jev and do nothing, and the banner of a goal still to be met says it
+  The decider and do nothing, and the banner of a goal still to be met says it
   is not checked. On a run going on that started without a key, `/goal` keeps
   the goal for the next message, says so, and does not tell the model
   it is checked now.

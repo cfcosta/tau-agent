@@ -3,7 +3,7 @@
   "description": "Picks each message's reasoning effort on auto",
   "uses": {
     "tools": [],
-    "jev": true,
+    "decide": true,
     "infer": false,
     "network": [],
     "secrets": [],
@@ -22,7 +22,7 @@
     "schema": {
       "properties": {
         "redecide": {
-          "description": "Jev looks again when a step's effort runs out, not only as each message comes in. Each change resends the whole context uncached, so it pays only on long tool chains.",
+          "description": "The decider looks again when a step's effort runs out, not only as each message comes in. Each change resends the whole context uncached, so it pays only on long tool chains.",
           "title": "Decide again between steps",
           "type": "boolean"
         },
@@ -69,8 +69,8 @@
   "pages": [],
   "repo_nav": null,
   "picker_auto": {
-    "jev": "Auto lets heiko-reasoning pick the effort for each message, with Jev.",
-    "no_jev": "Auto leaves the effort to the model: heiko-reasoning needs a TypeSafe key (Models)."
+    "decide": "Auto lets heiko-reasoning pick the effort for each message, with the decider.",
+    "no_decide": "Auto leaves the effort to the model: heiko-reasoning needs a TypeSafe key (Models)."
   },
   "continues": null,
   "listed_commands": false

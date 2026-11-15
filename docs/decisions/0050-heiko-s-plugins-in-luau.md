@@ -32,18 +32,18 @@ them by what they reach outside plain logic:
   processes and streams), heiko-tools (files, terminals), heiko-memory
   (embeddings, files), heiko-agents (a runtime of its own), heiko-sqlite
   (the store, open before any plugin), heiko-chatgpt (a provider, which
-  streams), heiko-jev (it is the Jev that Luau calls), heiko-phones (a
+  streams), heiko-decide (it is the decider that Luau calls), heiko-phones (a
   listener), heiko-direnv (runs `direnv`), heiko-notify (D-Bus) and heiko-skills
   (the person's files). The run loop, a slot of the kernel's, stays
   Rust too.
 
 What holds the eleven back is mostly one thing. In a run, only a tool's
-`call` may call the model (`infer`) or Jev (`ctx.jev`): every other run
+`call` may call the model (`infer`) or the decider (`ctx.decide`): every other run
 hook is given no reach (`Reach`, "a tool handler gets tools; other
 hooks, none", `runtime.rs`), and the hooks the Rust plugins call a
 model from have the shortest time limits (`before_request` 200 ms,
 `before_tool` 2 s). The skill does not say so: its `ctx` table lists
-`ctx.jev` with no word of where. The Rust plugins call the model inline
+`ctx.decide` with no word of where. The Rust plugins call the model inline
 from those same hooks, bounded only by the run's cancel.
 
 ## Decision
@@ -63,20 +63,20 @@ moved later all the same, once Luau reached what they hold: heiko-skills
 (gap K, the person's files) and heiko-memory (gap L, its notes' files,
 once ADR 0052 took its embeddings away), and heiko-notify (one host call
 to the desktop). Nine stay: heiko-vcs, heiko-mcp, heiko-tools, heiko-agents,
-heiko-sqlite, heiko-chatgpt, heiko-jev, heiko-phones and heiko-direnv.
+heiko-sqlite, heiko-chatgpt, heiko-decide, heiko-phones and heiko-direnv.
 
 ### The gaps, and how each closes
 
-**A. A run hook may call the model and Jev.** Every run hook (`start`,
+**A. A run hook may call the model and the decider.** Every run hook (`start`,
 `before_request`, `before_tool`, `after_tool_result`,
 `rewrite_context`, `rewritten`, `before_stop`, `turn_end`, `run_end`,
-and a tool's `call` as now) gets `infer` and `ctx.jev` when the
+and a tool's `call` as now) gets `infer` and `ctx.decide` when the
 plugin's `uses` names them. `infer` asks the run's model unless
 `uses.model` names another, and takes an `effort`. Both are charged to
-the run, through the same metered Jev and model calls the Rust plugins
+the run, through the same metered decider and model calls the Rust plugins
 use, and the run's cancel cancels them.
 
-A hook of a plugin whose `uses` names `infer` or `jev` runs to the
+A hook of a plugin whose `uses` names `infer` or `decide` runs to the
 tool limit, 60 s, in place of its own. A plugin that reaches neither
 keeps the short limits, so the hooks that run on every request stay
 cheap for every plugin that does not ask for more. `on_event` keeps
@@ -181,8 +181,8 @@ load it, and the Rust crate deleted.
 ## Testing
 
 - **Gap A**: a Luau plugin's `before_request`, `before_tool`,
-  `before_stop` and `rewrite_context` each call `infer` and `ctx.jev`
-  against a scripted model and a fake Jev, charged to the run; one
+  `before_stop` and `rewrite_context` each call `infer` and `ctx.decide`
+  against a scripted model and a fake decider, charged to the run; one
   without `uses.infer` gets neither and keeps the short limit; a
   cancelled run cancels the call.
 - **Gap B**: a transcript with a message of 100 000 characters reaches
@@ -203,7 +203,7 @@ load it, and the Rust crate deleted.
 
 ### Gap A
 
-- Every run hook but `on_event` gets the model and Jev when the
+- Every run hook but `on_event` gets the model and the decider when the
   plugin's `uses` names them, through a `RunReach` that asks with
   `PluginCtx::ask`, so the run is charged and its cancel cancels the
   ask. Those hooks then have a tool's 60 s (`Hook::limit_for`).
@@ -312,9 +312,9 @@ run's effort and set it, and the plan's points. Closed here as gap J:
   sets it, on auto only; the first plugin that sets it wins.
 - **The plan's points**: a view's `plan = { name, value }` is a plan
   field, set by the plugin, and its `plan_steps` the Plan screen's
-  step. A declaration's `picker_auto = { jev, no_jev }` is the model
+  step. A declaration's `picker_auto = { decide, no_decide }` is the model
   picker's line for "auto", with a TypeSafe key or without.
-- **A Jev call says its cost**, as a second value, so a plugin keeps
+- **A decider call says its cost**, as a second value, so a plugin keeps
   what each choice cost.
 - `before_request`'s `effort` is left out at the model's default, as
   `start`'s is: a JSON null would reach Luau as the truthy `json.null`.
@@ -323,10 +323,10 @@ What the port found besides:
 
 - **A run at a chosen effort left the next message nothing.** The Rust
   host gave the plugin only to runs on auto, so a long conversation
-  started at an effort the person chose switched to Jev's pick on its
+  started at an effort the person chose switched to the decider's pick on its
   next message, against the plugin's own docs; only its unit test,
   which gave the plugin to every run, kept it. A drawn property of the
-  Luau tests found it. With Jev, the Luau plugin is in every run, and
+  Luau tests found it. With the decider, the Luau plugin is in every run, and
   a run at a chosen effort leaves its context.
 - **What `start` leaves shows after the message.** The Rust plugin
   placed its choice after the message the run started on
@@ -365,14 +365,14 @@ things more:
   `/goal` draws as the goal it set, typed or as the model reads it,
   and a continuation a check's note says draws as nothing. The point (`heiko.run.user_message`) left
   `NOT_YET`.
-- **A command has an icon and a popover**: `popover = { jev, no_jev }`,
+- **A command has an icon and a popover**: `popover = { decide, no_decide }`,
   whose inputs' drafts reach `run` as `ctx.drafts`; an input whose
   `submit` is `"heiko.submit"` sends the composer and keeps what it says.
   A listed command may now have a popover (`Manifest::listed_popover`).
 - **A command works outside a chat**: it runs on no run and no state,
   and what it asks the interface, `heiko.send`, starts a chat. An
   action's `ctx.run` says whether its run is going on (`live`) and a
-  Jev key is saved (`jev`), as the interface sees them.
+  decider key is saved (`decide`), as the interface sees them.
 - **A command's prompt titles its chat**: `/name args` reads as `args`,
   its leading `--flag value` pairs dropped and one quoted string
   unquoted, for any command word, as heiko-ui reads titles without Luau.
@@ -403,7 +403,7 @@ What the port found besides:
 
 Its SQLite of rules became the plugin's store in each repository, as
 planned, and its page a page of the repository. Before the port, a view
-drew on other tools' cards (`calls`), a page's action got the host's Jev,
+drew on other tools' cards (`calls`), a page's action got the host's decider,
 and `start` could end the run (`heiko.fail`). It needed four things more:
 
 - **A view marks a card.** `calls[id].mark` is `"blocked"`, with the
@@ -415,7 +415,7 @@ and `start` could end the run (`heiko.fail`). It needed four things more:
   the repository, where it opened nothing before.
 - **`heiko.open_run`** opens the run `run`, for the review queue's Open in
   run.
-- **A page knows a Jev key is saved**, as `ctx.run.jev`, from the
+- **A page knows a decider key is saved**, as `ctx.run.decide`, from the
   interface, and is drawn again when that changes.
 
 What the port found besides:
@@ -439,7 +439,7 @@ What the port found besides:
   button cannot read an input's draft, so Enter in the rule's field keeps
   the rule, shown above it, and Save and Try it use what it kept; Enter
   in the field's field adds it, and its button is gone. Editing a rule
-  shows its text above an empty field. "Asking Jev…" does not show: the
+  shows its text above an empty field. "Asking the decider…" does not show: the
   page draws again once Try it is done. A save that fails is the
   action's error, which the interface shows, and the editor stays open.
 - **Smaller differences.** The review queue names a run by its first
@@ -449,14 +449,14 @@ What the port found besides:
   a phone. Where a field is found under several keys of one object, its
   values come in the keys' sorted order, not the model's: a Luau table
   keeps none. A failed check's message is the error the Luau got from
-  Jev. The catalog's row is one of heiko-luau-plugins', and Jev's cost is
+  The decider. The catalog's row is one of heiko-luau-plugins', and the decider's cost is
   booked to it.
 - **The parity check** ran the Rust rules, checks and fold, copied from
   before the port, beside the Luau on drawn inputs: 400 texts of
   Unicode white space, cases and dots, trimmed and read as targets, and
   numbers written as Rust writes them; 400 rules checked; 300 stored
   constitutions read back; 300 runs of edits; 400 calls checked, on
-  drawn rules and arguments, with Jev's scores at and near the marks or
+  drawn rules and arguments, with the decider's scores at and near the marks or
   its failure, comparing what each rule reads, the request, the records
   and the reason; 300 final answers, with holds; 300 runs of drawn
   records folded into counts, notes and calls; 200 repositories' totals;
@@ -507,7 +507,7 @@ needed five things more, each any plugin's:
   far past the 16 KiB a task takes. It takes an `effort`, the one the
   run started at, which `start` keeps.
 - **`rewrite_context` has ten minutes** when it reaches the model or
-  Jev: one summary of a long history, or many, takes longer than a
+  The decider: one summary of a long history, or many, takes longer than a
   tool's minute. The Rust plugin was bounded by the run's cancel alone.
 - **A rewrite that fails tells the run.** When no plugin rewrites and
   one's hook failed, heiko-luau-plugins answers the loop with its error,
@@ -529,7 +529,7 @@ What the port found besides:
 - **The summary alone cannot be picked.** heiko-luau-plugins is the only
   filler of `heiko.compaction` left, and fills it for the chain; the
   person picked heiko-compaction there for the summary alone. The tree is
-  off unless switched on, and pruning runs only with a Jev key.
+  off unless switched on, and pruning runs only with a decider key.
 - **A failed summary past the threshold is a line in the plugin's log**,
   not a plugin error of the run: three of those in a run would turn the
   plugin off for the rest of it, where the Rust one waited and tried
@@ -653,9 +653,9 @@ false })` replaces a result without marking the call for review: what
   model had read when it made it.
 - **An answer's parts** in the view: its text and thinking in order, so
   the history keeps where the thinking sat.
-- **A Jev state in order.** `state_json`, JSON text, stands for a
+- **A decider state in order.** `state_json`, JSON text, stands for a
   request's `state` and keeps its keys in the order written: the Rust
-  state's field order, which Jev reads and the estimate counts.
+  state's field order, which decider reads and the estimate counts.
 - **What a card shows of a rewrite.** A view's `calls[id].dropped` is
   `"result"` or `"call"`, and `calls[id].cut` says an output reached the
   model cut: the lines it kept, the archive and the tokens before and
@@ -664,7 +664,7 @@ false })` replaces a result without marking the call for review: what
 What the port found besides:
 
 - **The rewrite is heiko-luau-plugins'.** Its `context` entry, its
-  `ContextRewritten` event and its Jev charges name heiko-luau-plugins;
+  `ContextRewritten` event and its decider charges name heiko-luau-plugins;
   the entry's details hold the ledger and the stats. The ledger, each
   pass and each pruned output are the plugin's state, which a fork
   inherits, in place of `RunPlan::last_rewrite` and the `ledger` and
@@ -677,7 +677,7 @@ What the port found besides:
   yet. The ledger page has no turn column: the state does not know a
   call's turn. The catalog's row is heiko-luau-plugins', so no row says
   it needs a key; its status line says so.
-- **Jev is asked four requests at a time**, as Codemode limits a
+- **The decider is asked four requests at a time**, as Codemode limits a
   script, where the Rust plugin sent them all together.
 - **An output past 256 KiB is left whole**: the hook gets only its
   first 256 KiB. heiko's `exec_command` returns at most 50 KB, so only the
@@ -776,7 +776,7 @@ What the port found besides:
   cost: an action whose state moved on meanwhile loses its change, not only
   its stale copy. Two keys pressed before the first's result returns keep the
   first and lose the second, where they kept the second and lost the first; and
-  a slow action on a live run, as one calling Jev, loses its change if a hook
+  a slow action on a live run, as one calling the decider, loses its change if a hook
   changes that plugin's state while it runs. What such an action did outside
   its state stands.
 - **The card** is drawn from the state, on the call's card body: what
@@ -1234,14 +1234,14 @@ name, folder, remote, normalized }` each, for a plugin whose
 
 ## Alternatives considered
 
-- **Port the plugins and leave the gaps**, calling Jev over HTTP with
-  a secret. That skips the metered Jev, so a run's cost no longer
+- **Port the plugins and leave the gaps**, calling the decider over HTTP with
+  a secret. That skips the metered decider, so a run's cost no longer
   counts the plugin's calls, and it leaves the hooks' limits too short
   for any model call. The plugins would work around the interface
   instead of testing it.
 - **Raise every hook's limit.** Hooks that run on every request would
   then cost every plugin that has them, model or not. Tying the longer
-  limit to `uses.infer` and `uses.jev` keeps the cost on the plugins
+  limit to `uses.infer` and `uses.decide` keeps the cost on the plugins
   that ask for it.
 - **Keep the Rust crates behind a setting.** Two copies of each plugin
   to keep alike, and a setting no one should need. The parity property
@@ -1268,7 +1268,7 @@ name, folder, remote, normalized }` each, for a plugin whose
 ## Settled questions
 
 - **Who may call a model from `before_request`.** Any plugin whose
-  `uses` names `infer` or `jev`, a person's as well as heiko's: the Allow
+  `uses` names `infer` or `decide`, a person's as well as heiko's: the Allow
   click for that reach is where the person agrees to the cost.
 - **Many model calls at once.** A plugin wraps its `infer` calls in
   codemode's `parallel(...)`; nothing new is built for it. If the
@@ -1324,5 +1324,5 @@ draw pages of the app: which of the ten could move now.
   heiko-mcp (server processes and streams), heiko-tools (the agent's files
   and terminals), heiko-agents (a runtime of its own, loading agents'
   Luau and starting their turns), heiko-sqlite (the store, open before
-  any plugin), heiko-chatgpt (a provider, which streams), heiko-jev (the
+  any plugin), heiko-chatgpt (a provider, which streams), heiko-decide (the
   client Luau calls) and heiko-phones (a listener).

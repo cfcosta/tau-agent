@@ -17,7 +17,7 @@ private persisted provenance (see [inference traces](codemode-inference-traces.m
 The Codemode card lists each inference as a call. While it runs, the row shows
 the latest attempt progress and the card remains open. On completion, the row
 shows success or failure and the sum of reported cost across every attempt,
-including retries and failed responses. The card's total usage includes Jev
+including retries and failed responses. The card's total usage includes the decider
 requests and returned inference usage for display. Inference usage is already
 charged by the agent loop and is not charged again by Codemode. A row with
 unknown final usage labels its reported cost as partial; zero SDK usage is not

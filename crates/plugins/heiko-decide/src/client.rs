@@ -6,12 +6,12 @@ use async_trait::async_trait;
 use serde_json::json;
 use heiko_ai::retry::{RetryPolicy, jitter, parse_retry_after};
 
-use crate::{DEFAULT_MODEL, Jev, JevError, Request, Response, SYSTEM_ONE_URL};
+use crate::{DEFAULT_MODEL, Decider, DecideError, Request, Response, SYSTEM_ONE_URL};
 
 /// The environment variable [`TypeSafe::from_env`] reads.
 pub const API_KEY_VAR: &str = "TYPESAFE_API_KEY";
 
-/// How long one attempt may take, connecting included. Jev answers in a
+/// How long one attempt may take, connecting included. The decider answers in a
 /// fraction of a second, so a request this slow is not coming back.
 const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -35,7 +35,7 @@ impl fmt::Display for MissingApiKey {
 
 impl std::error::Error for MissingApiKey {}
 
-/// Jev over HTTPS. Clones share one connection pool.
+/// The decider over HTTPS. Clones share one connection pool.
 ///
 /// Status 429, 503 and 529 are retried under the client's
 /// [`RetryPolicy`], honoring `retry-after`; other failures are not.
@@ -105,7 +105,7 @@ impl TypeSafe {
     async fn attempt(
         &self,
         body: &str,
-    ) -> Result<Response, (JevError, Option<Option<Duration>>)> {
+    ) -> Result<Response, (DecideError, Option<Option<Duration>>)> {
         let response = self
             .http
             .post(&self.url)
@@ -115,7 +115,7 @@ impl TypeSafe {
             .send()
             .await
             .map_err(|error| {
-                (JevError::Transport(error.without_url().to_string()), None)
+                (DecideError::Transport(error.without_url().to_string()), None)
             })?;
         let status = response.status().as_u16();
         if !response.status().is_success() {
@@ -126,19 +126,19 @@ impl TypeSafe {
                     .and_then(|value| value.to_str().ok())
                     .and_then(|value| parse_retry_after("retry-after", value))
             });
-            return Err((JevError::Status(status), retry_after));
+            return Err((DecideError::Status(status), retry_after));
         }
         let text = response.text().await.map_err(|error| {
-            (JevError::Transport(error.without_url().to_string()), None)
+            (DecideError::Transport(error.without_url().to_string()), None)
         })?;
         serde_json::from_str(&text)
-            .map_err(|error| (JevError::Malformed(error.to_string()), None))
+            .map_err(|error| (DecideError::Malformed(error.to_string()), None))
     }
 }
 
 #[async_trait]
-impl Jev for TypeSafe {
-    async fn ask(&self, request: &Request) -> Result<Response, JevError> {
+impl Decider for TypeSafe {
+    async fn ask(&self, request: &Request) -> Result<Response, DecideError> {
         let body = json!({
             "model": self.model,
             "state": request.state,

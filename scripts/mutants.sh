@@ -21,7 +21,7 @@ exec cargo mutants --workspace --test-tool nextest \
   --file crates/heiko-agent/src/agent.rs \
   --file crates/heiko-agent/src/validation.rs \
   --file crates/heiko-agent/src/schema.rs \
-  --file crates/plugins/heiko-jev/src/lib.rs \
+  --file crates/plugins/heiko-decide/src/lib.rs \
   --file crates/plugins/heiko-tools-host/src/edit.rs \
   --file crates/plugins/heiko-tools-host/src/truncate.rs \
   --file crates/heiko-store-sqlite/src/lib.rs \

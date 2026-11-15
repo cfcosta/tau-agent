@@ -88,9 +88,9 @@ impl HostHalf for LuauPluginsHost {
             "repo": run.repo.name,
             "model": run.model,
         });
-        let jev = run
+        let decide = run
             .services
-            .get::<std::sync::Arc<dyn heiko_jev::Jev>>()
+            .get::<std::sync::Arc<dyn heiko_decide::Decider>>()
             .cloned();
         // Always there, even with no plugin active yet: one that becomes
         // active while the run goes on works in it from its next request.
@@ -108,7 +108,7 @@ impl HostHalf for LuauPluginsHost {
         let luau = crate::agent::LuauPlugins::live(
             std::sync::Arc::new(versions),
             info,
-            jev,
+            decide,
         )
         .await;
         // Their HTTP requests name secrets kept for each in heiko's
@@ -336,10 +336,10 @@ impl HostHalf for LuauPluginsHost {
         host.lists_repositories(&cx.repos);
         let chats = cx.conversations();
         let chats = chats.as_deref();
-        // The host's Jev, for an action of a plugin that uses it.
-        let host_jev = || {
+        // The host's decider, for an action of a plugin that uses it.
+        let host_decide = || {
             cx.services
-                .get::<std::sync::Arc<dyn heiko_jev::Jev>>()
+                .get::<std::sync::Arc<dyn heiko_decide::Decider>>()
                 .cloned()
         };
         match action {
@@ -358,11 +358,11 @@ impl HostHalf for LuauPluginsHost {
                 plugin,
                 page,
                 params,
-                jev,
+                decide,
                 drafts,
             } => {
                 return Ok(Some(
-                    host.page(&plugin, &page, &params, jev, &drafts).await,
+                    host.page(&plugin, &page, &params, decide, &drafts).await,
                 ));
             }
             Act::Setup { plugin, picked } => {
@@ -374,7 +374,7 @@ impl HostHalf for LuauPluginsHost {
                 args,
             } => {
                 let value = host
-                    .app_action(&plugin, &action, args, chats, host_jev())
+                    .app_action(&plugin, &action, args, chats, host_decide())
                     .await?;
                 // What it asks the interface, as a run's action does.
                 if let Some(interface) = value.get("heiko_interface").cloned() {
@@ -404,7 +404,7 @@ impl HostHalf for LuauPluginsHost {
                         &action,
                         args,
                         chats,
-                        host_jev(),
+                        host_decide(),
                     )
                     .await?;
                 // What it asks the interface, as an app's action does
@@ -462,7 +462,7 @@ impl HostHalf for LuauPluginsHost {
                 state,
                 settings,
                 live,
-                jev,
+                decide,
             } => {
                 let done = host
                     .action(crate::registry::ActionCall {
@@ -474,9 +474,9 @@ impl HostHalf for LuauPluginsHost {
                         state: &state,
                         settings: settings.as_ref(),
                         chats,
-                        jev: host_jev(),
+                        decide: host_decide(),
                         live,
-                        keyed: jev,
+                        keyed: decide,
                     })
                     .await;
                 return Ok(Some(serde_json::to_value(done)?));

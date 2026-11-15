@@ -37,7 +37,7 @@ pub fn usd(amount: f64) -> String {
     }
 }
 
-/// A Jev cost, which is often a fraction of a cent: to four places
+/// A decider cost, which is often a fraction of a cent: to four places
 /// under a cent, else as [`usd`].
 pub fn fine_usd(amount: f64) -> String {
     if amount < 0.01 {

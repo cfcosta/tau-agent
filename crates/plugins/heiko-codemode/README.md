@@ -20,7 +20,7 @@ cards the desktop does.
 | `modules`               | Module definitions, selections, tests and pins                |
 | `promotion`             | Requests to promote a module, and their decisions             |
 | `inference_trace`       | Records of nested `infer` calls; `restore_budget`             |
-| `live`                  | What a running call reports: `JevUpdate`, `InferUpdate`       |
+| `live`                  | What a running call reports: `DecideUpdate`, `InferUpdate`       |
 | `format::formatted`     | A script formatted by StyLua, for the cards only              |
 | `outline`               | A script's output on its card, one line per item              |
 | `image`                 | `image()` payloads, typed by their bytes (`parse`, `sniff`)   |

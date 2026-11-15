@@ -1,4 +1,4 @@
-//! The runner against fake Jevs: one that answers from ground truth,
+//! The runner against fake deciders: one that answers from ground truth,
 //! one that keeps nothing, one that fails. No network. Time is real:
 //! a Luau hook's limit is a timer that paused time lets run out.
 
@@ -8,7 +8,7 @@ use std::{
 };
 
 use serde_json::json;
-use heiko_jev::{Answer, Jev, JevError, fake::FakeJev};
+use heiko_decide::{Answer, Decider, DecideError, fake::FakeDecider};
 use heiko_output_pruning_eval::{
     measure::{self, Line, estimate_tokens},
     metrics::summarize,
@@ -26,10 +26,10 @@ fn chunk_lines() -> usize {
 }
 
 /// Keeps exactly the chunks holding a needle line.
-fn ground_truth(workload: &Workload) -> FakeJev {
+fn ground_truth(workload: &Workload) -> FakeDecider {
     let needles: HashSet<String> =
         workload.needles.iter().map(|n| n.text.clone()).collect();
-    FakeJev::new(move |request| {
+    FakeDecider::new(move |request| {
         let chunks = request.state["chunks"].as_array().unwrap();
         let answers = request
             .questions
@@ -45,13 +45,13 @@ fn ground_truth(workload: &Workload) -> FakeJev {
                     text.split('\n').any(|line| needles.contains(line));
                 (
                     id.clone(),
-                    Answer::Noul {
-                        noul: if needed { 0.95 } else { 0.0 },
+                    Answer::Predicate {
+                        predicate: if needed { 0.95 } else { 0.0 },
                     },
                 )
             })
             .collect();
-        Ok(heiko_jev::fake::response(answers, request))
+        Ok(heiko_decide::fake::response(answers, request))
     })
 }
 
@@ -77,13 +77,13 @@ fn rendered(
 
 fn trial(
     workload: &Workload,
-    jev: FakeJev,
+    decide: FakeDecider,
     exec: Exec,
 ) -> (heiko_output_pruning_eval::metrics::Trial, tempfile::TempDir) {
     let work = tempfile::tempdir().unwrap();
     let trial = block_on_io(runner::run(
         workload,
-        Arc::new(jev) as Arc<dyn Jev>,
+        Arc::new(decide) as Arc<dyn Decider>,
         &json!({}),
         work.path(),
         exec,
@@ -92,7 +92,7 @@ fn trial(
     (trial, work)
 }
 
-/// With a Jev that keeps exactly the needle chunks, every needle
+/// With a decider that keeps exactly the needle chunks, every needle
 /// reaches the model and the result is exactly the first, last and
 /// needle chunks: the reduction is that render's against what
 /// `exec_command` showed. The archive holds what the tool returned:
@@ -106,8 +106,8 @@ fn ground_truth_keeps_every_needle() {
         for kind in Kind::ALL {
             for seed in 0..2 {
                 let workload = generate(kind, seed);
-                let jev = ground_truth(&workload);
-                let (trial, _work) = trial(&workload, jev.clone(), exec);
+                let decide = ground_truth(&workload);
+                let (trial, _work) = trial(&workload, decide.clone(), exec);
                 let context = format!("{kind:?} #{seed} {exec:?}: {trial:?}");
                 assert_eq!(trial.error, None, "{context}");
                 let (native, cut) = match exec {
@@ -167,7 +167,7 @@ fn ground_truth_keeps_every_needle() {
                 if kind == Kind::EarlierRequirement {
                     // The history came in segments: only some states
                     // held the requirement, and the needle was kept.
-                    let holding = jev
+                    let holding = decide
                         .requests()
                         .iter()
                         .filter(|request| {
@@ -187,7 +187,7 @@ fn ground_truth_keeps_every_needle() {
     assert!(pruned_whole > 0, "some whole output fits the hook");
 }
 
-/// With a Jev that keeps nothing, the first and last chunks still stay:
+/// With a decider that keeps nothing, the first and last chunks still stay:
 /// recall counts exactly the needles in them.
 #[test]
 fn keeping_nothing_keeps_the_ends() {
@@ -195,7 +195,7 @@ fn keeping_nothing_keeps_the_ends() {
         let workload = generate(kind, 3);
         assert!(workload.output.len() <= HOOK_TEXT_BYTES, "{kind:?}");
         let (trial, _work) =
-            trial(&workload, FakeJev::nouls(|_| 0.0), Exec::Whole);
+            trial(&workload, FakeDecider::predicates(|_| 0.0), Exec::Whole);
         let lines = measure::lines(&workload.output);
         let chunks = measure::chunks(lines.len(), chunk_lines());
         let (first, last) = (&chunks[0], &chunks[chunks.len() - 1]);
@@ -222,7 +222,7 @@ fn keeping_nothing_keeps_the_ends() {
     }
 }
 
-/// Jev's answers decide against the threshold alone: a Jev uncertain
+/// The decider's answers decide against the threshold alone: a decider uncertain
 /// about every chunk (0.3) lets every asked chunk go, and one at the
 /// threshold (0.5) keeps them all, so nothing is replaced.
 #[test]
@@ -230,14 +230,14 @@ fn the_threshold_alone_decides() {
     for kind in [Kind::AllNoise, Kind::NeedleError] {
         let workload = generate(kind, 2);
         let (uncertain, _work) =
-            trial(&workload, FakeJev::nouls(|_| 0.3), Exec::Heiko);
+            trial(&workload, FakeDecider::predicates(|_| 0.3), Exec::Heiko);
         assert!(uncertain.replaced, "{kind:?}");
         assert_eq!(uncertain.kept_chunks, Some(2));
         assert_eq!((uncertain.answers.noise, uncertain.answers.needed), (0, 0));
         assert!(uncertain.answers.uncertain > 0);
 
         let (needed, _work) =
-            trial(&workload, FakeJev::nouls(|_| 0.5), Exec::Heiko);
+            trial(&workload, FakeDecider::predicates(|_| 0.5), Exec::Heiko);
         assert!(!needed.replaced, "{kind:?}");
         assert_eq!(needed.retained, needed.tail_retained);
         assert_eq!(needed.kept_chunks, needed.chunks);
@@ -246,14 +246,14 @@ fn the_threshold_alone_decides() {
     }
 }
 
-/// A Jev that fails leaves the result as `exec_command` returned it: the
+/// A decider that fails leaves the result as `exec_command` returned it: the
 /// whole output keeps every needle with no reduction; a cut one keeps
 /// what its tail held.
 #[test]
-fn a_failing_jev_leaves_the_output() {
+fn a_failing_decide_leaves_the_output() {
     for kind in Kind::ALL {
         let workload = generate(kind, 1);
-        let failing = || FakeJev::new(|_| Err(JevError::Status(503)));
+        let failing = || FakeDecider::new(|_| Err(DecideError::Status(503)));
         let (whole, _work) = trial(&workload, failing(), Exec::Whole);
         assert!(!whole.replaced);
         assert_eq!(whole.retained, whole.needles);
@@ -261,7 +261,7 @@ fn a_failing_jev_leaves_the_output() {
         assert_eq!(whole.tokens_after, whole.tokens_before);
         assert_eq!(
             whole.error.as_deref(),
-            Some("Jev answered with status 503")
+            Some("The decider answered with status 503")
         );
         assert_eq!(whole.cost_usd, 0.0);
 
@@ -273,7 +273,7 @@ fn a_failing_jev_leaves_the_output() {
     let middle = generate(Kind::CutMiddle, 1);
     let (trial, _work) = trial(
         &middle,
-        FakeJev::new(|_| Err(JevError::Status(503))),
+        FakeDecider::new(|_| Err(DecideError::Status(503))),
         Exec::Heiko,
     );
     assert_eq!((trial.retained, trial.tail_retained), (0, 0));
@@ -287,10 +287,10 @@ fn the_budget_stops_the_evaluation() {
     let mut config = Config::new(work.path().to_owned());
     config.seeds = vec![0, 1];
     config.kinds = vec![Kind::NeedleError, Kind::AllNoise];
-    let jev: Arc<dyn Jev> = Arc::new(FakeJev::nouls(|_| 0.0));
+    let decide: Arc<dyn Decider> = Arc::new(FakeDecider::predicates(|_| 0.0));
     let mut seen = 0;
     let report =
-        block_on_io(evaluate(&config, jev.clone(), &mut |_| seen += 1))
+        block_on_io(evaluate(&config, decide.clone(), &mut |_| seen += 1))
             .unwrap();
     assert_eq!(report.trials.len(), 4);
     assert_eq!(seen, 4);
@@ -302,7 +302,7 @@ fn the_budget_stops_the_evaluation() {
     let work = tempfile::tempdir().unwrap();
     config.work = work.path().to_owned();
     config.budget_usd = Some(report.trials[0].cost_usd / 2.0);
-    let report = block_on_io(evaluate(&config, jev, &mut |_| {})).unwrap();
+    let report = block_on_io(evaluate(&config, decide, &mut |_| {})).unwrap();
     assert_eq!(report.trials.len(), 1);
     assert!(report.stopped.is_some());
 }

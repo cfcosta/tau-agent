@@ -63,18 +63,18 @@ fn project() -> Project {
     .unwrap()
 }
 
-/// A host on `llm` with one repository, its Jev `jev` if there is one.
+/// A host on `llm` with one repository, its decider `decide` if there is one.
 fn host_on(
     llm: &ScriptedModel,
-    jev: Option<heiko_jev::fake::FakeJev>,
+    decide: Option<heiko_decide::fake::FakeDecider>,
 ) -> (Host, UnboundedReceiver<RunEvent>) {
-    host_with(llm, jev.map(|jev| Arc::new(jev) as Arc<dyn heiko_jev::Jev>))
+    host_with(llm, decide.map(|decide| Arc::new(decide) as Arc<dyn heiko_decide::Decider>))
 }
 
-/// [`host_on`], with any Jev.
+/// [`host_on`], with any decider.
 fn host_with(
     llm: &ScriptedModel,
-    jev: Option<Arc<dyn heiko_jev::Jev>>,
+    decide: Option<Arc<dyn heiko_decide::Decider>>,
 ) -> (Host, UnboundedReceiver<RunEvent>) {
     install();
     let dir = own_dir();
@@ -109,8 +109,8 @@ fn host_with(
                 Identity::default(),
             )),
         );
-    let host = match jev {
-        Some(jev) => host.with_service(heiko_jev::Upstream(jev)),
+    let host = match decide {
+        Some(decide) => host.with_service(heiko_decide::Upstream(decide)),
         None => host,
     };
     (host, events)
@@ -195,7 +195,7 @@ fn click(host: &Host, run: &RunId, what: &str, state: Value) {
         state,
         settings: None,
         live: false,
-        jev: true,
+        decide: true,
     };
     let done = host
         .block_on(host.plugin_act(
@@ -253,10 +253,10 @@ fn a_new_chat_shows_the_goal_it_inherits() {
     assert_eq!(state["checks"], false, "no key: nothing checks it");
 }
 
-/// A Jev whose first check of the goal waits, without holding a thread,
+/// A decider whose first check of the goal waits, without holding a thread,
 /// until it is let go: it says when it is asked, and answers as `inner`.
-struct GatedJev {
-    inner: heiko_jev::fake::FakeJev,
+struct GatedDecider {
+    inner: heiko_decide::fake::FakeDecider,
     held: tokio::sync::Mutex<
         Option<(
             std::sync::mpsc::Sender<()>,
@@ -266,11 +266,11 @@ struct GatedJev {
 }
 
 #[async_trait::async_trait]
-impl heiko_jev::Jev for GatedJev {
+impl heiko_decide::Decider for GatedDecider {
     async fn ask(
         &self,
-        request: &heiko_jev::Request,
-    ) -> Result<heiko_jev::Response, heiko_jev::JevError> {
+        request: &heiko_decide::Request,
+    ) -> Result<heiko_decide::Response, heiko_decide::DecideError> {
         if request.questions.contains_key("met") {
             let held = self.held.lock().await.take();
             if let Some((asked, gate)) = held {
@@ -282,7 +282,7 @@ impl heiko_jev::Jev for GatedJev {
     }
 }
 
-/// Pause pressed while the goal's check waits on Jev is kept: it is a
+/// Pause pressed while the goal's check waits on the decider is kept: it is a
 /// message to the run's own mailbox (ADR 0056), taken between the check's
 /// steps, and the check, going on, finds the goal paused and neither
 /// records itself nor sends the model back.
@@ -296,21 +296,21 @@ fn a_pause_pressed_while_the_goal_is_checked_is_kept() {
     // The first check waits until the test has pressed Pause.
     let (asked, checking) = std::sync::mpsc::channel::<()>();
     let (go, gate) = tokio::sync::oneshot::channel::<()>();
-    let jev = GatedJev {
-        inner: heiko_jev::fake::FakeJev::new(|request| {
+    let decide = GatedDecider {
+        inner: heiko_decide::fake::FakeDecider::new(|request| {
             if !request.questions.contains_key("met") {
-                return Err(heiko_jev::JevError::Status(400));
+                return Err(heiko_decide::DecideError::Status(400));
             }
             let answers = request
                 .questions
                 .keys()
-                .map(|id| (id.clone(), heiko_jev::Answer::Noul { noul: 0.1 }))
+                .map(|id| (id.clone(), heiko_decide::Answer::Predicate { predicate: 0.1 }))
                 .collect();
-            Ok(heiko_jev::fake::response(answers, request))
+            Ok(heiko_decide::fake::response(answers, request))
         }),
         held: tokio::sync::Mutex::new(Some((asked, gate))),
     };
-    let (host, mut events) = host_with(&llm, Some(Arc::new(jev)));
+    let (host, mut events) = host_with(&llm, Some(Arc::new(decide)));
 
     let prompt = "/goal --continuations 3 the tests pass";
     let mut view = host
@@ -354,9 +354,9 @@ fn a_goal_keeps_the_chat_going_until_it_holds() {
     // Not met, then met; then not met on every later check.
     let answers = Arc::new(Mutex::new(vec![0.1, 0.95, 0.2]));
     // Only the goal's question: heiko-reasoning asks too, for "auto".
-    let jev = heiko_jev::fake::FakeJev::new(move |request| {
+    let decide = heiko_decide::fake::FakeDecider::new(move |request| {
         if !request.questions.contains_key("met") {
-            return Err(heiko_jev::JevError::Status(400));
+            return Err(heiko_decide::DecideError::Status(400));
         }
         let mut answers = answers.lock().unwrap();
         let p = if answers.len() > 1 {
@@ -367,11 +367,11 @@ fn a_goal_keeps_the_chat_going_until_it_holds() {
         let answers = request
             .questions
             .keys()
-            .map(|id| (id.clone(), heiko_jev::Answer::Noul { noul: p }))
+            .map(|id| (id.clone(), heiko_decide::Answer::Predicate { predicate: p }))
             .collect();
-        Ok(heiko_jev::fake::response(answers, request))
+        Ok(heiko_decide::fake::response(answers, request))
     });
-    let (host, mut events) = host_on(&llm, Some(jev.clone()));
+    let (host, mut events) = host_on(&llm, Some(decide.clone()));
 
     let prompt = "/goal --continuations 3 the tests pass";
     let mut view = host
@@ -414,7 +414,7 @@ fn a_goal_keeps_the_chat_going_until_it_holds() {
     // A met goal is not checked again; a new one is, until paused. This
     // one runs out at once, then gets more continuations, paused.
     let goal_checks = || {
-        jev.requests()
+        decide.requests()
             .iter()
             .filter(|request| request.questions.contains_key("met"))
             .count()

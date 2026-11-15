@@ -39,7 +39,7 @@ The arms (`arm::Arm`) are what the second run knows of the first:
 
 Each arm's agent is built as heiko-ui builds one (the coding tools on the
 repository, compaction, the memory plugin), less what needs the app:
-version control, Jev and the constitution.
+version control, the decider and the constitution.
 
 Per run (`metrics::RunMetrics`) it records success, turns, tool calls
 and failed calls, input, output and cached tokens, cost and wall time.

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 use heiko_ai::message::Usage;
-use heiko_jev::Jev;
+use heiko_decide::Decider;
 
 use crate::modules::Definition;
 
@@ -109,12 +109,12 @@ pub trait Host: Send + Sync + 'static {
     /// cancelled before the call finishes.
     async fn call_tool(&self, call: ToolCall) -> Result<ToolReply, String>;
 
-    /// The Jev the `jev` global asks, if the run has one.
-    fn jev(&self) -> Option<Arc<dyn Jev>> {
+    /// The decider the `decide` global asks, if the run has one.
+    fn decide(&self) -> Option<Arc<dyn Decider>> {
         None
     }
 
-    /// Charges one Jev request's usage to the run.
+    /// Charges one decider request's usage to the run.
     fn charge(&self, _usage: &Usage) {}
 
     /// Reports what the script is doing while it runs, as the details

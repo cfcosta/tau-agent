@@ -1349,7 +1349,7 @@ impl Heiko {
         }
         self.host_settles();
         // With no TypeSafe key, heiko-goal's Resume and Keep going say
-        // goals need Jev, in a dialog over the window. The person reads
+        // goals need the decider, in a dialog over the window. The person reads
         // it, and puts it away.
         let device = self.device(who);
         let dialog =
@@ -1357,7 +1357,7 @@ impl Heiko {
         if let Some(title) = dialog {
             assert_eq!(
                 (plugin.as_str(), title.as_str()),
-                (heiko_luau_plugins::NAME, "Goals need Jev"),
+                (heiko_luau_plugins::NAME, "Goals need the decider"),
                 "{label} opened a dialog"
             );
             device

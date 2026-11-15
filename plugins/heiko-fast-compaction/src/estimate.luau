@@ -59,7 +59,7 @@ function estimate.tokens(text)
 	return div_ceil(estimate.tenths(text, estimate.DIGIT_TENTHS), 10)
 end
 
--- The estimate of a Jev state or question set, as its JSON text: half a
+-- The estimate of a decider state or question set, as its JSON text: half a
 -- token more per digit, since the numbers in JSON tokenize worse than
 -- prose.
 function estimate.state_tokens(json_text)

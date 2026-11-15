@@ -1,12 +1,12 @@
 -- Checks a run's tool calls and final answer against the repository's
--- rules, asking Jev how likely each rule is broken (ADR 0050;
+-- rules, asking the decider how likely each rule is broken (ADR 0050;
 -- docs/reference/constitution.md). Before a call, the rules that name
--- one of its arguments are asked about in one request: Jev sees only
+-- one of its arguments are asked about in one request: the decider sees only
 -- those fields, as the model wrote them. At or past a rule's block mark
 -- the call is refused with the rule, between review and block it runs,
 -- flagged for a person. Before the run stops, the rules on the final
 -- answer are checked the same way, and a broken one sends the answer
--- back, up to `max_holds` times. When Jev cannot answer, `on_error`
+-- back, up to `max_holds` times. When the decider cannot answer, `on_error`
 -- decides. The rules, the review queue and what the checks did live in
 -- the repository's store; the page edits them, and an edit applies from
 -- the next tool call.
@@ -185,7 +185,7 @@ local function note_title(text, ink)
 	return ui.title(text, nil, ink)
 end
 
--- One of its notes: a check Jev could not answer, or an answer held
+-- One of its notes: a check the decider could not answer, or an answer held
 -- under its mark: its title, the rule, and a square for each time it
 -- may go back; or one flagged.
 local function note_tree(note)
@@ -217,7 +217,7 @@ end
 
 -- What the checks draw on a call's card: beside its title, the rule
 -- that flagged it and its score with a way to review it, or quietly the
--- scores that passed; under a blocked one, a row: the rule, then Jev's
+-- scores that passed; under a blocked one, a row: the rule, then the decider's
 -- score against the rule's marks, which the card puts beside it.
 local function call_tree(call, repo)
 	local verdict = call.verdict
@@ -303,7 +303,7 @@ local function rules_page(params, _, env)
 	local repo = params.repo
 	local data = {
 		repo = repo,
-		jev = env.run.jev == true,
+		decide = env.run.decide == true,
 		focus = params.rule,
 		editor = store.get("editor"),
 		trying = store.get("trying"),
@@ -432,7 +432,7 @@ local actions = {
 		store.delete("trying")
 	end,
 	-- Tries the rule being written on the latest calls and answers it
-	-- reads, with Jev.
+	-- reads, with the decider.
 	try = function(_, _, env)
 		local draft = store.get("editor")
 		if draft == nil then
@@ -444,12 +444,12 @@ local actions = {
 			store.bump()
 			return
 		end
-		if not env.run.jev then
-			store.put("trying", { failed = "Trying a rule asks Jev: add a TypeSafe key on the Models screen." })
+		if not env.run.decide then
+			store.put("trying", { failed = "Trying a rule asks the decider: add a TypeSafe key on the Models screen." })
 		else
 			local calls, answers = page.trial_samples(draft, store.get("samples") or {})
 			local trials, cost = page.try(draft, calls, answers)
-			-- The rule as it is now: changed or closed while Jev answered,
+			-- The rule as it is now: changed or closed while the decider answered,
 			-- what it gave is not this rule's.
 			if not heiko.values.same(store.get("editor"), draft) then
 				return
@@ -468,7 +468,7 @@ local actions = {
 			return true
 		end)
 	end,
-	-- What happens to what Jev cannot answer (`value`, as the segments
+	-- What happens to what the decider cannot answer (`value`, as the segments
 	-- send it: block or allow), or how many times an answer may go back.
 	settings = function(args, _, env)
 		edit(env, "Could not save the constitution", function(constitution)
@@ -511,7 +511,7 @@ local actions = {
 }
 
 return heiko.plugin({
-	uses = { jev = true, store = true },
+	uses = { decide = true, store = true },
 	-- The page lets an answer go back up to ten times.
 	continues = page.MAX_HOLDS,
 
@@ -526,7 +526,7 @@ return heiko.plugin({
 		if state.title == nil then
 			state.title = heiko.text.prefix(string.match(plan.input or "", "^[^\n]*"), TITLE_CHARS)
 		end
-		if not env.run.jev then
+		if not env.run.decide then
 			state.starting = checks.starting(false)
 			return nil
 		end
@@ -545,7 +545,7 @@ return heiko.plugin({
 	before_tool = function(call, model, env)
 		local constitution = constitution_of()
 		sample_call(constitution, call)
-		if not env.run.jev or constitution == nil then
+		if not env.run.decide or constitution == nil then
 			return nil
 		end
 		local about = rules.for_call(constitution, call.name, call.args)
@@ -553,7 +553,7 @@ return heiko.plugin({
 			return nil
 		end
 		local shown = shown_of(about)
-		local scores, cost = heiko.jev.scores(checks.call_request(call.name, about), checks.question_ids(#about))
+		local scores, cost = heiko.decide.scores(checks.call_request(call.name, about), checks.question_ids(#about))
 		local records, reason
 		if scores == nil then
 			local record
@@ -573,7 +573,7 @@ return heiko.plugin({
 	before_stop = function(stop, model, env)
 		local constitution = constitution_of()
 		sample_answer(stop.text or "")
-		if not env.run.jev or constitution == nil then
+		if not env.run.decide or constitution == nil then
 			return nil
 		end
 		local found = rules.for_final_answer(constitution)
@@ -581,8 +581,8 @@ return heiko.plugin({
 			return nil
 		end
 		local answer = stop.text or ""
-		local scores, cost = heiko.jev.scores(checks.answer_request(answer, found), checks.question_ids(#found))
-		-- The holds as they are now, after Jev answered.
+		local scores, cost = heiko.decide.scores(checks.answer_request(answer, found), checks.question_ids(#found))
+		-- The holds as they are now, after the decider answered.
 		local holds = model.holds or 0
 		local records, message
 		if scores == nil then

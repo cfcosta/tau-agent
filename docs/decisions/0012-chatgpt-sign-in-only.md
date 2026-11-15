@@ -60,7 +60,7 @@ Users see heiko, and limit or disconnect it, in ChatGPT Settings → Usage.
   servers in turmoil: `heiko_testing::fake_chatgpt` for the sign-in and
   `FakeOpenAi` for the WebSocket, which records each upgrade's
   `Authorization`.
-- TypeSafe's key (`TYPESAFE_API_KEY`, for Jev) is another service and
+- TypeSafe's key (`TYPESAFE_API_KEY`, for the decider) is another service and
   is unchanged.
 - If OpenAI confirms that the plan route takes `stream_id`, lane sharing
   can come back as its own decision.

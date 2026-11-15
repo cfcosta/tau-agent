@@ -2054,7 +2054,7 @@ mod tests {
         assert_eq!(cut.archive, "/data/heiko/repos/app/archive/heiko-output-1.txt");
         assert_eq!(card.dropped, None);
 
-        // Jev looked, but the result stayed: nothing to say on the card.
+        // The decider looked, but the result stayed: nothing to say on the card.
         let mut view = self::view();
         view.apply(&RunEvent::ToolStart {
             run: run(),

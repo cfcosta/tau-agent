@@ -464,18 +464,18 @@ local function build_plan()
 	return planned
 end
 
--- Jev's answers to every question of `req`: `noul(id)`'s probability.
-local function answering(req, noul)
+-- The decider's answers to every question of `req`: `predicate(id)`'s probability.
+local function answering(req, predicate)
 	local answers = {}
 	for id in pairs(req.questions) do
-		answers[id] = { probability = noul(id) }
+		answers[id] = { probability = predicate(id) }
 	end
 	return answers
 end
 
--- `output.ask` in a hook of a run whose Jev is `jev`: what it gives.
-local function ask(jev, planned, threshold)
-	local got = t.run({ jev = jev }):call(function()
+-- `output.ask` in a hook of a run whose decider is `decide`: what it gives.
+local function ask(decide, planned, threshold)
+	local got = t.run({ decide = decide }):call(function()
 		return table.pack(output.ask(planned, threshold))
 	end)
 	return table.unpack(got, 1, got.n)
@@ -484,11 +484,11 @@ end
 -- Asking sends every planned request and charges each one answered;
 -- with every answer given, a chunk goes exactly when `output.keep` says:
 -- the second chunk, kept by its answer, stays with the first and last.
-t.case("asking charges every answer and keeps what Jev keeps", function()
+t.case("asking charges every answer and keeps what the decider keeps", function()
 	local planned = build_plan()
 	t.equal(#planned.requests > 1, true, tostring(#planned.requests))
 	local sent = 0
-	local jev = {
+	local decide = {
 		ask = function(req)
 			sent += 1
 			return answering(req, function(id)
@@ -496,7 +496,7 @@ t.case("asking charges every answer and keeps what Jev keeps", function()
 			end), 0.25
 		end,
 	}
-	local asked, why, spent = ask(jev, planned, 0.5)
+	local asked, why, spent = ask(decide, planned, 0.5)
 	t.equal(why, nil)
 	t.equal(sent, #planned.requests)
 	t.equal(spent, 0.25 * #planned.requests)
@@ -519,20 +519,20 @@ end)
 t.case("asking fails on any failure", function()
 	local planned = build_plan()
 	local seen = 0
-	local jev = {
+	local decide = {
 		ask = function(req)
 			seen += 1
 			if seen == 2 then
-				error("Jev answered with status 503", 0)
+				error("The decider answered with status 503", 0)
 			end
 			return answering(req, function()
 				return 0
 			end), 0.25
 		end,
 	}
-	local asked, why, spent = ask(jev, planned, 0.5)
+	local asked, why, spent = ask(decide, planned, 0.5)
 	t.equal(asked, nil)
-	t.equal(why, "Jev answered with status 503")
+	t.equal(why, "The decider answered with status 503")
 	t.equal(spent, 0.25 * (#planned.requests - 1))
 end)
 
@@ -546,7 +546,7 @@ t.case("asking fails on an answer missing or out of range", function()
 	}
 	local asked, why = ask(missing, planned, 0.5)
 	t.equal(asked, nil)
-	t.equal(string.find(why, "Jev gave no yes/no answer", 1, true) ~= nil, true, why)
+	t.equal(string.find(why, "The decider gave no yes/no answer", 1, true) ~= nil, true, why)
 	local wrong = {
 		ask = function(req)
 			return answering(req, function()

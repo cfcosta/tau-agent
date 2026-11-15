@@ -409,7 +409,7 @@ return heiko.plugin { tools = { hello = { description = "Hello.", call = functio
                 state: &state,
                 settings: Some(&serde_json::json!({ "step": 5 })),
                 chats: None,
-                jev: None,
+                decide: None,
                 live: false,
                 keyed: false,
             },
@@ -980,7 +980,7 @@ return heiko.plugin { uses = { store = true },
       for _, item in ipairs(heiko.await(heiko.cmd.store.list("item/"))) do
         table.insert(rows, ui.button(item.value, "drop", { key = item.key }))
       end
-      table.insert(rows, env.run.jev and "keyed" or "no key")
+      table.insert(rows, env.run.decide and "keyed" or "no key")
       return ui.stack(rows)
     end,
   },
@@ -995,7 +995,7 @@ return heiko.plugin { uses = { store = true },
 "#;
 
 /// A plugin's page of a repository and what it keeps of it read its
-/// store there, and whether a Jev key is saved; an action from the page
+/// store there, and whether a decider key is saved; an action from the page
 /// writes it, and another repository's store is its own.
 #[test]
 fn a_plugins_page_of_a_repository_reads_and_writes_its_store_there() {
@@ -1263,7 +1263,7 @@ return heiko.plugin { tools = { hello = { description = "Hello.", call = functio
             state: &folded,
             settings: None,
             chats: None,
-            jev: None,
+            decide: None,
             live: false,
             keyed: false,
         })

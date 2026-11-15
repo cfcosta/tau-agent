@@ -321,7 +321,7 @@ Findings:
 - Nested `[secret:…]` marks stay as they are on purpose: a single-pass
   scrub would leave a value that occurs inside a mark's text.
 - `State::due` in `heiko-watcher` is unused; the host repeats its rule.
-- `heiko-ui`'s `auto_reasoning_takes_the_effort_jev_picks` failed once in
+- `heiko-ui`'s `auto_reasoning_takes_the_effort_decide_picks` failed once in
   four full runs, as it did in the first round's survey, with "database is
   locked" at its second host's `start`. Alone (300 runs) and with the
   host binary in parallel copies (24 runs) it passed. Each host keeps its

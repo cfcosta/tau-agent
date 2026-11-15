@@ -1,5 +1,5 @@
-//! heiko-jev's host half: it keeps the TypeSafe key, and gives the plugins
-//! that ask Jev a metered client while there is one (ADR 0045).
+//! heiko-decide's host half: it keeps the TypeSafe key, and gives the plugins
+//! that ask the decider a metered client while there is one (ADR 0045).
 
 use std::{
     path::PathBuf,
@@ -19,23 +19,23 @@ use heiko_ui_plugin::{
 
 use crate::{
     DEFAULT_MODEL,
-    Jev,
+    Decider,
     TypeSafe,
     metered::{Meter, Metered},
-    ui::{Act, Data, JevUi, Stats},
+    ui::{Act, Data, DecideUi, Stats},
 };
 
 /// The host half for heiko's registry.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct JevHost;
+pub struct DecideHost;
 
-/// A Jev to ask in place of TypeSafe's, as if a key were saved: a host
+/// A decider to ask in place of TypeSafe's, as if a key were saved: a host
 /// value (`heiko_ui_plugin::Services::with`) for tests and the demo.
 #[derive(Clone)]
-pub struct Upstream(pub Arc<dyn Jev>);
+pub struct Upstream(pub Arc<dyn Decider>);
 
 /// What the host half keeps: the key, read once and kept as it changes
-/// (Jev is asked for often), and what every request did this session.
+/// (the decider is asked often), and what every request did this session.
 pub struct Host {
     path: Option<PathBuf>,
     key: Mutex<Option<String>>,
@@ -43,13 +43,13 @@ pub struct Host {
 }
 
 impl Host {
-    /// The Jev to give, when there is one: the host's stand-in, else
+    /// The decider to give, when there is one: the host's stand-in, else
     /// TypeSafe's with the saved key.
-    fn jev(&self, upstream: Option<&Upstream>) -> Option<Arc<dyn Jev>> {
+    fn decide(&self, upstream: Option<&Upstream>) -> Option<Arc<dyn Decider>> {
         let inner =
             upstream.map(|upstream| upstream.0.clone()).or_else(|| {
                 let key = self.key.lock().expect("not poisoned").clone()?;
-                Some(Arc::new(TypeSafe::new(key)) as Arc<dyn Jev>)
+                Some(Arc::new(TypeSafe::new(key)) as Arc<dyn Decider>)
             })?;
         Some(Arc::new(Metered::new(inner, self.meter.clone())))
     }
@@ -78,8 +78,8 @@ impl PluginHost for Host {
     }
 }
 
-impl HostHalf for JevHost {
-    type Plugin = JevUi;
+impl HostHalf for DecideHost {
+    type Plugin = DecideUi;
     type Host = Host;
 
     async fn agent_plugins(
@@ -95,9 +95,9 @@ impl HostHalf for JevHost {
         let given = cx.services.get::<Upstream>().is_some() || host.keyed();
         PluginInfo {
             description: if given {
-                "Gives the plugins that ask it TypeSafe's Jev"
+                "Gives the plugins that ask it TypeSafe's decider"
             } else {
-                "Gives the plugins that ask it TypeSafe's Jev: needs a key \
+                "Gives the plugins that ask it TypeSafe's decider: needs a key \
                  (Models)"
             }
             .into(),
@@ -126,8 +126,8 @@ impl HostHalf for JevHost {
     }
 
     fn provide(&self, host: &Host, services: &mut Provide<'_>) {
-        if let Some(jev) = host.jev(services.get::<Upstream>()) {
-            services.offer(crate::SERVICE, jev);
+        if let Some(decide) = host.decide(services.get::<Upstream>()) {
+            services.offer(crate::SERVICE, decide);
         }
     }
 

@@ -771,7 +771,7 @@ impl AgentTool for Click {
                 state: &json!({}),
                 settings: None,
                 chats: None,
-                jev: None,
+                decide: None,
                 live: true,
                 keyed: false,
             })
@@ -887,11 +887,11 @@ fn a_plugin_sets_a_turns_effort() {
 
 const THINKER: &str = r#"
 local heiko = require("heiko")
-return heiko.plugin { uses = { infer = true, jev = true },
+return heiko.plugin { uses = { infer = true, decide = true },
   before_request = function(request, model, env)
     if request.turn ~= 1 then return nil end
     local picked = heiko.await(heiko.cmd.infer({ task = "Pick an effort.", context = json.null, effort = "low" }))
-    local odd = heiko.jev.scores({ state = { n = 1 }, questions = { odd = { kind = "noul", question = "Is n odd?", yes = "odd" } } }, { "odd" })
+    local odd = heiko.decide.scores({ state = { n = 1 }, questions = { odd = { kind = "predicate", question = "Is n odd?", yes = "odd" } } }, { "odd" })
     model.said = { picked = picked, odd = odd[1] }
     return heiko.effort(picked)
   end,
@@ -902,30 +902,30 @@ const PLAIN: &str = r#"
 local heiko = require("heiko")
 return heiko.plugin { before_request = function(request, model, env)
     local inferred, why_infer = pcall(heiko.await, heiko.cmd.infer({ task = "Pick.", context = json.null }))
-    local asked, why_jev = pcall(heiko.await, heiko.cmd.jev.ask({ state = { n = 1 }, questions = { odd = { kind = "noul", question = "Is n odd?" } } }))
+    local asked, why_decide = pcall(heiko.await, heiko.cmd.decide.ask({ state = { n = 1 }, questions = { odd = { kind = "predicate", question = "Is n odd?" } } }))
     model.infer = if inferred then "reached" else tostring(why_infer)
-    model.jev = if asked then "reached" else tostring(why_jev)
+    model.decide = if asked then "reached" else tostring(why_decide)
   end,
 }
 "#;
 
-/// A run hook calls the model and Jev when its plugin's `uses` names
+/// A run hook calls the model and the decider when its plugin's `uses` names
 /// them (ADR 0050): `before_request` asks the model at low effort and
-/// Jev, and sets the turn's effort from the answer; the model's answer
+/// The decider, and sets the turn's effort from the answer; the model's answer
 /// is charged to the run. A plugin that names neither reaches neither.
 #[test]
-fn a_run_hook_calls_the_model_and_jev_it_uses() {
+fn a_run_hook_calls_the_model_and_decide_it_uses() {
     use heiko_ai::responses::request::ReasoningEffort;
     let llm = ScriptedModel::new()
         .turn(|t| t.text("high"))
         .turn(|t| t.text("done"));
     let store = block_on_io(heiko_store_sqlite::memory()).unwrap();
-    let jev = heiko_jev::fake::FakeJev::nouls(|_| 0.75);
+    let decide = heiko_decide::fake::FakeDecider::predicates(|_| 0.75);
     let plugins = LuauPlugins::new(
         // The first plugin that picks an effort is the last asked.
         vec![active("plain", PLAIN), active("thinker", THINKER)],
         json!({ "kind": "main", "repo": "r", "model": "m" }),
-        Some(std::sync::Arc::new(jev.clone())),
+        Some(std::sync::Arc::new(decide.clone())),
     );
     let agent = Agent::new(llm.clone()).plugin(plugins);
     let outcome = block_on_io(agent.run("think", &store)).unwrap();
@@ -947,7 +947,7 @@ fn a_run_hook_calls_the_model_and_jev_it_uses() {
         ],
         "the plugin's ask, then the turn at the effort it picked"
     );
-    assert_eq!(jev.requests().len(), 1);
+    assert_eq!(decide.requests().len(), 1);
     let stored = records(&store, &outcome.run);
     let state = |name: &str| {
         stored.iter().rev().find_map(|record| match record {
@@ -967,7 +967,7 @@ fn a_run_hook_calls_the_model_and_jev_it_uses() {
         "{plain}"
     );
     assert!(
-        plain["jev"].as_str().unwrap().contains("not available"),
+        plain["decide"].as_str().unwrap().contains("not available"),
         "{plain}"
     );
     assert!(
@@ -1903,25 +1903,25 @@ fn an_archive_needs_its_use() {
     assert!(failed);
 }
 
-/// A plugin whose action awaits Jev before it notes the answer, and
+/// A plugin whose action awaits the decider before it notes the answer, and
 /// whose `start` notes that it started, for its mailbox to be made.
 const NOTER: &str = r#"
 local heiko = require("heiko")
-return heiko.plugin { uses = { jev = true },
+return heiko.plugin { uses = { decide = true },
   start = function(_, model) model.started = true end,
   actions = {
     note = function(_, model)
-      local answers = heiko.await(heiko.cmd.jev.ask({ questions = { done = { kind = "noul", question = "Is it done?" } } }))
+      local answers = heiko.await(heiko.cmd.decide.ask({ questions = { done = { kind = "predicate", question = "Is it done?" } } }))
       model.noted = answers.done.probability
     end,
   },
 }
 "#;
 
-/// A run that stopped with a hook awaiting Jev keeps it in its journal
+/// A run that stopped with a hook awaiting the decider keeps it in its journal
 /// (ADR 0056): the model when none awaited, and the message the hook
 /// began on. Resumed, the run's mailbox takes the journal again, the
-/// hook awaits Jev once more, and with its answer ends as it would have.
+/// hook awaits the decider once more, and with its answer ends as it would have.
 #[test]
 fn a_hook_under_way_when_its_run_stopped_goes_on_when_it_resumes() {
     let llm = ScriptedModel::new()
@@ -1930,17 +1930,17 @@ fn a_hook_under_way_when_its_run_stopped_goes_on_when_it_resumes() {
     let store = block_on_io(heiko_store_sqlite::memory()).unwrap();
     let noter = active("noter", NOTER);
     let digest = noter.loaded.digest.clone();
-    let jev = heiko_jev::fake::FakeJev::nouls(|_| 0.75);
+    let decide = heiko_decide::fake::FakeDecider::predicates(|_| 0.75);
     let plugins = || {
         LuauPlugins::new(
             vec![active("noter", NOTER)],
             json!({ "kind": "main", "repo": "r", "model": "m" }),
-            Some(std::sync::Arc::new(jev.clone())),
+            Some(std::sync::Arc::new(decide.clone())),
         )
     };
     let agent = Agent::new(llm.clone()).plugin(plugins());
     let outcome = block_on_io(agent.run("first", &store)).unwrap();
-    // What a run that stopped as `note` awaited Jev left: its journal
+    // What a run that stopped as `note` awaited the decider left: its journal
     // open, from the model as `start` left it.
     let started = json!({ "started": true });
     let journal = [
@@ -1973,7 +1973,7 @@ fn a_hook_under_way_when_its_run_stopped_goes_on_when_it_resumes() {
     }
     let agent = Agent::new(llm.clone()).plugin(plugins());
     block_on_io(agent.resume(&outcome.run).run("again", &store)).unwrap();
-    // The hook goes on beside the run: its answer comes when Jev's does.
+    // The hook goes on beside the run: its answer comes when the decider's does.
     let noted = (0..200).find_map(|_| {
         let noted =
             records(&store, &outcome.run)
@@ -2004,12 +2004,12 @@ fn a_hook_under_way_when_its_run_stopped_goes_on_when_it_resumes() {
     ));
 }
 
-/// A check that awaits Jev as the run would stop.
+/// A check that awaits the decider as the run would stop.
 const CHECKER: &str = r#"
 local heiko = require("heiko")
-return heiko.plugin { uses = { jev = true },
+return heiko.plugin { uses = { decide = true },
   before_stop = function(_, model)
-    local answers = heiko.await(heiko.cmd.jev.ask({ questions = { done = { kind = "noul", question = "Is it done?" } } }))
+    local answers = heiko.await(heiko.cmd.decide.ask({ questions = { done = { kind = "predicate", question = "Is it done?" } } }))
     model.checked = answers.done.probability
   end,
 }
@@ -2028,11 +2028,11 @@ return heiko.plugin { start = function(_, model) model.started = true end }
 fn a_run_keeps_a_journal_only_while_a_hook_awaits() {
     let llm = ScriptedModel::new().turn(|t| t.text("done"));
     let store = block_on_io(heiko_store_sqlite::memory()).unwrap();
-    let jev = heiko_jev::fake::FakeJev::nouls(|_| 0.5);
+    let decide = heiko_decide::fake::FakeDecider::predicates(|_| 0.5);
     let plugins = LuauPlugins::new(
         vec![active("checker", CHECKER), active("still", STILL)],
         json!({ "kind": "main", "repo": "r", "model": "m" }),
-        Some(std::sync::Arc::new(jev)),
+        Some(std::sync::Arc::new(decide)),
     );
     let agent = Agent::new(llm).plugin(plugins);
     let outcome = block_on_io(agent.run("check", &store)).unwrap();

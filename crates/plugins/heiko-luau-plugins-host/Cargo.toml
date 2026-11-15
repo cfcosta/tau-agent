@@ -23,7 +23,7 @@ heiko-agent = { workspace = true, features = ["serde"] }
 heiko-ai.workspace = true
 heiko-codemode.workspace = true
 heiko-codemode-host.workspace = true
-heiko-jev.workspace = true
+heiko-decide.workspace = true
 sqlx.workspace = true
 heiko-tools-host.workspace = true
 # The host's local time, which `ctx.now` and `ctx.time` read (ADR 0050, gap D).

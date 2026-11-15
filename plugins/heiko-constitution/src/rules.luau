@@ -1,5 +1,5 @@
 -- A constitution (docs/reference/constitution.md): rules, where each
--- applies, and how sure Jev must be that one is broken to review or
+-- applies, and how sure the decider must be that one is broken to review or
 -- block, with `on_error` and `max_holds`. Each repository's lives in
 -- the plugin's store, and is edited only through heiko's UI. Every rule
 -- is checked when it is added, replaced or read back.
@@ -162,7 +162,7 @@ function rules.checked(id, text, on, review, block)
 	return { id = id, text = heiko.text.trim(text), on = labels, review = review, block = block }
 end
 
--- An empty constitution: no rules, Jev's failures let through, three
+-- An empty constitution: no rules, the decider's failures let through, three
 -- holds.
 function rules.default()
 	return { rules = array({}), on_error = "allow", max_holds = rules.DEFAULT_MAX_HOLDS }

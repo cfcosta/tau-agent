@@ -59,7 +59,7 @@ local report = tools.module_test({
 
 The test VM has the normal codemode Luau globals and sandbox, but its host
 offers only the supplied fake tool names, the target module's exact version,
-and its declared exact dependencies. It has no current-run tools, Jev, infer,
+and its declared exact dependencies. It has no current-run tools, the decider, infer,
 network, files, or processes. A fake called `infer` or `bash` remains a fake.
 Test VMs keep the codemode memory and cancellation limits, have a hard 2-second
 deadline, and share a cancellation-aware limit of two concurrent VMs. Test

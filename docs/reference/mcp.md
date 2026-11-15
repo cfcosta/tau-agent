@@ -200,7 +200,7 @@ The common `mcpServers` shape:
   its own yet, so the host subscribes to see them, with
   `auth::secrets_filter()` ("Signing in", "Logs").
 - **HTTP** uses heiko's TLS: reqwest with rustls, `ring` and the webpki
-  roots, as Jev does, with no redirects (so headers never reach another
+  roots, as the decider does, with no redirects (so headers never reach another
   host).
 
 ## Signing in

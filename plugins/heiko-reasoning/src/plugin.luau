@@ -1,7 +1,7 @@
--- Picks a run's reasoning effort with Jev (ADR 0050;
+-- Picks a run's reasoning effort with the decider (ADR 0050;
 -- docs/reference/plugins.md, `heiko-reasoning`): once as the run starts,
 -- and, with `redecide`, again when the effort's lease ends. Only runs on
--- auto are scored; an effort someone chose stands. Jev gets the task,
+-- auto are scored; an effort someone chose stands. The decider gets the task,
 -- clipped at both ends, and the start of the instructions, and answers
 -- one question whose levels say what each effort suits.
 local heiko = require("heiko")
@@ -54,7 +54,7 @@ local function verdict(choice)
 	return ui.stamp("not applied", "neutral")
 end
 
--- One choice at full size: what it was for, its scale, how sure Jev was
+-- One choice at full size: what it was for, its scale, how sure the decider was
 -- against the threshold, then each level's probability.
 local function step(choice)
 	local what = "message"
@@ -79,7 +79,7 @@ local function step(choice)
 end
 
 -- A note in the transcript: the effort the run goes at on its scale, or
--- that Jev could not score.
+-- that decider could not score.
 local function note(entry, state)
 	if entry.kind == "failed" then
 		return ui.row({ ui.mark("failing"), ui.text(entry.message), ui.spacer(), ui.mono(entry.detail), ui.toned(NAME, "neutral", true) })
@@ -96,12 +96,12 @@ local function note(entry, state)
 	})
 end
 
--- Asks Jev for the effort of `state_for_jev`, of `levels_of`: the
--- choice, or nil and why. It awaits Jev: the model may have changed
+-- Asks the decider for the effort of `state_for_decide`, of `levels_of`: the
+-- choice, or nil and why. It awaits the decider: the model may have changed
 -- when it returns.
-local function ask(env, levels_of, state_for_jev, redecides)
-	local answers, cost = heiko.jev.ask({
-		state = state_for_jev,
+local function ask(env, levels_of, state_for_decide, redecides)
+	local answers, cost = heiko.decide.ask({
+		state = state_for_decide,
 		questions = effort.questions(levels_of, redecides),
 	})
 	if answers == nil then
@@ -111,10 +111,10 @@ local function ask(env, levels_of, state_for_jev, redecides)
 end
 
 return heiko.plugin({
-	uses = { jev = true, transcript = true },
+	uses = { decide = true, transcript = true },
 	picker_auto = {
-		jev = "Auto lets heiko-reasoning pick the effort for each message, with Jev.",
-		no_jev = "Auto leaves the effort to the model: heiko-reasoning needs a TypeSafe key (Models).",
+		decide = "Auto lets heiko-reasoning pick the effort for each message, with the decider.",
+		no_decide = "Auto leaves the effort to the model: heiko-reasoning needs a TypeSafe key (Models).",
 	},
 	settings = {
 		schema = {
@@ -123,7 +123,7 @@ return heiko.plugin({
 				redecide = {
 					type = "boolean",
 					title = "Decide again between steps",
-					description = "Jev looks again when a step's effort runs out, not only as each message comes in. Each change resends the whole context uncached, so it pays only on long tool chains.",
+					description = "The decider looks again when a step's effort runs out, not only as each message comes in. Each change resends the whole context uncached, so it pays only on long tool chains.",
 				},
 				threshold = {
 					type = "number",
@@ -135,7 +135,7 @@ return heiko.plugin({
 		default = { redecide = false, threshold = effort.DEFAULT_THRESHOLD },
 	},
 
-	-- As the run starts: on auto, with Jev, the effort of its message.
+	-- As the run starts: on auto, with the decider, the effort of its message.
 	start = function(input, model, env)
 		local state = effort.state(model)
 		state.redecides = false
@@ -148,11 +148,11 @@ return heiko.plugin({
 		state.task = text_of(input.input)
 		state.instructions = effort.instructions(text_of(input.instructions))
 		state.levels = effort.levels(input.efforts)
-		if not env.run.jev then
+		if not env.run.decide then
 			state.starting = input.effort and ("off · effort set to " .. input.effort) or "off · no TypeSafe key"
 			return nil
 		end
-		-- With Jev, every run leaves its context to the next message,
+		-- With the decider, every run leaves its context to the next message,
 		-- so a long conversation keeps an effort someone chose too.
 		state.active = env.run.id
 		if input.effort ~= nil then
@@ -172,7 +172,7 @@ return heiko.plugin({
 			effort.message_state(state.task, state.instructions, state.context),
 			state.redecides
 		)
-		-- The model as it is now, after Jev answered: another message may
+		-- The model as it is now, after the decider answered: another message may
 		-- have taken it over.
 		state = effort.state(model)
 		if state.active ~= env.run.id then
@@ -183,7 +183,7 @@ return heiko.plugin({
 			-- Unsure or failed, the message goes on as the last one did.
 			state.effort_now = last
 			state.lease = "tool_chain"
-			effort.record_error(state, "Jev could not score the task: " .. why, last, nil)
+			effort.record_error(state, "The decider could not score the task: " .. why, last, nil)
 			return last and heiko.start({ effort = last }) or nil
 		end
 		local picked = choice.verdict == "chose" and choice.effort or nil
@@ -196,7 +196,7 @@ return heiko.plugin({
 		return runs_at and heiko.start({ effort = runs_at }) or nil
 	end,
 
-	-- With `redecide`, before each later request whose lease ended: Jev
+	-- With `redecide`, before each later request whose lease ended: the decider
 	-- again, on what the agent said and the results it is about to read.
 	before_request = function(request, model, env)
 		local state = effort.state(model)
@@ -223,13 +223,13 @@ return heiko.plugin({
 		state.rewritten = nil
 		local asked = effort.step_state(state.task, state.instructions, request.effort, messages)
 		local choice, why = ask(env, state.levels, asked, true)
-		-- And again after Jev answered.
+		-- And again after the decider answered.
 		state = effort.state(model)
 		if state.active ~= env.run.id then
 			return nil
 		end
 		if choice == nil then
-			effort.record_error(state, "Jev could not score the step: " .. why, request.effort, request.turn)
+			effort.record_error(state, "The decider could not score the step: " .. why, request.effort, request.turn)
 			return nil
 		end
 		state.lease = choice.lease

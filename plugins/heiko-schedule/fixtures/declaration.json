@@ -3,7 +3,7 @@
   "description": "Chats wake themselves later, with a note",
   "uses": {
     "tools": [],
-    "jev": false,
+    "decide": false,
     "infer": false,
     "network": [],
     "secrets": [],

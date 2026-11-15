@@ -30,11 +30,11 @@ turn, and every result goes into the transcript.
   adds their tools. Its reference is [mcp.md](../reference/mcp.md).
 - **`heiko-codemode`** (`crates/plugins/heiko-codemode`): the `codemode`
   tool, a Luau sandbox that calls any callable tool, MCP tools
-  included, and asks Jev. Its reference is
+  included, and asks the decider. Its reference is
   [codemode.md](../reference/codemode.md).
 
 Codemode is useful without MCP: it drives `read`, `grep` and `bash`,
-and asks Jev. MCP is useful without Codemode: its tools are ordinary
+and asks the decider. MCP is useful without Codemode: its tools are ordinary
 tools. Each crate is a `UiPlugin`
 ([0017](0017-plugins-bring-their-ui.md)).
 
@@ -106,7 +106,7 @@ too:
    model gets the content.
 4. **A plugin's tools reach its run.** `ToolCtx::plugin()` gives a
    tool the `PluginCtx` of the plugin that added it, for the run: it
-   charges Jev's usage and reads and writes Codemode's store records.
+   charges the decider's usage and reads and writes Codemode's store records.
 
 `heiko-mcp` also needs per-run tools: `RunPlan::add_tool` in
 `Plugin::start`, for the servers' direct tools, which are known only

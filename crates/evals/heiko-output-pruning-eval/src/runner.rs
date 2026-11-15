@@ -22,7 +22,7 @@ use heiko_agent::{
     tool::{AgentTool, ToolCtx, ToolOutput},
 };
 use heiko_ai::message::{InputBlock, Message};
-use heiko_jev::{Jev, JevError, Request, Response};
+use heiko_decide::{Decider, DecideError, Request, Response};
 use heiko_luau_plugins::{Record, names::FAST_COMPACTION as NAME};
 use heiko_luau_plugins_host::agent::{Active, LuauPlugins};
 use heiko_testing::scripted::ScriptedModel;
@@ -88,13 +88,13 @@ pub enum Exec {
     Whole,
 }
 
-/// Counts what a Jev was asked and what it cost.
+/// Counts what a decider was asked and what it cost.
 pub struct Metered {
-    inner: Arc<dyn Jev>,
+    inner: Arc<dyn Decider>,
     tally: Mutex<Tally>,
 }
 
-/// Requests, input tokens and dollars, Jev's answers by band, and each
+/// Requests, input tokens and dollars, the decider's answers by band, and each
 /// question's largest answer by its id (a chunk's, such as `c7`).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Tally {
@@ -105,10 +105,10 @@ pub struct Tally {
     pub answers: std::collections::BTreeMap<String, f64>,
 }
 
-/// Noul answers at most this are confident noise.
+/// Predicate answers at most this are confident noise.
 pub const NOISE: f64 = 0.1;
 
-/// Noul answers: at most [`NOISE`] (confident noise), above it and under
+/// Predicate answers: at most [`NOISE`] (confident noise), above it and under
 /// 0.5 (uncertain; with the default threshold, these go too), and 0.5 or
 /// more (needed: the chunk stays).
 #[derive(
@@ -121,10 +121,10 @@ pub struct Bands {
 }
 
 impl Bands {
-    pub fn record(&mut self, noul: f64) {
-        if noul <= NOISE {
+    pub fn record(&mut self, predicate: f64) {
+        if predicate <= NOISE {
             self.noise += 1;
-        } else if noul < 0.5 {
+        } else if predicate < 0.5 {
             self.uncertain += 1;
         } else {
             self.needed += 1;
@@ -133,7 +133,7 @@ impl Bands {
 }
 
 impl Metered {
-    pub fn new(inner: Arc<dyn Jev>) -> Self {
+    pub fn new(inner: Arc<dyn Decider>) -> Self {
         Self {
             inner,
             tally: Mutex::default(),
@@ -146,8 +146,8 @@ impl Metered {
 }
 
 #[async_trait]
-impl Jev for Metered {
-    async fn ask(&self, request: &Request) -> Result<Response, JevError> {
+impl Decider for Metered {
+    async fn ask(&self, request: &Request) -> Result<Response, DecideError> {
         let response = self.inner.ask(request).await;
         let mut tally = self.tally.lock().expect("not poisoned");
         tally.requests += 1;
@@ -155,10 +155,10 @@ impl Jev for Metered {
             tally.input_tokens += response.usage.input_tokens;
             tally.cost_usd += response.usage().cost.total;
             for id in request.questions.keys() {
-                if let Ok(noul) = response.noul(id) {
-                    tally.bands.record(noul);
-                    let most = tally.answers.entry(id.clone()).or_insert(noul);
-                    *most = most.max(noul);
+                if let Ok(predicate) = response.predicate(id) {
+                    tally.bands.record(predicate);
+                    let most = tally.answers.entry(id.clone()).or_insert(predicate);
+                    *most = most.max(predicate);
                 }
             }
         }
@@ -203,7 +203,7 @@ fn object_schema() -> Value {
     json!({"type": "object"})
 }
 
-/// What the plugin's state says of one output it asked Jev about; the
+/// What the plugin's state says of one output it asked the decider about; the
 /// fields the trial uses.
 #[derive(Debug, serde::Deserialize)]
 struct OutputStats {
@@ -240,12 +240,12 @@ async fn plugin(settings: &Value) -> Result<Active, EvalError> {
     Ok(active)
 }
 
-/// Runs `workload` once, pruning with `jev` under `settings` (the
+/// Runs `workload` once, pruning with `decide` under `settings` (the
 /// plugin's keys over its defaults), archiving to `work`,
 /// `exec_command` returning the output as `exec` says.
 pub async fn run(
     workload: &Workload,
-    jev: Arc<dyn Jev>,
+    decide: Arc<dyn Decider>,
     settings: &Value,
     work: &Path,
     exec: Exec,
@@ -269,7 +269,7 @@ pub async fn run(
         })
         .turn(|turn| turn.text("done"));
 
-    let metered = Arc::new(Metered::new(jev));
+    let metered = Arc::new(Metered::new(decide));
     let mut agent = Agent::new(model.clone()).tool(Scripted {
         name: "exec_command".into(),
         answers: vec![(json!({"cmd": workload.command}), native.clone())],
@@ -295,7 +295,7 @@ pub async fn run(
         LuauPlugins::new(
             vec![active],
             json!({ "kind": "main", "repo": "eval", "model": "scripted" }),
-            Some(metered.clone() as Arc<dyn Jev>),
+            Some(metered.clone() as Arc<dyn Decider>),
         )
         .with_archive(work.to_owned()),
     );
@@ -326,7 +326,7 @@ pub async fn run(
         .ok_or(EvalError::NoResult)?;
 
     // The plugin's last state holds what it made of the output, when it
-    // asked Jev; a failure is in its log.
+    // asked the decider; a failure is in its log.
     let mut stats: Option<OutputStats> = None;
     let mut error = None;
     for body in store
@@ -395,7 +395,7 @@ pub async fn run(
         tokens_after,
         replaced: seen != native,
         requests: tally.requests,
-        jev_input_tokens: tally.input_tokens,
+        decide_input_tokens: tally.input_tokens,
         cost_usd: tally.cost_usd,
         answers: tally.bands,
         scores: (0..layout.chunk_tokens.len())
@@ -444,7 +444,7 @@ fn layout(output: &str, needles: &[Needle], chunk_lines: usize) -> Layout {
 pub struct Config {
     pub kinds: Vec<Kind>,
     pub seeds: Vec<u64>,
-    /// Stop once Jev spend passes this many dollars.
+    /// Stop once the decider spend passes this many dollars.
     pub budget_usd: Option<f64>,
     /// The plugin's settings over its defaults, by its flat keys (such
     /// as `output_chunk_lines`); empty for the defaults.
@@ -481,7 +481,7 @@ pub struct Report {
 /// out leaves every kind about as sampled. `progress` sees each trial.
 pub async fn evaluate(
     config: &Config,
-    jev: Arc<dyn Jev>,
+    decide: Arc<dyn Decider>,
     progress: &mut dyn FnMut(&Trial),
 ) -> Result<Report, EvalError> {
     let mut trials = Vec::new();
@@ -502,7 +502,7 @@ pub async fn evaluate(
             std::fs::create_dir_all(&dir)?;
             let trial = run(
                 &workload,
-                jev.clone(),
+                decide.clone(),
                 &config.settings,
                 &dir,
                 config.exec,

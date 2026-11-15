@@ -26,7 +26,7 @@ heiko's memory starts empty.
 
 The import belongs to the memory plugin: its notes, its checks, its
 review. Today a plugin cannot do it alone. First-run setup is a closed
-enum; a host half has no model but Jev; background work has no owner
+enum; a host half has no model but the decider; background work has no owner
 and no progress; the status bar shows only heiko's own news; a
 repository is known by its sidebar name alone; and core names the
 memory plugin in the repository menu, against ADR 0006.

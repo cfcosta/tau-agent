@@ -1140,10 +1140,10 @@ fn a_phone_closes_the_conversation_it_shows(cx: &mut TestAppContext) {
     );
 }
 
-/// The TypeSafe key typed in heiko-jev's field goes to its host half, and
+/// The TypeSafe key typed in heiko-decide's field goes to its host half, and
 /// its Remove forgets it there: the kernel keeps no key.
 #[gpui::test]
-fn the_typesafe_key_goes_to_heiko_jev_and_is_forgotten(cx: &mut TestAppContext) {
+fn the_typesafe_key_goes_to_heiko_decide_and_is_forgotten(cx: &mut TestAppContext) {
     let (workspace, mut cx, events) = open_demo(cx);
     let origin = heiko_ui_remote::plugins::Origin {
         run: None,
@@ -1151,7 +1151,7 @@ fn the_typesafe_key_goes_to_heiko_jev_and_is_forgotten(cx: &mut TestAppContext) 
     };
     workspace.update(&mut cx, |ws, cx| {
         ws.plugin_action(
-            heiko_jev::NAME,
+            heiko_decide::NAME,
             "key",
             &serde_json::json!({ "text": " ts-secret " }),
             &origin,
@@ -1162,22 +1162,22 @@ fn the_typesafe_key_goes_to_heiko_jev_and_is_forgotten(cx: &mut TestAppContext) 
     let asked = |events: &[WorkspaceEvent]| {
         events.iter().rev().find_map(|event| match event {
             WorkspaceEvent::PluginAct { plugin, action, .. }
-                if plugin == heiko_jev::NAME =>
+                if plugin == heiko_decide::NAME =>
             {
-                serde_json::from_value::<heiko_jev::ui::Act>(action.clone()).ok()
+                serde_json::from_value::<heiko_decide::ui::Act>(action.clone()).ok()
             }
             _ => None,
         })
     };
     assert_eq!(
         asked(&events.borrow()),
-        Some(heiko_jev::ui::Act::Key {
+        Some(heiko_decide::ui::Act::Key {
             key: Some("ts-secret".into())
         })
     );
     workspace.update(&mut cx, |ws, cx| {
         ws.plugin_action(
-            heiko_jev::NAME,
+            heiko_decide::NAME,
             "forget",
             &serde_json::Value::Null,
             &origin,
@@ -1187,7 +1187,7 @@ fn the_typesafe_key_goes_to_heiko_jev_and_is_forgotten(cx: &mut TestAppContext) 
     });
     assert_eq!(
         asked(&events.borrow()),
-        Some(heiko_jev::ui::Act::Key { key: None })
+        Some(heiko_decide::ui::Act::Key { key: None })
     );
 }
 

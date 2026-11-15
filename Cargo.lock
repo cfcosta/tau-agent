@@ -4456,7 +4456,7 @@ dependencies = [
  "heiko-ai",
  "heiko-clock",
  "heiko-codemode-host",
- "heiko-jev",
+ "heiko-decide",
  "heiko-luau-plugins",
  "heiko-luau-plugins-host",
  "heiko-store",
@@ -4503,7 +4503,7 @@ dependencies = [
  "hegeltest",
  "heiko-agent",
  "heiko-ai",
- "heiko-jev",
+ "heiko-decide",
  "heiko-ui-kit",
  "heiko-ui-plugin",
  "serde",
@@ -4546,7 +4546,7 @@ dependencies = [
  "heiko-agent",
  "heiko-ai",
  "heiko-codemode",
- "heiko-jev",
+ "heiko-decide",
  "heiko-store",
  "heiko-store-sqlite",
  "heiko-testing",
@@ -4563,6 +4563,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "heiko-decide"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "hegeltest",
+ "heiko-agent",
+ "heiko-ai",
+ "heiko-ui-plugin",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "heiko-demo"
 version = "0.1.0"
 dependencies = [
@@ -4574,8 +4590,8 @@ dependencies = [
  "heiko-ai",
  "heiko-chatgpt",
  "heiko-codemode",
+ "heiko-decide",
  "heiko-direnv",
- "heiko-jev",
  "heiko-luau-plugins",
  "heiko-luau-plugins-host",
  "heiko-mcp",
@@ -4616,28 +4632,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "heiko-jev"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "hegeltest",
- "heiko-agent",
- "heiko-ai",
- "heiko-ui-plugin",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "heiko-luau-plugins"
 version = "0.1.0"
 dependencies = [
  "hegeltest",
  "heiko-agent",
- "heiko-jev",
+ "heiko-decide",
  "heiko-ui-kit",
  "heiko-ui-plugin",
  "serde",
@@ -4662,7 +4662,7 @@ dependencies = [
  "heiko-clock",
  "heiko-codemode",
  "heiko-codemode-host",
- "heiko-jev",
+ "heiko-decide",
  "heiko-luau-plugins",
  "heiko-perf",
  "heiko-plugins",
@@ -4778,7 +4778,7 @@ dependencies = [
  "hegeltest",
  "heiko-agent",
  "heiko-ai",
- "heiko-jev",
+ "heiko-decide",
  "heiko-luau-plugins",
  "heiko-luau-plugins-host",
  "heiko-store",
@@ -4856,8 +4856,8 @@ dependencies = [
  "heiko-agents",
  "heiko-chatgpt",
  "heiko-codemode",
+ "heiko-decide",
  "heiko-direnv",
- "heiko-jev",
  "heiko-luau-plugins",
  "heiko-mcp",
  "heiko-phones",
@@ -5053,9 +5053,9 @@ dependencies = [
  "heiko-agents",
  "heiko-ai",
  "heiko-chatgpt",
+ "heiko-decide",
  "heiko-demo",
  "heiko-direnv",
- "heiko-jev",
  "heiko-luau-plugins",
  "heiko-luau-plugins-host",
  "heiko-mcp",

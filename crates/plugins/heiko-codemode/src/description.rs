@@ -52,28 +52,28 @@ Globals:
 - `json.encode(value)` returns compact JSON; `json.decode(text)` parses JSON. Each text is at most 1 MiB. Decode refuses integer literals outside ±2^53 instead of rounding them. Failures raise string errors.
 - `return value` appends the value like `text`."#;
 
-/// The `Jev:` section, when the plugin has a Jev.
-pub const JEV: &str = r#"Jev:
-- `jev` asks Jev, a classifier model, typed questions about a state. `state` is any JSON value; `question` is the instructions. Each call is one request; at most 4 run at once. A failed request raises an error.
+/// The `Decide:` section, when the plugin has a decider.
+pub const DECIDE: &str = r#"Decide:
+- `decide` asks the decider, a classifier model, typed questions about a state. `state` is any JSON value; `question` is the instructions. Each call is one request; at most 4 run at once. A failed request raises an error.
 
 ```luau
 type Probabilities = { [string]: number }
-jev.noul(args: { state: any, question: string, yes: string?, no: string? }): { probability: number }
-jev.choice(args: { state: any, question: string, options: { [string]: string } }): { choice: string, confidence: number, probabilities: Probabilities }
-jev.score(args: { state: any, question: string, levels: { string } }): { score: number, confidence: number, probabilities: Probabilities }
-jev.ask(args: { state: any, questions: { [string]: { kind: "noul" | "choice" | "score", question: string, yes: string?, no: string?, options: { [string]: string }?, levels: { string }? } } }): { [string]: any }
+decide.predicate(args: { state: any, question: string, yes: string?, no: string? }): { probability: number }
+decide.choice(args: { state: any, question: string, options: { [string]: string } }): { choice: string, confidence: number, probabilities: Probabilities }
+decide.score(args: { state: any, question: string, levels: { string } }): { score: number, confidence: number, probabilities: Probabilities }
+decide.ask(args: { state: any, questions: { [string]: { kind: "predicate" | "choice" | "score", question: string, yes: string?, no: string?, options: { [string]: string }?, levels: { string }? } } }): { [string]: any }
 ```
 - `choice` takes 1 to 255 options; `score` takes 2 to 10 levels, lowest first, and its `score` is 0 for the lowest level.
-- `jev.ask` asks several questions in one request and returns each answer under its id."#;
+- `decide.ask` asks several questions in one request and returns each answer under its id."#;
 
-/// Said when the plugin has no Jev.
-pub const NO_JEV: &str = "Jev is not available in this run: `jev` is nil.";
+/// Said when the plugin has no decider.
+pub const NO_DECIDE: &str = "The decider is not available in this run: `decide` is nil.";
 
 /// The closing paragraph.
 pub const NOT_DECLARED: &str = "Some tools may not be declared to you, such as MCP tools that are only for scripts. They are still callable on `tools` and listed in `ALL_TOOLS`. Find one with `search_tools(query)`, and read a server's instructions with `describe_namespace(name)`.";
 
 /// The tool's whole description.
-pub fn description(has_jev: bool) -> String {
-    let jev = if has_jev { JEV } else { NO_JEV };
-    format!("{INTRO}\n\n{jev}\n\n{NOT_DECLARED}")
+pub fn description(has_decide: bool) -> String {
+    let decide = if has_decide { DECIDE } else { NO_DECIDE };
+    format!("{INTRO}\n\n{decide}\n\n{NOT_DECLARED}")
 }

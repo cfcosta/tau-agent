@@ -1,4 +1,4 @@
--- `heiko.store`, `heiko.jev`, `heiko.infer` and `heiko.now`: what a hook
+-- `heiko.store`, `heiko.decide`, `heiko.infer` and `heiko.now`: what a hook
 -- awaits, called as a hook calls it, on the harness's fakes.
 local heiko = require("heiko")
 local t = heiko.test
@@ -67,33 +67,33 @@ t.property("the store holds the last value put under each key", function(draw)
 	end
 end)
 
-t.case("Jev's answers come with what they cost", function()
+t.case("The decider's answers come with what they cost", function()
 	local asked
 	local run = t.run({
-		jev = {
+		decide = {
 			ask = function(request)
 				asked = request
 				return { met = { probability = 0.9 } }, 0.002
 			end,
 		},
 	})
-	local request = { state = { x = 1 }, questions = { met = { kind = "noul", question = "Is it met?" } } }
+	local request = { state = { x = 1 }, questions = { met = { kind = "predicate", question = "Is it met?" } } }
 	t.equal(run:call(function()
-		return { heiko.jev.ask(request) }
+		return { heiko.decide.ask(request) }
 	end), { { met = { probability = 0.9 } }, 0.002 })
-	t.equal(asked.questions.met.kind, "noul")
+	t.equal(asked.questions.met.kind, "predicate")
 end)
 
-t.case("Jev failing is nil and why, not an error", function()
+t.case("The decider failing is nil and why, not an error", function()
 	local run = t.run({
-		jev = {
+		decide = {
 			ask = function()
-				error("Jev answered 503", 0)
+				error("The decider answered 503", 0)
 			end,
 		},
 	})
 	local got = run:call(function()
-		local answers, why = heiko.jev.ask({ questions = {} })
+		local answers, why = heiko.decide.ask({ questions = {} })
 		return { answers == nil, why }
 	end)
 	t.equal(got[1], true)
@@ -102,21 +102,21 @@ end)
 
 t.case("scores are each question's probability, in the order asked", function()
 	local run = t.run({
-		jev = {
+		decide = {
 			ask = function()
 				return { a = { probability = 0.25 }, b = { probability = 0.75 } }, 0.001
 			end,
 		},
 	})
 	t.equal(run:call(function()
-		return { heiko.jev.scores({ questions = {} }, { "b", "a" }) }
+		return { heiko.decide.scores({ questions = {} }, { "b", "a" }) }
 	end), { { 0.75, 0.25 }, 0.001 })
 	-- One it left out, or answered without a probability, is no score.
 	local missing = run:call(function()
-		local scores, why = heiko.jev.scores({ questions = {} }, { "a", "c" })
+		local scores, why = heiko.decide.scores({ questions = {} }, { "a", "c" })
 		return { scores == nil, why }
 	end)
-	t.equal(missing, { true, "Jev gave no answer to c" })
+	t.equal(missing, { true, "The decider gave no answer to c" })
 end)
 
 t.case("the model's answer is its envelope, and a refusal says why", function()

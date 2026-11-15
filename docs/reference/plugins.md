@@ -394,24 +394,24 @@ compact an idle run
 
 `on_event` sees every event throughout.
 
-## The shared Jev client: `heiko-jev`
+## The shared decider client: `heiko-decide`
 
-Three of the four plugins ask Jev (TypeSafe's System One model) for
+Three of the four plugins ask the decider (TypeSafe's System One model) for
 decisions, so the client is its own small crate, not code copied three
-times. It is built: `crates/plugins/heiko-jev`. Plugins take an `impl Jev`
-(the trait), so tests answer with `heiko_jev::fake::FakeJev` and
-production uses the HTTP client, `heiko_jev::TypeSafe`.
+times. It is built: `crates/plugins/heiko-decide`. Plugins take an `impl Decider`
+(the trait), so tests answer with `heiko_decide::fake::FakeDecider` and
+production uses the HTTP client, `heiko_decide::TypeSafe`.
 
-heiko-jev is a plugin too (ADR 0045). The kernel names no Jev: heiko-jev
+heiko-decide is a plugin too (ADR 0045). The kernel names no decider: heiko-decide
 keeps the TypeSafe key (`typesafe-key` in heiko's config directory), and
-gives the plugins that declare its service (`heiko_jev::SERVICE`,
-`heiko.jev`) the client, counted (`Metered`), while there is a key
+gives the plugins that declare its service (`heiko_decide::SERVICE`,
+`heiko.decide`) the client, counted (`Metered`), while there is a key
 (`HostHalf::provide`). Its section of the Models screen, and its own
-page (`heiko_jev::key_page`, which other plugins' buttons link to), take
-the key in a secret field and show what Jev did this session. Another
-plugin's view reads whether a key is saved with `heiko_jev::keyed`, from
-heiko-jev's data. Tests give it a Jev in place of TypeSafe's with
-`Host::with_service(heiko_jev::Upstream(jev))`.
+page (`heiko_decide::key_page`, which other plugins' buttons link to), take
+the key in a secret field and show what the decider did this session. Another
+plugin's view reads whether a key is saved with `heiko_decide::keyed`, from
+heiko-decide's data. Tests give it a decider in place of TypeSafe's with
+`Host::with_service(heiko_decide::Upstream(decide))`.
 
 - **API.** One call: `POST https://api.typesafe.ai/v1/systemone` with
   `{ model, state, questions }`. The answers come back under the
@@ -421,10 +421,10 @@ heiko-jev's data. Tests give it a Jev in place of TypeSafe's with
     confidence;
   - `Score`: ordered levels (at most 10), with probabilities and a
     confidence;
-  - `Noul`: the probability that a yes/no statement is true.
+  - `Predicate`: the probability that a yes/no statement is true.
     A request is a builder over a shared state, so several questions go
     in one round trip, as TypeSafe's docs recommend.
-- **Answers are checked when read** (`Response::noul`, `choice`,
+- **Answers are checked when read** (`Response::predicate`, `choice`,
   `score`): a missing answer, one of the wrong kind, or a probability
   outside `[0, 1]` is an error, never a default.
 - **Limits.** The client does not estimate tokens: TypeSafe's limits
@@ -435,7 +435,7 @@ heiko-jev's data. Tests give it a Jev in place of TypeSafe's with
   drop the body, which can echo the request.
 - **Retries.** 429, 503 and 529 are retried, honoring `retry-after`,
   under heiko-ai's `RetryPolicy`.
-- **Cost.** Input tokens only; output is free. Jev 1.13 costs $0.042
+- **Cost.** Input tokens only; output is free. The decider 1.13 costs $0.042
   per million input tokens. The client returns `Usage` with the cost
   filled in, which a plugin passes to `ctx.charge`.
 - **Key.** Given explicitly, or read with `from_env()` from
@@ -443,7 +443,7 @@ heiko-jev's data. Tests give it a Jev in place of TypeSafe's with
 - **TLS.** rustls with `ring` and Mozilla's roots, as for OpenAI: no
   system certificate store.
 - **Confidence.** Every answer exposes `confidence` (Choice and Score)
-  or its probability (Noul). Plugins take thresholds as settings and
+  or its probability (Predicate). Plugins take thresholds as settings and
   have a low-confidence fallback. They never act on an unsure answer
   as if it were sure.
 
@@ -511,7 +511,7 @@ Each plugin declares itself in one place, `UiPlugin::declaration`
 - `fills`: the slots it can fill. `Fills::fill` refuses any other, and
   says so.
 - `services`: the host services it takes, by name
-  (`services::names`, such as `heiko.jev` or `heiko.workspace-dir`). The
+  (`services::names`, such as `heiko.decide` or `heiko.workspace-dir`). The
   host offers each named service with `Services::offer`; the registry
   hands each plugin's host half a view (`Services::scoped`, through
   `RunCtx` and `HostCx`) without the services it did not declare, and
@@ -528,7 +528,7 @@ plugin's About tab: its seams, then each kind of reach it declares.
 
 A plugin gives other plugins a service with `HostHalf::provide`, called
 each time the host builds its context or a run's, so what it gives can
-change (heiko-jev gives `heiko.jev` only while a key is saved);
+change (heiko-decide gives `heiko.decide` only while a key is saved);
 `Provide::offer` refuses a name the declaration does not list in
 `provides`. A slot the host needs before any host state is made
 (`heiko.store`, which every host state is made with) is filled by
@@ -633,7 +633,7 @@ settings)` gives what commands in a repository start through: a
   the main workspace (`RepoLauncher`). With none, commands start as
   they are. heiko-direnv is the first such plugin
   ([0025](../decisions/0025-agent-commands-run-in-an-environment-plugins-give.md)).
-- **What a run's services hold.** Besides the metered Jev and the turn
+- **What a run's services hold.** Besides the metered decider and the turn
   hooks (`TurnHooks`), `RunCtx::services` holds the run's workspace
   (`WorkspaceDir`); how its commands start (`RunCommands`: `Direct`,
   `Through` the joined launcher, or `Off` for an agent's repository
@@ -910,7 +910,7 @@ model and cannot await.
 
 A hook reaches nothing itself. Every effect is a command of `heiko.cmd`:
 reads and waits are awaited, `local v = heiko.await(cmd.store.get(k))`
-(`nil` for a missing value; Jev's answer and its cost; an infer's answer
+(`nil` for a missing value; the decider's answer and its cost; an infer's answer
 unwrapped, or raised), and writes are given,
 `heiko.give(cmd.store.put(k, v))`, carried out when the step ends. A host
 tool is `cmd.tool(name, args)`, and `heiko.all({ ... })` awaits several at
@@ -923,7 +923,7 @@ runs. Across an await anything may have changed: an action, another hook,
 a job, or another run's write to the store. So a hook reads what it uses
 of the model and the store again after each await. An action is a
 message to the same model, not a copy: a Pause pressed while heiko-goal's
-check waits on Jev is in the model when the check goes on. Hooks have no
+check waits on the decider is in the model when the check goes on. Hooks have no
 clock and no randomness; time is `env.now`. The return protocols
 (`heiko.continue`, `heiko.block`, `heiko.start`, `heiko.rewrite`, `heiko.result`,
 `heiko.effort`, `heiko.interface`, `heiko.start_chat`, `heiko.steer_chat`,
@@ -936,11 +936,11 @@ before_stop = function(stop, model)
   if asked == nil or asked.status ~= "active" then
     return nil
   end
-  local answers, cost = heiko.await(cmd.jev.ask({
+  local answers, cost = heiko.await(cmd.decide.ask({
     state = { goal = asked.condition, final_answer = stop.text },
     questions = { met = QUESTION },
   }))
-  local g = model.goal -- again: a Pause may have come while Jev answered
+  local g = model.goal -- again: a Pause may have come while the decider answered
   if g == nil or g.status ~= "active" or g.condition ~= asked.condition then
     return nil
   end
@@ -955,7 +955,7 @@ end,
 `one_line`, `prefix`, `cut`, `codes`), `heiko.count` (`plural`,
 `tokens`), `heiko.values` (`count`, `copy`, `same`, `is_array`,
 `contains`), `heiko.store` (`get`, `list`, `put`, `delete`, `bump`,
-`of(repo)`: the store's commands awaited and given), `heiko.jev` (`ask`
+`of(repo)`: the store's commands awaited and given), `heiko.decide` (`ask`
 and `scores`, a failure as `nil` and why), `heiko.infer` (the model's
 answer as `{ ok, value, error, reason }`) and `heiko.now(env)`.
 
@@ -1005,7 +1005,7 @@ Token estimates and overflow detection, which the loop uses for
 Built: `plugins/heiko-reasoning`, a Luau plugin heiko comes with
 (ADR 0050): `src/plugin.luau`, the policy in `src/effort.luau`.
 It scores runs whose effort is "auto" when a TypeSafe key is saved
-(`uses.jev`); each choice (every level's probability, the confidence
+(`uses.decide`); each choice (every level's probability, the confidence
 and the threshold) is kept in the run's state, and shows as the run's
 reasoning note, plan field and plan step. Its settings, in its pane
 under heiko-luau-plugins, set `redecide` ("Decide again between steps")
@@ -1025,7 +1025,7 @@ and the threshold (0.7 by default) for runs started after.
      "yes, do it" is only as simple as what it agrees to.
   2. Ask one `Score` question whose levels describe the work each
      effort suits. The levels are the efforts the run's model takes
-     (`heiko_ai::model::efforts`), so Jev never picks one the API would
+     (`heiko_ai::model::efforts`), so the decider never picks one the API would
      reject; a model that does not reason is not scored. The question
      asks for the minimum sufficient depth, says that a short message
      alone is not evidence the work is simple, and that the state is
@@ -1040,7 +1040,7 @@ and the threshold (0.7 by default) for runs started after.
      at (`runs_at`); heiko-ui shows a note only when that changes.
   4. **Sticky effort.** A run that goes on with a conversation or
      inherits one (a fork, whose records start with its parent's) keeps
-     the effort it last ran at, even when Jev is sure of another, once
+     the effort it last ran at, even when the decider is sure of another, once
      its prefix reaches `STICKY_TOKENS` (20k): `start`'s
      `prefix_tokens`, what the conversation and the instructions hold. Any change of effort makes OpenAI read nothing from
      cache, so switching would resend all of it at full price. The
@@ -1058,7 +1058,7 @@ and the threshold (0.7 by default) for runs started after.
   - `user_turn`: until the user writes again.
 
   A failed tool call, a context rewrite or a user message steered in
-  ends any lease. Before a request whose lease has ended, Jev is asked
+  ends any lease. Before a request whose lease has ended, the decider is asked
   both questions again, with the step (`tool_step`, or `user_turn` for
   a steered message), the effort now, the end of what the agent last
   said, and the tool results it is about to read: how many, how many
@@ -1066,10 +1066,10 @@ and the threshold (0.7 by default) for runs started after.
   answer sets the effort for that request on; an unsure or failed one
   leaves it. Each choice is kept with its `turn` and `lease`, and
   heiko-ui shows it before the reply it chose for, with how long the
-  effort holds. A request Jev fails gets a note too (`kind = "failed"`,
+  effort holds. A request the decider fails gets a note too (`kind = "failed"`,
   with its turn between turns), so a stored run shows it.
 
-- **Cost:** one Jev round trip (about 180 ms median) before the session
+- **Cost:** one decider round trip (about 180 ms median) before the session
   opens, and with `redecide` one per ended lease. The warm-up, if on,
   comes after the first, so it warms the chosen effort.
 - **Why `redecide` is off:** no model keeps its cache across a change
@@ -1088,11 +1088,11 @@ and the threshold (0.7 by default) for runs started after.
 The `replay` example loads the plugin as heiko does and walks a stored
 run's timeline request by request through its hooks: `start` as a user
 message after a final answer comes in, sticky effort included, and
-`before_request` before each request, which asks Jev only when the
+`before_request` before each request, which asks the decider only when the
 lease has ended. Each `Decision` says what the stored request went out
 at (from the run's records, the Rust plugin's or the Luau one's state),
-what Jev answered, and what the plugin would send. It runs on the
-latest runs of a store, each on its own model, with the real Jev:
+what the decider answered, and what the plugin would send. It runs on the
+latest runs of a store, each on its own model, with the real decider:
 
 ```sh
 cargo run -p heiko-built-in-tests --example replay -- ~/.local/share/heiko/runs.db 20
@@ -1343,7 +1343,7 @@ Built: `plugins/heiko-constitution`, a Luau plugin heiko comes with
   1. For a call a rule applies to, put the relevant argument fields
      into the state. Only those: TypeSafe notes that irrelevant detail
      costs accuracy.
-  2. Ask one `Noul` per applicable rule, all in one request.
+  2. Ask one `Predicate` per applicable rule, all in one request.
   3. A rule whose violation probability passes its threshold blocks
      the call. The reason names the rule and quotes it, so the model
      sees why and fixes the call.
@@ -1357,7 +1357,7 @@ Built: `plugins/heiko-constitution`, a Luau plugin heiko comes with
   in its model, drawn on the calls' lines, as notes and in the
   inspector.
 - **Risk:** the state is untrusted. File content and tool output can
-  try to steer Jev, which its docs warn about. Rules for destructive
+  try to steer the decider, which its docs warn about. Rules for destructive
   calls get higher thresholds, and the checked fields are what the
   model wrote, not what tools returned.
 
@@ -1370,13 +1370,13 @@ with (ADR 0050). Its reference is [fast-compaction.md](fast-compaction.md).
   leaves an idle run to heiko-compaction, since pruning first would
   change what that summary reads from cache), `start` (whether there is
   a TypeSafe key), and `after_tool_result` to prune a large
-  `exec_command` output before the model first sees it. It uses Jev,
+  `exec_command` output before the model first sees it. It uses the decider,
   the run's conversation and `cmd.archive`.
 - **How** (after `joelhooks/pi-fast-jev-compaction`):
   1. Past a share of the window (default 60%), and outside a token
      cooldown, build a state of the history: tool names, inputs,
      ok/error and sizes. Never the tool outputs themselves.
-  2. Ask two `Noul`s per unpinned call: does knowing the call still
+  2. Ask two `Predicate`s per unpinned call: does knowing the call still
      matter, and does its full output still need to be verbatim.
      Split the questions into batches under the request limit, and send
      the batches concurrently.
@@ -1463,13 +1463,13 @@ Built: `plugins/heiko-goal`, a Luau plugin heiko comes with (ADR
   model its own message), `after_tool_result` (the latest results, as
   evidence), `turn_end` (the tokens the turns used, its `tokens`), and `before_stop` (the
   check; it declares `continues = 20`).
-- **How:** one `noul` per stop: does the goal hold, judged from the
+- **How:** one `predicate` per stop: does the goal hold, judged from the
   model's last answer and its recent tool results. Not yet sends the
   model back with the goal, within the goal's continuations and budget.
 - **State:** the run's model. The goal belongs to the
   conversation, so a resumed run keeps it; its banner's buttons and the
   `/goal` command pause, extend or clear it, and the check reads the
-  model again after Jev answers, so a Pause pressed meanwhile stands.
+  model again after the decider answers, so a Pause pressed meanwhile stands.
 
 ### `heiko-watcher`: notes what you missed
 

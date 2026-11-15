@@ -1,6 +1,6 @@
 [package]
-name = "heiko-jev"
-description = "A client for TypeSafe's Jev (System One) model, and the plugin that gives it to heiko's plugins."
+name = "heiko-decide"
+description = "A client for TypeSafe's decider (System One) model, and the plugin that gives it to heiko's plugins."
 version.workspace = true
 edition.workspace = true
 repository.workspace = true

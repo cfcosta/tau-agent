@@ -461,10 +461,10 @@ fn a_large_output_is_pruned_into_heiko_s_archive() {
             Identity::default(),
         )),
     );
-    // Jev finds every chunk it is asked about disposable: the first and
+    // The decider finds every chunk it is asked about disposable: the first and
     // last stay anyway.
-    let host = host.with_service(heiko_jev::Upstream(std::sync::Arc::new(
-        heiko_jev::fake::FakeJev::nouls(|_| 0.0),
+    let host = host.with_service(heiko_decide::Upstream(std::sync::Arc::new(
+        heiko_decide::fake::FakeDecider::predicates(|_| 0.0),
     )));
     let mut view = host
         .block_on(host.start("build it", &ModelChoice::default(), REPO))

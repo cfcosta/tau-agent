@@ -45,7 +45,7 @@ heiko-sqlite.workspace = true
 heiko-chatgpt.workspace = true
 heiko-agents.workspace = true
 heiko-luau-plugins.workspace = true
-heiko-jev.workspace = true
+heiko-decide.workspace = true
 heiko-mcp-host.workspace = true
 heiko-store.workspace = true
 # The product shows `bash` output as a terminal: commands run under a

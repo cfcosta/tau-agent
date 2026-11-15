@@ -164,10 +164,10 @@ cmd.http = {
 	end,
 }
 
--- Jev: `ask` answers with `(answers, cost)`, the answers by question.
-cmd.jev = {
+-- The decider: `ask` answers with `(answers, cost)`, the answers by question.
+cmd.decide = {
 	ask = function(request)
-		return command("jev", { fn = "ask", request = request })
+		return command("decide", { fn = "ask", request = request })
 	end,
 }
 
@@ -202,7 +202,7 @@ cmd.chats = {
 }
 
 -- The ops that are not a host tool's name.
-local OPS = { all = true, jev = true }
+local OPS = { all = true, decide = true }
 
 -- A host tool `uses.tools` names, with its args: its name is the op, as
 -- every host call's is.

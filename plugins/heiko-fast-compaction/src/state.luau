@@ -1,16 +1,16 @@
--- The transcript as the history stage shows Jev: tool calls with their
+-- The transcript as the history stage shows the decider: tool calls with their
 -- inputs and the size of their results, never the results themselves.
 --
 -- Ported from `tamaratran/fast-jev-compaction` by way of
 -- `joelhooks/pi-fast-jev-compaction` (`src/core/state.ts`; see
--- THIRD_PARTY_NOTICES.md). Lengths count characters. What Jev reads is
+-- THIRD_PARTY_NOTICES.md). Lengths count characters. What the decider reads is
 -- written here as JSON text, its keys in order, as the Rust plugin's
 -- types wrote it: a Luau table keeps no order.
 local heiko = require("heiko")
 
 local state = {}
 
--- What the state tells Jev about itself.
+-- What the state tells the decider about itself.
 state.CONTEXT = [==[
 A coding assistant conversation is being compacted to free context. `history` is the conversation so far, oldest first, verbatim except that tool outputs are replaced by a short `result` note. A long conversation is split into ordered segments that are asked about separately; then `history` is one segment, `calls` lists the tool calls asked about, and a keep in any segment keeps the call. Oversized fields continue across entries labeled `part`, with their field name and character offset. Each question asks whether one tool call, or the full output of that call, still needs to stay in the history verbatim. Whatever is not kept is deleted from model context: a cut output keeps its head and the path of a file holding it whole, and a dropped call goes with its output, though the assistant can re-run a tool or re-read a file.]==]
 
@@ -257,7 +257,7 @@ function state.goal_or_prompts(goal, entries)
 	return state.goal_from(entries)
 end
 
--- The state sent to Jev, as JSON text: the whole history, or one
+-- The state sent to the decider, as JSON text: the whole history, or one
 -- segment of it with the calls asked about beside it, as texts.
 function state.state_json(goal, history_json, calls_json)
 	local fields = {

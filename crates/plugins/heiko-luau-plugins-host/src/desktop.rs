@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use heiko_ai::message::Usage;
 use heiko_codemode_host::{ToolCall, ToolEntry, ToolReply};
-use heiko_jev::Jev;
+use heiko_decide::Decider;
 
 use crate::runtime::Reach;
 
@@ -83,8 +83,8 @@ impl Reach for DesktopReach {
         Ok(ToolReply::success(Value::Null))
     }
 
-    fn jev(&self) -> Option<Arc<dyn Jev>> {
-        self.reach.jev()
+    fn decide(&self) -> Option<Arc<dyn Decider>> {
+        self.reach.decide()
     }
 
     fn charge(&self, usage: &Usage) {

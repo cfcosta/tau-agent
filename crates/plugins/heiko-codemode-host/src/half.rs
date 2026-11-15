@@ -12,7 +12,7 @@ use heiko_codemode::{
     store::Record,
     ui::{Action, ActionReply, description, validate_selection},
 };
-use heiko_jev::Jev;
+use heiko_decide::Decider;
 use heiko_ui_plugin::{HostCx, HostHalf, PluginInfo, RunCtx};
 
 /// heiko-codemode on the host.
@@ -23,17 +23,17 @@ impl HostHalf for CodemodeHost {
     type Plugin = CodemodeUi;
     type Host = ();
 
-    /// The `codemode` tool, asking the run's metered Jev when there is a
-    /// key; without one, scripts run and `jev` is nil.
+    /// The `codemode` tool, asking the run's metered decider when there is a
+    /// key; without one, scripts run and `decide` is nil.
     async fn agent_plugins(
         &self,
         _host: &(),
         run: &RunCtx,
         _settings: &(),
     ) -> anyhow::Result<Vec<Box<dyn Plugin>>> {
-        let jev = run.services.get::<Arc<dyn Jev>>().cloned();
+        let decide = run.services.get::<Arc<dyn Decider>>().cloned();
         Ok(vec![Box::new(
-            crate::Codemode::new(jev)
+            crate::Codemode::new(decide)
                 .with_repository(run.repo.dir.join("codemode-modules")),
         )])
     }
@@ -44,9 +44,9 @@ impl HostHalf for CodemodeHost {
         cx: &HostCx,
         _settings: &(),
     ) -> PluginInfo {
-        let jev = cx.services.get::<Arc<dyn Jev>>().is_some();
+        let decide = cx.services.get::<Arc<dyn Decider>>().is_some();
         PluginInfo {
-            description: description(jev),
+            description: description(decide),
             page: None,
             ..Default::default()
         }
