@@ -14,16 +14,17 @@
 )]
 
 use std::{
+    collections::BTreeMap,
     sync::{Arc, atomic::Ordering},
     time::Duration,
 };
 
-use common::{FakeHost, error, script, script_with, texts};
+use common::{FakeHost, Held, beside, error, script, script_with, texts};
 use hegel::{TestCase, generators as gs};
-use serde_json::{Value, json};
 use heiko_codemode::store::Snapshot;
 use heiko_codemode_host::{CallStatus, CancellationToken, Failure};
-use heiko_testing::block_on;
+use heiko_testing::{block_on, block_on_io};
+use serde_json::{Value, json};
 
 use crate::common;
 
@@ -51,30 +52,92 @@ async fn settles_errors_without_stopping_siblings() {
     assert_eq!(host.names().len(), 3);
 }
 
-#[tokio::test]
-async fn bounds_running_callbacks_with_nested_parallel_tools() {
-    let host = host();
-    let outcome = script(
-        &host,
+/// Whatever the items, the concurrency, how many tools each callback
+/// runs in `parallel` and the order the test lets those calls go, `map`
+/// runs as many callbacks at once as the concurrency allows and the
+/// items left to start can fill: a callback starts only when one ends,
+/// in item order, and never more run at once. Each call holds until the
+/// test lets it go, so what runs beside what is set by what the test
+/// let go, not by timing.
+#[hegel::test(test_cases = 200)]
+fn map_runs_callbacks_up_to_its_concurrency(tc: TestCase) {
+    let items: usize = tc.draw(gs::integers::<usize>().max_value(8));
+    let concurrency: usize =
+        tc.draw(gs::integers::<usize>().min_value(1).max_value(4));
+    let width: usize =
+        tc.draw(gs::integers::<usize>().min_value(1).max_value(3));
+    let code = format!(
         r#"local running, peak = 0, 0
-           local results = map(array({ 1, 2, 3, 4, 5, 6 }), function(item)
+           local results = map(json.decode('{}'), function(item)
                running += 1
                peak = math.max(peak, running)
-               local a, b = parallel(
-                   function() return tools.sleep({ ms = 40 }) end,
-                   function() return tools.sleep({ ms = 40 }) end
-               )
+               local calls = {{}}
+               for k = 1, {width} do
+                   calls[k] = function()
+                       return tools.hold({{ item = item, k = k }}).item
+                   end
+               end
+               local values = {{ parallel(table.unpack(calls)) }}
                running -= 1
-               return item + a + b
-           end, 2)
-           return { peak = peak, results = results }"#,
-    )
-    .await;
+               local sum = 0
+               for _, value in values do sum += value end
+               return sum
+           end, {concurrency})
+           return {{ peak = peak, results = results }}"#,
+        json!((1..=items).collect::<Vec<_>>())
+    );
+    let host = host();
+    let mut held = host.held();
+    let test = async {
+        // The callbacks running, by item, with how many of their calls
+        // are still held; the next item to start.
+        let mut running: BTreeMap<u64, usize> = BTreeMap::new();
+        let mut next = 1;
+        let mut holding: Vec<Held> = Vec::new();
+        let mut ended = 0;
+        while next <= items && running.len() < concurrency {
+            running.insert(next as u64, width);
+            next += 1;
+        }
+        while ended < items {
+            let live: usize = running.values().sum();
+            while holding.len() < live {
+                let call = held.recv().await.expect("a held call");
+                let item = call.args["item"].as_u64().unwrap();
+                assert!(
+                    running.contains_key(&item),
+                    "item {item} started before a callback ended: {running:?}"
+                );
+                assert!(call.running <= concurrency * width);
+                holding.push(call);
+            }
+            let at =
+                tc.draw(gs::integers::<usize>().max_value(holding.len() - 1));
+            let call = holding.swap_remove(at);
+            let item = call.args["item"].as_u64().unwrap();
+            call.open();
+            let left = running.get_mut(&item).unwrap();
+            *left -= 1;
+            if *left == 0 {
+                running.remove(&item);
+                ended += 1;
+                if next <= items {
+                    running.insert(next as u64, width);
+                    next += 1;
+                }
+            }
+        }
+    };
+    let outcome = block_on_io(beside(script(&host, &code), test));
     assert_eq!(outcome.failure, None);
     let value: Value = serde_json::from_str(&texts(&outcome)[0]).unwrap();
-    assert_eq!(value["peak"], 2);
-    assert_eq!(host.peak.load(Ordering::SeqCst), 4);
-    assert_eq!(value["results"][5], json!({"ok":true,"value":86}));
+    let most = items.min(concurrency);
+    assert_eq!(value["peak"], most, "callbacks running at once");
+    assert_eq!(host.peak.load(Ordering::SeqCst), most * width);
+    let expected: Vec<Value> = (1..=items)
+        .map(|item| json!({"ok":true,"value":item * width}))
+        .collect();
+    assert_eq!(value["results"], json!(expected));
 }
 
 #[tokio::test]

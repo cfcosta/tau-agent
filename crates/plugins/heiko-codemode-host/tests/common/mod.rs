@@ -12,7 +12,6 @@ use std::{
 };
 
 use async_trait::async_trait;
-use serde_json::json;
 use heiko_codemode::store::Snapshot;
 use heiko_codemode_host::{
     CancellationToken,
@@ -27,12 +26,16 @@ use heiko_codemode_host::{
     run,
 };
 use heiko_jev::Jev;
+use serde_json::{Value, json};
+use tokio::sync::{mpsc, oneshot};
 
 /// Tools:
 /// - `echo`: returns its arguments;
 /// - `fail`: fails with `tool broke`;
 /// - `sleep`: waits `ms` milliseconds and returns them;
 /// - `slow_one`: `sleep`, but sequential;
+/// - `hold`: waits until the test opens its gate (see [`Holds`]), once
+///   the test has taken [`FakeHost::held`];
 /// - `mcp__linear__list_issues`: an MCP-shaped result with `isError`.
 #[derive(Default)]
 pub struct FakeHost {
@@ -43,6 +46,38 @@ pub struct FakeHost {
     pub running: Arc<AtomicUsize>,
     pub peak: Arc<AtomicUsize>,
     pub jev: Option<Arc<dyn Jev>>,
+    pub holds: Holds,
+}
+
+/// A `hold` call that has started, waiting for its gate.
+pub struct Held {
+    pub args: Value,
+    /// The host's calls running as it started, itself among them.
+    pub running: usize,
+    gate: oneshot::Sender<Value>,
+}
+
+impl Held {
+    /// Lets the call return its arguments.
+    pub fn open(self) {
+        let _ = self.gate.send(self.args);
+    }
+}
+
+/// Where `hold` calls report that they started.
+pub struct Holds {
+    started: mpsc::UnboundedSender<Held>,
+    heard: Mutex<Option<mpsc::UnboundedReceiver<Held>>>,
+}
+
+impl Default for Holds {
+    fn default() -> Self {
+        let (started, heard) = mpsc::unbounded_channel();
+        Self {
+            started,
+            heard: Mutex::new(Some(heard)),
+        }
+    }
 }
 
 pub fn tool(name: &str, description: &str) -> ToolEntry {
@@ -62,6 +97,11 @@ impl FakeHost {
             jev: Some(Arc::new(jev)),
             ..Self::default()
         }
+    }
+
+    /// The `hold` calls as they start; taken once.
+    pub fn held(&self) -> mpsc::UnboundedReceiver<Held> {
+        self.holds.heard.lock().unwrap().take().expect("taken once")
     }
 
     pub fn names(&self) -> Vec<String> {
@@ -121,13 +161,18 @@ impl Host for FakeHost {
                 },
             },
         }));
-        vec![
+        let mut tools = vec![
             tool("echo", "Returns its arguments."),
             tool("fail", "Always fails."),
             sleep,
             slow,
             issues,
-        ]
+        ];
+        // Only a test that listens for held calls has `hold`.
+        if self.holds.heard.lock().unwrap().is_none() {
+            tools.push(tool("hold", "Waits until the test lets it go."));
+        }
+        tools
     }
 
     fn namespaces(&self) -> Vec<Namespace> {
@@ -154,6 +199,16 @@ impl Host for FakeHost {
                 let ms = call.args["ms"].as_u64().unwrap_or(0);
                 tokio::time::sleep(Duration::from_millis(ms)).await;
                 Ok(json!(ms))
+            }
+            "hold" => {
+                let (gate, opened) = oneshot::channel();
+                let held = Held {
+                    args: call.args,
+                    running: now,
+                    gate,
+                };
+                self.holds.started.send(held).expect("the test listens");
+                opened.await.map_err(|_| "the gate was dropped".to_owned())
             }
             "mcp__linear__list_issues" => Ok(json!({
                 "content": [{ "type": "text", "text": "no access" }],
@@ -214,4 +269,19 @@ pub fn texts(outcome: &Outcome) -> Vec<String> {
 /// The failure's head, or a panic if the script succeeded.
 pub fn error(outcome: &Outcome) -> String {
     outcome.failure.as_ref().expect("the script failed").head()
+}
+
+/// Runs `work` beside `test`, which lets its held calls go; `work` may
+/// end only once `test` has.
+pub async fn beside<T: std::fmt::Debug>(
+    work: impl Future<Output = T>,
+    test: impl Future<Output = ()>,
+) -> T {
+    tokio::pin!(work);
+    tokio::select! {
+        biased;
+        () = test => {}
+        early = &mut work => panic!("it ended before the test let it: {early:?}"),
+    }
+    work.await
 }

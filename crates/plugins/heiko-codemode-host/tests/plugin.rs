@@ -7,7 +7,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use serde_json::{Value, json};
+use hegel::generators as gs;
 use heiko_agent::{
     agent::Agent,
     error::{PluginError, ToolError},
@@ -28,7 +28,13 @@ use heiko_codemode_host::{CancellationToken, Codemode, PLUGIN};
 use heiko_jev::fake::FakeJev;
 use heiko_store::{Entry, Store};
 use heiko_testing::{block_on, scripted::ScriptedModel};
-use tokio::time::Instant;
+use serde_json::{Value, json};
+use tokio::{
+    sync::{mpsc, oneshot},
+    time::Instant,
+};
+
+use crate::common::beside;
 
 /// The id the scripted model gives the first tool call.
 const FIRST: &str = "call_0|fc_0";
@@ -597,53 +603,211 @@ fn start_lists_the_direct_tools_signatures() {
     });
 }
 
-/// Among one script's calls, a `Sequential` tool's call runs alone; the
-/// others overlap. Calls start in the order the script made them, so a
-/// call after a sequential one waits for it. `parallel` returns every
-/// function's value in the order the functions were given, a function
-/// that calls no tool among them.
+/// A call that has started: its text, the calls already running as it
+/// started, and its gate.
+type Started = (String, Vec<String>, oneshot::Sender<()>);
+
+/// Holds each call until the test opens its gate, and answers with its
+/// `text`. Tools made with [`Gated::beside`] share what is running.
+struct Gated {
+    name: &'static str,
+    mode: ExecutionMode,
+    running: Arc<Mutex<Vec<String>>>,
+    started: mpsc::UnboundedSender<Started>,
+}
+
+impl Gated {
+    fn new(
+        name: &'static str,
+        mode: ExecutionMode,
+    ) -> (Self, mpsc::UnboundedReceiver<Started>) {
+        let (started, heard) = mpsc::unbounded_channel();
+        let tool = Self {
+            name,
+            mode,
+            running: Arc::default(),
+            started,
+        };
+        (tool, heard)
+    }
+
+    fn beside(&self, name: &'static str, mode: ExecutionMode) -> Self {
+        Self {
+            name,
+            mode,
+            running: self.running.clone(),
+            started: self.started.clone(),
+        }
+    }
+}
+
+#[async_trait]
+impl AgentTool for Gated {
+    fn name(&self) -> &str {
+        self.name
+    }
+    fn description(&self) -> &str {
+        "Waits for the test, then echoes its text."
+    }
+    fn parameters(&self) -> &Value {
+        static SCHEMA: std::sync::LazyLock<Value> =
+            std::sync::LazyLock::new(|| {
+                json!({
+                    "type": "object",
+                    "properties": { "text": { "type": "string" } }
+                })
+            });
+        &SCHEMA
+    }
+    fn execution_mode(&self) -> ExecutionMode {
+        self.mode
+    }
+    async fn call(
+        &self,
+        args: Value,
+        ctx: ToolCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        let text = args["text"].as_str().unwrap_or_default().to_owned();
+        let (gate, opened) = oneshot::channel();
+        {
+            let mut running = self.running.lock().unwrap();
+            let before = running.clone();
+            running.push(text.clone());
+            self.started
+                .send((text.clone(), before, gate))
+                .expect("the test listens");
+        }
+        tokio::select! {
+            _ = ctx.cancel.cancelled() => {}
+            _ = opened => {}
+        }
+        self.running.lock().unwrap().retain(|other| *other != text);
+        Ok(ToolOutput::text(text))
+    }
+}
+
+/// Among one script's calls, whatever the mix of `Sequential` and other
+/// tools and whichever call the test lets end first: a sequential call
+/// starts only with nothing running, nothing starts beside it, and the
+/// sequential calls start in the order the script made them; the other
+/// calls before the first sequential one all run at once. `parallel`
+/// returns every function's value in the order the functions were
+/// given, a function that calls no tool among them. Each call holds
+/// until the test lets it go, and the test lets one go only once
+/// nothing else can move (paused time), so what runs beside what is set
+/// by what the test let go.
+#[hegel::test(test_cases = 60)]
+fn a_sequential_tool_runs_alone_within_a_script(tc: hegel::TestCase) {
+    let sequential = tc.draw(gs::vecs(gs::booleans()).min_size(1).max_size(6));
+    runs_alone(&sequential, &mut |held| {
+        tc.draw(gs::integers::<usize>().max_value(held - 1))
+    });
+}
+
+/// A call after two sequential ones is not ordered against the second:
+/// it may start while that one still queues behind the first, as long
+/// as it does not start beside a sequential call.
 #[test]
-fn a_sequential_tool_runs_alone_within_a_script() {
+fn a_call_after_two_sequential_ones_need_not_wait_for_the_second() {
+    runs_alone(&[true, true, false], &mut |_| 0);
+}
+
+/// Runs one script whose `parallel` calls `seq` where `sequential` says
+/// and `par` elsewhere. Whenever nothing else can move, it lets the
+/// held call `pick` chooses go, checking each call as it starts.
+fn runs_alone(sequential: &[bool], pick: &mut dyn FnMut(usize) -> usize) {
+    let texts: Vec<String> =
+        (0..sequential.len()).map(|n| format!("c{n}")).collect();
+    let calls: Vec<String> = sequential
+        .iter()
+        .zip(&texts)
+        .map(|(seq, text)| {
+            let tool = if *seq { "seq" } else { "par" };
+            format!(
+                "function() return tools.{tool}({{ text = \"{text}\" }}) end"
+            )
+        })
+        .collect();
+    let code = format!(
+        "return {{ parallel({}, function() return \"plain\" end) }}",
+        calls.join(", ")
+    );
+    let seqs: Vec<&String> = texts
+        .iter()
+        .zip(sequential)
+        .filter_map(|(text, seq)| seq.then_some(text))
+        .collect();
+    let leading: Vec<&String> = texts
+        .iter()
+        .zip(sequential)
+        .take_while(|(_, seq)| !**seq)
+        .map(|(text, _)| text)
+        .collect();
+    let (par, mut heard) = Gated::new("par", ExecutionMode::Parallel);
+    let seq = par.beside("seq", ExecutionMode::Sequential);
+    let test =
+        async {
+            let mut held: Vec<(String, oneshot::Sender<()>)> = Vec::new();
+            let seqs_started = std::cell::Cell::new(0);
+            let started = std::cell::Cell::new(0);
+            let check = |(text, before, gate): Started,
+                         held: &mut Vec<(String, oneshot::Sender<()>)>| {
+            assert!(
+                before.iter().all(|other| !seqs.contains(&other)),
+                "{text} started beside a sequential call: {before:?}"
+            );
+            if seqs.contains(&&text) {
+                assert!(before.is_empty(), "{text} started beside {before:?}");
+                assert_eq!(
+                    seqs[seqs_started.get()], &text,
+                    "sequential calls start in script order"
+                );
+                seqs_started.set(seqs_started.get() + 1);
+            }
+            started.set(started.get() + 1);
+            held.push((text, gate));
+        };
+            let mut first = true;
+            loop {
+                if held.is_empty() {
+                    match heard.recv().await {
+                        Some(call) => check(call, &mut held),
+                        None => break,
+                    }
+                }
+                // Paused time moves on only once every task waits: the
+                // calls that can start have.
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                while let Ok(call) = heard.try_recv() {
+                    check(call, &mut held);
+                }
+                if first {
+                    first = false;
+                    let running: Vec<&String> =
+                        held.iter().map(|(text, _)| text).collect();
+                    assert!(
+                        leading.iter().all(|text| running.contains(text)),
+                        "{leading:?} all run at once, not just {running:?}"
+                    );
+                }
+                let at = pick(held.len());
+                let _ = held.swap_remove(at).1.send(());
+                if held.is_empty() && started.get() == texts.len() {
+                    break;
+                }
+            }
+        };
     block_on(async {
         let store = heiko_store_sqlite::memory().await.unwrap();
-        let mut seq = Echo::new("seq");
-        seq.mode = ExecutionMode::Sequential;
-        let seq_log = seq.log.clone();
-        let par = Echo::new("par");
-        let par_log = par.log.clone();
-        let agent = Agent::new(model(&[r#"
-return { parallel(
-    function() return tools.par({ text = "p1", ms = 100 }) end,
-    function() return tools.par({ text = "p2", ms = 100 }) end,
-    function() return tools.seq({ text = "s1", ms = 100 }) end,
-    function() return tools.par({ text = "p3", ms = 100 }) end,
-    function() return tools.seq({ text = "s2", ms = 100 }) end,
-    function() return "plain" end
-) }
-"#]))
-        .tool(seq)
-        .tool(par)
-        .plugin(Codemode::new(None));
-        let outcome = agent.run("go", &store).await.unwrap();
+        let agent = Agent::new(model(&[&code]))
+            .tool(seq)
+            .tool(par)
+            .plugin(Codemode::new(None));
+        let outcome = beside(agent.run("go", &store), test).await.unwrap();
         let result = only_result(&store, &outcome.run.0).await;
-        assert_eq!(items(&result), [r#"["p1","p2","s1","p3","s2","plain"]"#]);
-
-        let seqs = seq_log.lock().unwrap().clone();
-        let pars = par_log.lock().unwrap().clone();
-        assert_eq!((seqs.len(), pars.len()), (2, 3));
-        let all: Vec<(Instant, Instant)> =
-            seqs.iter().chain(&pars).copied().collect();
-        for (start, end) in &seqs {
-            let overlapping =
-                all.iter().filter(|(s, e)| s < end && start < e).count();
-            assert_eq!(overlapping, 1, "a sequential call runs alone");
-        }
-        let par_overlap = pars.iter().enumerate().any(|(i, (s, e))| {
-            pars.iter()
-                .enumerate()
-                .any(|(j, (s2, e2))| i != j && s2 < e && s < e2)
-        });
-        assert!(par_overlap, "parallel calls still overlap");
+        let mut values = texts.clone();
+        values.push("plain".into());
+        assert_eq!(items(&result), [json!(values).to_string()]);
     });
 }
 

@@ -11,12 +11,12 @@ use std::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
-    time::Duration,
 };
 
 use async_trait::async_trait;
-use common::{FakeHost, error, script, texts};
-use heiko_codemode_host::CallStatus;
+use common::{FakeHost, beside, error, script, texts};
+use hegel::generators as gs;
+use heiko_codemode_host::{CallStatus, jev::MAX_IN_FLIGHT};
 use heiko_jev::{
     Answer,
     Jev,
@@ -26,6 +26,8 @@ use heiko_jev::{
     Response,
     fake::{FakeJev, response},
 };
+use heiko_testing::block_on_io;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::common;
 
@@ -148,19 +150,23 @@ async fn a_bad_answer_raises() {
     assert_eq!(outcome.calls[0].status, CallStatus::Error);
 }
 
-/// Answers after a while, counting requests in flight.
-#[derive(Clone, Default)]
-struct SlowJev {
+/// Answers once the test lets it, counting requests in flight; each
+/// request says, as it starts, how many were in flight with it.
+#[derive(Clone)]
+struct GatedJev {
     running: Arc<AtomicUsize>,
     peak: Arc<AtomicUsize>,
+    started: mpsc::UnboundedSender<(usize, oneshot::Sender<()>)>,
 }
 
 #[async_trait]
-impl Jev for SlowJev {
+impl Jev for GatedJev {
     async fn ask(&self, request: &Request) -> Result<Response, JevError> {
         let now = self.running.fetch_add(1, Ordering::SeqCst) + 1;
         self.peak.fetch_max(now, Ordering::SeqCst);
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let (gate, opened) = oneshot::channel();
+        self.started.send((now, gate)).expect("the test listens");
+        let _ = opened.await;
         self.running.fetch_sub(1, Ordering::SeqCst);
         let answers = request
             .questions
@@ -171,19 +177,47 @@ impl Jev for SlowJev {
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn at_most_four_requests_run_at_once() {
-    let jev = SlowJev::default();
+/// However many requests a script makes in `parallel`, and whichever
+/// the test lets end first, as many run at once as the limit allows and
+/// the requests left can fill: a request waits only when the limit's
+/// worth are in flight. Each holds until the test lets it go, so what
+/// runs beside what is set by what the test let go, not by timing.
+#[hegel::test(test_cases = 100)]
+fn at_most_four_requests_run_at_once(tc: hegel::TestCase) {
+    let asked: usize =
+        tc.draw(gs::integers::<usize>().min_value(1).max_value(12));
+    let (started, mut heard) = mpsc::unbounded_channel();
+    let jev = GatedJev {
+        running: Arc::default(),
+        peak: Arc::default(),
+        started,
+    };
     let host = Arc::new(FakeHost::with_jev(jev.clone()));
-    let outcome = script(
-        &host,
-        "local f = function() return jev.noul({ state = 1, question = 'q' }).probability end\n\
-         return parallel(f, f, f, f, f, f, f, f)",
-    )
-    .await;
+    let code = format!(
+        "local f = function() return jev.noul({{ state = 1, question = 'q' }}).probability end\n\
+         return parallel({})",
+        vec!["f"; asked].join(", ")
+    );
+    let test = async {
+        let mut in_flight = Vec::new();
+        let mut ended = 0;
+        while ended < asked {
+            while in_flight.len() < MAX_IN_FLIGHT.min(asked - ended) {
+                let (running, gate) = heard.recv().await.expect("a request");
+                assert!(running <= MAX_IN_FLIGHT, "{running} in flight");
+                in_flight.push(gate);
+            }
+            let at =
+                tc.draw(gs::integers::<usize>().max_value(in_flight.len() - 1));
+            let _ = in_flight.swap_remove(at).send(());
+            ended += 1;
+        }
+    };
+    let outcome = block_on_io(beside(script(&host, &code), test));
     assert_eq!(outcome.failure, None, "{outcome:?}");
-    assert_eq!(outcome.calls.len(), 8);
-    assert_eq!(jev.peak.load(Ordering::SeqCst), 4);
+    assert_eq!(outcome.calls.len(), asked);
+    assert_eq!(texts(&outcome), vec!["0.1"; asked]);
+    assert_eq!(jev.peak.load(Ordering::SeqCst), asked.min(MAX_IN_FLIGHT));
 }
 
 /// `state_json`, JSON text, stands for `state`, its keys in the order it

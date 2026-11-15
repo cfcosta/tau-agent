@@ -24,7 +24,7 @@ use common::{
     project_with,
     ready_child,
 };
-use serde_json::{Value, json};
+use hegel::generators as gs;
 use heiko_agent::{
     agent::Agent,
     event::RunEvent,
@@ -40,6 +40,7 @@ use heiko_ui_plugin::{
     vcs::{Link, WORKSPACE_PLUGIN},
 };
 use heiko_vcs_host::{Head, ProjectRepo};
+use serde_json::{Value, json};
 
 use crate::common;
 
@@ -115,6 +116,58 @@ fn stack_of(project: &ProjectRepo, run: &RunId) -> Vec<String> {
         .collect()
 }
 
+/// What each `spawn` call in `transcript`'s last batch got back, in the
+/// calls' order, matched by call id: the run it started, or why it was
+/// refused.
+fn spawned(transcript: &[Message]) -> Vec<Result<RunId, String>> {
+    let calls: Vec<&str> = transcript
+        .iter()
+        .rev()
+        .find_map(|message| match message {
+            Message::Assistant(turn) => Some(turn),
+            _ => None,
+        })
+        .expect("a turn")
+        .tool_calls()
+        .filter(|call| call.name == "spawn")
+        .map(|call| call.id.as_str())
+        .collect();
+    calls
+        .into_iter()
+        .map(|id| {
+            let result = transcript
+                .iter()
+                .find_map(|message| match message {
+                    Message::ToolResult(result)
+                        if result.tool_call_id == id =>
+                    {
+                        Some(result)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("no result for {id}"));
+            let text: String = result
+                .content
+                .iter()
+                .filter_map(InputBlock::as_text)
+                .collect();
+            if result.is_error {
+                return Err(text);
+            }
+            let run = result
+                .details
+                .as_ref()
+                .and_then(|details| details["run"].as_str())
+                .unwrap_or_else(|| panic!("{id} started no run: {text}"));
+            assert!(
+                text.contains(&format!("Sub-agent {run} started")),
+                "{text}"
+            );
+            Ok(RunId(run.into()))
+        })
+        .collect()
+}
+
 /// A sub-agent forks its caller, works on the caller's committed code,
 /// and ends with its commit on its own stack, on the caller's: nothing
 /// reaches the caller until the host lands it.
@@ -147,11 +200,10 @@ fn a_sub_agent_works_on_the_callers_code() {
             .await
             .unwrap();
         assert_eq!(outcome.text, "done");
-        // The caller heard it started, and went on.
-        let started = format!("{:?}", llm.requests()[3].transcript);
-        assert!(started.contains("started"), "{started}");
-
         let (run, ending) = ends.recv().await.unwrap();
+        // The caller heard it started, as the run that ended, and went
+        // on.
+        assert_eq!(spawned(&llm.requests()[3].transcript), [Ok(run.clone())]);
         assert_eq!(
             ending,
             Ending::Done {
@@ -231,22 +283,35 @@ fn a_failed_sub_agent_is_dropped() {
         .await
         .unwrap();
         assert_eq!(outcome.text, "gave up");
-        let result = format!("{:?}", llm.requests()[1].transcript);
-        assert!(result.contains("no model for sub-agents"), "{result}");
+        let [Err(refused)] = &spawned(&llm.requests()[1].transcript)[..] else {
+            panic!("one refused call")
+        };
+        assert!(refused.contains("no model for sub-agents"), "{refused}");
         assert!(agents.running().is_empty());
         assert_eq!(project.workspaces().unwrap(), ["parent"]);
     });
 }
 
 /// Counts the calls running at once, and the most it saw. Each call
-/// waits until [`MAX_RUNNING`] have run at once: the sub-agents'
-/// workspaces are made one at a time, under the repository's lock, so
-/// they reach the call at different times, and only that many start.
-#[derive(Clone, Default)]
+/// waits until `target` have run at once: the sub-agents' workspaces
+/// are made one at a time, under the repository's lock, so they reach
+/// the call at different times, and only waiting makes them overlap.
+#[derive(Clone)]
 struct Gauge {
+    target: usize,
     now: Arc<Mutex<(usize, usize)>>,
-    /// Told when the most reaches [`MAX_RUNNING`].
+    /// Told when the most reaches `target`.
     reached: Arc<tokio::sync::Notify>,
+}
+
+impl Gauge {
+    fn new(target: usize) -> Self {
+        Self {
+            target,
+            now: Arc::default(),
+            reached: Arc::default(),
+        }
+    }
 }
 
 #[async_trait]
@@ -271,7 +336,7 @@ impl AgentTool for Gauge {
             let mut now = self.now.lock().unwrap();
             now.0 += 1;
             now.1 = now.1.max(now.0);
-            if now.1 >= MAX_RUNNING {
+            if now.1 >= self.target {
                 self.reached.notify_waiters();
             }
         }
@@ -284,7 +349,7 @@ impl AgentTool for Gauge {
                 let reached = self.reached.notified();
                 tokio::pin!(reached);
                 reached.as_mut().enable();
-                if self.now.lock().unwrap().1 >= MAX_RUNNING {
+                if self.now.lock().unwrap().1 >= self.target {
                     break;
                 }
                 reached.await;
@@ -296,24 +361,44 @@ impl AgentTool for Gauge {
     }
 }
 
-/// Two more sub-agents in one batch than may run at once: the most
-/// start and end, and the two past them are refused.
+/// Some number of sub-agents in one batch, up to a few past the most
+/// that may run at once: as many as may run start, each a run of its
+/// own, and run side by side; the rest are refused, each told why; and
+/// the runs that end are exactly those that started.
+#[hegel::test(test_cases = 16)]
+fn at_most_max_running_sub_agents_run_at_once(tc: hegel::TestCase) {
+    let asked = tc.draw(
+        gs::integers::<usize>()
+            .min_value(1)
+            .max_value(MAX_RUNNING + 3),
+    );
+    fan_out(asked);
+}
+
+/// Two past the most, the case the limit is for.
 #[test]
-fn at_most_max_running_sub_agents_run_at_once() {
+fn two_sub_agents_past_the_most_are_refused() {
+    fan_out(MAX_RUNNING + 2);
+}
+
+/// Spawns `asked` sub-agents in one batch, and checks what each call got
+/// back against the limit, and the gauge's peak.
+fn fan_out(asked: usize) {
     let home = tempfile::tempdir().unwrap();
     let project = project_with(home.path(), &[("README.md", "hello\n")]);
+    let starts = asked.min(MAX_RUNNING);
     runtime().block_on(async {
         let store = heiko_store_sqlite::memory().await.unwrap();
         let llm = ScriptedModel::new()
             .turn(|t| {
-                let tasks: Vec<Value> = (0..MAX_RUNNING + 2)
+                let tasks: Vec<Value> = (0..asked)
                     .map(|n| json!({ "task": format!("{n}") }))
                     .collect();
                 spawn_all(t, &tasks)
             })
             .turn(|t| t.text("done"));
         let parent = caller(&project);
-        let gauge = Gauge::default();
+        let gauge = Gauge::new(starts);
         let child_gauge = gauge.clone();
         let (agents, mut ends) = heard_sub_agents();
         let outcome =
@@ -328,28 +413,31 @@ fn at_most_max_running_sub_agents_run_at_once() {
             .await
             .unwrap();
         assert_eq!(outcome.text, "done");
-        let results = format!("{:?}", llm.requests()[1].transcript);
-        assert_eq!(
-            results.matches("started").count(),
-            MAX_RUNNING,
-            "{results}"
-        );
-        assert_eq!(
-            results
-                .matches(&format!(
-                    "{MAX_RUNNING} sub-agents are running already"
-                ))
-                .count(),
-            2,
-            "{results}"
-        );
-        for _ in 0..MAX_RUNNING {
-            let (_, ending) = ends.recv().await.unwrap();
-            assert!(matches!(ending, Ending::Done { .. }), "{ending:?}");
+        let results = spawned(&llm.requests()[1].transcript);
+        assert_eq!(results.len(), asked);
+        let mut started: Vec<RunId> =
+            results.iter().filter_map(|r| r.clone().ok()).collect();
+        let refused: Vec<String> =
+            results.into_iter().filter_map(Result::err).collect();
+        assert_eq!(started.len(), starts, "{refused:?}");
+        let full = format!("{MAX_RUNNING} sub-agents are running already");
+        for reason in &refused {
+            assert!(reason.contains(&full), "{reason}");
         }
+        let mut ended = Vec::new();
+        for _ in 0..starts {
+            let (run, ending) = ends.recv().await.unwrap();
+            assert!(matches!(ending, Ending::Done { .. }), "{ending:?}");
+            ended.push(run);
+        }
+        started.sort();
+        ended.sort();
+        started.dedup();
+        assert_eq!(started.len(), starts, "a run started twice");
+        assert_eq!(ended, started);
         let (running, most) = *gauge.now.lock().unwrap();
         assert_eq!(running, 0);
-        assert_eq!(most, MAX_RUNNING);
+        assert_eq!(most, starts);
     });
 }
 
