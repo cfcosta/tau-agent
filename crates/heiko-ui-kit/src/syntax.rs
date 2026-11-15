@@ -31,6 +31,7 @@ pub enum Lang {
     JavaScript,
     Json,
     Luau,
+    Markdown,
     Nix,
     Python,
     Rust,
@@ -41,12 +42,13 @@ pub enum Lang {
 
 impl Lang {
     /// Every language, for tests and the configurations.
-    pub const ALL: [Lang; 11] = [
+    pub const ALL: [Lang; 12] = [
         Lang::Bash,
         Lang::Go,
         Lang::JavaScript,
         Lang::Json,
         Lang::Luau,
+        Lang::Markdown,
         Lang::Nix,
         Lang::Python,
         Lang::Rust,
@@ -77,6 +79,7 @@ impl Lang {
             "js" | "jsx" | "mjs" | "cjs" | "javascript" => Lang::JavaScript,
             "json" | "jsonc" | "json5" => Lang::Json,
             "luau" | "lua" => Lang::Luau,
+            "md" | "markdown" => Lang::Markdown,
             "nix" => Lang::Nix,
             "py" | "pyi" | "python" => Lang::Python,
             "rs" | "rust" => Lang::Rust,
@@ -112,6 +115,12 @@ impl Lang {
                 // The grammar's own query is Neovim's, which reads
                 // differently; see the file.
                 include_str!("../queries/luau.scm").into(),
+            ),
+            // Its blocks only: a line's emphasis and links are a second
+            // grammar's, and stay plain.
+            Lang::Markdown => (
+                tree_sitter_md::LANGUAGE,
+                include_str!("../queries/markdown.scm").into(),
             ),
             Lang::Nix => (
                 tree_sitter_nix::LANGUAGE,

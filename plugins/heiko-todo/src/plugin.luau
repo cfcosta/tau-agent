@@ -361,6 +361,96 @@ local function change_card(input, model, env)
 	return ui.row({ line, ui.button("undo", "undo", result.undo, "secondary") })
 end
 
+-- The run's note of the issue `id`, if it has one. A run's notes
+-- (`model.notes`, oldest first) are the issues it filed, each with what
+-- the run did to it since and the calls that did it: the transcript
+-- draws one note for them all, where the last of the calls is.
+local function note_of(model, id)
+	for _, note in ipairs(model.notes or {}) do
+		if note.id == id then
+			return note
+		end
+	end
+	return nil
+end
+
+-- Folds the call going on into the note of `issue`, when the run has
+-- one: `said` joins what happened to it, and `undo` is what its undo
+-- now undoes. Gives the note.
+local function fold(model, env, issue, said, undo)
+	local note = note_of(model, issue.id)
+	if not note then
+		return nil
+	end
+	note.title = issue.title
+	if said and note.said[#note.said] ~= said then
+		table.insert(note.said, said)
+	end
+	if undo then
+		note.undo = undo
+	end
+	table.insert(note.calls, env.run.call)
+	return note
+end
+
+-- The note the run's steps show under: the last issue it filed that it
+-- holds and has not closed.
+local function steps_note(model)
+	local notes = model.notes or {}
+	for at = #notes, 1, -1 do
+		if notes[at].claimed and not notes[at].closed then
+			return notes[at]
+		end
+	end
+	return nil
+end
+
+-- A step of a note's checklist: done ones filled and dimmed, the one in
+-- progress outlined, the rest quiet.
+local function note_step(step)
+	local line = step.text
+	if step.issue then
+		line = line .. " → " .. step.issue
+	end
+	if step.status == "done" then
+		return ui.row({ ui.square("✓", "filled", "good"), ui.toned(line, "neutral") })
+	end
+	return ui.row({ ui.square("", step.status == "in_progress" and "outlined" or "quiet", step.status == "in_progress" and "warn" or nil), ui.text(line) })
+end
+
+-- An issue's note: under its mark, what the run did to it so far with
+-- its id and the undo, its title on a slip, and the run's steps when
+-- they are for it.
+local function note_tree(note, list)
+	local head = { ui.toned(table.concat(note.said, " · "), "neutral", true), ui.spacer(), ui.toned(note.id, "neutral", true) }
+	if note.undo then
+		table.insert(head, ui.button("undo", "undo", note.undo, "secondary"))
+	end
+	local body = { ui.row(head), ui.slip(note.title, "good") }
+	if note.steps and #list > 0 then
+		local lines = {}
+		for _, step in ipairs(list) do
+			table.insert(lines, note_step(step))
+		end
+		table.insert(body, ui.stack(lines))
+	end
+	return ui.row({ ui.kanji("件", "good"), ui.stack(body) })
+end
+
+-- How the calls the run's notes fold draw: the last call about an issue
+-- as its note, with no line of its own, and the ones before it as
+-- nothing at all.
+local function folded(model)
+	local calls = nil
+	for _, note in ipairs(model.notes or {}) do
+		for at, call in ipairs(note.calls) do
+			calls = calls or {}
+			calls[call] = { head = ui.stack({}), body = at == #note.calls and note_tree(note, model.steps or {}) or nil }
+		end
+	end
+	return calls
+end
+
 -- A read's card: the issues it found.
 local function read_card(input, model, env)
 	local result = input.result
@@ -484,7 +574,10 @@ local tools = {
 				promote(model, args.step, issue.id)
 			end
 			bump(store)
-			return { issue = brief(issue), line = "filed " .. issue.id .. ": " .. issue.title, undo = { forget = issue.id } }
+			local undo = { forget = issue.id }
+			model.notes = model.notes or array({})
+			table.insert(model.notes, { id = issue.id, title = issue.title, said = array({ "filed" }), calls = array({ env.run.call }), undo = undo })
+			return { issue = brief(issue), line = "filed " .. issue.id .. ": " .. issue.title, undo = undo }
 		end,
 		card = change_card,
 	},
@@ -511,6 +604,10 @@ local tools = {
 			elseif before and before.status ~= issue.status then
 				line = issue.id .. ": " .. before.status .. " to " .. issue.status
 			end
+			local note = note_of(model, issue.id)
+			if note then
+				note.title = issue.title
+			end
 			return changed(store, issue, line, before)
 		end,
 		card = change_card,
@@ -522,6 +619,10 @@ local tools = {
 			local store = store_of()
 			local issue = issues.claim(store, now(env), args.id, env.run.id)
 			model.issue = issue.id
+			local note = fold(model, env, issue, "claimed by this run")
+			if note then
+				note.claimed = true
+			end
 			bump(store)
 			return { issue = brief(issue), line = "claimed " .. issue.id }
 		end,
@@ -575,7 +676,12 @@ local tools = {
 			local store = store_of()
 			local before = snapshot(store, args.id)
 			if args.reopen then
-				return changed(store, issues.reopen(store, now(env), args.id), "reopened " .. args.id, before)
+				local result = changed(store, issues.reopen(store, now(env), args.id), "reopened " .. args.id, before)
+				local note = fold(model, env, result.issue, "reopened", result.undo)
+				if note then
+					note.closed = nil
+				end
+				return result
 			end
 			local issue = issues.close(store, now(env), args.id, args.reason)
 			local done, all = graph.checked(issue)
@@ -583,7 +689,12 @@ local tools = {
 			if done < all then
 				line = line .. ", " .. (all - done) .. " criteria unmet"
 			end
-			return changed(store, issue, line, before)
+			local result = changed(store, issue, line, before)
+			local note = fold(model, env, issue, "closed", result.undo)
+			if note then
+				note.closed = true
+			end
+			return result
 		end,
 		card = change_card,
 	},
@@ -595,7 +706,9 @@ local tools = {
 			local before = snapshot(store, args.id)
 			local issue = issues.defer(store, now(env), args.id, args["until"])
 			local line = "deferred " .. issue.id .. (issue.defer_until and (" until " .. string.sub(time.iso(issue.defer_until), 1, 10)) or "")
-			return changed(store, issue, line, before)
+			local result = changed(store, issue, line, before)
+			fold(model, env, issue, "deferred", result.undo)
+			return result
 		end,
 		card = change_card,
 	},
@@ -641,6 +754,16 @@ local tools = {
 				end
 			end
 			model.steps = list
+			-- The steps of an issue the run filed and holds show in its
+			-- note, and this call with them.
+			local note = steps_note(model)
+			if note then
+				for _, other in ipairs(model.notes) do
+					other.steps = nil
+				end
+				note.steps = true
+				table.insert(note.calls, env.run.call)
+			end
 			return { steps = #list, done = steps.done(list) }
 		end,
 	},
@@ -1224,6 +1347,17 @@ local actions = {
 	-- Undoes a change a run's card shows.
 	undo = function(args, model, env)
 		local store = store_of()
+		-- The issue's note says so, and has nothing more to undo.
+		local was = args.restore
+		local note = note_of(model, args.forget or (was and was.id))
+		if note then
+			note.undo = nil
+			table.insert(note.said, "undone")
+			if was then
+				note.title = was.title
+				note.closed = was.status == "closed" or nil
+			end
+		end
 		if args.forget then
 			issues.delete(store, now(env), args.forget)
 		elseif args.restore then
@@ -1478,9 +1612,6 @@ return heiko.plugin({
 	end),
 	view = function(model, env)
 		local drawn, id = band(model)
-		if not drawn then
-			return {}
-		end
-		return { band = drawn, row = id and { line = id } or nil }
+		return { band = drawn, row = id and { line = id } or nil, calls = folded(model) }
 	end,
 })

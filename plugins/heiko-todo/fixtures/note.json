@@ -1,0 +1,307 @@
+{
+  "state": {
+    "held": {
+      "criteria": {},
+      "found": {},
+      "id": "td-0cad",
+      "next": {},
+      "title": "Honor retry-after on 429 and 503"
+    },
+    "issue": "td-0cad",
+    "notes": [
+      {
+        "calls": [
+          "call_todo_1",
+          "call_todo_2",
+          "call_todo_3"
+        ],
+        "claimed": true,
+        "id": "td-0cad",
+        "said": [
+          "filed",
+          "claimed by this run"
+        ],
+        "steps": true,
+        "title": "Honor retry-after on 429 and 503",
+        "undo": {
+          "forget": "td-0cad"
+        }
+      }
+    ],
+    "steps": [
+      {
+        "status": "done",
+        "text": "Find where the loop reads the header"
+      },
+      {
+        "status": "in_progress",
+        "text": "Pass the parsed header to the retry policy"
+      },
+      {
+        "status": "pending",
+        "text": "Cap the wait at the policy's longest delay"
+      },
+      {
+        "status": "pending",
+        "text": "Add tests against the fake server"
+      }
+    ]
+  },
+  "view": {
+    "band": {
+      "children": [
+        {
+          "piece": "text",
+          "text": "Next: Pass the parsed header to the retry policy, 1/4"
+        },
+        {
+          "children": [
+            {
+              "label": "✓",
+              "piece": "square",
+              "style": "filled",
+              "tone": "good"
+            },
+            {
+              "mono": false,
+              "piece": "toned",
+              "text": "Find where the loop reads the header",
+              "tone": "neutral"
+            }
+          ],
+          "piece": "row"
+        },
+        {
+          "children": [
+            {
+              "label": "2",
+              "piece": "square",
+              "style": "outlined",
+              "tone": "info"
+            },
+            {
+              "piece": "text",
+              "text": "Pass the parsed header to the retry policy"
+            },
+            {
+              "piece": "spacer"
+            },
+            {
+              "action": "promote",
+              "args": {
+                "at": 2
+              },
+              "kind": "secondary",
+              "label": "make an issue",
+              "piece": "button"
+            }
+          ],
+          "piece": "row"
+        },
+        {
+          "children": [
+            {
+              "label": "3",
+              "piece": "square",
+              "style": "quiet",
+              "tone": "info"
+            },
+            {
+              "mono": false,
+              "piece": "toned",
+              "text": "Cap the wait at the policy's longest delay",
+              "tone": "neutral"
+            },
+            {
+              "piece": "spacer"
+            },
+            {
+              "action": "promote",
+              "args": {
+                "at": 3
+              },
+              "kind": "secondary",
+              "label": "make an issue",
+              "piece": "button"
+            }
+          ],
+          "piece": "row"
+        },
+        {
+          "children": [
+            {
+              "label": "4",
+              "piece": "square",
+              "style": "quiet",
+              "tone": "info"
+            },
+            {
+              "mono": false,
+              "piece": "toned",
+              "text": "Add tests against the fake server",
+              "tone": "neutral"
+            },
+            {
+              "piece": "spacer"
+            },
+            {
+              "action": "promote",
+              "args": {
+                "at": 4
+              },
+              "kind": "secondary",
+              "label": "make an issue",
+              "piece": "button"
+            }
+          ],
+          "piece": "row"
+        }
+      ],
+      "id": "todo-band",
+      "open": true,
+      "piece": "section",
+      "small": false,
+      "title": "td-0cad · Honor retry-after on 429 and 503"
+    },
+    "calls": {
+      "call_todo_1": {
+        "head": {
+          "children": [],
+          "piece": "stack"
+        }
+      },
+      "call_todo_2": {
+        "head": {
+          "children": [],
+          "piece": "stack"
+        }
+      },
+      "call_todo_3": {
+        "body": {
+          "children": [
+            {
+              "piece": "kanji",
+              "text": "件",
+              "tone": "good"
+            },
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "mono": true,
+                      "piece": "toned",
+                      "text": "filed · claimed by this run",
+                      "tone": "neutral"
+                    },
+                    {
+                      "piece": "spacer"
+                    },
+                    {
+                      "mono": true,
+                      "piece": "toned",
+                      "text": "td-0cad",
+                      "tone": "neutral"
+                    },
+                    {
+                      "action": "undo",
+                      "args": {
+                        "forget": "td-0cad"
+                      },
+                      "kind": "secondary",
+                      "label": "undo",
+                      "piece": "button"
+                    }
+                  ],
+                  "piece": "row"
+                },
+                {
+                  "dashed": false,
+                  "piece": "slip",
+                  "text": "Honor retry-after on 429 and 503",
+                  "tone": "good"
+                },
+                {
+                  "children": [
+                    {
+                      "children": [
+                        {
+                          "label": "✓",
+                          "piece": "square",
+                          "style": "filled",
+                          "tone": "good"
+                        },
+                        {
+                          "mono": false,
+                          "piece": "toned",
+                          "text": "Find where the loop reads the header",
+                          "tone": "neutral"
+                        }
+                      ],
+                      "piece": "row"
+                    },
+                    {
+                      "children": [
+                        {
+                          "label": "",
+                          "piece": "square",
+                          "style": "outlined",
+                          "tone": "warn"
+                        },
+                        {
+                          "piece": "text",
+                          "text": "Pass the parsed header to the retry policy"
+                        }
+                      ],
+                      "piece": "row"
+                    },
+                    {
+                      "children": [
+                        {
+                          "label": "",
+                          "piece": "square",
+                          "style": "quiet",
+                          "tone": "neutral"
+                        },
+                        {
+                          "piece": "text",
+                          "text": "Cap the wait at the policy's longest delay"
+                        }
+                      ],
+                      "piece": "row"
+                    },
+                    {
+                      "children": [
+                        {
+                          "label": "",
+                          "piece": "square",
+                          "style": "quiet",
+                          "tone": "neutral"
+                        },
+                        {
+                          "piece": "text",
+                          "text": "Add tests against the fake server"
+                        }
+                      ],
+                      "piece": "row"
+                    }
+                  ],
+                  "piece": "stack"
+                }
+              ],
+              "piece": "stack"
+            }
+          ],
+          "piece": "row"
+        },
+        "head": {
+          "children": [],
+          "piece": "stack"
+        }
+      }
+    },
+    "row": {
+      "line": "td-0cad"
+    }
+  }
+}

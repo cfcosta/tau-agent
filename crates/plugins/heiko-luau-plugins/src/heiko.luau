@@ -905,6 +905,16 @@ function ui.figure(text)
 	return { piece = "figure", text = tostring(text) }
 end
 
+-- One small square for each ink in `inks`: a few things, by how each
+-- went. `neutral` is one not there yet.
+function ui.pips(inks)
+	local out = array({})
+	for _, of in ipairs(inks or {}) do
+		table.insert(out, ink(of))
+	end
+	return { piece = "pips", tones = out }
+end
+
 -- A large glyph in the display face, in the color `of`: the mark beside
 -- a note.
 function ui.kanji(text, of)
@@ -940,13 +950,15 @@ end
 
 -- A heading that opens and closes `children`. `id` names it among the
 -- plugin's sections, so where the person left it is kept; `opts.open`
--- says whether it starts open.
+-- says whether it starts open, and `opts.small` makes it a line inside a
+-- note rather than a page's heading.
 function ui.section(id, title, children, opts)
 	return {
 		piece = "section",
 		id = tostring(id),
 		title = tostring(title),
 		open = (opts and opts.open) == true,
+		small = (opts and opts.small) == true,
 		children = pieces(children),
 	}
 end

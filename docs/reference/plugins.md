@@ -601,7 +601,15 @@ heiko-luau-plugins the plugins repository.
   args)`, a choice a string or `{ label, value }`).
   A tool call's part of the tree is still called its card (`AtCard`,
   `CardView`, a Luau tool's `card`): it draws as a line of the
-  transcript, with its body under it when open. A
+  transcript, with its body under it when open. A Luau plugin's view
+  draws on a call's line with `calls[call_id] = { head, label, badge,
+  body }`. A `head` that is an empty stack (`ui.stack({})`) takes the
+  line away: only the `body` shows, a note in the call's place, and
+  with no `body` the call draws nothing at all, nor does reasoning
+  without words right before it. A plugin folds calls about one thing
+  this way, the last as the note and the ones before it as nothing
+  (`heiko-todo`'s note of an issue a run filed). A call that was
+  refused, flagged, dropped or given a badge keeps its line. A
   button, a switch, an input's Enter or a key in one of its trees
   names one of the plugin's actions, which the interface hands to
   `UiPlugin::on_action` with its arguments and a `ViewCx` made again

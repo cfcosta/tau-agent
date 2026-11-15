@@ -434,12 +434,15 @@ pub enum Node {
     },
     /// A heading that opens and closes the pieces under it. Whether it
     /// is open is the interface's state, under the plugin's `id`; until
-    /// the person clicks, `open` says.
+    /// the person clicks, `open` says. A `small` one is a line inside a
+    /// note: its title in the mono face over a hairline.
     Section {
         id: String,
         title: String,
         #[serde(default)]
         open: bool,
+        #[serde(default)]
+        small: bool,
         #[serde(default, deserialize_with = "nodes")]
         children: Vec<Node>,
     },
@@ -679,6 +682,12 @@ pub enum Node {
         marked: Vec<u32>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         labels: Vec<TickLabel>,
+    },
+    /// One small square for each of a few things, each in its ink: the
+    /// calls a script made, by how they went. No wider than its squares.
+    Pips {
+        #[serde(default)]
+        tones: Vec<Ink>,
     },
     /// The small mark of a state; with a `count` above one, the count
     /// before it.
@@ -1806,6 +1815,7 @@ impl<'a> Draw<'a> {
                 id,
                 title,
                 open,
+                small,
                 children,
             } => {
                 let key = self.key(open_key(id));
@@ -1815,7 +1825,29 @@ impl<'a> Draw<'a> {
                     .and_then(Value::as_bool)
                     .unwrap_or(*open);
                 let turn: &'static str = if open { "hide" } else { "show" };
-                let head = section_header(title.clone(), Some(turn.into()), t)
+                let head = if *small {
+                    div()
+                        .flex()
+                        .items_baseline()
+                        .gap(sp(3.))
+                        .pb(sp(1.5))
+                        .border_b_1()
+                        .border_color(t.hairline)
+                        .child(
+                            heiko_ui_kit::components::mono(
+                                title.clone(),
+                                heiko_ui_kit::theme::Type::SMALL,
+                                t.dim,
+                            )
+                            .flex_1()
+                            .min_w(rems(0.))
+                            .truncate(),
+                        )
+                        .child(heiko_ui_kit::components::link_action(turn, t))
+                } else {
+                    section_header(title.clone(), Some(turn.into()), t)
+                };
+                let head = head
                     .id(SharedString::from(format!("{path}:section")))
                     .debug_selector(selector("section", title))
                     .cursor_pointer()
@@ -2415,6 +2447,18 @@ impl<'a> Draw<'a> {
                     ))
                     .into_any_element()
             }
+            Node::Pips { tones } => div()
+                .flex()
+                .flex_shrink_0()
+                .items_center()
+                .gap(rems(0.1875))
+                .children(tones.iter().take(MAX_TICKS).map(|tone| {
+                    div().size(rems(0.5625)).bg(match tone {
+                        Ink::Neutral => t.hairline,
+                        tone => tone.color(t),
+                    })
+                }))
+                .into_any_element(),
             Node::Mark { state, count } => match count {
                 Some(count) => heiko_ui_kit::components::counted_mark(
                     *count as usize,

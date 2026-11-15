@@ -1,5 +1,6 @@
-//! heiko-codemode's UI (ADR 0017): the `codemode` card, with the script,
-//! the calls it made, each a tool's line, and its output; the store a run's
+//! heiko-codemode's UI (ADR 0017): the `codemode` card, its line saying
+//! what the script called, over the calls it made, each a tool's line,
+//! and its output, the script itself behind a link; the store a run's
 //! scripts keep, in the inspector; and its line in the run's plugin
 //! list.
 //!
@@ -35,10 +36,10 @@ use heiko_ui_plugin::{
     UiPlugin,
     ViewCx,
     points::{self, AtCard, AtRun, CardView},
-    tree::{KeyValue, Kind, MarkState, Node, Tone, open_key},
+    tree::{Ink, KeyValue, Kind, MarkState, Node, Tone, open_key},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::{
     CallStatus,
@@ -468,23 +469,9 @@ pub fn script(data: &CallData) -> &str {
         .unwrap_or_default()
 }
 
-/// The script's first line worth reading: not its options line.
-pub fn first_line(code: &str) -> &str {
-    code.lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty() && !line.starts_with("-- @options:"))
-        .unwrap_or_default()
-}
-
-/// The header's line: `3 calls · 1.2 s`. While the script runs (no
-/// details yet), the calls so far.
+/// What ends the header's line once the script ended: `1.2 s`.
 pub fn label(calls: &Calls, details: Option<&Value>) -> String {
-    let n = calls.rows.len();
-    let mut parts = vec![match (n, calls.complete) {
-        (1, _) => "1 call".to_owned(),
-        (n, true) => format!("{n} calls"),
-        (n, false) => format!("{n}+ calls"),
-    }];
+    let mut parts = Vec::new();
     if let Some(ms) = details.and_then(|details| details["wall_ms"].as_u64()) {
         parts.push(format!("{:.1} s", ms as f64 / 1000.0));
     }
@@ -492,6 +479,107 @@ pub fn label(calls: &Calls, details: Option<&Value>) -> String {
         parts.push("reported partial · final usage unknown".to_owned());
     }
     parts.join(" · ")
+}
+
+/// How many times the script called each tool, in the order it first
+/// called them.
+pub fn counts(calls: &Calls) -> Vec<(&str, usize)> {
+    let mut counts: Vec<(&str, usize)> = Vec::new();
+    for row in &calls.rows {
+        match counts.iter_mut().find(|(name, _)| *name == row.name) {
+            Some((_, n)) => *n += 1,
+            None => counts.push((&row.name, 1)),
+        }
+    }
+    counts
+}
+
+/// The calls the header's strip has a tick for: the first of them.
+pub const STRIP_CALLS: usize = 24;
+
+/// The calls listed before the rest go behind `+ N more`.
+pub const LISTED_CALLS: usize = 4;
+
+/// The id the script of the card `call_id` opens under: its UI state
+/// key is this id's [`open_key`].
+pub fn code_key(call_id: &str) -> String {
+    format!("codemode-code-{call_id}")
+}
+
+/// Whether a call failed, by its own end or a plugin's refusal.
+fn call_failed(row: &Row) -> bool {
+    row.status == CallStatus::Error
+        || row
+            .marks
+            .iter()
+            .any(|mark| matches!(mark.mark, CardMark::Blocked { .. }))
+}
+
+/// The header's line, in place of the script: what it called, as
+/// `read × 4 · grep × 2`, a tick for each call, and the link that opens
+/// the script (`code_open` says whether it is). `ended` is whether the
+/// script did.
+pub fn head(
+    call_id: &str,
+    calls: &Calls,
+    ended: bool,
+    code_open: bool,
+) -> Node {
+    let dim = |text: String| Node::Toned {
+        text,
+        tone: Tone::Neutral,
+        mono: true,
+    };
+    let mut line = Vec::new();
+    for (n, (name, count)) in counts(calls).into_iter().enumerate() {
+        if n > 0 {
+            line.push(dim("·".into()));
+        }
+        line.push(Node::Toned {
+            text: name.to_owned(),
+            tone: Tone::Info,
+            mono: true,
+        });
+        line.push(dim(format!("× {count}")));
+    }
+    if calls.rows.is_empty() {
+        // While it runs, the card's own state says so.
+        if ended {
+            line.push(dim("no calls".into()));
+        }
+    } else {
+        // A square a call, by how it went.
+        let shown = &calls.rows[..calls.rows.len().min(STRIP_CALLS)];
+        line.push(Node::Pips {
+            tones: shown
+                .iter()
+                .map(|row| {
+                    if call_failed(row) {
+                        Ink::Bad
+                    } else if row.status == CallStatus::Running {
+                        Ink::Neutral
+                    } else {
+                        Ink::Good
+                    }
+                })
+                .collect(),
+        });
+    }
+    line.push(Node::Spacer);
+    line.push(Node::Button {
+        label: if code_open { "hide code" } else { "code" }.into(),
+        action: outline::OPEN.into(),
+        args: json!({
+            "key": open_key(&code_key(call_id)),
+            "open": !code_open,
+        }),
+        kind: Kind::Secondary,
+        icon: None,
+        size: Default::default(),
+        wide: false,
+        detail: None,
+    });
+    Node::row(line)
 }
 
 impl UiPlugin for CodemodeUi {
@@ -553,7 +641,7 @@ impl UiPlugin for CodemodeUi {
     }
 
     /// What a tree's buttons ask: the [`Action`] in their arguments,
-    /// or an output item opened or closed.
+    /// or the script or an output item opened or closed.
     fn on_action(
         &self,
         action: &str,
@@ -669,7 +757,11 @@ pub fn card(
         .as_ref()
         .and_then(|result| failure(&result.text, result.error));
     let code = script(data);
-    let head = mono(first_line(code));
+    let code_open = view
+        .ui_value(&open_key(&code_key(&at.call_id)))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let head = head(&at.call_id, &calls, data.result.is_some(), code_open);
     // An output item is open once clicked; a lone one from the start.
     let items = details.map(outline::items).unwrap_or_default();
     let open = |index: usize| {
@@ -679,44 +771,48 @@ pub fn card(
     };
     let body = body(
         &at.call_id,
-        code,
+        code_open.then_some(code),
         &calls,
         failed.clone(),
         &items,
         &open,
         details,
     );
+    let label = label(&calls, details);
     Some(CardView {
         head: Some(head),
-        label: Some(label(&calls, details)),
+        label: (!label.is_empty()).then_some(label),
         failed: failed
             .as_ref()
             .map(|error| error.lines().next().unwrap_or_default().to_owned()),
         edge: failed.as_ref().map(|_| theme::Tone::Danger),
         shape: None,
         body: Some(body),
-        // Open while it runs, so its calls show as they come; closed once
-        // it ended, down to its header.
-        folds: data.result.is_some(),
+        // Its calls stay open under its line; only the script is closed,
+        // behind the line's link.
+        folds: false,
         inset: false,
     })
 }
 
-/// The card's body: the script, its calls, each a tool's line, its
-/// output `items` (each a line that opens, `open` saying which are),
-/// why it failed and what it stored.
+/// The card's body: the script when it is open (`code`), its calls,
+/// each a tool's line, the first [`LISTED_CALLS`] and the rest behind
+/// `+ N more`, its output `items` (each a line that opens, `open`
+/// saying which are), why it failed and what it stored.
 pub fn body(
     call_id: &str,
-    code: &str,
+    code: Option<&str>,
     calls: &Calls,
     failed: Option<String>,
     items: &[outline::Shown],
     open: &dyn Fn(usize) -> bool,
     details: Option<&Value>,
 ) -> Node {
-    let mut body = vec![self::code("luau", formatted(code))];
+    let mut body: Vec<Node> = code
+        .map(|code| self::code("luau", formatted(code)))
+        .into_iter()
+        .collect();
     if !calls.rows.is_empty() {
-        body.extend(part("calls", calls.rows.len()));
         // Every tool's name as wide as the longest, so the arguments
         // start in one column.
         let width = calls
@@ -725,11 +821,27 @@ pub fn body(
             .map(|row| row.name.chars().count())
             .max()
             .unwrap_or_default();
-        for (n, row) in calls.rows.iter().enumerate() {
-            if n > 0 {
-                body.push(Node::Rule);
+        let lines = |rows: &[Row]| {
+            let mut lines = Vec::new();
+            for (n, row) in rows.iter().enumerate() {
+                if n > 0 {
+                    lines.push(Node::Rule);
+                }
+                lines.extend(call_row(row, width));
             }
-            body.extend(call_row(row, width));
+            lines
+        };
+        let listed = calls.rows.len().min(LISTED_CALLS);
+        let (first, rest) = calls.rows.split_at(listed);
+        body.extend(lines(first));
+        if !rest.is_empty() {
+            body.push(Node::Section {
+                small: true,
+                id: format!("codemode-calls-{call_id}/more"),
+                title: format!("+ {} more", rest.len()),
+                open: false,
+                children: lines(rest),
+            });
         }
         if !calls.complete {
             body.push(Node::Toned {
@@ -888,6 +1000,7 @@ fn store_section(state: &State, run: Option<&RunId>) -> Node {
         section.push(heading("Inference traces"));
         section.extend(inference.into_iter().map(|(id, trace)| {
             Node::Section {
+                small: false,
                 id: format!("codemode-trace-{run}-{id}"),
                 title: format!("{id} · {}", trace.status()),
                 open: false,
@@ -1052,6 +1165,7 @@ fn promotions_section(records: &[promotion::Record], run: &RunId) -> Node {
                 request.id
             )),
             Node::Section {
+                small: false,
                 id: format!("codemode-promotion-{run}-{}", request.id),
                 title: "Show exact request".into(),
                 open: false,
@@ -1152,12 +1266,14 @@ fn version_row(
             }
         )),
         Node::Section {
+            small: false,
             id: id("source"),
             title: "Show source".into(),
             open: false,
             children: vec![code("luau", formatted(definition.source()))],
         },
         Node::Section {
+            small: false,
             id: id("signatures"),
             title: "Show signatures".into(),
             open: false,
@@ -1230,6 +1346,7 @@ fn test_section(
         ));
     }
     Node::Section {
+        small: false,
         id,
         title: format!(
             "{} · test {} · {}",

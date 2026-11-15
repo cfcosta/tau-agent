@@ -49,6 +49,7 @@ tree-sitter-python = "0.25.0"
 tree-sitter-rust = "0.24.2"
 tree-sitter-toml-ng = "0.7.0"
 tree-sitter-typescript = "0.23.2"
+tree-sitter-md = "0.5.4"
 libc = "0.2.189"
 # Codemode's sandbox: Luau, run from tokio, with JSON values
 # (docs/decisions/0018-codemode-and-mcp.md).

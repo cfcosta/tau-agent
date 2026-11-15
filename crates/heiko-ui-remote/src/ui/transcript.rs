@@ -100,13 +100,32 @@ pub fn item(
     let Some(item) = run.items.get(index) else {
         return div().into_any_element();
     };
+    // A call its plugin folded into a later one's note draws nothing,
+    // and neither does the wordless reasoning that led to it.
+    let folded_at = |at: usize| match run.items.get(at) {
+        Some(Item::Tool(card)) => folded(ws, run, card),
+        _ => None,
+    };
+    let nothing = match item {
+        Item::Tool(_) => folded_at(index) == Some(Folded::Away),
+        Item::Thinking {
+            text,
+            secs: Some(_),
+        } if text.is_empty() => folded_at(index + 1) == Some(Folded::Away),
+        _ => false,
+    };
+    if nothing && index + 1 < run.items.len() {
+        return div().into_any_element();
+    }
     // Calls one after another are the rows of one list; a refused one
-    // stands apart, under its rule.
+    // stands apart, under its rule, and so does a note that stands for
+    // its calls.
     let stacked = matches!(
         (index.checked_sub(1).and_then(|at| run.items.get(at)), item),
         (Some(Item::Tool(_)), Item::Tool(card))
             if !matches!(card.state, ToolState::Blocked { .. })
-    );
+    ) && folded_at(index).is_none()
+        && index.checked_sub(1).and_then(folded_at).is_none();
     let above = if index == 0 {
         edge
     } else if stacked {
@@ -571,11 +590,72 @@ fn duration(secs: u64) -> String {
     }
 }
 
+/// How a call its plugin folded into a note draws, in place of its
+/// line.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Folded {
+    /// Nothing at all: a later call's note stands for it.
+    Away,
+    /// Only what its plugin draws under it: the note.
+    Note,
+}
+
+/// Whether `head`, what a plugin gave in place of a call's arguments,
+/// is an empty stack: the call has no line of its own.
+fn headless(head: Option<&heiko_ui_plugin::tree::Node>) -> bool {
+    use heiko_ui_plugin::tree::Node;
+    matches!(head, Some(Node::Stack { children }) if children.is_empty())
+}
+
+/// Whether the call `card` has no line of its own, and what is left of
+/// it: its plugin gave it an empty stack for a head. A call that was
+/// refused, flagged or dropped, or that a plugin put a badge on, keeps
+/// its line.
+fn folded(ws: &Workspace, run: &RunView, card: &ToolCard) -> Option<Folded> {
+    use heiko_ui_plugin::points;
+    if card.dropped.is_some()
+        || matches!(
+            card.state,
+            ToolState::Blocked { .. } | ToolState::Flagged { .. }
+        )
+    {
+        return None;
+    }
+    let contexts: Vec<(String, points::AtCard)> = ws
+        .plugin_names()
+        .into_iter()
+        .map(|name| (name.to_owned(), crate::views::at_card(run, card, name)))
+        .collect();
+    let context_of = |plugin: &str| {
+        contexts
+            .iter()
+            .find(|(name, _)| name == plugin)
+            .map(|(_, at)| at)
+    };
+    let (_, view) = ws
+        .contributions_named(points::CARD, context_of)
+        .into_iter()
+        .next()?;
+    if !headless(view.head.as_ref())
+        || !ws
+            .contributions_named(points::CARD_BADGE, context_of)
+            .is_empty()
+    {
+        return None;
+    }
+    let under = view.body.is_some()
+        || !ws
+            .contributions_named(points::CARD_BODY, context_of)
+            .is_empty();
+    Some(if under { Folded::Note } else { Folded::Away })
+}
+
 /// A tool call, as one line of the transcript: the tool's name in the
 /// color of its kind, its arguments, and what came back at the line's
 /// end, or under the line on a phone. Its body, when open, sits under
 /// it on a flat band. A refused call stands under a red rule, with what
-/// it proposed.
+/// it proposed. A call its plugin gave an empty stack for a head has no
+/// line: only what the plugin draws under it shows.
 fn tool(
     ws: &Workspace,
     run: &RunView,
@@ -620,6 +700,7 @@ fn tool(
         let origin = crate::plugins::Origin::at(at);
         Some(ws.plugin_tree(plugin, &id, &node, origin, cx))
     };
+    let headless = headless(view.head.as_ref());
     let (head, shape, card_body) = (
         part("head", view.head),
         part("shape", view.shape),
@@ -628,6 +709,10 @@ fn tool(
     let badges =
         ws.drawn_with(heiko_ui_plugin::points::CARD_BADGE, context_of, cx);
     let blocked = matches!(card.state, ToolState::Blocked { .. });
+    let lineless = headless
+        && badges.is_empty()
+        && !blocked
+        && !matches!(card.state, ToolState::Flagged { .. });
     // What plugins draw under a call. Under a refused one it is the
     // verdict of the plugin that refused it: a row's first piece says
     // why, and the rest measure it, beside that.
@@ -837,6 +922,14 @@ fn tool(
                     })
             });
 
+    if lineless {
+        return div()
+            .flex()
+            .flex_col()
+            .gap(sp(2.))
+            .children(body)
+            .children(extras);
+    }
     div()
         .flex()
         .flex_col()

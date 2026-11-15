@@ -54,6 +54,7 @@ mcp                mcp               7
 ledger             ledger            12 --finished
 direnv             envrc-consent     7
 skill              skill             7  --steps 0
+todo               todo              7  --steps 0
 goal               goal              7
 watcher            watcher           30
 reasoning          note-open         7  --steps 4

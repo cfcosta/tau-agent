@@ -417,6 +417,7 @@ pub static SCREENS: &[(&str, Screen)] = &[
         )
     }),
     ("skill", |ws, _, cx| skill(ws, true, cx)),
+    ("todo", |ws, _, cx| todo(ws, cx)),
     ("skill-missing", |ws, _, cx| skill(ws, false, cx)),
     ("codemode", |ws, _, cx| codemode(ws, cx)),
     ("reasoning-wait", |ws, _, cx| reasoning(ws, None, cx)),
@@ -1999,6 +2000,53 @@ fn skill(workspace: &mut Workspace, found: bool, cx: &mut Context<Workspace>) {
     }
 }
 
+/// heiko-agent's main chat after it filed an issue, claimed it and wrote
+/// its steps: heiko-todo's one note for the three calls.
+fn todo(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
+    let run = run_id();
+    workspace.navigate(Route::Run(run.clone()), cx);
+    for (n, tool) in ["todo_create", "todo_claim", "todo_steps"]
+        .into_iter()
+        .enumerate()
+    {
+        let call = format!("call_todo_{}", n + 1);
+        workspace.apply(
+            HostUpdate::Event(RunEvent::ToolStart {
+                run: run.clone(),
+                call_id: call.clone(),
+                tool: tool.into(),
+                args: serde_json::json!({}),
+                parent: None,
+            }),
+            cx,
+        );
+        workspace.apply(
+            HostUpdate::Event(RunEvent::ToolEnd {
+                run: run.clone(),
+                call_id: call,
+                output: std::sync::Arc::new(
+                    heiko_agent::tool::ToolOutput::text("ok".to_owned()),
+                ),
+                is_error: false,
+                parent: None,
+            }),
+            cx,
+        );
+    }
+    let fixture = crate::luau_fixture(heiko_luau_plugins::names::TODO, "note");
+    for body in crate::luau_records_of(heiko_luau_plugins::names::TODO, &fixture)
+    {
+        workspace.apply(
+            HostUpdate::PluginFold {
+                run: run.clone(),
+                plugin: heiko_luau_plugins::NAME.into(),
+                body,
+            },
+            cx,
+        );
+    }
+}
+
 /// heiko-agent's main chat with a `codemode` script that read a project's
 /// files: its card open, its first output item too.
 fn codemode(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
@@ -2086,7 +2134,6 @@ fn codemode(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         }),
         cx,
     );
-    workspace.toggle_card(&run, &call, cx);
     // Its first output open, in heiko-codemode's UI state (ADR 0045).
     workspace.set_plugin_ui(
         heiko_codemode::PLUGIN,

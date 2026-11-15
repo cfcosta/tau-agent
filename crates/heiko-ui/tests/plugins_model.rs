@@ -195,6 +195,7 @@ impl<const N: usize> Probe<N> {
             ]),
             button(&format!("{name} mark"), "mark", json!({ "probe": name })),
             Node::Section {
+                small: false,
                 id: "details".into(),
                 title: format!("{name} details"),
                 open: false,

@@ -230,7 +230,7 @@ fn stage_square(n: usize, at: Option<usize>, t: &Theme) -> Div {
     }
 }
 
-/// heiko's wordmark and "setup", the stages as numbered squares joined
+/// heiko's wordmark, the stages as numbered squares joined
 /// by hairlines, and where you are, over a heavy rule. A phone shows the
 /// squares without their names.
 fn top_bar(
@@ -307,9 +307,6 @@ fn top_bar(
             logo(t, 22.)
         } else {
             wordmark(24., t)
-        })
-        .when(!compact, |bar| {
-            bar.child(div().text_color(t.dim).child("setup"))
         })
         .child(div().flex_1())
         .child(

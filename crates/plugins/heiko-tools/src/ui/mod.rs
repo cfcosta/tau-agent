@@ -749,6 +749,7 @@ fn lang_name(lang: syntax::Lang) -> &'static str {
         Lang::JavaScript => "javascript",
         Lang::Json => "json",
         Lang::Luau => "luau",
+        Lang::Markdown => "markdown",
         Lang::Nix => "nix",
         Lang::Python => "python",
         Lang::Rust => "rust",

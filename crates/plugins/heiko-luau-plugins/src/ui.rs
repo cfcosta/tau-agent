@@ -376,11 +376,13 @@ pub(crate) fn rewrite(node: Node, f: &mut dyn FnMut(Node) -> Node) -> Node {
             id,
             title,
             open,
+            small,
             children,
         } => Node::Section {
             id,
             title,
             open,
+            small,
             children: each(children, f),
         },
         Node::Modal {
@@ -554,11 +556,13 @@ fn embed_as(piece: &Value, plugin: &str, mark: &str) -> Node {
             id,
             title,
             open,
+            small,
             children,
         } => Node::Section {
             id: own(id),
             title,
             open,
+            small,
             children,
         },
         Node::Tabs { id, tabs } => Node::Tabs { id: own(id), tabs },
@@ -2266,7 +2270,9 @@ fn pane(state: &State) -> Option<heiko_ui_plugin::points::PaneView> {
 
 /// What the first plugin by name whose view draws on the card of
 /// `call_id` puts in place of its head and at its header's end:
-/// `calls = { [call_id] = { head, label } }`.
+/// `calls = { [call_id] = { head, label } }`. A head that is an empty
+/// stack leaves the call no line at all: only its `body` shows, a note
+/// in the call's place, or nothing.
 fn card_header(state: &State, call_id: &str) -> Option<CardView> {
     state
         .plugins
@@ -3295,6 +3301,36 @@ mod tests {
         let body = format!("{:?}", on_card(&state, "c1", "body").unwrap());
         assert!(body.contains("rules says"), "{body}");
         assert_eq!(on_card(&state, "c2", "badge"), None);
+    }
+
+    /// A call whose `head` is an empty stack keeps it as one, which the
+    /// transcript reads as a call with no line: its `body` is the note
+    /// that stands for it, and a call with neither draws nothing.
+    #[test]
+    fn a_views_call_with_an_empty_head_has_no_line() {
+        let mut state = State::default();
+        let mut run = heiko_ui_plugin::testing::FakeRun::default();
+        let nothing = json!({ "piece": "stack", "children": [] });
+        state.apply(
+            Record::View {
+                plugin: "todo".into(),
+                view: json!({ "calls": {
+                    "c1": { "head": nothing },
+                    "c2": {
+                        "head": nothing,
+                        "body": { "piece": "text", "text": "the note" },
+                    },
+                } }),
+            },
+            &mut run,
+        );
+        for call in ["c1", "c2"] {
+            let head = card_header(&state, call).unwrap().head;
+            assert_eq!(head, Some(Node::Stack { children: vec![] }), "{call}");
+        }
+        assert_eq!(on_card(&state, "c1", "body"), None);
+        let body = format!("{:?}", on_card(&state, "c2", "body").unwrap());
+        assert!(body.contains("the note"), "{body}");
     }
 
     /// A view's `calls` that say `mark` mark their cards, refused with

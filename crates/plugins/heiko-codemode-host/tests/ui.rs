@@ -62,6 +62,7 @@ use heiko_ui_plugin::{
     UiPlugin as _,
     ViewCx,
     points::AtCard,
+    tree::{Ink, Node, open_key},
 };
 
 fn module_record(record: modules::Record) -> Value {
@@ -982,7 +983,7 @@ fn verdicts_mark_their_rows() {
     assert_eq!(stored.rows[0].marks, live.rows[0].marks);
     assert_eq!(
         ui::label(&stored, data.result.as_ref().unwrap().details.as_ref()),
-        "1 call · 0.0 s"
+        "0.0 s"
     );
 }
 
@@ -1182,8 +1183,9 @@ fn draw(at: &AtCard) -> Option<(Option<String>, Option<String>, bool, bool)> {
         .map(|card| (card.label, card.failed, card.folds, card.body.is_some()))
 }
 
-/// The card is codemode's only: open with its calls while the script
-/// runs, folded to its header once it ended, and red when it failed.
+/// The card is codemode's only: its calls open under its line while the
+/// script runs and once it ended, its time at the line's end, and red
+/// when it failed.
 #[test]
 fn the_card_shows_the_script_as_it_goes() {
     assert!(draw(&at_card("exec_command", CallData::default())).is_none());
@@ -1194,7 +1196,7 @@ fn the_card_shows_the_script_as_it_goes() {
     data.nested_start("call_1/1", CALL, "read", &json!({ "path": "a" }));
     let (label, failed, folds, body) =
         draw(&at_card("codemode", data.clone())).unwrap();
-    assert_eq!(label.as_deref(), Some("1 call"));
+    assert_eq!(label, None);
     assert_eq!(failed, None);
     assert!(!folds && body);
     data.result = Some(CallResult {
@@ -1209,7 +1211,148 @@ fn the_card_shows_the_script_as_it_goes() {
     });
     data.end();
     let (label, failed, folds, _) = draw(&at_card("codemode", data)).unwrap();
-    assert_eq!(label.as_deref(), Some("0 calls · 1.5 s"));
+    assert_eq!(label.as_deref(), Some("1.5 s"));
     assert_eq!(failed.as_deref(), Some("codemode:2: boom"));
-    assert!(folds);
+    assert!(!folds);
+}
+
+/// A row of a result's `details.calls`, as the tree's tests list them.
+fn stored_row(n: usize, name: &str, status: &str) -> Value {
+    json!({ "id": format!("{CALL}/{n}"), "name": name, "args": "{}",
+            "status": status, "ms": 3, "error": null, "cost": null })
+}
+
+fn calls_of(rows: Vec<Value>) -> ui::Calls {
+    ui::stored_rows(&json!({ "calls": rows, "complete": true })).unwrap()
+}
+
+/// The pieces of a row.
+fn row_of(node: &Node) -> &[Node] {
+    match node {
+        Node::Row { children } => children,
+        other => panic!("not a row: {other:?}"),
+    }
+}
+
+fn toned(node: &Node) -> &str {
+    match node {
+        Node::Toned { text, .. } => text,
+        other => panic!("not a toned line: {other:?}"),
+    }
+}
+
+/// The line says what the script called, in the order of first use, a
+/// tick for each call up to the strip's cap, and never its source.
+#[test]
+fn the_line_counts_what_the_script_called() {
+    let mut rows: Vec<Value> = ["read", "read", "grep", "read", "grep"]
+        .iter()
+        .enumerate()
+        .map(|(n, name)| stored_row(n + 1, name, "ok"))
+        .collect();
+    rows[2] = stored_row(3, "grep", "error");
+    let calls = calls_of(rows);
+    assert_eq!(ui::counts(&calls), [("read", 3), ("grep", 2)]);
+    let head = ui::head(CALL, &calls, true, false);
+    let line = row_of(&head);
+    let words: Vec<&str> = line[..5].iter().map(toned).collect();
+    assert_eq!(words, ["read", "× 3", "·", "grep", "× 2"]);
+    let Node::Pips { tones } = &line[5] else {
+        panic!("no strip: {:?}", line[5]);
+    };
+    assert_eq!(
+        tones.as_slice(),
+        [Ink::Good, Ink::Good, Ink::Bad, Ink::Good, Ink::Good]
+    );
+    let Node::Button { label, args, .. } = &line[7] else {
+        panic!("no link: {:?}", line[7]);
+    };
+    assert_eq!(label, "code");
+    assert_eq!(
+        args,
+        &json!({ "key": open_key(&ui::code_key(CALL)), "open": true })
+    );
+    let open = ui::head(CALL, &calls, true, true);
+    let Node::Button { label, args, .. } = row_of(&open).last().unwrap()
+    else {
+        panic!("no link");
+    };
+    assert_eq!(
+        (label.as_str(), &args["open"]),
+        ("hide code", &json!(false))
+    );
+
+    // Past the cap, the strip is the first calls'.
+    let many = calls_of(
+        (1..=ui::STRIP_CALLS + 6)
+            .map(|n| stored_row(n, "read", "ok"))
+            .collect(),
+    );
+    let head = ui::head(CALL, &many, true, false);
+    assert_eq!(toned(&row_of(&head)[1]), "× 30");
+    let Node::Pips { tones } = &row_of(&head)[2] else {
+        panic!("no strip");
+    };
+    assert_eq!(tones.len(), 24);
+
+    // With nothing called: nothing while it runs, then no calls.
+    let none = calls_of(Vec::new());
+    assert!(matches!(
+        row_of(&ui::head(CALL, &none, false, false))[0],
+        Node::Spacer
+    ));
+    assert_eq!(
+        toned(&row_of(&ui::head(CALL, &none, true, false))[0]),
+        "no calls"
+    );
+}
+
+/// The script is closed until its link opens it; the calls are listed
+/// under the line, the first four and the rest behind `+ N more`.
+#[test]
+fn the_body_lists_the_calls_and_keeps_the_script_closed() {
+    let calls =
+        calls_of((1..=6).map(|n| stored_row(n, "read", "ok")).collect());
+    let closed = ui::body(CALL, None, &calls, None, &[], &|_| false, None);
+    let Node::Stack { children } = &closed else {
+        panic!("not a stack: {closed:?}");
+    };
+    assert!(
+        !children
+            .iter()
+            .any(|node| matches!(node, Node::Code { .. }))
+    );
+    // Four rows, a rule between each, then the rest.
+    assert_eq!(children.len(), ui::LISTED_CALLS * 2);
+    let Some(Node::Section {
+        id,
+        title,
+        open,
+        small,
+        children: rest,
+    }) = children.last()
+    else {
+        panic!("no more: {children:?}");
+    };
+    assert_eq!(id, &format!("codemode-calls-{CALL}/more"));
+    assert_eq!((title.as_str(), *open, *small), ("+ 2 more", false, true));
+    assert_eq!(rest.len(), 3);
+
+    let opened = ui::body(
+        CALL,
+        Some("return 1"),
+        &calls_of(vec![stored_row(1, "read", "ok")]),
+        None,
+        &[],
+        &|_| false,
+        None,
+    );
+    let Node::Stack { children } = &opened else {
+        panic!("not a stack: {opened:?}");
+    };
+    let Node::Code { lang, .. } = &children[0] else {
+        panic!("no script: {children:?}");
+    };
+    assert_eq!(lang.as_deref(), Some("luau"));
+    assert_eq!(children.len(), 2);
 }

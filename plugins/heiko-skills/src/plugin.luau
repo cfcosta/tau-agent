@@ -156,7 +156,7 @@ return heiko.plugin({
 	},
 
 	-- Each loaded skill's card: which, what it is for, and what the model
-	-- read: the file on a stamp, over its instructions on a band.
+	-- read: its file, which opens onto its instructions as written.
 	view = function(model)
 		local calls = {}
 		for call, loaded in pairs(model.loaded or {}) do
@@ -164,8 +164,7 @@ return heiko.plugin({
 				head = ui.mono(loaded.name),
 				body = ui.stack({
 					ui.text(loaded.description),
-					ui.row({ ui.stamp(loaded.file) }),
-					ui.band({ ui.markdown(loaded.instructions) }),
+					ui.section("skill-" .. call, loaded.file, { ui.code("markdown", loaded.instructions) }, { small = true }),
 				}),
 			}
 		end

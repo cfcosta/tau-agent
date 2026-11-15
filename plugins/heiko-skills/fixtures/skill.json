@@ -36,21 +36,17 @@
             {
               "children": [
                 {
-                  "label": "~/.agents/skills/release-notes/SKILL.md",
-                  "piece": "stamp",
-                  "tone": "neutral"
-                }
-              ],
-              "piece": "row"
-            },
-            {
-              "children": [
-                {
-                  "piece": "markdown",
+                  "first_line": null,
+                  "lang": "markdown",
+                  "piece": "code",
                   "text": "Run scripts/commits.sh with the two tags, group what it lists, and lead with what users will notice."
                 }
               ],
-              "piece": "band"
+              "id": "skill-call_skill",
+              "open": false,
+              "piece": "section",
+              "small": true,
+              "title": "~/.agents/skills/release-notes/SKILL.md"
             }
           ],
           "piece": "stack"

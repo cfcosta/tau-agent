@@ -8,7 +8,7 @@ use heiko_ui_kit::{
 };
 
 /// Code that each language's grammar should color, and a part of it.
-const SAMPLES: [(Lang, &str, &str, Kind); 11] = [
+const SAMPLES: [(Lang, &str, &str, Kind); 12] = [
     (Lang::Bash, "echo \"hi\" # note", "# note", Kind::Comment),
     (Lang::Go, "func main() { return }", "func", Kind::Keyword),
     (Lang::JavaScript, "const x = 'hi';", "'hi'", Kind::String),
@@ -19,6 +19,7 @@ const SAMPLES: [(Lang, &str, &str, Kind); 11] = [
         "function",
         Kind::Keyword,
     ),
+    (Lang::Markdown, "# Title\n\ntext", "Title", Kind::Function),
     (Lang::Nix, "{ a = \"hi\"; }", "\"hi\"", Kind::String),
     (Lang::Python, "def f():\n    return 1", "def", Kind::Keyword),
     (Lang::Rust, "fn main() { let x = 1; }", "fn", Kind::Keyword),
@@ -59,7 +60,8 @@ fn languages_come_from_paths_and_tags() {
     assert_eq!(Lang::of_path("Cargo.lock"), Some(Lang::Toml));
     assert_eq!(Lang::of_path("repo/.envrc"), Some(Lang::Bash));
     assert_eq!(Lang::of_path("README"), None);
-    assert_eq!(Lang::of_path("notes.md"), None);
+    assert_eq!(Lang::of_path("notes.md"), Some(Lang::Markdown));
+    assert_eq!(Lang::of_path("notes.txt"), None);
     assert_eq!(Lang::of_name("Python"), Some(Lang::Python));
     assert_eq!(Lang::of_name("luau"), Some(Lang::Luau));
 }
