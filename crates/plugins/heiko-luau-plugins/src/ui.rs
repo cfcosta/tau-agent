@@ -1239,10 +1239,13 @@ impl UiPlugin for LuauPluginsUi {
             .contribute(points::CARD, |at: &AtCard, view| {
                 let details =
                     at.data.result.as_ref().and_then(|r| r.details.as_ref());
-                // What the plugin's tool does, as its table declares it.
+                // What the plugin's tool does, as its table declares it:
+                // as its result says, or its plugin's declaration while
+                // it runs.
                 let kind = details
                     .and_then(|details| details.get("kind"))
-                    .and_then(|kind| serde_json::from_value(kind.clone()).ok());
+                    .and_then(|kind| serde_json::from_value(kind.clone()).ok())
+                    .or_else(|| declared_kind(view.data, &at.tool));
                 if let Some(ask) =
                     view.state.and_then(|state| state.asks.get(&at.call_id))
                 {
@@ -1258,14 +1261,18 @@ impl UiPlugin for LuauPluginsUi {
                 {
                     return Some(CardView { kind, ..header });
                 }
-                let details = details?;
-                let plugin = details.get("plugin")?.as_str()?;
-                let card = details.get("card").filter(|card| !card.is_null());
+                // The tool's own card, once it ended.
+                let card = details.and_then(|details| {
+                    let plugin = details.get("plugin")?.as_str()?;
+                    let card =
+                        details.get("card").filter(|card| !card.is_null())?;
+                    Some(embed(card, plugin))
+                });
                 if card.is_none() && kind.is_none() {
                     return None;
                 }
                 Some(CardView {
-                    body: card.map(|card| embed(card, plugin)),
+                    body: card,
                     kind,
                     ..CardView::default()
                 })
@@ -2284,6 +2291,20 @@ fn pane(state: &State) -> Option<heiko_ui_plugin::points::PaneView> {
                 body: embed(&pane["body"], name),
             })
         })
+}
+
+/// The kind the active plugin that adds the tool `tool` declares for it.
+fn declared_kind(
+    overview: &Overview,
+    tool: &str,
+) -> Option<heiko_ui_kit::theme::ToolKind> {
+    overview
+        .plugins
+        .iter()
+        .filter_map(|entry| entry.declaration.as_ref())
+        .flat_map(|declaration| &declaration.tools)
+        .find(|spec| spec.name == tool)?
+        .kind
 }
 
 /// What the first plugin by name whose view draws on the card of

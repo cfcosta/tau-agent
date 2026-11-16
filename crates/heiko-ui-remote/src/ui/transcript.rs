@@ -137,7 +137,7 @@ pub fn item(
     });
     let head = headed
         .filter(|stretch| stretch.first == index)
-        .map(|stretch| stretch_head(run, stretch, folded, t, cx));
+        .map(|stretch| stretch_head(ws, run, stretch, folded, t, cx));
     if folded && head.is_none() {
         let waits = matches!(item, Item::Tool(card) if waits(ws, run, card));
         if !waits {
@@ -226,9 +226,28 @@ fn first_call(run: &RunView, stretch: Stretch) -> Option<&str> {
 /// Whether the call of `card` waits on the person, as its plugin says:
 /// it shows while its stretch is folded. Only a call still going can.
 fn waits(ws: &Workspace, run: &RunView, card: &ToolCard) -> bool {
-    if !matches!(card.state, ToolState::Running) {
-        return false;
-    }
+    matches!(card.state, ToolState::Running)
+        && card_view(ws, run, card).is_some_and(|view| view.waits)
+}
+
+/// What the call of `card` does: as the plugin that draws it says, or
+/// as its result or name says.
+fn drawn_kind(
+    ws: &Workspace,
+    run: &RunView,
+    card: &ToolCard,
+) -> Option<heiko_ui_kit::theme::ToolKind> {
+    card_view(ws, run, card)
+        .and_then(|view| view.kind)
+        .or_else(|| super::stretch::kind(card))
+}
+
+/// How the plugin that draws the call of `card` draws it.
+fn card_view(
+    ws: &Workspace,
+    run: &RunView,
+    card: &ToolCard,
+) -> Option<heiko_ui_plugin::points::CardView> {
     let contexts: Vec<(String, heiko_ui_plugin::points::AtCard)> = ws
         .plugin_names()
         .into_iter()
@@ -243,13 +262,14 @@ fn waits(ws: &Workspace, run: &RunView, card: &ToolCard) -> bool {
     ws.contributions_named(heiko_ui_plugin::points::CARD, context_of)
         .into_iter()
         .next()
-        .is_some_and(|(_, view)| view.waits)
+        .map(|(_, view)| view)
 }
 
 /// A stretch's head line (ADR 0060): a tick for each call in its kind's
 /// color, the steps' range, what they did, how many failed or are at
 /// work, and `fold` or `open`. Clicking it folds or opens the stretch.
 fn stretch_head(
+    ws: &Workspace,
     run: &RunView,
     stretch: Stretch,
     folded: bool,
@@ -264,7 +284,7 @@ fn stretch_head(
             let color = if super::stretch::failed(card) {
                 t.red
             } else {
-                super::stretch::kind(card)
+                drawn_kind(ws, run, card)
                     .map_or(t.text, |kind| t.roles.kind(kind))
             };
             (color, matches!(card.state, ToolState::Running))
