@@ -646,6 +646,24 @@ one the workspace store gives `main/`.
   another's: unlike `git worktree prune`, which jj's `unlink_worktree`
   runs, it leaves alone a worktree whose folder is gone. The person's
   `git worktree prune` keeps heiko's, whose folders exist.
+- A new run's workspace shares its files' blocks with heiko's other
+  workspaces where the filesystem can (Btrfs, XFS with reflinks, APFS;
+  ADR 0061). Before jj checks the commit out, each plain file of the
+  commit that the main chat's workspace or another run's holds
+  unchanged is cloned from it: the source's tree has the same file at
+  that path, and the file on disk is a regular file with the size and
+  modification time jj recorded at the source's last snapshot. A clone
+  is `FICLONE` on Linux and `fclonefileat` on macOS, never a copy or a
+  link, and gets the mode jj's checkout gives (`0o644` or `0o755`).
+  Symlinks, conflicts, paths under `.git` or `.jj`, and files no source
+  holds are written by jj's `check_out`, which leaves the clones in
+  place. A snapshot that tracks no new files then hashes the clones;
+  when its tree is not the commit's, a second `check_out` rewrites what
+  differs from the store. A probe clone in the new workspace's `.jj`
+  comes first: where it fails (ext4, tmpfs) nothing is cloned. Sources
+  are on the new workspace's device and made whole; the person's own
+  checkout is never one, and a source's record is read from a copy, so
+  nothing in a source is written.
 
 - `Project::clone(url, token, root, identity)` makes the project at
   `root` by fetching every branch and tag of `url` with gix, as

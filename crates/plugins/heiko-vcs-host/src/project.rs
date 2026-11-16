@@ -1137,8 +1137,13 @@ impl ProjectRepo {
         let mut workspace = begun
             .finish(&repo, WorkspaceNameBuf::from(name))
             .map_err(VcsError::AddWorkspace)?;
-        block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
-            .map_err(VcsError::CheckOut)?;
+        let sources = self.clone_sources(&repo, name)?;
+        crate::reflink::check_out(
+            &mut workspace,
+            repo.op_id().clone(),
+            &wc,
+            &sources,
+        )?;
         crate::colocate::ignore_jj_dir(&dir)?;
         made(&dir)?;
         drop(git);
@@ -1501,8 +1506,13 @@ impl ProjectRepo {
         let mut workspace = begun
             .finish(&repo, WorkspaceNameBuf::from(name))
             .map_err(VcsError::AddWorkspace)?;
-        block_on(workspace.check_out(repo.op_id().clone(), None, &wc))
-            .map_err(VcsError::CheckOut)?;
+        let sources = self.clone_sources(&repo, name)?;
+        crate::reflink::check_out(
+            &mut workspace,
+            repo.op_id().clone(),
+            &wc,
+            &sources,
+        )?;
         crate::colocate::ignore_jj_dir(&dir)?;
         made(&dir)?;
         drop(git);
@@ -1597,7 +1607,11 @@ impl ProjectRepo {
     /// store has it. The main chat's is not one, nor is any the person
     /// made, wherever it is.
     pub fn workspaces(&self) -> Result<Vec<String>, VcsError> {
-        let repo = self.load()?;
+        self.runs_in(self.load()?.as_ref())
+    }
+
+    /// [`Self::workspaces`], as `repo` has them.
+    fn runs_in(&self, repo: &ReadonlyRepo) -> Result<Vec<String>, VcsError> {
         let store = repo.loader().workspace_store();
         let mut names = Vec::new();
         for name in repo.view().wc_commit_ids().keys() {
@@ -1613,6 +1627,23 @@ impl ProjectRepo {
         }
         names.sort();
         Ok(names)
+    }
+
+    /// The workspaces run `name`'s new workspace can clone its files
+    /// from (ADR 0061): the main chat's and the other runs', heiko's
+    /// own, never the person's.
+    fn clone_sources(
+        &self,
+        repo: &ReadonlyRepo,
+        name: &str,
+    ) -> Result<Vec<PathBuf>, VcsError> {
+        let mut sources = vec![self.main_dir().to_owned()];
+        for run in self.runs_in(repo)? {
+            if run != name {
+                sources.push(self.workspace_dir(&run));
+            }
+        }
+        Ok(sources)
     }
 
     /// Makes the main chat's workspace heiko's own in a project made

@@ -27,6 +27,8 @@ jj-lib.workspace = true
 pollster.workspace = true
 rand.workspace = true
 rand_chacha.workspace = true
+# Clones a run's files from another workspace's (ADR 0061).
+rustix = { workspace = true, features = ["fs"] }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

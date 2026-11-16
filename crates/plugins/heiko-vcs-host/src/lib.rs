@@ -47,6 +47,7 @@ mod operations;
 mod ops;
 pub mod plugin;
 pub mod project;
+mod reflink;
 mod repository;
 mod revsets;
 pub mod run_workspace;
