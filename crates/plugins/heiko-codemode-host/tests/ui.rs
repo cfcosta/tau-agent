@@ -62,7 +62,7 @@ use heiko_ui_plugin::{
     UiPlugin as _,
     ViewCx,
     points::AtCard,
-    tree::{Ink, Node, open_key},
+    tree::{Node, StepState, open_key},
 };
 
 fn module_record(record: modules::Record) -> Value {
@@ -981,9 +981,10 @@ fn verdicts_mark_their_rows() {
     data.end();
     let stored = ui::calls(CALL, &data);
     assert_eq!(stored.rows[0].marks, live.rows[0].marks);
+    // Under a second, the time is not shown (ADR 0060).
     assert_eq!(
         ui::label(&stored, data.result.as_ref().unwrap().details.as_ref()),
-        "0.0 s"
+        ""
     );
 }
 
@@ -1236,13 +1237,13 @@ fn row_of(node: &Node) -> &[Node] {
 
 fn toned(node: &Node) -> &str {
     match node {
-        Node::Toned { text, .. } => text,
+        Node::Toned { text, .. } | Node::Mono { text } => text,
         other => panic!("not a toned line: {other:?}"),
     }
 }
 
-/// The line says what the script called, in the order of first use, a
-/// tick for each call up to the strip's cap, and never its source.
+/// The line says what the script called, in the order of first use, and
+/// never its source.
 #[test]
 fn the_line_counts_what_the_script_called() {
     let mut rows: Vec<Value> = ["read", "read", "grep", "read", "grep"]
@@ -1255,17 +1256,10 @@ fn the_line_counts_what_the_script_called() {
     assert_eq!(ui::counts(&calls), [("read", 3), ("grep", 2)]);
     let head = ui::head(CALL, &calls, true, false);
     let line = row_of(&head);
-    let words: Vec<&str> = line[..5].iter().map(toned).collect();
-    assert_eq!(words, ["read", "× 3", "·", "grep", "× 2"]);
-    let Node::Pips { tones } = &line[5] else {
-        panic!("no strip: {:?}", line[5]);
-    };
-    assert_eq!(
-        tones.as_slice(),
-        [Ink::Good, Ink::Good, Ink::Bad, Ink::Good, Ink::Good]
-    );
-    let Node::Button { label, args, .. } = &line[7] else {
-        panic!("no link: {:?}", line[7]);
+    let words: Vec<&str> = line[..3].iter().map(toned).collect();
+    assert_eq!(words, ["read ×3", "·", "grep ×2"]);
+    let Node::Button { label, args, .. } = &line[4] else {
+        panic!("no link: {:?}", line[4]);
     };
     assert_eq!(label, "code");
     assert_eq!(
@@ -1282,19 +1276,6 @@ fn the_line_counts_what_the_script_called() {
         ("hide code", &json!(false))
     );
 
-    // Past the cap, the strip is the first calls'.
-    let many = calls_of(
-        (1..=ui::STRIP_CALLS + 6)
-            .map(|n| stored_row(n, "read", "ok"))
-            .collect(),
-    );
-    let head = ui::head(CALL, &many, true, false);
-    assert_eq!(toned(&row_of(&head)[1]), "× 30");
-    let Node::Pips { tones } = &row_of(&head)[2] else {
-        panic!("no strip");
-    };
-    assert_eq!(tones.len(), 24);
-
     // With nothing called: nothing while it runs, then no calls.
     let none = calls_of(Vec::new());
     assert!(matches!(
@@ -1308,7 +1289,8 @@ fn the_line_counts_what_the_script_called() {
 }
 
 /// The script is closed until its link opens it; the calls are listed
-/// under the line, the first four and the rest behind `+ N more`.
+/// under the line as lettered steps (ADR 0060), the first four and the
+/// rest behind `+ N more calls`.
 #[test]
 fn the_body_lists_the_calls_and_keeps_the_script_closed() {
     let calls =
@@ -1322,8 +1304,18 @@ fn the_body_lists_the_calls_and_keeps_the_script_closed() {
             .iter()
             .any(|node| matches!(node, Node::Code { .. }))
     );
-    // Four rows, a rule between each, then the rest.
-    assert_eq!(children.len(), ui::LISTED_CALLS * 2);
+    // Four steps, then the rest.
+    assert_eq!(children.len(), ui::LISTED_CALLS + 1);
+    let letters = |nodes: &[Node]| -> Vec<String> {
+        nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Step { label, .. } => Some(label.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(letters(children), ["a", "b", "c", "d"]);
     let Some(Node::Section {
         id,
         title,
@@ -1336,8 +1328,11 @@ fn the_body_lists_the_calls_and_keeps_the_script_closed() {
         panic!("no more: {children:?}");
     };
     assert_eq!(id, &format!("codemode-calls-{CALL}/more"));
-    assert_eq!((title.as_str(), *open, *small), ("+ 2 more", false, true));
-    assert_eq!(rest.len(), 3);
+    assert_eq!(
+        (title.as_str(), *open, *small),
+        ("+ 2 more calls", false, true)
+    );
+    assert_eq!(letters(rest), ["e", "f"]);
 
     let opened = ui::body(
         CALL,
@@ -1356,4 +1351,46 @@ fn the_body_lists_the_calls_and_keeps_the_script_closed() {
     };
     assert_eq!(lang.as_deref(), Some("luau"));
     assert_eq!(children.len(), 2);
+}
+
+/// A step reads as a top-level call's line: the argument worth reading,
+/// never JSON, its tool's kind, and a time only past a second.
+#[test]
+fn a_call_is_a_step_with_its_subject() {
+    let mut row = stored_row(1, "grep", "ok");
+    row["args"] = json!(r#"{"pattern":"retry","path":"src"}"#);
+    row["ms"] = json!(1500);
+    let mut cut = stored_row(2, "read", "error");
+    cut["args"] = json!(r#"{"path":"a very long pa"#);
+    let calls = calls_of(vec![row, cut]);
+    let body = ui::body(CALL, None, &calls, None, &[], &|_| false, None);
+    let Node::Stack { children } = &body else {
+        panic!("not a stack: {body:?}");
+    };
+    assert_eq!(
+        children[0],
+        Node::Step {
+            label: "a".into(),
+            tool: "grep".into(),
+            kind: Some(heiko_ui_kit::theme::ToolKind::Search),
+            subject: "\"retry\" src".into(),
+            receipt: "1.5 s".into(),
+            state: StepState::Done,
+        }
+    );
+    let Node::Step {
+        subject,
+        state,
+        receipt,
+        ..
+    } = &children[1]
+    else {
+        panic!("not a step: {:?}", children[1]);
+    };
+    assert_eq!(subject, r#"{"path":"a very long pa"#);
+    assert_eq!(*state, StepState::Failed);
+    assert_eq!(receipt, "");
+    assert_eq!(ui::letter(25), "z");
+    assert_eq!(ui::letter(26), "aa");
+    assert_eq!(ui::letter(27), "ab");
 }

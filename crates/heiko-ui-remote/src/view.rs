@@ -1808,34 +1808,7 @@ fn event_run(event: &RunEvent) -> &RunId {
     event.run()
 }
 
-/// Picks the argument a person would want to see first.
-pub fn summarize_args(args: &Value) -> String {
-    let text = |key: &str| args.get(key).and_then(Value::as_str);
-    if let Some(command) = text("cmd") {
-        return command.to_owned();
-    }
-    // `write_stdin` reads as the process and what it was typed.
-    if let Some(process) = args.get("process_id").and_then(Value::as_i64) {
-        return match text("chars").filter(|chars| !chars.is_empty()) {
-            Some(chars) => format!("#{process} ← {}", chars.escape_debug()),
-            None => format!("#{process}"),
-        };
-    }
-    // grep and find read best as `"pattern" path`.
-    match (text("pattern"), text("path")) {
-        (Some(pattern), Some(path)) => format!("\"{pattern}\" {path}"),
-        (Some(pattern), None) => format!("\"{pattern}\""),
-        (None, Some(path)) => path.to_owned(),
-        (None, None) => match (text("id"), text("title")) {
-            (Some(id), Some(title)) => format!("{id} · {title}"),
-            _ => ["query", "task", "id", "title"]
-                .into_iter()
-                .find_map(text)
-                .unwrap_or_default()
-                .to_owned(),
-        },
-    }
-}
+pub use heiko_ui_plugin::summarize_args;
 
 /// The text an `edit` or `write` call would add, for showing a call that
 /// never ran.

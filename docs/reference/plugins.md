@@ -581,9 +581,10 @@ heiko-luau-plugins the plugins repository.
   tree has the pieces the interface's own screens show state with
   (ADR 0057): `Ticks` (a quantity as square ticks, with thresholds
   marked), `Mark` (a state's small mark, with a count), `Stamp`,
-  `Square`, `Slip`, `Figure` and `Kanji` (a note's large mark); in
-  Luau, `ui.ticks`, `ui.mark`, `ui.stamp`, `ui.square`, `ui.slip`,
-  `ui.figure` and `ui.kanji`. A button's kind says whether it is the
+  `Square`, `Slip`, `Figure`, `Kanji` (a note's large mark) and `Step`
+  (a call made inside another, ADR 0060); in Luau, `ui.ticks`,
+  `ui.mark`, `ui.stamp`, `ui.square`, `ui.slip`, `ui.figure`,
+  `ui.kanji` and `ui.step`. A button's kind says whether it is the
   primary action, drawn as the offset block, or an underlined word.
   A `wide` button takes the whole width, its label at the left, and a
   wide primary one may have `detail`, a second line inside the block

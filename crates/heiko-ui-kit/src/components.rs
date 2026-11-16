@@ -753,6 +753,18 @@ pub fn step_square(
     square(label, style, t).when(!filled, |square| square.bg(t.bg))
 }
 
+/// A call made inside another's step: a smaller [`step_square`], with a
+/// letter.
+pub fn sub_step_square(
+    label: impl Into<SharedString>,
+    style: SquareStyle,
+    t: &Theme,
+) -> Div {
+    step_square(label, style, t)
+        .size(rems(1.125))
+        .typeset(Type::MICRO.mono())
+}
+
 /// The spine of a stretch of calls: a thin line under the middle of its
 /// steps' squares, down the row it is drawn in. It starts at the middle
 /// of the row's line on the stretch's first step, and ends there on its

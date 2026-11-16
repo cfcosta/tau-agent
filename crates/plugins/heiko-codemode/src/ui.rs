@@ -36,7 +36,7 @@ use heiko_ui_plugin::{
     UiPlugin,
     ViewCx,
     points::{self, AtCard, AtRun, CardView},
-    tree::{Ink, KeyValue, Kind, MarkState, Node, Tone, open_key},
+    tree::{KeyValue, Kind, Node, StepState, Tone, open_key},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -469,16 +469,39 @@ pub fn script(data: &CallData) -> &str {
         .unwrap_or_default()
 }
 
-/// What ends the header's line once the script ended: `1.2 s`.
+/// What ends the header's line once the script ended: `1.2 s`, when it
+/// took a second or more (ADR 0060).
 pub fn label(calls: &Calls, details: Option<&Value>) -> String {
     let mut parts = Vec::new();
-    if let Some(ms) = details.and_then(|details| details["wall_ms"].as_u64()) {
-        parts.push(format!("{:.1} s", ms as f64 / 1000.0));
+    if let Some(took) =
+        details.and_then(|details| seconds(details["wall_ms"].as_u64()?))
+    {
+        parts.push(took);
     }
     if calls.rows.iter().any(|row| row.usage_uncertain) {
         parts.push("reported partial · final usage unknown".to_owned());
     }
     parts.join(" · ")
+}
+
+/// `1.2 s` for `ms`, when it is a second or more: a shorter time is not
+/// shown (ADR 0060).
+pub fn seconds(ms: u64) -> Option<String> {
+    (ms >= 1000).then(|| format!("{:.1} s", ms as f64 / 1000.0))
+}
+
+/// The letter of the `n`th call, from 0: `a` to `z`, then `aa`, `ab`.
+pub fn letter(n: usize) -> String {
+    let mut n = n;
+    let mut letters = Vec::new();
+    loop {
+        letters.push((b'a' + (n % 26) as u8) as char);
+        if n < 26 {
+            break;
+        }
+        n = n / 26 - 1;
+    }
+    letters.iter().rev().collect()
 }
 
 /// How many times the script called each tool, in the order it first
@@ -494,9 +517,6 @@ pub fn counts(calls: &Calls) -> Vec<(&str, usize)> {
     counts
 }
 
-/// The calls the header's strip has a tick for: the first of them.
-pub const STRIP_CALLS: usize = 24;
-
 /// The calls listed before the rest go behind `+ N more`.
 pub const LISTED_CALLS: usize = 4;
 
@@ -506,19 +526,9 @@ pub fn code_key(call_id: &str) -> String {
     format!("codemode-code-{call_id}")
 }
 
-/// Whether a call failed, by its own end or a plugin's refusal.
-fn call_failed(row: &Row) -> bool {
-    row.status == CallStatus::Error
-        || row
-            .marks
-            .iter()
-            .any(|mark| matches!(mark.mark, CardMark::Blocked { .. }))
-}
-
 /// The header's line, in place of the script: what it called, as
-/// `read × 4 · grep × 2`, a tick for each call, and the link that opens
-/// the script (`code_open` says whether it is). `ended` is whether the
-/// script did.
+/// `read ×4 · grep ×2`, and the link that opens the script (`code_open`
+/// says whether it is). `ended` is whether the script did.
 pub fn head(
     call_id: &str,
     calls: &Calls,
@@ -535,35 +545,16 @@ pub fn head(
         if n > 0 {
             line.push(dim("·".into()));
         }
-        line.push(Node::Toned {
-            text: name.to_owned(),
-            tone: Tone::Info,
-            mono: true,
+        line.push(Node::Mono {
+            text: match count {
+                1 => name.to_owned(),
+                n => format!("{name} ×{n}"),
+            },
         });
-        line.push(dim(format!("× {count}")));
     }
-    if calls.rows.is_empty() {
-        // While it runs, the card's own state says so.
-        if ended {
-            line.push(dim("no calls".into()));
-        }
-    } else {
-        // A square a call, by how it went.
-        let shown = &calls.rows[..calls.rows.len().min(STRIP_CALLS)];
-        line.push(Node::Pips {
-            tones: shown
-                .iter()
-                .map(|row| {
-                    if call_failed(row) {
-                        Ink::Bad
-                    } else if row.status == CallStatus::Running {
-                        Ink::Neutral
-                    } else {
-                        Ink::Good
-                    }
-                })
-                .collect(),
-        });
+    // While it runs, the card's own state says so.
+    if calls.rows.is_empty() && ended {
+        line.push(dim("no calls".into()));
     }
     line.push(Node::Spacer);
     line.push(Node::Button {
@@ -815,35 +806,29 @@ pub fn body(
         .into_iter()
         .collect();
     if !calls.rows.is_empty() {
-        // Every tool's name as wide as the longest, so the arguments
-        // start in one column.
-        let width = calls
-            .rows
-            .iter()
-            .map(|row| row.name.chars().count())
-            .max()
-            .unwrap_or_default();
-        let lines = |rows: &[Row]| {
+        // Each call a lettered step, from `a` (ADR 0060).
+        let lines = |rows: &[Row], from: usize| {
             let mut lines = Vec::new();
             for (n, row) in rows.iter().enumerate() {
-                if n > 0 {
-                    lines.push(Node::Rule);
-                }
-                lines.extend(call_row(row, width));
+                lines.extend(call_row(row, from + n));
             }
             lines
         };
         let listed = calls.rows.len().min(LISTED_CALLS);
         let (first, rest) = calls.rows.split_at(listed);
-        body.extend(lines(first));
+        body.extend(lines(first, 0));
         if !rest.is_empty() {
             body.push(Node::Section {
                 small: true,
                 lead: Vec::new(),
                 id: format!("codemode-calls-{call_id}/more"),
-                title: format!("+ {} more", rest.len()),
+                title: format!(
+                    "+ {} more {}",
+                    rest.len(),
+                    if rest.len() == 1 { "call" } else { "calls" }
+                ),
                 open: false,
-                children: lines(rest),
+                children: lines(rest, listed),
             });
         }
         if !calls.complete {
@@ -880,10 +865,11 @@ pub fn body(
     Node::stack(body)
 }
 
-/// One call, as a tool's line: the mark of how it went, the tool (its
-/// name `width` characters wide), its arguments and, at the end, its
-/// time; then its error and plugins' verdicts, each on a line under it.
-fn call_row(row: &Row, width: usize) -> Vec<Node> {
+/// The `n`th call, from 0, as a lettered step (ADR 0060): its letter in
+/// a square of how it went, the tool in its kind's color, the argument
+/// worth reading and, at the end, its time past a second; then its error
+/// and plugins' verdicts, each on a line under it.
+fn call_row(row: &Row, n: usize) -> Vec<Node> {
     let blocked = row.marks.iter().find_map(|mark| match &mark.mark {
         CardMark::Blocked { reason, by } => {
             Some((by.clone().unwrap_or_else(|| mark.plugin.clone()), reason))
@@ -895,36 +881,30 @@ fn call_row(row: &Row, width: usize) -> Vec<Node> {
         .iter()
         .find(|mark| mark.mark == CardMark::Flagged)
         .map(|mark| mark.plugin.clone());
-    let status = Node::Mark {
-        state: match row.status {
-            _ if blocked.is_some() => MarkState::Failing,
-            CallStatus::Running => MarkState::Working,
-            CallStatus::Ok => MarkState::Met,
-            CallStatus::Error => MarkState::Failing,
-            CallStatus::Cancelled => MarkState::Idle,
-        },
-        count: None,
+    let state = match row.status {
+        _ if blocked.is_some() => StepState::Failed,
+        CallStatus::Running => StepState::Running,
+        CallStatus::Ok => StepState::Done,
+        CallStatus::Error => StepState::Failed,
+        CallStatus::Cancelled => StepState::Stopped,
     };
-    let when = match (row.status, row.ms) {
-        (CallStatus::Cancelled, _) => "cancelled".to_owned(),
-        (_, Some(ms)) => format!("{ms} ms"),
-        (_, None) => String::new(),
+    let receipt = match row.status {
+        CallStatus::Cancelled => "cancelled".to_owned(),
+        _ => row.ms.and_then(seconds).unwrap_or_default(),
     };
-    let mut lines = vec![Node::row([
-        status,
-        Node::Toned {
-            text: format!("{:<width$}", row.name),
-            tone: Tone::Info,
-            mono: true,
-        },
-        mono(row.args.clone()),
-        Node::Spacer,
-        Node::Toned {
-            text: when,
-            tone: Tone::Neutral,
-            mono: true,
-        },
-    ])];
+    // The argument worth reading, as a top-level call's line shows it;
+    // arguments cut too short to read as JSON show as they are.
+    let subject = serde_json::from_str::<Value>(&row.args)
+        .map(|args| heiko_ui_plugin::summarize_args(&args))
+        .unwrap_or_else(|_| row.args.clone());
+    let mut lines = vec![Node::Step {
+        label: letter(n),
+        tool: row.name.clone(),
+        kind: theme::ToolKind::of(&row.name),
+        subject,
+        receipt,
+        state,
+    }];
     if let Some(error) = &row.error {
         lines.push(marked("blocked", Tone::Bad, error.clone()));
     }

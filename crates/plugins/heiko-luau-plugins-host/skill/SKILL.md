@@ -566,6 +566,12 @@ Plain tables, drawn by heiko on the computer and on the phone:
   `"quiet"` (not reached yet), `"outlined"` or `"filled"`. With
   `action`, a click carries out `actions[action]` with `args`, so a row
   of squares can be a choice
+- `ui.step({ label, tool, kind, subject, receipt, state })`: a call made
+  inside another, as a lettered step: its tool in the color of its
+  `kind` (`"look"`, `"search"`, `"change"`, `"run"`, `"reach"` or
+  `"people"`), what it was about (a path, a command), what came back
+  (`"29 lines"`), and its `state` (`"done"`, `"running"`, `"failed"`,
+  `"waits"` or `"stopped"`)
 - `ui.slip(text, ink, dashed, { page = "note", plugin = "...", params = { ... } })`:
   a note or an id on a label outlined in the ink; `dashed` for one
   proposed, not kept yet. With `page`, a click opens that page

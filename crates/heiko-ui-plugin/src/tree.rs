@@ -233,6 +233,22 @@ pub enum SquareLook {
     Filled,
 }
 
+/// How a [`Node::Step`] stands, by name on the wire.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum StepState {
+    #[default]
+    Done,
+    Running,
+    Failed,
+    /// It waits on the person.
+    Waits,
+    /// Cancelled, or stopped before it ended.
+    Stopped,
+}
+
 /// How much room a [`Node::Gap`] leaves, by name on the wire.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize,
@@ -724,6 +740,20 @@ pub enum Node {
         action: Option<String>,
         #[serde(default, skip_serializing_if = "Value::is_null")]
         args: Value,
+    },
+    /// A call made inside another (ADR 0060): a lettered step, its tool
+    /// in its kind's color, what it is about, and what came back.
+    Step {
+        label: String,
+        tool: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<theme::ToolKind>,
+        #[serde(default)]
+        subject: String,
+        #[serde(default)]
+        receipt: String,
+        #[serde(default)]
+        state: StepState,
     },
     /// A note or an id on a label outlined in `tone`; `dashed` for one
     /// proposed, not kept yet. With `to`, a click opens that page.
@@ -2549,6 +2579,56 @@ impl<'a> Draw<'a> {
                         .into_any_element(),
                     None => square.into_any_element(),
                 }
+            }
+            Node::Step {
+                label,
+                tool,
+                kind,
+                subject,
+                receipt,
+                state,
+            } => {
+                use heiko_ui_kit::{
+                    components::{mono, sub_step_square},
+                    theme::weight,
+                };
+                let style = match state {
+                    StepState::Done | StepState::Stopped => SquareStyle::Quiet,
+                    StepState::Running => SquareStyle::Outlined(t.green),
+                    StepState::Failed => SquareStyle::Filled(t.red),
+                    StepState::Waits => SquareStyle::Outlined(t.roles.live),
+                };
+                let verb = match (state, kind) {
+                    (StepState::Failed, _) => t.red,
+                    (_, Some(kind)) => t.roles.kind(*kind),
+                    (_, None) => t.text,
+                };
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .gap(sp(3.))
+                    .min_h(rems(1.75))
+                    .child(sub_step_square(label.clone(), style, t))
+                    .child(
+                        mono(tool.clone(), Type::SMALL, verb)
+                            .flex_shrink_0()
+                            .min_w(rems(6.))
+                            .font_weight(weight::EMPHASIS),
+                    )
+                    .child(
+                        mono(subject.clone(), Type::SMALL, t.text_soft)
+                            .flex_1()
+                            .min_w(rems(0.))
+                            .truncate(),
+                    )
+                    .when(!receipt.is_empty(), |row| {
+                        row.child(
+                            mono(receipt.clone(), Type::SMALL, t.dim)
+                                .flex_shrink_0(),
+                        )
+                    })
+                    .into_any_element()
             }
             Node::Slip {
                 text,

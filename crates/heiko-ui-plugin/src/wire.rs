@@ -354,8 +354,8 @@ mod tests {
     }
 
     fn node(tc: &TestCase) -> crate::tree::Node {
-        use crate::tree::{Kind, Node};
-        match tc.draw(gs::integers::<u8>().max_value(3)) {
+        use crate::tree::{Kind, Node, StepState};
+        match tc.draw(gs::integers::<u8>().max_value(4)) {
             0 => Node::text(word(tc)),
             1 => Node::Mono { text: word(tc) },
             2 => Node::Button {
@@ -367,6 +367,24 @@ mod tests {
                 size: Default::default(),
                 wide: tc.draw(gs::booleans()),
                 detail: maybe(tc),
+            },
+            3 => Node::Step {
+                label: word(tc),
+                tool: word(tc),
+                kind: tc.draw(gs::booleans()).then(|| {
+                    tc.draw_silent(gs::sampled_from(
+                        heiko_ui_kit::theme::ToolKind::ALL.to_vec(),
+                    ))
+                }),
+                subject: word(tc),
+                receipt: word(tc),
+                state: tc.draw_silent(gs::sampled_from(vec![
+                    StepState::Done,
+                    StepState::Running,
+                    StepState::Failed,
+                    StepState::Waits,
+                    StepState::Stopped,
+                ])),
             },
             _ => Node::stack([Node::text(word(tc)), Node::Rule]),
         }

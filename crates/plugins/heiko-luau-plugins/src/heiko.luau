@@ -878,6 +878,35 @@ function ui.square(label, style, of, action, args)
 	}
 end
 
+-- What a tool does (ADR 0060), as its table's `kind` and a step say it.
+local KINDS = { look = true, search = true, change = true, run = true, reach = true, people = true }
+
+local STEP_STATES = { done = true, running = true, failed = true, waits = true, stopped = true }
+
+-- A call made inside another (ADR 0060): a lettered step, as codemode
+-- lists a script's calls. `step` holds its `label` (`a`) and `tool`, and
+-- may hold its `kind` (look, search, change, run, reach or people), its
+-- `subject` (a path, a command), its `receipt` (`29 lines`) and its
+-- `state`: done (the default), running, failed, waits or stopped.
+function ui.step(step)
+	local state = step.state or "done"
+	if not STEP_STATES[state] then
+		error("a step is done, running, failed, waits or stopped, not " .. tostring(state), 2)
+	end
+	if step.kind ~= nil and not KINDS[step.kind] then
+		error("a step's kind is look, search, change, run, reach or people, not " .. tostring(step.kind), 2)
+	end
+	return {
+		piece = "step",
+		label = tostring(step.label or ""),
+		tool = tostring(step.tool or ""),
+		kind = step.kind,
+		subject = tostring(step.subject or ""),
+		receipt = tostring(step.receipt or ""),
+		state = state,
+	}
+end
+
 -- A note or an id on a label outlined in the color `of`; `dashed` for
 -- one proposed, not kept yet. With `opts.page`, a click opens that page
 -- of this plugin, or of `opts.plugin`, with `opts.params`.
@@ -1237,8 +1266,6 @@ local function page_of(what, name, pages)
 		error("`" .. what .. "` opens the page `" .. tostring(name) .. "`, which `pages` lacks", 0)
 	end
 end
-
-local KINDS = { look = true, search = true, change = true, run = true, reach = true, people = true }
 
 -- A tool's kind, one of `KINDS`, or nil when it declares none.
 local function kind_of(name, kind)

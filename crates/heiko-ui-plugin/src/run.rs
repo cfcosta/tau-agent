@@ -278,3 +278,33 @@ pub trait RunCx {
     /// The turn the run is in.
     fn turn(&self) -> u32;
 }
+
+/// Picks the argument a person would want to see first: a call's
+/// subject (ADR 0060), a path, a pattern, a command. Never JSON.
+pub fn summarize_args(args: &Value) -> String {
+    let text = |key: &str| args.get(key).and_then(Value::as_str);
+    if let Some(command) = text("cmd") {
+        return command.to_owned();
+    }
+    // `write_stdin` reads as the process and what it was typed.
+    if let Some(process) = args.get("process_id").and_then(Value::as_i64) {
+        return match text("chars").filter(|chars| !chars.is_empty()) {
+            Some(chars) => format!("#{process} ← {}", chars.escape_debug()),
+            None => format!("#{process}"),
+        };
+    }
+    // grep and find read best as `"pattern" path`.
+    match (text("pattern"), text("path")) {
+        (Some(pattern), Some(path)) => format!("\"{pattern}\" {path}"),
+        (Some(pattern), None) => format!("\"{pattern}\""),
+        (None, Some(path)) => path.to_owned(),
+        (None, None) => match (text("id"), text("title")) {
+            (Some(id), Some(title)) => format!("{id} · {title}"),
+            _ => ["query", "task", "id", "title"]
+                .into_iter()
+                .find_map(text)
+                .unwrap_or_default()
+                .to_owned(),
+        },
+    }
+}

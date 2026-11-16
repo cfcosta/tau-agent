@@ -921,3 +921,48 @@ async fn a_tool_declares_its_kind() {
         "{refused}"
     );
 }
+
+/// `ui.step` draws a call made inside another (ADR 0060) as the tree's
+/// `Step`; a state or a kind it does not know is the plugin's error.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_step_is_the_trees_step() {
+    use heiko_ui_plugin::tree::{Node, StepState};
+    let modules = Arc::new(files("steps", "return {}").modules().unwrap());
+    let step = |args: &str| {
+        evaluate(
+            "steps",
+            modules.clone(),
+            format!(
+                "local heiko = require(\"heiko\")\n\
+                 return heiko.ui.step({{ {args} }})"
+            ),
+            Duration::from_secs(2),
+            CancellationToken::new(),
+        )
+    };
+    let drawn = step(
+        "label = \"a\", tool = \"read\", kind = \"look\", \
+         subject = \"README.md\", receipt = \"7 lines\"",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        serde_json::from_value::<Node>(drawn).unwrap(),
+        Node::Step {
+            label: "a".into(),
+            tool: "read".into(),
+            kind: Some(heiko_ui_kit::theme::ToolKind::Look),
+            subject: "README.md".into(),
+            receipt: "7 lines".into(),
+            state: StepState::Done,
+        }
+    );
+    let refused = step("label = \"b\", tool = \"ls\", state = \"late\"")
+        .await
+        .unwrap_err();
+    assert!(refused.contains("not late"), "{refused}");
+    let refused = step("label = \"b\", tool = \"ls\", kind = \"edit\"")
+        .await
+        .unwrap_err();
+    assert!(refused.contains("not edit"), "{refused}");
+}
