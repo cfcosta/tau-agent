@@ -1388,16 +1388,29 @@ pub fn weighted_table(
 /// flat band, with its language on a line of its own over it, at the
 /// right.
 pub fn code_block(lang: Option<&str>, text: &str, t: &Theme) -> Div {
-    numbered_code_block(lang, text, None, t)
+    band_code(lang, text, None, true, t)
 }
 
-/// [`code_block`], with each line's number in a gutter from `first`
-/// when given. Numbered lines do not wrap, so each number stays beside
-/// its line.
+/// Code on a band, as a tool's body shows it (ADR 0060): with each
+/// line's number in a gutter from `first` when given, and no label: the
+/// call's line says what it is. Numbered lines do not wrap, so each
+/// number stays beside its line.
 pub fn numbered_code_block(
     lang: Option<&str>,
     text: &str,
     first: Option<u32>,
+    t: &Theme,
+) -> Div {
+    band_code(lang, text, first, false, t)
+}
+
+/// Code on a band, in `lang`'s colors, its language over it when
+/// `labeled`.
+fn band_code(
+    lang: Option<&str>,
+    text: &str,
+    first: Option<u32>,
+    labeled: bool,
     t: &Theme,
 ) -> Div {
     let gutter = first.map(|first| {
@@ -1421,7 +1434,7 @@ pub fn numbered_code_block(
         .bg(t.card)
         // Its language, on a line of its own at the right, over the
         // code and never on it.
-        .children(lang.map(|lang| {
+        .children(lang.filter(|_| labeled).map(|lang| {
             div().flex().justify_end().pb(sp(1.)).child(mono(
                 lang.to_owned(),
                 Type::MICRO,

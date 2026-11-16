@@ -196,8 +196,8 @@ fn artifact_grant_fold_reloads_and_cards_report_bounded_metadata() {
 }
 
 /// A `read` card numbers the lines the model got from where they start
-/// in the file, leaves out the notice after them, and says which part of
-/// the file it holds.
+/// in the file, leaves out the notice after them, and says how many of
+/// the file's lines it holds.
 #[hegel::test(test_cases = 200)]
 fn a_read_numbers_its_lines(tc: hegel::TestCase) {
     let total: usize =
@@ -230,14 +230,18 @@ fn a_read_numbers_its_lines(tc: hegel::TestCase) {
     let read = ReadView::of(&data).unwrap();
     assert_eq!(read.first, first);
     assert_eq!(read.lines, lines);
-    // Its first and last line of the total (a read with no lines names
-    // its first).
-    let last = if returned == 0 {
-        first
-    } else {
-        first + returned - 1
+    // The lines it shows, of the file's (ADR 0060): the count alone
+    // when it shows the whole file.
+    let grouped = heiko_ui_kit::format::grouped;
+    let lines_of = |n: usize| match n {
+        1 => "1 line".to_owned(),
+        n => format!("{} lines", grouped(n)),
     };
-    let expected = format!("lines {first}–{last} of {total}");
+    let expected = if first == 1 && returned >= total {
+        lines_of(total)
+    } else {
+        format!("{} of {}", grouped(returned), lines_of(total))
+    };
     assert_eq!(read.label(), expected);
 }
 
@@ -257,7 +261,7 @@ fn a_read_without_text_has_no_lines() {
     assert_eq!(of(json!({"kind": "image"}), false), None);
     assert_eq!(of(json!({}), true), None);
     // An older result, without the counts, reads as the whole file.
-    assert_eq!(of(json!({}), false).unwrap().label(), "lines 1–1 of 1");
+    assert_eq!(of(json!({}), false).unwrap().label(), "1 line");
 }
 
 /// A command's terminal is its chunks joined in order while it runs, and

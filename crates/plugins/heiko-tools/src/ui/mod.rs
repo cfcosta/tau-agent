@@ -230,15 +230,17 @@ impl ReadView {
         })
     }
 
-    /// The header's word on it: `lines 120–179 of 612`.
+    /// The line's receipt (ADR 0060): `29 lines` for the whole file,
+    /// `60 of 612 lines` for a part of it.
     pub fn label(&self) -> String {
         let shown = self.lines.len();
-        let last = (self.first + shown).saturating_sub(1).max(self.first);
+        if self.first == 1 && shown >= self.total {
+            return counted(self.total, "line");
+        }
         format!(
-            "lines {}–{} of {}",
-            heiko_ui_kit::format::grouped(self.first),
-            heiko_ui_kit::format::grouped(last),
-            heiko_ui_kit::format::grouped(self.total)
+            "{} of {}",
+            heiko_ui_kit::format::grouped(shown),
+            counted(self.total, "line")
         )
     }
 }
@@ -546,7 +548,7 @@ fn grep_line(line: &str) -> Option<GrepLine> {
     })
 }
 
-/// `5 matches in 2 files`.
+/// `5 matches · 2 files`.
 pub fn grep_label(lines: &[GrepLine]) -> String {
     let matches = lines.iter().filter(|line| line.matched).count();
     if matches == 0 {
@@ -557,7 +559,7 @@ pub fn grep_label(lines: &[GrepLine]) -> String {
     files.sort_unstable();
     files.dedup();
     format!(
-        "{} {} in {}",
+        "{} {} · {}",
         heiko_ui_kit::format::grouped(matches),
         if matches == 1 { "match" } else { "matches" },
         counted(files.len(), "file")
@@ -1021,6 +1023,7 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, ToolsUi>) -> Option<CardView> {
             Some(CardView {
                 label: Some(read.label()),
                 body: Some(body),
+                folds: true,
                 ..CardView::default()
             })
         }
@@ -1053,6 +1056,7 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, ToolsUi>) -> Option<CardView> {
             Some(CardView {
                 label: Some(listing.summary()),
                 body,
+                folds: true,
                 ..CardView::default()
             })
         }
@@ -1067,6 +1071,7 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, ToolsUi>) -> Option<CardView> {
                 }),
                 body: (!paths.is_empty())
                     .then(|| found_body(&paths, &key, opened(&key, view))),
+                folds: true,
                 ..CardView::default()
             })
         }
@@ -1084,6 +1089,7 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, ToolsUi>) -> Option<CardView> {
                         opened(&key, view),
                     )
                 }),
+                folds: true,
                 ..CardView::default()
             })
         }
@@ -1234,8 +1240,8 @@ mod tests {
             line("src/a.rs", false),
             line("src/b.rs", true),
         ];
-        assert_eq!(grep_label(&lines), "2 matches in 2 files");
-        assert_eq!(grep_label(&lines[..1]), "1 match in 1 file");
+        assert_eq!(grep_label(&lines), "2 matches · 2 files");
+        assert_eq!(grep_label(&lines[..1]), "1 match · 1 file");
         assert_eq!(
             grep_lines(&ended("No matches found", None, false)),
             Some(Vec::new())
