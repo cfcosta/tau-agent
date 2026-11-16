@@ -21,6 +21,7 @@ use gpui::{
     Entity,
     Hsla,
     IntoElement,
+    Rems,
     SharedString,
     Stateful,
     Svg,
@@ -735,6 +736,53 @@ pub fn square(
         .border_color(line)
         .when_some(fill, |square, fill| square.bg(fill))
         .font_weight(weight::EMPHASIS)
+}
+
+/// The height of a step's line in a stretch of calls (ADR 0060): its
+/// square sits in the middle, where the spine meets it.
+pub const STEP_ROW: Rems = rems(1.875);
+
+/// A step of a stretch of calls: its [`square`], on the ground, so the
+/// spine runs behind it and not through it.
+pub fn step_square(
+    label: impl Into<SharedString>,
+    style: SquareStyle,
+    t: &Theme,
+) -> Div {
+    let filled = matches!(style, SquareStyle::Filled(_));
+    square(label, style, t).when(!filled, |square| square.bg(t.bg))
+}
+
+/// The spine of a stretch of calls: a thin line under the middle of its
+/// steps' squares, down the row it is drawn in. It starts at the middle
+/// of the row's line on the stretch's first step, and ends there on its
+/// last.
+pub fn spine(first: bool, last: bool, t: &Theme) -> Div {
+    let middle = rems(STEP_ROW.0 / 2.);
+    div()
+        .absolute()
+        .left(rems(0.703125))
+        .w(px(1.5))
+        .top(if first { middle } else { rems(0.) })
+        .when(last, |line| line.h(middle))
+        .when(!last, |line| line.bottom_0())
+        .bg(t.slate)
+}
+
+/// What a stretch's calls did, a square tick for each in its color,
+/// `dim` for one still going: the head line's strip.
+pub fn kind_ticks(ticks: &[(Hsla, bool)]) -> Div {
+    div()
+        .flex()
+        .flex_shrink_0()
+        .gap(rems(0.1875))
+        .children(ticks.iter().map(|(color, dim)| {
+            div()
+                .w(rems(0.4375))
+                .h(rems(0.875))
+                .bg(*color)
+                .when(*dim, |tick| tick.opacity(0.5))
+        }))
 }
 
 /// A [`slip`] in a `color` of its own; `dashed` for one proposed, not

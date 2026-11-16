@@ -128,6 +128,7 @@ impl Workspace {
             history_repo: _,
             open_notes: _,
             open_cards: _,
+            stretch_folds: _,
             // Onboarding and pairing are each device's own.
             setup: _,
             pairing: _,

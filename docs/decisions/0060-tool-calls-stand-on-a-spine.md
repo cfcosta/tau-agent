@@ -37,8 +37,9 @@ chose the spine and the parts that all three shared.
 ### A stretch of calls is a list of numbered steps
 
 The calls between two things that are not calls are one **stretch**:
-the model's words, the person's message, or a plugin's note. A call
-that draws nothing does not end a stretch.
+the model's words, the person's message, or a plugin's note. What sits
+between two of the model's calls, a turn's end or its reasoning, does
+not end a stretch.
 
 - **Steps.** Each call in a stretch is a numbered step. Numbering starts
   again after each of the person's messages.
@@ -51,9 +52,10 @@ that draws nothing does not end a stretch.
   (`read · grep · edit ×2`), how many failed or are at work, and
   `fold`.
 - **Folding.** A folded stretch is its head line alone, which reads
-  `4 steps`. The stretch that is running stays open. A stretch folds
-  once its turn has ended, unless the person opened it. The person's
-  folds and opens are kept per run.
+  `4 steps`. A stretch folds once something that is not a call follows
+  it and none of its calls is still going, unless the person opened it;
+  so the stretch at work stays open. The person's folds and opens are
+  kept per run.
 - **The square.** It says how the step stands:
   - quiet: done;
   - outlined in green: running;

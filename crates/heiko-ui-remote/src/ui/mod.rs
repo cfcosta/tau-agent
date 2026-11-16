@@ -13,6 +13,7 @@ pub mod landing;
 pub mod push;
 pub mod queue;
 pub mod screens;
+pub mod stretch;
 pub mod transcript;
 
 pub use components::*;

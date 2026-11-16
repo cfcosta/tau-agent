@@ -557,6 +557,9 @@ pub struct Workspace {
     /// Tool cards that fold, opened, as `(run, call id)`. They start
     /// closed.
     open_cards: HashSet<(RunId, String)>,
+    /// Stretches of calls the person folded or opened, by their run and
+    /// first call's id: whether each is folded (ADR 0060).
+    stretch_folds: HashMap<(RunId, String), bool>,
     pub(crate) kept_branch: Option<RunId>,
     /// Child runs on their way to landing, by run.
     landings: HashMap<RunId, LandingState>,
@@ -849,6 +852,7 @@ impl Workspace {
             history_repo: None,
             open_notes: HashSet::new(),
             open_cards: HashSet::new(),
+            stretch_folds: HashMap::new(),
             kept_branch: None,
             landings: HashMap::new(),
             pushes: HashMap::new(),
@@ -1704,6 +1708,34 @@ impl Workspace {
 
     pub fn card_open(&self, run: &RunId, call_id: &str) -> bool {
         self.open_cards.contains(&(run.clone(), call_id.to_owned()))
+    }
+
+    /// Folds the stretch of calls starting at `first_call`, or opens it,
+    /// from how it is drawn now: `folded`.
+    pub fn toggle_stretch(
+        &mut self,
+        run: &RunId,
+        first_call: &str,
+        folded: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.stretch_folds
+            .insert((run.clone(), first_call.to_owned()), !folded);
+        cx.notify();
+    }
+
+    /// Whether the stretch of calls starting at `first_call` is folded:
+    /// as the person left it, or `default`.
+    pub fn stretch_folded(
+        &self,
+        run: &RunId,
+        first_call: &str,
+        default: bool,
+    ) -> bool {
+        self.stretch_folds
+            .get(&(run.clone(), first_call.to_owned()))
+            .copied()
+            .unwrap_or(default)
     }
 
     /// Runs what the query box holds against the store.

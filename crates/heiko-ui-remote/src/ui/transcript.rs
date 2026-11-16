@@ -13,7 +13,10 @@ use gpui::{
     prelude::*,
     rems,
 };
-use heiko_ui_kit::syntax::Lang;
+use heiko_ui_kit::{
+    components::{STEP_ROW, SquareStyle, kind_ticks, spine, step_square},
+    syntax::Lang,
+};
 
 use super::{
     Material as _,
@@ -24,6 +27,7 @@ use super::{
     rich,
     stamp,
     stop_look,
+    stretch::Stretch,
 };
 use crate::{
     assets::State,
@@ -117,15 +121,47 @@ pub fn item(
     if nothing && index + 1 < run.items.len() {
         return div().into_any_element();
     }
+    // The stretch of calls the item is in (ADR 0060), and whether it is
+    // folded to its head line: then only its head, and a call that waits
+    // on the person, show.
+    let stretch = Stretch::around(&run.items, index);
+    let headed = stretch.filter(|stretch| stretch.headed(&run.items));
+    let folded = headed.is_some_and(|stretch| {
+        first_call(run, stretch).is_some_and(|first| {
+            ws.stretch_folded(
+                &run.id,
+                first,
+                stretch.folds_by_default(&run.items),
+            )
+        })
+    });
+    let head = headed
+        .filter(|stretch| stretch.first == index)
+        .map(|stretch| stretch_head(run, stretch, folded, t, cx));
+    if folded && head.is_none() {
+        let waits = matches!(item, Item::Tool(card) if waits(ws, run, card));
+        if !waits {
+            return div().into_any_element();
+        }
+    }
     // Calls one after another are the rows of one list; a refused one
     // stands apart, under its rule, and so does a note that stands for
-    // its calls.
-    let stacked = matches!(
-        (index.checked_sub(1).and_then(|at| run.items.get(at)), item),
-        (Some(Item::Tool(_)), Item::Tool(card))
-            if !matches!(card.state, ToolState::Blocked { .. })
-    ) && folded_at(index).is_none()
-        && index.checked_sub(1).and_then(folded_at).is_none();
+    // its calls. What sits between two calls of a stretch keeps its
+    // spine whole.
+    let stacked = match stretch {
+        Some(stretch) if index > stretch.first => !matches!(
+            item,
+            Item::Tool(card) if matches!(card.state, ToolState::Blocked { .. })
+        ),
+        _ => {
+            matches!(
+                (index.checked_sub(1).and_then(|at| run.items.get(at)), item),
+                (Some(Item::Tool(_)), Item::Tool(card))
+                    if !matches!(card.state, ToolState::Blocked { .. })
+            ) && folded_at(index).is_none()
+                && index.checked_sub(1).and_then(folded_at).is_none()
+        }
+    };
     let above = if index == 0 {
         edge
     } else if stacked {
@@ -133,16 +169,164 @@ pub fn item(
     } else {
         sp(4.)
     };
+    let body = match (folded, item) {
+        (true, _) if head.is_some() => None,
+        (_, Item::Tool(card)) => Some(
+            tool(
+                ws,
+                run,
+                card,
+                stretch.map(|s| place(run, s, index)),
+                t,
+                compact,
+                cx,
+            )
+            .into_any_element(),
+        ),
+        _ => Some(item_view(ws, run, index, item, t, compact, cx)),
+    };
     column(
         div()
             .w_full()
             .pt(above)
             .when(index + 1 == run.items.len(), |item| item.pb(edge))
-            .child(item_view(ws, run, index, item, t, compact, cx)),
+            .children(head)
+            .children(body),
         side,
         compact,
     )
     .into_any_element()
+}
+
+/// Where a call stands in its stretch: its step's number, and whether
+/// it is the stretch's first or last call.
+#[derive(Clone, Copy)]
+struct Place {
+    step: usize,
+    first: bool,
+    last: bool,
+}
+
+fn place(run: &RunView, stretch: Stretch, index: usize) -> Place {
+    Place {
+        step: super::stretch::step(&run.items, index),
+        first: index == stretch.first,
+        last: index == stretch.last,
+    }
+}
+
+/// The id of the stretch's first call, which names the stretch.
+fn first_call(run: &RunView, stretch: Stretch) -> Option<&str> {
+    match run.items.get(stretch.first) {
+        Some(Item::Tool(card)) => Some(&card.call_id),
+        _ => None,
+    }
+}
+
+/// Whether the call of `card` waits on the person, as its plugin says:
+/// it shows while its stretch is folded. Only a call still going can.
+fn waits(ws: &Workspace, run: &RunView, card: &ToolCard) -> bool {
+    if !matches!(card.state, ToolState::Running) {
+        return false;
+    }
+    let contexts: Vec<(String, heiko_ui_plugin::points::AtCard)> = ws
+        .plugin_names()
+        .into_iter()
+        .map(|name| (name.to_owned(), crate::views::at_card(run, card, name)))
+        .collect();
+    let context_of = |plugin: &str| {
+        contexts
+            .iter()
+            .find(|(name, _)| name == plugin)
+            .map(|(_, at)| at)
+    };
+    ws.contributions_named(heiko_ui_plugin::points::CARD, context_of)
+        .into_iter()
+        .next()
+        .is_some_and(|(_, view)| view.waits)
+}
+
+/// A stretch's head line (ADR 0060): a tick for each call in its kind's
+/// color, the steps' range, what they did, how many failed or are at
+/// work, and `fold` or `open`. Clicking it folds or opens the stretch.
+fn stretch_head(
+    run: &RunView,
+    stretch: Stretch,
+    folded: bool,
+    t: &Theme,
+    cx: &mut Context<Workspace>,
+) -> Stateful<Div> {
+    let calls: Vec<&ToolCard> =
+        stretch.calls(&run.items).map(|(_, card)| card).collect();
+    let ticks: Vec<(Hsla, bool)> = calls
+        .iter()
+        .map(|card| {
+            let color = if super::stretch::failed(card) {
+                t.red
+            } else {
+                super::stretch::kind(card)
+                    .map_or(t.text, |kind| t.roles.kind(kind))
+            };
+            (color, matches!(card.state, ToolState::Running))
+        })
+        .collect();
+    let (from, to) = (
+        super::stretch::step(&run.items, stretch.first),
+        super::stretch::step(&run.items, stretch.last),
+    );
+    let steps = if folded {
+        format!("{} steps", calls.len())
+    } else {
+        format!("steps {from}–{to}")
+    };
+    let failed = calls
+        .iter()
+        .filter(|card| super::stretch::failed(card))
+        .count();
+    let working = calls
+        .iter()
+        .filter(|card| matches!(card.state, ToolState::Running))
+        .count();
+    let first = first_call(run, stretch).unwrap_or_default().to_owned();
+    let run_id = run.id.clone();
+    div()
+        .id(SharedString::from(format!("stretch-{first}")))
+        .flex()
+        .items_center()
+        .gap(sp(3.))
+        .min_h(STEP_ROW)
+        .border_t_1()
+        .border_b_1()
+        .border_color(t.hairline)
+        .cursor_pointer()
+        .child(kind_ticks(&ticks))
+        .child(mono(steps, Type::SMALL, t.text_soft).flex_shrink_0())
+        .child(
+            mono(
+                super::stretch::verbs(calls.iter().copied(), 4),
+                Type::SMALL,
+                t.dim,
+            )
+            .flex_1()
+            .min_w(rems(0.))
+            .truncate(),
+        )
+        .when(failed > 0, |row| {
+            row.child(
+                mono(format!("{failed} failed"), Type::SMALL, t.red)
+                    .flex_shrink_0(),
+            )
+        })
+        .when(working > 0, |row| {
+            row.child(
+                mono(format!("{working} at work"), Type::SMALL, t.green)
+                    .flex_shrink_0(),
+            )
+        })
+        .child(link_action(if folded { "open" } else { "fold" }, t))
+        .on_click(cx.listener(move |ws, _, _, cx| {
+            ws.toggle_stretch(&run_id, &first, folded, cx)
+        }))
 }
 
 /// How wide the transcript's column is on a desktop: a reading measure,
@@ -209,7 +393,7 @@ fn item_view(
             turn_end(ws, run, *turn, t, compact, cx).into_any_element()
         }
         Item::Tool(card) => {
-            tool(ws, run, card, t, compact, cx).into_any_element()
+            tool(ws, run, card, None, t, compact, cx).into_any_element()
         }
         Item::Plugin(note) => {
             plugin_note(ws, run, index, note, t, compact, cx).into_any_element()
@@ -660,6 +844,7 @@ fn tool(
     ws: &Workspace,
     run: &RunView,
     card: &ToolCard,
+    place: Option<Place>,
     t: &Theme,
     compact: bool,
     cx: &mut Context<Workspace>,
@@ -759,9 +944,10 @@ fn tool(
         t.red
     } else {
         view.kind
-            .or_else(|| heiko_ui_kit::theme::ToolKind::of(&card.tool))
+            .or_else(|| super::stretch::kind(card))
             .map_or(t.text, |kind| t.roles.kind(kind))
     };
+    let waits = view.waits;
     // A result that wants attention is written in its tone.
     let quiet = match view.edge {
         Some(Tone::Danger) => t.red,
@@ -824,12 +1010,28 @@ fn tool(
             .pb(sp(1.5))
             .children(under)
     });
+    // The step's square says how it stands (ADR 0060).
+    let square = place.map(|place| {
+        let style = if blocked || failed {
+            SquareStyle::Filled(t.red)
+        } else if waits {
+            SquareStyle::Outlined(t.roles.live)
+        } else if matches!(card.state, ToolState::Running) {
+            SquareStyle::Outlined(t.green)
+        } else if folds && open {
+            SquareStyle::Outlined(t.blue)
+        } else {
+            SquareStyle::Quiet
+        };
+        step_square(place.step.to_string(), style, t)
+    });
     let header = div()
         .id(SharedString::from(format!("tool-{}", card.call_id)))
         .flex()
         .items_center()
         .gap(sp(3.))
-        .min_h(rems(if compact { 2.25 } else { 1.5625 }))
+        .min_h(if compact { rems(2.25) } else { STEP_ROW })
+        .children(square)
         .child(
             mono(card.tool.clone(), Type::SMALL, name)
                 .flex_shrink_0()
@@ -846,6 +1048,7 @@ fn tool(
         // The call's stamp or diffstat, then what came back.
         .children(shape.map(|shape| div().flex_shrink_0().child(shape)))
         .children(at_end)
+        // The whole line opens and closes what folds under it.
         .when(folds, |row| {
             let run_id = run.id.clone();
             let call_id = card.call_id.clone();
@@ -853,10 +1056,6 @@ fn tool(
                 .on_click(cx.listener(move |ws, _, _, cx| {
                     ws.toggle_card(&run_id, &call_id, cx)
                 }))
-                .child(
-                    mono(if open { "−" } else { "+" }, Type::SMALL, t.dim)
-                        .flex_shrink_0(),
-                )
         });
 
     let body: Option<AnyElement> = match &card.state {
@@ -932,19 +1131,38 @@ fn tool(
             .children(body)
             .children(extras);
     }
+    // A step's spine runs down its row, unless it stepped off: refused,
+    // or waiting on the person. What is under its line sits past its
+    // square, under its name.
+    let spined = place
+        .filter(|place| !(place.first && place.last) && !blocked && !waits);
+    let below = div()
+        .flex()
+        .flex_col()
+        .when(place.is_some(), |below| below.pl(STEP_INDENT))
+        .children(under)
+        .children(body)
+        .children(cut)
+        .children(extras);
     div()
+        .relative()
         .flex()
         .flex_col()
         .when(dropped, |card| card.opacity(0.7))
         .when(blocked, |card| {
             card.pt(sp(2.5)).border_t_2().border_color(t.red)
         })
+        .when(waits, |card| {
+            card.pt(sp(2.5)).border_t_2().border_color(t.roles.live)
+        })
+        .children(spined.map(|place| spine(place.first, place.last, t)))
         .child(header)
-        .children(under)
-        .children(body)
-        .children(cut)
-        .children(extras)
+        .child(below)
 }
+
+/// How far what is under a step's line sits in: past its square and the
+/// gap after it.
+const STEP_INDENT: gpui::Rems = rems(2.25);
 
 /// A child run's landing, in its parent's chat: what came, and what is
 /// left to resolve, under a rule. The child's title opens its closed
