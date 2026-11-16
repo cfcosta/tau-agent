@@ -144,7 +144,7 @@ impl Layout<'_> {
         for child in children(node) {
             if let Some(previous) = previous {
                 let row = previous.end_position().row;
-                if child.kind() == ";" {
+                if matches!(child.kind(), ";" | "empty_statement") {
                     // Kept against the statement it ends.
                 } else if child.kind() == "comment"
                     && child.start_position().row == row
@@ -171,33 +171,41 @@ impl Layout<'_> {
         // Whatever follows a block (`end`, `until`, `else`) starts a
         // line of its own.
         let mut after_block = false;
-        let kids = children(node);
-        let mut index = 0;
-        while index < kids.len() {
-            let child = kids[index];
+        for child in children(node) {
             if child.kind() == "block" {
-                let mut inner = vec![Doc::Hard, self.statements(child)];
-                let mut last = child;
-                while let Some(&next) = kids.get(index + 1)
-                    && next.kind() == "comment"
-                    && kids.get(index + 2).is_some()
-                {
-                    inner.push(self.separator(last, next, node));
-                    inner.push(self.node(next));
-                    last = next;
-                    index += 1;
-                }
-                if child.child_count() > 0 || last != child {
-                    docs.push(indent(Doc::Concat(inner)));
+                if child.child_count() > 0 {
+                    docs.push(indent(Doc::Concat(vec![
+                        Doc::Hard,
+                        self.statements(child),
+                    ])));
                 }
                 after_block = true;
-                previous = None;
-                index += 1;
+                previous = Some(child);
                 continue;
             }
-            if after_block
+            let block_ended =
+                after_block || previous.is_some_and(ends_in_block);
+            if block_ended && child.kind() == "comment" {
+                // tree-sitter leaves a comment after a block's last
+                // statement outside the block, even outside its `elseif`
+                // arm; it belongs at the block's end.
+                let row = previous
+                    .map(|p| last_leaf(p, self.code).end_position().row);
+                if row == Some(child.start_position().row) {
+                    docs.push(text(" "));
+                    docs.push(self.node(child));
+                } else {
+                    docs.push(indent(Doc::Concat(vec![
+                        Doc::Hard,
+                        self.node(child),
+                    ])));
+                }
+                after_block = true;
+                previous = Some(child);
+                continue;
+            }
+            if block_ended
                 || matches!(child.kind(), "elseif_statement" | "else_statement")
-                || previous.is_some_and(|p| ends_in_block(p))
             {
                 docs.push(Doc::Hard);
             } else if let Some(previous) = previous {
@@ -206,7 +214,6 @@ impl Layout<'_> {
             after_block = false;
             docs.push(self.node(child));
             previous = Some(child);
-            index += 1;
         }
         Doc::Concat(docs)
     }

@@ -425,7 +425,13 @@ fn luau_block(tc: &TestCase, depth: u8) -> Vec<String> {
                 out.extend([name, "=".into()]);
                 out.extend(tc.draw(luau_expression(depth)));
             }
-            2 => out.extend([name, "(".into(), ")".into()]),
+            2 => {
+                out.extend([name, "(".into(), ")".into()]);
+                // Models end statements with `;` as often as not.
+                if tc.draw(gs::booleans()) {
+                    out.push(";".into());
+                }
+            }
             3 => out.push(
                 tc.draw(gs::sampled_from(vec![
                     "-- a note",
@@ -499,6 +505,27 @@ fn a_formatted_script_keeps_its_tokens(tc: TestCase) {
 #[track_caller]
 fn shows(code: &str, shown: &str) {
     assert_eq!(&*formatted(code), shown);
+}
+
+/// A script on one line, its statements ended with `;`, reads one
+/// statement a line, each `;` kept at its end.
+#[test]
+fn a_semicolon_stays_at_the_end_of_its_statement() {
+    shows(
+        "text(tools.read({path='a'})); text(tools.ls({path='docs'}))",
+        "text(tools.read({ path = 'a' }));\ntext(tools.ls({ path = 'docs' }))",
+    );
+    shows("local a = 1; local b = 2;", "local a = 1;\nlocal b = 2;");
+}
+
+/// A comment ending a block's last line stays on it, in an `elseif` or
+/// `else` arm too, where nothing follows the block.
+#[test]
+fn a_comment_ending_a_block_stays_on_its_line() {
+    shows(
+        "if a then b() elseif c then d() -- why\n else e() -- else\n end",
+        "if a then\n  b()\nelseif c then\n  d() -- why\nelse\n  e() -- else\nend",
+    );
 }
 
 /// A minus before a minus keeps its space: `--` would be a comment.
