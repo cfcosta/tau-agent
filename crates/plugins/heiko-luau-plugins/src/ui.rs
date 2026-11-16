@@ -1237,25 +1237,36 @@ impl UiPlugin for LuauPluginsUi {
                 (!asks.is_empty()).then(|| asks.join(" "))
             })
             .contribute(points::CARD, |at: &AtCard, view| {
+                let details =
+                    at.data.result.as_ref().and_then(|r| r.details.as_ref());
+                // What the plugin's tool does, as its table declares it.
+                let kind = details
+                    .and_then(|details| details.get("kind"))
+                    .and_then(|kind| serde_json::from_value(kind.clone()).ok());
                 if let Some(ask) =
                     view.state.and_then(|state| state.asks.get(&at.call_id))
                 {
                     return Some(CardView {
                         body: Some(allow_card(ask, at)),
+                        kind,
+                        waits: true,
                         ..CardView::default()
                     });
                 }
                 if let Some(header) =
                     view.state.and_then(|state| card_header(state, &at.call_id))
                 {
-                    return Some(header);
+                    return Some(CardView { kind, ..header });
                 }
-                let details = at.data.result.as_ref()?.details.as_ref()?;
+                let details = details?;
                 let plugin = details.get("plugin")?.as_str()?;
-                let card =
-                    details.get("card").filter(|card| !card.is_null())?;
+                let card = details.get("card").filter(|card| !card.is_null());
+                if card.is_none() && kind.is_none() {
+                    return None;
+                }
                 Some(CardView {
-                    body: Some(embed(card, plugin)),
+                    body: card.map(|card| embed(card, plugin)),
+                    kind,
                     ..CardView::default()
                 })
             })

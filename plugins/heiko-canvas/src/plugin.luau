@@ -296,6 +296,7 @@ return heiko.plugin({
 
 	tools = {
 		canvas_show = {
+			kind = "change",
 			description = "Shows the person an image file on the canvas, a pane beside the conversation. Use it for a picture they should look at: a chart you plotted, a screenshot, a diagram you rendered. The file must be PNG, JPEG, GIF, WebP, BMP or SVG, at most 8 MiB. The canvas keeps a copy, so the file may change afterwards. Give `item` to replace an image on the canvas with a new version; leave it out to add one.",
 			parameters = {
 				type = "object",
@@ -318,6 +319,7 @@ return heiko.plugin({
 			call = show,
 		},
 		canvas_write = {
+			kind = "change",
 			description = "Writes a Markdown document on the canvas, a pane beside the conversation, for the person to read: a plan, a report, a draft, anything longer than a reply that they will want to keep open while you talk. Give `item` to replace a document's whole text with a new revision; leave it out to start a new document. To change part of a document, use canvas_edit.",
 			parameters = {
 				type = "object",
@@ -336,6 +338,7 @@ return heiko.plugin({
 			call = write,
 		},
 		canvas_edit = {
+			kind = "change",
 			description = "Revises a document on the canvas by exact replacements: each `old` must occur exactly once in the text as the edits before it left it, and becomes `new`. The result is a new revision; the person can step back through earlier ones.",
 			parameters = {
 				type = "object",
@@ -365,6 +368,7 @@ return heiko.plugin({
 			call = edit,
 		},
 		canvas_read = {
+			kind = "look",
 			description = "Reads a document's text from the canvas: its latest revision, or `revision`, numbered from 1. An image reads as its title, caption and file.",
 			parameters = {
 				type = "object",

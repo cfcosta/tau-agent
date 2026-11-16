@@ -45,7 +45,8 @@
         ],
         "type": "object"
       },
-      "card": false
+      "card": false,
+      "kind": "change"
     },
     {
       "name": "scheduled",
@@ -55,7 +56,8 @@
         "properties": {},
         "type": "object"
       },
-      "card": false
+      "card": false,
+      "kind": "look"
     },
     {
       "name": "unschedule",
@@ -72,7 +74,8 @@
         ],
         "type": "object"
       },
-      "card": false
+      "card": false,
+      "kind": "change"
     }
   ],
   "hooks": {

@@ -419,6 +419,12 @@ mod tests {
             body: tc.draw(gs::booleans()).then(|| node(&tc)),
             folds: tc.draw(gs::booleans()),
             inset: tc.draw(gs::booleans()),
+            kind: tc.draw(gs::booleans()).then(|| {
+                tc.draw_silent(gs::sampled_from(
+                    heiko_ui_kit::theme::ToolKind::ALL.to_vec(),
+                ))
+            }),
+            waits: tc.draw(gs::booleans()),
         };
         assert_eq!(back(&card), card);
         let pane = PaneView {

@@ -183,6 +183,7 @@ return heiko.plugin({
 	},
 	tools = {
 		zoom = {
+			kind = "look",
 			description = "Open the line id+n of the compacted conversation (<chat>) into the two lines of n/2 under it; n = 1 gives the message whole.",
 			parameters = {
 				type = "object",

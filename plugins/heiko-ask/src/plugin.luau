@@ -195,6 +195,7 @@ end
 return heiko.plugin({
 	tools = {
 		ask = {
+			kind = "people",
 			description = DESCRIPTION,
 			parameters = PARAMETERS,
 			-- A script's call would end with the script, the person still

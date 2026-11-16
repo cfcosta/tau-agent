@@ -36,7 +36,8 @@
         ],
         "type": "object"
       },
-      "card": false
+      "card": false,
+      "kind": "look"
     }
   ],
   "hooks": {

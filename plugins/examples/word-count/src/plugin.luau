@@ -9,6 +9,7 @@ return heiko.plugin {
 	uses = { tools = { "read" } },
 	tools = {
 		word_count = {
+			kind = "look",
 			description = "Counts the words in a file of the workspace.",
 			parameters = {
 				type = "object",

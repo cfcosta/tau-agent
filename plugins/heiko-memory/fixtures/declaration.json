@@ -89,7 +89,8 @@
         ],
         "type": "object"
       },
-      "card": false
+      "card": false,
+      "kind": "change"
     },
     {
       "name": "memory_read",
@@ -106,7 +107,8 @@
         ],
         "type": "object"
       },
-      "card": false
+      "card": false,
+      "kind": "look"
     },
     {
       "name": "memory_search",
@@ -128,7 +130,8 @@
         ],
         "type": "object"
       },
-      "card": false
+      "card": false,
+      "kind": "search"
     },
     {
       "name": "memory_write",
@@ -201,7 +204,8 @@
         ],
         "type": "object"
       },
-      "card": false
+      "card": false,
+      "kind": "change"
     }
   ],
   "hooks": {

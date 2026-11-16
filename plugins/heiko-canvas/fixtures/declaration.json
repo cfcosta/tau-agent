@@ -63,7 +63,8 @@
         ],
         "type": "object"
       },
-      "card": false
+      "card": false,
+      "kind": "change"
     },
     {
       "name": "canvas_read",
@@ -87,7 +88,8 @@
         ],
         "type": "object"
       },
-      "card": false
+      "card": false,
+      "kind": "look"
     },
     {
       "name": "canvas_show",
@@ -119,7 +121,8 @@
         ],
         "type": "object"
       },
-      "card": false
+      "card": false,
+      "kind": "change"
     },
     {
       "name": "canvas_write",
@@ -147,7 +150,8 @@
         ],
         "type": "object"
       },
-      "card": false
+      "card": false,
+      "kind": "change"
     }
   ],
   "hooks": {

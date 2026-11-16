@@ -105,6 +105,7 @@ return heiko.plugin({
 
 	tools = {
 		[scan.TOOL] = {
+			kind = "look",
 			description = DESCRIPTION,
 			parameters = {
 				type = "object",

@@ -100,6 +100,8 @@ pub fn card(at: &AtCard, view: &mut ViewCx<'_, McpUi>) -> Option<CardView> {
         body,
         folds: false,
         inset: false,
+        kind: Some(heiko_ui_kit::theme::ToolKind::Reach),
+        waits: false,
     })
 }
 

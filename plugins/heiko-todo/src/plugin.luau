@@ -434,6 +434,7 @@ end
 
 local tools = {
 	todo_ready = {
+		kind = "look",
 		description = "The ready issues: open, not deferred, blocked by nothing open, sorted by priority then age. Ask before choosing work. With blocked, what waits on what instead.",
 		parameters = object({
 			label = { type = "string" },
@@ -459,6 +460,7 @@ local tools = {
 		card = read_card,
 	},
 	todo_list = {
+		kind = "look",
 		description = "Issues by status, label, type, priority or claim; with tree, each epic's children under it.",
 		parameters = object({
 			status = { type = "string", enum = { "open", "in_progress", "blocked", "deferred", "closed" } },
@@ -500,6 +502,7 @@ local tools = {
 		card = read_card,
 	},
 	todo_show = {
+		kind = "look",
 		description = "One issue whole: its description, criteria, links, what blocks it and its comments.",
 		parameters = object({ id = ID }, { "id" }),
 		call = function(args, model, env)
@@ -509,6 +512,7 @@ local tools = {
 		card = read_card,
 	},
 	todo_search = {
+		kind = "search",
 		description = "Issues whose title, description or comments hold the text, any case.",
 		parameters = object({ text = { type = "string" } }, { "text" }),
 		call = function(args, model, env)
@@ -518,6 +522,7 @@ local tools = {
 		card = read_card,
 	},
 	todo_create = {
+		kind = "change",
 		description = "Files a new issue. What you find outside your issue goes here rather than into your work: it is found while the issue you hold. Give the step it comes from, when it is one of yours, and the step is done, naming it.",
 		parameters = object({
 			title = { type = "string" },
@@ -546,6 +551,7 @@ local tools = {
 		card = change_card,
 	},
 	todo_update = {
+		kind = "change",
 		description = "Changes an issue's title, description, type, priority, labels, criteria (replaced, unchecked) or status. A blocked status says what outside heiko it waits on; to wait on an issue, link it.",
 		parameters = object({
 			id = ID,
@@ -577,6 +583,7 @@ local tools = {
 		card = change_card,
 	},
 	todo_claim = {
+		kind = "change",
 		description = "Claims an issue for this run: it goes in progress, yours until it is closed or your run ends. Refused when another run holds it.",
 		parameters = object({ id = ID }, { "id" }),
 		call = function(args, model, env)
@@ -593,6 +600,7 @@ local tools = {
 		card = change_card,
 	},
 	todo_check = {
+		kind = "change",
 		description = "Checks one of an issue's done-when criteria, by its number from 1; done false unchecks it.",
 		parameters = object({ id = ID, criterion = { type = "integer" }, done = { type = "boolean" } }, { "id", "criterion" }),
 		call = function(args, model, env)
@@ -605,6 +613,7 @@ local tools = {
 		card = change_card,
 	},
 	todo_link = {
+		kind = "change",
 		description = "Links an issue: blocks (on blocks id, which waits for it), parent (on is the epic over id), found_while (id was found while on was worked), related. A blocks link that closes a cycle is refused. remove takes a link away.",
 		parameters = object({
 			id = ID,
@@ -623,6 +632,7 @@ local tools = {
 		card = change_card,
 	},
 	todo_comment = {
+		kind = "change",
 		description = "Adds a comment to an issue.",
 		parameters = object({ id = ID, text = { type = "string" } }, { "id", "text" }),
 		call = function(args, model, env)
@@ -634,6 +644,7 @@ local tools = {
 		card = change_card,
 	},
 	todo_close = {
+		kind = "change",
 		description = "Closes an issue with the reason; with reopen, opens a closed one again. Closing with criteria unmet is allowed, but the reason says why. An epic closes once its children have.",
 		parameters = object({ id = ID, reason = { type = "string" }, reopen = { type = "boolean" } }, { "id" }),
 		call = function(args, model, env)
@@ -663,6 +674,7 @@ local tools = {
 		card = change_card,
 	},
 	todo_defer = {
+		kind = "change",
 		description = "Defers an issue, until a date (2026-11-10) when given: it is not ready until then.",
 		parameters = object({ id = ID, ["until"] = { type = "string" } }, { "id" }),
 		call = function(args, model, env)
@@ -677,6 +689,7 @@ local tools = {
 		card = change_card,
 	},
 	todo_dispatch = {
+		kind = "people",
 		description = "Asks the person to start a chat on an issue, with it claimed, or to send it to a chat that exists (to, its run id). It is the one thing you cannot do alone: the person allows it, or says why not.",
 		parameters = object({ id = ID, to = { type = "string", description = "The chat's run id; none starts a new chat." } }, { "id" }),
 		call = function(args, model, env)
@@ -695,6 +708,7 @@ local tools = {
 		end,
 	},
 	todo_steps = {
+		kind = "change",
 		description = "Replace this run's steps with a new list: your own checklist of how you mean to do what you are doing. Each step has its text and a status, pending, in_progress or done; at most one is in progress. Send the whole list each time.",
 		parameters = object({
 			steps = {

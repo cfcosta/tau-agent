@@ -248,6 +248,9 @@ pub struct ToolSpec {
     /// It draws its own card.
     #[serde(default)]
     pub card: bool,
+    /// What it does, which colors its name (ADR 0060).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<heiko_ui_kit::theme::ToolKind>,
     /// The boolean setting it is offered while it is on: the model sees
     /// it only then.
     #[serde(default, skip_serializing_if = "Option::is_none")]

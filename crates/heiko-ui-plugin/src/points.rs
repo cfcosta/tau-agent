@@ -321,6 +321,11 @@ pub struct CardView {
     /// Whether the body sits inset under the header and says itself what
     /// was cut from the result (a terminal's screen).
     pub inset: bool,
+    /// What the tool does, when its plugin says it: its name's color.
+    pub kind: Option<heiko_ui_kit::theme::ToolKind>,
+    /// The call waits on the person: it leaves the spine, under an
+    /// orange rule, and shows while its stretch is folded.
+    pub waits: bool,
 }
 
 /// What a plugin shows in a run's pane ([`PANE`]).

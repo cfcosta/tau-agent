@@ -1238,6 +1238,16 @@ local function page_of(what, name, pages)
 	end
 end
 
+local KINDS = { look = true, search = true, change = true, run = true, reach = true, people = true }
+
+-- A tool's kind, one of `KINDS`, or nil when it declares none.
+local function kind_of(name, kind)
+	if kind ~= nil and not KINDS[kind] then
+		error("the tool `" .. name .. "` has the kind `" .. tostring(kind) .. "`: a kind is look, search, change, run, reach or people", 0)
+	end
+	return kind
+end
+
 -- What the host reads of a plugin, without running its hooks.
 function heiko._describe(plugin)
 	page_of("nav", plugin.nav and plugin.nav.page, plugin.pages)
@@ -1249,6 +1259,8 @@ function heiko._describe(plugin)
 			description = tool.description or "",
 			parameters = tool.parameters or { type = "object", properties = {} },
 			card = tool.card ~= nil,
+			-- What it does (ADR 0060): look, search, change, run, reach or people.
+			kind = kind_of(name, tool.kind),
 			-- The boolean setting the tool is offered while it is on.
 			when = tool.when and tostring(tool.when) or nil,
 			-- Only the model calls it, never a script.

@@ -792,6 +792,8 @@ pub fn card(
         // behind the line's link.
         folds: false,
         inset: false,
+        kind: Some(theme::ToolKind::Run),
+        waits: false,
     })
 }
 

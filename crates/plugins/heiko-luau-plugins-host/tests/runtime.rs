@@ -885,3 +885,39 @@ return heiko.plugin { uses = { decide = USES },
         assert_eq!(out.value, want, "uses.decide = {uses}");
     }
 }
+
+/// A tool's table says what it does with `kind` (ADR 0060); a kind that
+/// is not one of the six stops the plugin from loading, saying why.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tool_declares_its_kind() {
+    let plugin = |kind: &str| {
+        format!(
+            "return {{ tools = {{ \
+               file = {{ kind = {kind}, call = function() return 1 end }}, \
+               plain = {{ call = function() return 2 end }} }} }}"
+        )
+    };
+    let loaded = load("kinds", files("kinds", &plugin("\"change\"")))
+        .await
+        .unwrap();
+    let kinds: Vec<_> = loaded
+        .declaration
+        .tools
+        .iter()
+        .map(|tool| (tool.name.as_str(), tool.kind))
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            ("file", Some(heiko_ui_kit::theme::ToolKind::Change)),
+            ("plain", None),
+        ]
+    );
+    let refused = load("kinds", files("kinds", &plugin("\"edit\"")))
+        .await
+        .unwrap_err();
+    assert!(
+        refused.contains("the tool `file` has the kind `edit`"),
+        "{refused}"
+    );
+}

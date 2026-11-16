@@ -89,6 +89,7 @@
         "type": "object"
       },
       "card": false,
+      "kind": "people",
       "model_only": true
     }
   ],

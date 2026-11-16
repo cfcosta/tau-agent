@@ -758,7 +758,9 @@ fn tool(
     let name = if blocked || failed {
         t.red
     } else {
-        t.roles.tool(&card.tool)
+        view.kind
+            .or_else(|| heiko_ui_kit::theme::ToolKind::of(&card.tool))
+            .map_or(t.text, |kind| t.roles.kind(kind))
     };
     // A result that wants attention is written in its tone.
     let quiet = match view.edge {

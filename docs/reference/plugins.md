@@ -906,7 +906,9 @@ itself, changed in place, and `env` the run's `run`, `now`, `settings`,
 `models` and a command's `drafts`. `view` is `(model, env)`, a tool's
 `card` `(input, model, env)` with `input = { call, result }`, and
 `settings.view` `(settings, model, env)`: each draws a frozen copy of the
-model and cannot await.
+model and cannot await. A tool's table may say what it does with `kind`:
+`look`, `search`, `change`, `run`, `reach` or `people`. The kind colors
+the tool's name in the chat (ADR 0060), and any other value is an error.
 
 A hook reaches nothing itself. Every effect is a command of `heiko.cmd`:
 reads and waits are awaited, `local v = heiko.await(cmd.store.get(k))`

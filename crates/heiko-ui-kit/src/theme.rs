@@ -46,6 +46,73 @@ pub enum Tone {
     Quiet,
 }
 
+/// What a tool does (ADR 0060). It gives the tool's name its color, and
+/// its plugin declares it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolKind {
+    /// Reads what is there: a file, a listing, a change.
+    Look,
+    /// Looks for something: grep, find, a memory recall.
+    Search,
+    /// Changes something: a file, a commit, an issue, a note.
+    Change,
+    /// Runs something: a command, a script.
+    Run,
+    /// Reaches outside: the web, an MCP server, a forge.
+    Reach,
+    /// Speaks with someone: the person, or an agent.
+    People,
+}
+
+impl ToolKind {
+    pub const ALL: [Self; 6] = [
+        Self::Look,
+        Self::Search,
+        Self::Change,
+        Self::Run,
+        Self::Reach,
+        Self::People,
+    ];
+
+    /// The kind its name says: `change`.
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.name() == name)
+    }
+
+    /// Its name, as a plugin declares it: `change`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Look => "look",
+            Self::Search => "search",
+            Self::Change => "change",
+            Self::Run => "run",
+            Self::Reach => "reach",
+            Self::People => "people",
+        }
+    }
+
+    /// The kind of one of heiko's own tools, by its name; any MCP
+    /// tool reaches. A plugin's tool declares its own.
+    pub fn of(tool: &str) -> Option<Self> {
+        Some(match tool {
+            "read" | "ls" | "image" | "artifact_read" | "vcs_status"
+            | "vcs_log" | "vcs_show" | "vcs_diff" | "pending_asks"
+            | "scheduled" => Self::Look,
+            "grep" | "find" => Self::Search,
+            "edit" | "write" | "vcs_commit" | "vcs_describe" | "vcs_new"
+            | "vcs_restore" | "vcs_undo" | "vcs_resolve" | "vcs_land"
+            | "artifact_grant" | "artifact_prune" | "schedule"
+            | "unschedule" => Self::Change,
+            "exec_command" | "write_stdin" | "codemode" => Self::Run,
+            "http" | "notify" => Self::Reach,
+            "ask" | "agent_send" | "spawn" | "wait" => Self::People,
+            _ if tool.starts_with("mcp__") => Self::Reach,
+            _ => return None,
+        })
+    }
+}
+
 pub const SANS: &str = "Geist";
 pub const MONO: &str = "Geist Mono";
 /// The reading face of notes.
@@ -161,14 +228,13 @@ pub struct Roles {
     /// The primary action's fill, and the text on it.
     pub primary: Hsla,
     pub on_primary: Hsla,
-    /// Tools by what they do: listing, searching, reading, changing
-    /// files, running commands, and anything else.
-    pub tool_list: Hsla,
-    pub tool_search: Hsla,
-    pub tool_read: Hsla,
-    pub tool_edit: Hsla,
-    pub tool_run: Hsla,
-    pub tool_other: Hsla,
+    /// Tools by their kind ([`ToolKind`]).
+    pub look: Hsla,
+    pub search: Hsla,
+    pub change: Hsla,
+    pub run: Hsla,
+    pub reach: Hsla,
+    pub people: Hsla,
 }
 
 impl Roles {
@@ -189,12 +255,12 @@ impl Roles {
             code: c(rgb(0x7dcfff)),
             primary: c(rgb(0x7aa2f7)),
             on_primary: c(rgb(0x16161e)),
-            tool_list: c(rgb(0x2ac3de)),
-            tool_search: c(rgb(0x73daca)),
-            tool_read: c(rgb(0x7aa2f7)),
-            tool_edit: c(rgb(0xff9e64)),
-            tool_run: c(rgb(0xbb9af7)),
-            tool_other: c(rgb(0x7dcfff)),
+            look: c(rgb(0x7aa2f7)),
+            search: c(rgb(0x73daca)),
+            change: c(rgb(0xff9e64)),
+            run: c(rgb(0x7dcfff)),
+            reach: c(rgb(0xe0af68)),
+            people: c(rgb(0xbb9af7)),
         }
     }
 
@@ -205,24 +271,22 @@ impl Roles {
             "heiko-memory" => self.memory,
             "heiko-constitution" => self.rules,
             "heiko-mcp" => self.mcp,
-            "heiko-compaction" | "heiko-fast-compaction" => self.tool_read,
-            "heiko-codemode" => self.tool_run,
+            "heiko-compaction" | "heiko-fast-compaction" => self.look,
+            "heiko-codemode" => self.run,
             "heiko-ask" => self.agent,
             _ => return None,
         })
     }
 
-    /// The color a tool's name is written in.
-    pub fn tool(&self, name: &str) -> Hsla {
-        match name {
-            "ls" | "vcs_status" | "vcs_log" => self.tool_list,
-            "grep" | "find" => self.tool_search,
-            "read" | "vcs_show" | "vcs_diff" => self.tool_read,
-            "edit" | "write" => self.tool_edit,
-            "exec_command" | "write_stdin" | "codemode" => self.tool_run,
-            _ if name.starts_with("mcp__") => self.mcp,
-            _ if name.starts_with("memory") => self.memory,
-            _ => self.tool_other,
+    /// The color a tool of `kind` has its name written in.
+    pub fn kind(&self, kind: ToolKind) -> Hsla {
+        match kind {
+            ToolKind::Look => self.look,
+            ToolKind::Search => self.search,
+            ToolKind::Change => self.change,
+            ToolKind::Run => self.run,
+            ToolKind::Reach => self.reach,
+            ToolKind::People => self.people,
         }
     }
 }

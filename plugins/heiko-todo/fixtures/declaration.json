@@ -39,7 +39,8 @@
         ],
         "type": "object"
       },
-      "card": true
+      "card": true,
+      "kind": "change"
     },
     {
       "name": "todo_claim",
@@ -57,7 +58,8 @@
         ],
         "type": "object"
       },
-      "card": true
+      "card": true,
+      "kind": "change"
     },
     {
       "name": "todo_close",
@@ -81,7 +83,8 @@
         ],
         "type": "object"
       },
-      "card": true
+      "card": true,
+      "kind": "change"
     },
     {
       "name": "todo_comment",
@@ -103,7 +106,8 @@
         ],
         "type": "object"
       },
-      "card": true
+      "card": true,
+      "kind": "change"
     },
     {
       "name": "todo_create",
@@ -167,7 +171,8 @@
         ],
         "type": "object"
       },
-      "card": true
+      "card": true,
+      "kind": "change"
     },
     {
       "name": "todo_defer",
@@ -188,7 +193,8 @@
         ],
         "type": "object"
       },
-      "card": true
+      "card": true,
+      "kind": "change"
     },
     {
       "name": "todo_dispatch",
@@ -210,7 +216,8 @@
         ],
         "type": "object"
       },
-      "card": false
+      "card": false,
+      "kind": "people"
     },
     {
       "name": "todo_link",
@@ -246,7 +253,8 @@
         ],
         "type": "object"
       },
-      "card": true
+      "card": true,
+      "kind": "change"
     },
     {
       "name": "todo_list",
@@ -299,7 +307,8 @@
         "required": [],
         "type": "object"
       },
-      "card": true
+      "card": true,
+      "kind": "look"
     },
     {
       "name": "todo_ready",
@@ -339,7 +348,8 @@
         "required": [],
         "type": "object"
       },
-      "card": true
+      "card": true,
+      "kind": "look"
     },
     {
       "name": "todo_search",
@@ -356,7 +366,8 @@
         ],
         "type": "object"
       },
-      "card": true
+      "card": true,
+      "kind": "search"
     },
     {
       "name": "todo_show",
@@ -374,7 +385,8 @@
         ],
         "type": "object"
       },
-      "card": true
+      "card": true,
+      "kind": "look"
     },
     {
       "name": "todo_steps",
@@ -412,7 +424,8 @@
         ],
         "type": "object"
       },
-      "card": false
+      "card": false,
+      "kind": "change"
     },
     {
       "name": "todo_update",
@@ -484,7 +497,8 @@
         ],
         "type": "object"
       },
-      "card": true
+      "card": true,
+      "kind": "change"
     }
   ],
   "hooks": {

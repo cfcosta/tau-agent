@@ -174,7 +174,8 @@ fn lane(
     };
     let said = match doing {
         Some((tool, rest)) => {
-            let color = t.roles.tool(&tool);
+            let color = heiko_ui_kit::theme::ToolKind::of(&tool)
+                .map_or(t.text, |kind| t.roles.kind(kind));
             div()
                 .min_w(rems(0.))
                 .flex()
@@ -237,7 +238,7 @@ fn lane(
             ui::ticks(
                 (turn as usize).min(LANE_TICKS),
                 LANE_TICKS,
-                t.roles.tool_run,
+                t.roles.people,
                 t,
             )
         })))

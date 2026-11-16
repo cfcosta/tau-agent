@@ -404,6 +404,7 @@ local plugin = heiko.plugin({
 	},
 	tools = {
 		memory_write = {
+			kind = "change",
 			description = "Save one idea to long-term memory, for later runs on this repository: a decision and why, a convention, a command, a gotcha (symptom, cause, fix), a case (task, approach, outcome), or a preference the user stated. One idea per note, in full prose. Answers with the nearest existing notes: link to them, or update (id) or supersede (supersedes) one instead of repeating it. Not for task progress or TODOs.",
 			parameters = {
 				type = "object",
@@ -426,6 +427,7 @@ local plugin = heiko.plugin({
 			call = saving("memory_write", write_call),
 		},
 		memory_search = {
+			kind = "search",
 			description = "Search long-term memory: notes kept from earlier runs on this repository and the user's preferences. Returns ids, titles, descriptions and the matching line, plus notes linked with the best matches. Superseded notes are listed as history; a note marked may be stale was written before a file it is about changed, so check it. Notes are also plain files you can grep.",
 			parameters = {
 				type = "object",
@@ -438,6 +440,7 @@ local plugin = heiko.plugin({
 			call = saving("memory_search", search_call),
 		},
 		memory_read = {
+			kind = "look",
 			description = "Read a memory note in full, with its links and the notes that link to it.",
 			parameters = {
 				type = "object",
@@ -447,6 +450,7 @@ local plugin = heiko.plugin({
 			call = saving("memory_read", read_call),
 		},
 		memory_link = {
+			kind = "change",
 			description = "Link two memory notes, typed: relates, refines, supersedes, contradicts or derived_from; or tie a note to a file, crate or symbol with about (the note is then flagged when that file changes). Links are how later searches reach a note that shares none of the query's words.",
 			parameters = {
 				type = "object",

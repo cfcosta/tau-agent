@@ -13,6 +13,7 @@ end
 return heiko.plugin {
 	tools = {
 		ask_to_ship = {
+			kind = "people",
 			description = "Asks the person whether a change may ship. Ask before you release it.",
 			parameters = {
 				type = "object",

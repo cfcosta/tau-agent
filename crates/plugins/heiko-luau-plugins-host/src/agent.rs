@@ -2031,6 +2031,7 @@ impl AgentTool for LuauTool {
                 "plugin": self.plugin,
                 "value": value,
                 "card": card,
+                "kind": self.spec.kind,
             })),
             ..ToolOutput::text(text)
         })

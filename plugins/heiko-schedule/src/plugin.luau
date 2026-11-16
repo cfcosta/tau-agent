@@ -252,6 +252,7 @@ return heiko.plugin({
 
 	tools = {
 		schedule = {
+			kind = "change",
 			description = "Wake this chat later, once, with a note to yourself for then: `in` a while, or `on` a local date and time. When it comes, this chat takes a turn whose message is your note, after any turn going ends. Use it when work waits on something: a review, a release, a long build. Scheduling a name again replaces it. The person sees what you scheduled beside the chat and may cancel it.",
 			parameters = {
 				type = "object",
@@ -273,11 +274,13 @@ return heiko.plugin({
 			call = schedule,
 		},
 		scheduled = {
+			kind = "look",
 			description = "What this chat has scheduled with `schedule` that is still to come, soonest first, and the host's local time now. Look before you schedule something again.",
 			parameters = { type = "object", properties = {}, additionalProperties = false },
 			call = scheduled,
 		},
 		unschedule = {
+			kind = "change",
 			description = "Cancel what this chat scheduled as `name`.",
 			parameters = {
 				type = "object",
