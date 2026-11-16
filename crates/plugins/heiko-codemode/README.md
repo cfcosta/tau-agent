@@ -21,7 +21,7 @@ cards the desktop does.
 | `promotion`             | Requests to promote a module, and their decisions             |
 | `inference_trace`       | Records of nested `infer` calls; `restore_budget`             |
 | `live`                  | What a running call reports: `DecideUpdate`, `InferUpdate`       |
-| `format::formatted`     | A script formatted by StyLua, for the cards only              |
+| `format::formatted`     | A script laid out one statement a line, for the cards only    |
 | `outline`               | A script's output on its card, one line per item              |
 | `image`                 | `image()` payloads, typed by their bytes (`parse`, `sniff`)   |
 
@@ -38,7 +38,8 @@ its API returns.
 
 It builds on `heiko-agent` (with `serde`), `heiko-ai`, `heiko-ui-plugin` and
 `heiko-ui-kit`; its views are trees the interface draws (ADR 0045).
-`stylua` formats scripts for the cards.
+`format` lays scripts out for the cards from `tree-sitter-luau`'s syntax
+tree, changing only whitespace (and a table's trailing comma).
 
 Used by:
 
@@ -62,8 +63,9 @@ cargo nextest run --release -p heiko-codemode
 `tests/store.rs`, `tests/modules.rs` and `tests/repository_pins.rs` are
 Hegel property tests. They check the folds against an independent model
 at every prefix of generated record histories. The workspace's
-`hegel.toml` sets the case counts. `tests/format.rs` checks StyLua
-formatting. Nothing needs network or credentials.
+`hegel.toml` sets the case counts. `tests/format.rs` checks that
+formatting keeps every token of generated scripts and of every shipped
+Luau file, and that it is idempotent. Nothing needs network or credentials.
 
 ## Further reading
 

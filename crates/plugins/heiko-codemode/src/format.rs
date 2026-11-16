@@ -1,5 +1,5 @@
-//! Scripts as the cards show them: formatted by StyLua, so a script the
-//! model wrote on one line reads as code. Only the cards see this; the
+//! Scripts as the cards show them: laid out one statement a line
+//! ([`luau`]), so a script the model wrote on one line reads as code. Only the cards see this; the
 //! sandbox runs the source as it came, so its errors' line numbers stay
 //! the model's.
 
@@ -10,13 +10,8 @@ use std::{
     sync::Arc,
 };
 
-use stylua_lib::{
-    Config,
-    IndentType,
-    LuaVersion,
-    OutputVerification,
-    format_code,
-};
+mod doc;
+mod luau;
 
 /// Sources [`formatted`] keeps, per thread, before it starts over.
 const CACHED: usize = 128;
@@ -46,15 +41,7 @@ pub fn formatted(code: &str) -> Arc<str> {
 }
 
 fn format(code: &str) -> Option<String> {
-    let config = Config {
-        syntax: LuaVersion::Luau,
-        // A card is narrow.
-        column_width: 80,
-        indent_type: IndentType::Spaces,
-        indent_width: 2,
-        ..Config::default()
-    };
-    let text =
-        format_code(code, config, None, OutputVerification::None).ok()?;
+    // A card is narrow.
+    let text = luau::format(code, 80)?;
     Some(text.trim_end().to_owned())
 }

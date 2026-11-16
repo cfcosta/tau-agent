@@ -38,6 +38,7 @@ ignore = "0.4.33"
 # Syntax highlighting of code in cards and replies (heiko-ui-kit's
 # `syntax`): the highlighter, which brings the parser, and one grammar
 # per language.
+tree-sitter = "0.27.0"
 tree-sitter-highlight = "0.27.0"
 tree-sitter-bash = "0.25.1"
 tree-sitter-go = "0.25.0"
@@ -54,8 +55,6 @@ libc = "0.2.189"
 # Codemode's sandbox: Luau, run from tokio, with JSON values
 # (docs/decisions/0018-codemode-and-mcp.md).
 mlua = { version = "0.12.2", features = ["luau", "async", "send", "serde"] }
-# Codemode's cards show scripts formatted; the library half, for Luau.
-stylua = { version = "2.5.2", default-features = false, features = ["luau"] }
 # The terminal emulator behind heiko-terminal
 # (docs/decisions/0010-terminal-rendering.md). The -sys crate finds the
 # library through pkg-config (the flake's `libghostty-vt`), never git or
