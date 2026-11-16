@@ -1,6 +1,6 @@
 # 0060: Tool calls stand on a spine, in one language
 
-- Status: accepted, being implemented. Follows
+- Status: accepted. Follows
   [0057](0057-the-interface-is-flat-and-printed.md) ("A tool call is a
   line") and [0045](0045-everything-is-a-plugin.md) (a tool's plugin
   draws its card).
@@ -145,12 +145,18 @@ steps (`todo_file`, the issue's title, its id and an undo). Plugin
 
 ## Steps
 
+All done on 2026-11-16.
+
 1. The kinds: `ToolKind`, the theme's colors, `CardView::kind`, the Luau
    tool's `kind`, and run in cyan.
 2. The spine: stretches, the head line and its fold, the numbered
    squares and stepping off.
-3. One line: subjects instead of JSON, receipts in counts, the whole
-   line opens, and `+ N more <noun>`.
-4. Codemode's nested calls as lettered steps.
+3. One line: receipts in counts, the whole line opens, bodies that fold,
+   and no label on the band.
+4. Codemode's nested calls as lettered steps (`Node::Step`, `ui.step`),
+   with the subject a top-level call shows.
 5. Todo's calls as steps.
-6. Screenshots.
+6. Screenshots of the screens with calls.
+
+Left for later: codemode's output items still carry numbered squares,
+which read like steps.
