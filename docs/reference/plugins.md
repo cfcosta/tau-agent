@@ -607,9 +607,11 @@ heiko-luau-plugins the plugins repository.
   body }`. A `head` that is an empty stack (`ui.stack({})`) takes the
   line away: only the `body` shows, a note in the call's place, and
   with no `body` the call draws nothing at all, nor does reasoning
-  without words right before it. A plugin folds calls about one thing
-  this way, the last as the note and the ones before it as nothing
-  (`heiko-todo`'s note of an issue a run filed). With `folds = true`
+  without words right before it (`heiko-todo`'s calls that set a run's
+  steps, which show over the composer instead). A `label` is the call's
+  receipt (`heiko-todo` gives each call about an issue the run filed
+  the issue's id, and the last of them its undo as a `badge`). With
+  `folds = true`
   the `body` is closed under the line until the person clicks it
   (`heiko-skills`' line of a loaded skill). A call that was
   refused, flagged, dropped or given a badge keeps its line. A

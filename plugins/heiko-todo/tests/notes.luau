@@ -1,5 +1,5 @@
--- An issue a run files has one note in its chat: the calls about it
--- fold into it, drawn where the last of them is.
+-- The calls about an issue a run files are steps in its chat (ADR
+-- 0060), each with the issue's id, the last with the undo.
 local heiko = require("heiko")
 local t = heiko.test
 
@@ -11,39 +11,28 @@ local function away(call)
 	t.equal(call.body, nil)
 end
 
--- A note's parts: its mark, caption, id, undo and title.
-local function parts(call)
-	t.equal(#call.head.children, 0)
-	local note = call.body
-	t.equal(note.piece, "row")
-	local mark, body = note.children[1], note.children[2].children
-	local head = body[1].children
-	t.equal(#body, 2)
-	return {
-		mark = { mark.piece, mark.text, mark.tone },
-		caption = head[1].text,
-		id = head[3].text,
-		undo = head[4],
-		slip = { body[2].piece, body[2].text, body[2].tone, body[2].dashed },
-	}
+-- A step's receipt, and its undo when it has one.
+local function step(call)
+	t.equal(call.head, nil)
+	t.equal(call.body, nil)
+	return call.label, call.badge
 end
 
-t.case("an issue filed and claimed is one note, at the last call; its steps are not in it", function()
+t.case("an issue filed and claimed is a step a call with its id, the undo on the last; its steps are not there", function()
 	local run = t.run({ id = "r1" })
 	local id = run:tool("todo_create", { title = "Identify startup improvements" }, "c1").issue.id
-	local filed = parts(run:view().calls.c1)
-	t.equal(filed.mark, { "kanji", "件", "good" })
-	t.equal(filed.caption, "filed")
-	t.equal(filed.id, id)
-	t.equal(filed.slip, { "slip", "Identify startup improvements", "good", false })
-	t.equal(filed.undo.label, "undo")
-	t.equal(filed.undo.args, { forget = id })
+	local label, undo = step(run:view().calls.c1)
+	t.equal(label, id)
+	t.equal(undo.label, "undo")
+	t.equal(undo.args, { forget = id })
 
 	run:tool("todo_claim", { id = id }, "c2")
 	local calls = run:view().calls
-	away(calls.c1)
-	t.equal(parts(calls.c2).caption, "filed · claimed by this run")
-	t.equal(parts(calls.c2).undo.args, { forget = id })
+	label, undo = step(calls.c1)
+	t.equal({ label, undo }, { id, nil })
+	label, undo = step(calls.c2)
+	t.equal(label, id)
+	t.equal(undo.args, { forget = id })
 
 	run:tool("todo_steps", {
 		steps = {
@@ -53,8 +42,7 @@ t.case("an issue filed and claimed is one note, at the last call; its steps are 
 		},
 	}, "c3")
 	calls = run:view().calls
-	away(calls.c1)
-	t.equal(parts(calls.c2).caption, "filed · claimed by this run")
+	t.equal(step(calls.c2), id)
 	away(calls.c3)
 end)
 
@@ -97,35 +85,34 @@ t.case("steps all done leave the composer, and one line where the last call is",
 	t.equal(view.calls.c3.body.lead[1].text, "2 steps")
 end)
 
-t.case("closing the issue folds in too, and its undo reopens it", function()
+t.case("closing the issue moves the undo to its step, and the undo reopens it", function()
 	local run = t.run({ id = "r1" })
 	local id = run:tool("todo_create", { title = "fix it" }, "c1").issue.id
 	run:tool("todo_claim", { id = id }, "c2")
 	run:tool("todo_close", { id = id, reason = "fixed" }, "c3")
 	local calls = run:view().calls
-	away(calls.c1)
-	away(calls.c2)
-	local note = parts(calls.c3)
-	t.equal(note.caption, "filed · claimed by this run · closed")
-	t.equal(note.undo.args.restore.status, "in_progress")
-	run:action("undo", note.undo.args)
-	note = parts(run:view().calls.c3)
-	t.equal(note.caption, "filed · claimed by this run · closed · undone")
-	t.equal(note.undo, nil)
+	t.equal({ step(calls.c1) }, { id })
+	t.equal({ step(calls.c2) }, { id })
+	local label, undo = step(calls.c3)
+	t.equal(label, id)
+	t.equal(undo.args.restore.status, "in_progress")
+	run:action("undo", undo.args)
+	label, undo = step(run:view().calls.c3)
+	t.equal({ label, undo }, { id .. " · undone", nil })
 	t.equal(run:tool("todo_show", { id = id }).issue.status ~= "closed", true)
 end)
 
-t.case("each issue filed has its own note", function()
+t.case("each issue filed has its own id and undo", function()
 	local run = t.run({ id = "r1" })
 	local a = run:tool("todo_create", { title = "a" }, "c1").issue.id
 	local b = run:tool("todo_create", { title = "b" }, "c2").issue.id
 	run:tool("todo_claim", { id = a }, "c3")
 	local calls = run:view().calls
-	away(calls.c1)
-	t.equal(parts(calls.c2).id, b)
-	t.equal(parts(calls.c2).caption, "filed")
-	t.equal(parts(calls.c3).id, a)
-	t.equal(parts(calls.c3).caption, "filed · claimed by this run")
+	t.equal({ step(calls.c1) }, { a })
+	local label, undo = step(calls.c2)
+	t.equal({ label, undo.args }, { b, { forget = b } })
+	label, undo = step(calls.c3)
+	t.equal({ label, undo.args }, { a, { forget = a } })
 end)
 
 t.case("calls about an issue the run did not file keep their lines", function()
@@ -137,7 +124,7 @@ t.case("calls about an issue the run did not file keep their lines", function()
 	t.equal(run:view().calls, nil)
 end)
 
-t.case("reads and other changes of a noted issue keep their lines; a new title shows on the slip", function()
+t.case("reads and other changes of a noted issue keep their own lines", function()
 	local run = t.run({ id = "r1" })
 	local id = run:tool("todo_create", { title = "fix it" }, "c1").issue.id
 	run:tool("todo_show", { id = id }, "c2")
@@ -147,21 +134,21 @@ t.case("reads and other changes of a noted issue keep their lines; a new title s
 	t.equal(calls.c2, nil)
 	t.equal(calls.c3, nil)
 	t.equal(calls.c4, nil)
-	t.equal(parts(calls.c1).slip[2], "fix it well")
+	local label, undo = step(calls.c1)
+	t.equal({ label, undo.args }, { id, { forget = id } })
 end)
 
-t.case("undoing the filing says so on the note, with nothing left to undo", function()
+t.case("undoing the filing says so on its step, with nothing left to undo", function()
 	local run = t.run({ id = "r1" })
 	local id = run:tool("todo_create", { title = "fix it" }, "c1").issue.id
 	run:action("undo", { forget = id })
-	local note = parts(run:view().calls.c1)
-	t.equal(note.caption, "filed · undone")
-	t.equal(note.undo, nil)
+	local label, undo = step(run:view().calls.c1)
+	t.equal({ label, undo }, { id .. " · undone", nil })
 	t.equal(#run:tool("todo_list", {}).issues, 0)
 end)
 
--- The demo's chat: an issue filed and claimed, as the one note, and
--- its steps over the composer.
+-- The demo's chat: an issue filed and claimed, as two steps with its
+-- id, and its steps over the composer.
 t.fixture("note", function()
 	local run = t.run({ id = "demo" })
 	local id = run:tool("todo_create", { title = "Honor retry-after on 429 and 503" }, "call_todo_1").issue.id

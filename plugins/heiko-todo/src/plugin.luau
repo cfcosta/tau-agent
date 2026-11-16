@@ -339,8 +339,8 @@ end
 
 -- The run's note of the issue `id`, if it has one. A run's notes
 -- (`model.notes`, oldest first) are the issues it filed, each with what
--- the run did to it since and the calls that did it: the transcript
--- draws one note for them all, where the last of the calls is.
+-- the run did to it since and the calls that did it: each call a step
+-- in the chat with the issue's id, the last with the undo.
 local function note_of(model, id)
 	for _, note in ipairs(model.notes or {}) do
 		if note.id == id then
@@ -369,14 +369,18 @@ local function fold(model, env, issue, said, undo)
 	return note
 end
 
--- An issue's note: under its mark, what the run did to it so far with
--- its id and the undo, and its title on a slip.
-local function note_tree(note)
-	local head = { ui.toned(table.concat(note.said, " · "), "neutral", true), ui.spacer(), ui.toned(note.id, "neutral", true) }
-	if note.undo then
-		table.insert(head, ui.button("undo", "undo", note.undo, "secondary"))
+-- How the calls about a noted issue draw (ADR 0060): each a step whose
+-- receipt is the issue's id, `undone` after it on the last once undone,
+-- and the undo at the end of the last one's line.
+local function note_calls(note, calls)
+	local undone = note.said[#note.said] == "undone"
+	for at, call in ipairs(note.calls) do
+		local last = at == #note.calls
+		calls[call] = {
+			label = (last and undone) and (note.id .. " · undone") or note.id,
+			badge = (last and note.undo) and ui.button("undo", "undo", note.undo, "secondary") or nil,
+		}
 	end
-	return ui.row({ ui.kanji("件", "good"), ui.stack({ ui.row(head), ui.slip(note.title, "good") }) })
 end
 
 -- The line a list of steps leaves in the chat once all are done: how
@@ -392,18 +396,16 @@ local function finished_line(call, list)
 	return ui.section("steps-" .. call, "", lines, { small = true, lead = { ui.toned(count, "good", true), ui.pips(inks) } })
 end
 
--- How the calls the run's notes fold draw: the last call about an issue
--- as its note, with no line of its own, and the ones before it as
--- nothing at all. A call that set the run's steps draws nothing either:
--- they are over the composer while any is left, and the call that
--- finished a list is the line it leaves.
+-- How the run's calls draw where todo has something to say: the calls
+-- about an issue the run filed as steps with its id ([note_calls]). A
+-- call that set the run's steps draws nothing: they are over the
+-- composer while any is left, and the call that finished a list is the
+-- line it leaves.
 local function folded(model)
 	local calls = nil
 	for _, note in ipairs(model.notes or {}) do
-		for at, call in ipairs(note.calls) do
-			calls = calls or {}
-			calls[call] = { head = ui.stack({}), body = at == #note.calls and note_tree(note) or nil }
-		end
+		calls = calls or {}
+		note_calls(note, calls)
 	end
 	for _, call in ipairs(model.step_calls or {}) do
 		calls = calls or {}

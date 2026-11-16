@@ -198,66 +198,19 @@
     },
     "calls": {
       "call_todo_1": {
-        "head": {
-          "children": [],
-          "piece": "stack"
-        }
+        "label": "td-0cad"
       },
       "call_todo_2": {
-        "body": {
-          "children": [
-            {
-              "piece": "kanji",
-              "text": "件",
-              "tone": "good"
-            },
-            {
-              "children": [
-                {
-                  "children": [
-                    {
-                      "mono": true,
-                      "piece": "toned",
-                      "text": "filed · claimed by this run",
-                      "tone": "neutral"
-                    },
-                    {
-                      "piece": "spacer"
-                    },
-                    {
-                      "mono": true,
-                      "piece": "toned",
-                      "text": "td-0cad",
-                      "tone": "neutral"
-                    },
-                    {
-                      "action": "undo",
-                      "args": {
-                        "forget": "td-0cad"
-                      },
-                      "kind": "secondary",
-                      "label": "undo",
-                      "piece": "button"
-                    }
-                  ],
-                  "piece": "row"
-                },
-                {
-                  "dashed": false,
-                  "piece": "slip",
-                  "text": "Honor retry-after on 429 and 503",
-                  "tone": "good"
-                }
-              ],
-              "piece": "stack"
-            }
-          ],
-          "piece": "row"
+        "badge": {
+          "action": "undo",
+          "args": {
+            "forget": "td-0cad"
+          },
+          "kind": "secondary",
+          "label": "undo",
+          "piece": "button"
         },
-        "head": {
-          "children": [],
-          "piece": "stack"
-        }
+        "label": "td-0cad"
       },
       "call_todo_3": {
         "head": {

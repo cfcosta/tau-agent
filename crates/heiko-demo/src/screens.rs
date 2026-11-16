@@ -2003,17 +2003,24 @@ fn skill(workspace: &mut Workspace, found: bool, cx: &mut Context<Workspace>) {
 fn todo(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
     let run = run_id();
     workspace.navigate(Route::Run(run.clone()), cx);
-    for (n, tool) in ["todo_create", "todo_claim", "todo_steps"]
-        .into_iter()
-        .enumerate()
-    {
+    // As the model sent them: the line shows the issue's title, then its
+    // id.
+    let calls = [
+        (
+            "todo_create",
+            serde_json::json!({ "title": "Honor retry-after on 429 and 503" }),
+        ),
+        ("todo_claim", serde_json::json!({ "id": "td-0cad" })),
+        ("todo_steps", serde_json::json!({})),
+    ];
+    for (n, (tool, args)) in calls.into_iter().enumerate() {
         let call = format!("call_todo_{}", n + 1);
         workspace.apply(
             HostUpdate::Event(RunEvent::ToolStart {
                 run: run.clone(),
                 call_id: call.clone(),
                 tool: tool.into(),
-                args: serde_json::json!({}),
+                args,
                 parent: None,
             }),
             cx,
