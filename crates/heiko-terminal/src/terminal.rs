@@ -5,17 +5,14 @@ use std::{marker::PhantomData, ops::Range};
 
 use libghostty_vt::{
     self as vt,
-    fmt::Format,
+    fmt::{Format, Formatter},
+    grid_ref::TrackedGridRef,
+    point::{Coordinate as PointCoordinate, Point, Space as PointSpace},
     render::{CellIterator, CursorVisualStyle, RenderState, RowIterator},
-    screen::{
-        CellContentTag,
-        CellWide,
-        Screen as ActiveScreen,
-        TrackedGridRef,
-    },
-    selection::{FormatOptions, Selection},
+    screen::{CellContentTag, CellWide, Screen as ActiveScreen},
+    selection::Selection,
     style::{self as vt_style, StyleColor},
-    terminal::{Point, PointCoordinate, PointSpace, ScrollViewport},
+    terminal::ScrollViewport,
 };
 
 use crate::{
@@ -136,11 +133,8 @@ impl Terminal {
         } else {
             options.scrollback
         };
-        let inner = vt::Terminal::new(vt::TerminalOptions {
-            cols,
-            rows,
-            max_scrollback: scrollback,
-        })?;
+        let mut inner = vt::Terminal::new(cols, rows)?;
+        inner.set_scrollback_max_bytes(Some(scrollback))?;
         Ok(Self {
             mark: None,
             recording: options.record,
@@ -482,22 +476,26 @@ impl Terminal {
             to = last_col(cols - 2)?;
         }
         let selection = Selection::new(from, to, false);
-        let bytes = self.inner.format_selection_alloc(
-            None,
-            FormatOptions::new()
-                .with_emit_format(Format::Plain)
-                .with_unwrap(unwrap)
-                .with_trim(false)
-                .with_selection(&selection),
-        )?;
-        Ok(match bytes {
-            Some(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+        // The formatter reads the terminal's own selection: set it for
+        // the call, then clear it.
+        self.inner.set_selection(Some(&selection))?;
+        let text = match Formatter::new_selection(&self.inner)? {
+            Some(mut formatter) => {
+                formatter
+                    .set_format(Format::Plain)?
+                    .set_unwrap(unwrap)?
+                    .set_trim(false)?;
+                String::from_utf8_lossy(&formatter.format_alloc(None)?)
+                    .into_owned()
+            }
             None => String::new(),
-        })
+        };
+        self.inner.set_selection(None)?;
+        Ok(text)
     }
 }
 
-fn rgb(color: vt_style::RgbColor) -> Rgb {
+fn rgb(color: vt::color::Rgb) -> Rgb {
     Rgb {
         r: color.r,
         g: color.g,

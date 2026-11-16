@@ -59,10 +59,12 @@ stylua = { version = "2.5.2", default-features = false, features = ["luau"] }
 # The terminal emulator behind heiko-terminal
 # (docs/decisions/0010-terminal-rendering.md). The -sys crate finds the
 # library through pkg-config (the flake's `libghostty-vt`), never git or
-# Zig. Its version pins a Ghostty commit, and flake.nix's `ghostty`
-# input must be at that commit: move the two together.
-libghostty-vt = { version = "0.2.2", default-features = false }
-libghostty-vt-sys = { version = "0.2.2", default-features = false, features = [
+# Zig. The bindings come from their repository until a crates.io release
+# covers libghostty-vt 1.0; their revision pins a Ghostty commit
+# (GHOSTTY_COMMIT in libghostty-vt-sys's build.rs), and flake.nix's
+# `ghostty` input must be at that commit: move the two together.
+libghostty-vt = { git = "https://github.com/uzaaft/libghostty-rs", rev = "483ea3d5247b214060da58ef6037a95f30ae89fb", default-features = false }
+libghostty-vt-sys = { git = "https://github.com/uzaaft/libghostty-rs", rev = "483ea3d5247b214060da58ef6037a95f30ae89fb", default-features = false, features = [
   "pkg-config",
 ] }
 image = { version = "0.25.10", default-features = false, features = [

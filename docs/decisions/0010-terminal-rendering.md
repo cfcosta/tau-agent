@@ -20,8 +20,9 @@ so a reopened run can draw the same screen.
 ## Decision
 
 - **libghostty-vt is the emulator**, through the `libghostty-vt` crate
-  (0.2.2) of Uzaaft/libghostty-rs. It is Ghostty's own parser and
-  screen state: the most complete emulation available (grapheme
+  of Uzaaft/libghostty-rs, at a pinned revision of its repository
+  until a crates.io release covers libghostty-vt 1.0. It is Ghostty's
+  own parser and screen state: the most complete emulation available (grapheme
   clusters, wide characters, reflow, current OSC and Kitty sequences),
   used every day in Ghostty. Its formatter gives plain text, its render
   state gives styled cells, and its tracked grid references let us read
@@ -59,8 +60,9 @@ so a reopened run can draw the same screen.
   them too: `ToolError::Output` carries a whole output, details
   included.
 - **The Nix flake provides libghostty.** It has the Ghostty flake as an
-  input, pinned at the commit `libghostty-vt-sys` 0.2.2 builds against
-  (`a887df42c56f6de86c0fe6da9c4eeca37931e083`), and puts its
+  input, pinned at the commit the pinned `libghostty-vt-sys` builds
+  against (`108cacb17ed8990840cd14abfce43d8ed8503ca1`, libghostty-vt
+  1.0.1-dev), and puts its
   `libghostty-vt` package in the dev shell and the package build. The
   `-sys` crate's `pkg-config` feature finds it there and links it
   statically, so cargo never runs git or Zig.
@@ -70,15 +72,15 @@ so a reopened run can draw the same screen.
 - **The API is pre-1.0.** The crate's README and Ghostty's C API docs
   both expect breaking changes. Every libghostty call is inside
   `heiko-terminal`, so an upgrade touches one crate.
-- **The Ghostty input and the crate move together.** A crate version
-  that pins a new Ghostty commit needs the flake input at that commit in
-  the same change, or the library and the bindings disagree. Comments
+- **The Ghostty input and the crate move together.** A bindings
+  revision that pins a new Ghostty commit needs the flake input at that
+  commit in the same change, or the library and the bindings disagree. Comments
   in `flake.nix` and the workspace `Cargo.toml` say so.
-- **The first build compiles Ghostty.** ghostty.cachix.org and nixpkgs
-  do not have this commit's `libghostty-vt`, so Nix builds it with Zig:
+- **The first build may compile Ghostty.** ghostty.cachix.org has this
+  commit's `libghostty-vt`; without that cache, Nix builds it with Zig:
   about a minute, after about 280 MiB of downloads (1.7 GiB unpacked).
   Outside Nix, the `-sys` crate falls back to cloning Ghostty with git
-  and building it with Zig 0.15.
+  and building it with Zig 0.17.
 - **`Terminal` is `!Send`.** libghostty-vt is not thread-safe. The
   runner keeps each command's terminal on a thread of its own and sends
   plain data out; heiko-ui keeps its terminals on the GPUI foreground

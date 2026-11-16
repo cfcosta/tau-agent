@@ -32,9 +32,11 @@ use std::collections::VecDeque;
 
 use libghostty_vt::{
     self as vt,
-    screen::{CellContentTag, CellWide, GridRef},
-    style::{self as vt_style, RgbColor, StyleColor},
-    terminal::{Point, PointCoordinate},
+    color::Rgb as RgbColor,
+    grid_ref::GridRef,
+    point::{Coordinate as PointCoordinate, Point},
+    screen::{CellContentTag, CellWide},
+    style::{self as vt_style, StyleColor},
 };
 
 use crate::error::Error;

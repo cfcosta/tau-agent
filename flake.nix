@@ -11,12 +11,12 @@
     };
     # libghostty-vt, the terminal emulator behind heiko-tools' `terminal`
     # feature (docs/decisions/0010-terminal-rendering.md). Pinned at the
-    # Ghostty commit that `libghostty-vt-sys` 0.2.2 builds against
-    # (GHOSTTY_COMMIT in its build.rs). The two must move together: a
-    # crate bump that pins a new commit needs this input bumped in the
-    # same change. Its own nixpkgs is kept, so its Zig build matches
-    # what Ghostty tests.
-    ghostty.url = "github:ghostty-org/ghostty/a887df42c56f6de86c0fe6da9c4eeca37931e083";
+    # Ghostty commit that the `libghostty-vt-sys` revision in Cargo.toml
+    # builds against (GHOSTTY_COMMIT in its build.rs). The two must move
+    # together: a bindings bump that pins a new commit needs this input
+    # bumped in the same change. Its own nixpkgs and Zig are kept, so its
+    # Zig build matches what Ghostty tests.
+    ghostty.url = "github:ghostty-org/ghostty/108cacb17ed8990840cd14abfce43d8ed8503ca1";
     # The jj CLI the tests compare heiko-vcs-host with: it must be the
     # version of the jj-lib in Cargo.lock (0.47.0), so the two move
     # together. A nixos-unstable revision whose jujutsu is that version;
@@ -118,7 +118,7 @@
               ghosttyVendor = {
                 GHOSTTY_SOURCE_DIR = "${ghostty}";
                 GHOSTTY_ZIG_SYSTEM_DIR = "${libghostty-vt.deps}";
-                zig = ghostty.inputs.nixpkgs.legacyPackages.${system}.zig_0_15;
+                zig = ghostty.inputs.zig.packages.${system}."0.17.0";
               };
 
               rustPlatform = pkgs.makeRustPlatform {
@@ -131,6 +131,7 @@
                 lockFile = ./Cargo.lock;
                 outputHashes = {
                   "gpui-pre-mobile-0.1.0" = "sha256-OsZGo2xypJdkXHT0Fng1yVAuVG7ZeVnhWSFONTZ3IGk=";
+                  "libghostty-vt-0.2.1" = "sha256-e5YkGJxvKF6kNaFlRC9M1VCftcKrk3YgnirkW/EXlCQ=";
                 };
               };
 
