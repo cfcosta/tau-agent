@@ -706,6 +706,17 @@ Seed the suite with these cases from pi at `2b0a123`:
   tests need no `DATABASE_URL`.
 - CI runs `cargo sqlx prepare --check`.
 
+## Reflinks on real filesystems
+
+The reflink tests in `heiko-vcs-host` (ADR 0061) clone with a plain
+copy as a stand-in, unless `HEIKO_TEST_REFLINK_DIR` names a directory
+on a filesystem that shares blocks; then two of them make real clones.
+`scripts/test-reflink.sh` runs them on Btrfs, XFS and ext4, each a
+loop-mounted image file in a privileged Docker container, so it needs
+Docker but not sudo. Every test must pass on Btrfs and XFS; on ext4 the
+two real ones must fail and the rest pass. It runs by hand, from the dev
+shell, after changing `reflink.rs`.
+
 ## Mutation testing
 
 `scripts/mutants.sh` runs `cargo mutants` on the modules where a
