@@ -24,5 +24,7 @@ help: the following other types implement trait `AgentTool`
 note: required by a bound in `heiko_agent::agent::Agent::tool`
   --> src/agent.rs
    |
+   | impl Agent {
+...
    |     pub fn tool(self, tool: impl AgentTool) -> Self {
    |                                  ^^^^^^^^^ required by this bound in `Agent::tool`

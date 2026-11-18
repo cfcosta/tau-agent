@@ -286,9 +286,11 @@ These follow `$XDG_DATA_HOME` and `$XDG_CONFIG_HOME` when they're set.
 
 ## Development
 
-The workspace pins a nightly toolchain and uses Rust edition 2024.
+The workspace pins a stable toolchain and uses Rust edition 2024.
 `nix develop` provides it, along with the native libraries GPUI and the
-terminal need.
+terminal need. Its rustfmt comes from a pinned nightly, because
+`rustfmt.toml` uses nightly-only import options; outside Nix, format with
+`cargo +nightly-2026-08-04 fmt`.
 
 ```sh
 nix develop

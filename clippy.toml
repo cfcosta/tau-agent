@@ -1,14 +1,15 @@
 # Nothing blocks outside `spawn_blocking` (docs/decisions/0028). A jj
 # job running in `spawn_blocking` and heiko-testing's helpers allow these
-# where they use them, with their reason.
+# where they use them, with their reason. Inside heiko-vcs-host its own
+# paths do not resolve, hence `allow-invalid` on those.
 disallowed-methods = [
   { path = "tokio::runtime::Runtime::block_on", reason = "await it instead, or run blocking work in spawn_blocking (ADR 0028)" },
   { path = "tokio::runtime::Handle::block_on", reason = "await it instead, or run blocking work in spawn_blocking (ADR 0028)" },
   { path = "pollster::block_on", reason = "only inside a job running in spawn_blocking (ADR 0028)" },
   { path = "futures::executor::block_on", reason = "await it instead, or run blocking work in spawn_blocking (ADR 0028)" },
   { path = "heiko_ui::host::Host::block_on", reason = "for tests only: the interface asks the host with on_host or Host::spawn (ADR 0028)" },
-  { path = "heiko_vcs_host::Project::blocking", reason = "for tests only: async code runs a job with Project::run (ADR 0028)" },
-  { path = "heiko_vcs_host::ProjectRepo::open", reason = "it blocks: use Project::open (ADR 0028)" },
-  { path = "heiko_vcs_host::ProjectRepo::import", reason = "it blocks: use Project::import (ADR 0028)" },
-  { path = "heiko_vcs_host::ProjectRepo::open_or_import", reason = "it blocks: use Project::open_or_import (ADR 0028)" },
+  { path = "heiko_vcs_host::Project::blocking", reason = "for tests only: async code runs a job with Project::run (ADR 0028)", allow-invalid = true },
+  { path = "heiko_vcs_host::ProjectRepo::open", reason = "it blocks: use Project::open (ADR 0028)", allow-invalid = true },
+  { path = "heiko_vcs_host::ProjectRepo::import", reason = "it blocks: use Project::import (ADR 0028)", allow-invalid = true },
+  { path = "heiko_vcs_host::ProjectRepo::open_or_import", reason = "it blocks: use Project::open_or_import (ADR 0028)", allow-invalid = true },
 ]

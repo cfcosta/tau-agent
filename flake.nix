@@ -5,8 +5,11 @@
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    rust-overlay = {
-      url = "github:oxalica/rust-overlay";
+    # The toolchain and the package builder: Rust's own release
+    # manifests, and a builder that keeps compiled dependencies in a
+    # derivation of their own.
+    rust-dev-tools = {
+      url = "github:cfcosta/rust-dev-tools.nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     # libghostty-vt, the terminal emulator behind heiko-tools' `terminal`
@@ -29,7 +32,7 @@
       ghostty,
       nixpkgs,
       nixpkgs-jj,
-      rust-overlay,
+      rust-dev-tools,
       treefmt-nix,
       ...
     }:
@@ -46,12 +49,28 @@
           system:
           f (
             let
-              pkgs = import nixpkgs {
-                inherit system;
-                overlays = [ (import rust-overlay) ];
-              };
+              pkgs = import nixpkgs { inherit system; };
 
-              rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+              # Stable from rust-toolchain.toml, with rustfmt from a pinned
+              # nightly: rustfmt.toml's import options are nightly-only.
+              # The linker stays the platform default.
+              setup =
+                rust:
+                rust-dev-tools.setup pkgs {
+                  name = "heiko";
+                  inherit rust;
+                  overrides = {
+                    linux.useMold = false;
+                    darwin.useLLD = false;
+                  };
+                };
+              rdt = setup (
+                rust-dev-tools.version.fromToolchainFile ./rust-toolchain.toml
+                // {
+                  rustfmt = rust-dev-tools.version.fromToolchain "nightly" "2026-08-04";
+                }
+              );
+              inherit (rdt) rust;
 
               # The phone build (docs/decisions/0013-phones-connect-to-a-running-heiko.md):
               # the same toolchain with the Android target, and an Android
@@ -59,7 +78,13 @@
               # accepted, so it gets a nixpkgs of its own, and only the
               # opt-in `android` dev shell and the phone's packages pull it
               # in.
-              androidRust = rust.override { targets = [ "aarch64-linux-android" ]; };
+              androidRust =
+                (setup (
+                  rust-dev-tools.version.fromToolchainFile ./rust-toolchain.toml
+                  // {
+                    targets = [ "aarch64-linux-android" ];
+                  }
+                )).rust;
               androidPkgs = import nixpkgs {
                 inherit system;
                 config = {
@@ -121,11 +146,6 @@
                 zig = ghostty.inputs.zig.packages.${system}."0.17.0";
               };
 
-              rustPlatform = pkgs.makeRustPlatform {
-                cargo = rust;
-                rustc = rust;
-              };
-
               # Shared by every Rust package: the git dependencies' hashes.
               cargoLock = {
                 lockFile = ./Cargo.lock;
@@ -135,7 +155,9 @@
                 };
               };
 
-              heiko = rustPlatform.buildRustPackage {
+              # Compiled dependencies live in `heiko.cargoArtifacts`, so a
+              # change to heiko's own crates rebuilds only them.
+              heiko = rdt.buildRustPackage {
                 pname = "heiko";
                 version = "0.1.0";
 
@@ -151,16 +173,12 @@
                 };
 
                 inherit cargoLock;
-                cargoBuildFlags = [
-                  "--package"
+                cargoPackages = [
                   "heiko"
-                  "--package"
                   "heiko-plugin"
                 ];
-                cargoTestFlags = [
-                  "--package"
+                checkPackages = [
                   "heiko-plugin"
-                  "--package"
                   "heiko-ui"
                 ];
                 # Each test in a process of its own, as everywhere else: a
@@ -169,7 +187,7 @@
                 useNextest = true;
 
                 # The sqlx query metadata is committed; no database at build time.
-                SQLX_OFFLINE = "true";
+                env.SQLX_OFFLINE = "true";
 
                 nativeBuildInputs = [
                   pkgs.pkg-config

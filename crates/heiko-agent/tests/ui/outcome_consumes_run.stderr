@@ -8,7 +8,7 @@ error[E0382]: borrow of moved value: `run`
 6 |     run.steer("too late");
   |     ^^^ value borrowed here after move
   |
-note: `Run::outcome` takes ownership of the receiver `self`, which moves `run`
+note: `heiko_agent::agent::Run::outcome` takes ownership of the receiver `self`, which moves `run`
  --> src/agent.rs
   |
   |     pub async fn outcome(mut self) -> Result<Outcome, AgentError> {
