@@ -916,7 +916,7 @@ async fn steer(chatgpt: &ChatGpt, args: &Args) -> Result<(), Error> {
         responses::request::{Lineage, Settings},
     };
     let account = account(chatgpt, args)?;
-    let model = args.value("model").unwrap_or("gpt-6.1-sol").to_owned();
+    let model = args.value("model").unwrap_or("gpt-6.2-sol").to_owned();
     let client = OpenAi::chatgpt(chatgpt.clone(), account);
     let mut session = client
         .session(Settings {

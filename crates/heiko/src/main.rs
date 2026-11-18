@@ -5,7 +5,7 @@
 //! With no model to run on yet, it opens setup to sign in. With `--demo` it
 //! replays the scripted session instead.
 //!
-//! - `--model <id>`: the model; gpt-6.1-sol by default.
+//! - `--model <id>`: the model; gpt-6.2-sol by default.
 //! - `--prompt <text>`: start a run with this task right away.
 //! - `--demo`: the scripted session; `--finished` opens it done.
 //! - `--open <screen>`: a screen of the demo, by its name in
@@ -61,7 +61,7 @@ struct Args {
     /// The demo plays `demo::stress` of this many rounds instead of its
     /// script.
     stress: Option<usize>,
-    /// `None` takes gpt-6.1-sol.
+    /// `None` takes gpt-6.2-sol.
     model: Option<String>,
     reduce_motion: bool,
 }

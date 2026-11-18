@@ -503,7 +503,7 @@ fn the_next_run_starts_on_the_picked_model(cx: &mut TestAppContext) {
         ws.navigate(Route::NewRun, cx);
         assert_eq!(
             ws.next_model(),
-            &ModelChoice::new("gpt-6.1-sol", Effort::Auto)
+            &ModelChoice::new("gpt-6.2-sol", Effort::Auto)
         );
         ws.show_picker(PickerTarget::Next, cx);
         ws.pick_effort(Effort::Low, cx);
@@ -1972,11 +1972,11 @@ fn the_picker_offers_the_models_own_efforts(cx: &mut TestAppContext) {
             ws.next_model(),
             &ModelChoice::new("gpt-6-luna", Effort::None)
         );
-        // gpt-6.1-sol starts at low, so none gives way to auto.
-        ws.pick_model("gpt-6.1-sol", cx);
+        // gpt-6.2-sol starts at low, so none gives way to auto.
+        ws.pick_model("gpt-6.2-sol", cx);
         assert_eq!(
             ws.next_model(),
-            &ModelChoice::new("gpt-6.1-sol", Effort::Auto)
+            &ModelChoice::new("gpt-6.2-sol", Effort::Auto)
         );
     });
     assert_eq!(
