@@ -805,7 +805,10 @@ links to one of them with `params.repo`:
 `ui.link("Review", "rules", { params = { repo = env.run.repo } })`. `repo_nav`, `{ label, page, icon? }`, is its entry under
 each repository in the sidebar, opening that page; `repo_data(_, model, env)`
 returns what the entry shows, `{ nav = { detail?, badge?, tone? } }`
-among it. A page's buttons and inputs carry out the plugin's `actions`
+among it. Its `repo_data.composer`, `{ placeholder, prompt }`, is a
+suggestion for the next run there: the empty composer of a new run says
+`placeholder`, and Tab puts `prompt` in it. The first active plugin's
+shows. A page's buttons and inputs carry out the plugin's `actions`
 in that repository, on its store there, with the page's own params in
 `args.params`. Its links to its own pages (`ui.link(label, page, {
 params })`) open them of that repository.

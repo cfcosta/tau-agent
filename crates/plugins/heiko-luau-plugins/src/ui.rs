@@ -41,6 +41,7 @@ use heiko_ui_plugin::{
         AtRun,
         AtSetup,
         CardView,
+        ComposerHint,
         HomeAction,
         HomeList,
         HomeRow,
@@ -1356,6 +1357,12 @@ impl UiPlugin for LuauPluginsUi {
                 home_lists(view.data, view.repo(&at.repo)).nth(nth)
             })
         });
+        // The new run's composer: the first plugin's suggestion for the
+        // repository (ADR 0063).
+        let manifest = manifest
+            .contribute(points::COMPOSER_HINT, |at: &AtRepo, view| {
+                composer_hint(view.data, view.repo(&at.repo))
+            });
         // Under each repository, the plugins' entries for it.
         (0..NAV_ENTRIES).fold(manifest, |manifest, at| {
             manifest.contribute(
@@ -1693,6 +1700,32 @@ fn repo_nav_entries<'a>(
 /// words it puts in the new run's composer, or `action` and `args`, one
 /// of the plugin's actions carried out in the repository. A list with
 /// no rows is left out.
+/// The first active plugin's `composer` of a repository, from its
+/// `repo_data`: `{ placeholder, prompt }`, both text and neither empty.
+fn composer_hint(
+    overview: &Overview,
+    kept: Option<&crate::RepoValues>,
+) -> Option<ComposerHint> {
+    overview
+        .plugins
+        .iter()
+        .filter(|entry| matches!(entry.standing, Standing::Active))
+        .find_map(|entry| {
+            let composer = &kept?.0.get(&entry.name)?["composer"];
+            let text = |key: &str| {
+                composer[key]
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+                    .map(str::to_owned)
+            };
+            Some(ComposerHint {
+                placeholder: text("placeholder")?,
+                prompt: text("prompt")?,
+            })
+        })
+}
+
 fn home_lists<'a>(
     overview: &'a Overview,
     kept: Option<&'a crate::RepoValues>,
@@ -3243,6 +3276,57 @@ mod tests {
             }]
         );
         assert_eq!(home_lists(&overview, None).count(), 0);
+    }
+
+    /// The composer's suggestion is the first active plugin's `composer`
+    /// of the repository with both its texts; a plugin that is not
+    /// active, or gives an empty text, gives none (ADR 0063).
+    #[test]
+    fn the_composer_hint_is_the_first_active_plugins_composer() {
+        let entry = |name: &str, standing: Standing| Entry {
+            name: name.into(),
+            description: String::new(),
+            version: String::new(),
+            standing,
+            declaration: Some(Declaration::named(name)),
+            tests: Vec::new(),
+            keeps_earlier: false,
+            built_in: false,
+            app: None,
+        };
+        let overview = Overview {
+            plugins: vec![
+                entry("failing", Standing::Failing),
+                entry("blank", Standing::Active),
+                entry("suggests", Standing::Active),
+                entry("later", Standing::Active),
+            ],
+            ..Overview::default()
+        };
+        let composer = |placeholder: &str, prompt: &str| json!({ "composer": { "placeholder": placeholder, "prompt": prompt } });
+        let kept = crate::RepoValues(
+            [
+                ("failing".to_owned(), composer("Not this", "No")),
+                ("blank".to_owned(), composer("  ", "Nothing to show")),
+                (
+                    "suggests".to_owned(),
+                    composer(
+                        " Retry the sync test ",
+                        "Find why sync_test fails one run in ten.",
+                    ),
+                ),
+                ("later".to_owned(), composer("Too late", "Second")),
+            ]
+            .into(),
+        );
+        assert_eq!(
+            composer_hint(&overview, Some(&kept)),
+            Some(ComposerHint {
+                placeholder: "Retry the sync test".into(),
+                prompt: "Find why sync_test fails one run in ten.".into(),
+            })
+        );
+        assert_eq!(composer_hint(&overview, None), None);
     }
 
     /// A view's `plan` is a field of the run's plan, set by the plugin

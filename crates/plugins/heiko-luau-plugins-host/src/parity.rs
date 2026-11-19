@@ -92,6 +92,7 @@ pub fn point(name: &str) -> Option<Luau> {
         (CARD_BODY.name, "calls"),
         (COMPOSER.name, "composer"),
         (PANE.name, "pane"),
+        (COMPOSER_HINT.name, "repo_data.composer"),
     ];
     if let Some((_, hook)) = hooks.iter().find(|(point, _)| *point == name) {
         return Some(Luau::Hook(hook));

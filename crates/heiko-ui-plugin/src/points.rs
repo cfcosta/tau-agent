@@ -357,6 +357,15 @@ impl PointCx for AtCard {
     }
 }
 
+/// A suggestion for the composer of a new run ([`COMPOSER_HINT`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ComposerHint {
+    /// What the empty composer says: `Retry the flaky sync test`.
+    pub placeholder: String,
+    /// What Tab puts in it, to send as it is or change first.
+    pub prompt: String,
+}
+
 /// What a plugin lists on Home for a repository ([`HOME`]): a titled
 /// section of a few rows, under the new run's composer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -491,6 +500,12 @@ pub const COMPOSER: Point<AtRun> = Point::new("heiko.run.composer");
 /// note the person may act on while it is new (heiko-watcher's). Every
 /// contribution is drawn, in order.
 pub const COMPOSER_BAND: Point<AtRun> = Point::new("heiko.run.composer.band");
+/// What the composer of a new run in a repository says while it is
+/// empty, and the prompt Tab puts in it: a suggestion of the next run
+/// (ADR 0063). The first contribution is shown; with none, the composer
+/// keeps its own.
+pub const COMPOSER_HINT: Point<AtRepo, ComposerHint> =
+    Point::new("heiko.repo.composer.hint");
 /// Entries in a repository's menu in the sidebar, after heiko's own: a
 /// setting the plugin keeps per repository.
 pub const REPO_MENU: Point<AtRepo> = Point::new("heiko.sidebar.repo.menu");
@@ -519,7 +534,7 @@ pub const SETUP: Point<AtSetup, SetupView> = Point::new("heiko.setup.step");
 pub const PANE: Point<AtRun, PaneView> = Point::new("heiko.run.pane");
 
 /// Every point `heiko-ui` declares.
-pub const ALL: [&str; 35] = [
+pub const ALL: [&str; 36] = [
     CARD.name,
     CARD_STAT.name,
     CHANGES.name,
@@ -550,6 +565,7 @@ pub const ALL: [&str; 35] = [
     PICKER_AUTO.name,
     COMPOSER.name,
     COMPOSER_BAND.name,
+    COMPOSER_HINT.name,
     REPO_MENU.name,
     REPO_ACTIONS.name,
     ACTIVITY.name,

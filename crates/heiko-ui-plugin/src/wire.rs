@@ -194,6 +194,7 @@ wired!(
     crate::RowNote,
     crate::points::CardView,
     crate::points::PaneView,
+    crate::points::ComposerHint,
     f32,
     String,
 );
