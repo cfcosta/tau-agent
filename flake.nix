@@ -295,6 +295,8 @@
                       "crates/*/.sqlx/*"
                       # Written by scripts/update-android-deps.sh.
                       "crates/heiko-phone/android/deps.json"
+                      # Written by `nix run github:cfcosta/rust-dev-tools.nix#plan`.
+                      "rust-units.json"
                     ];
 
                     formatter = {
