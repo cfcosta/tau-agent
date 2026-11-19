@@ -36,7 +36,8 @@ fn a_device_sign_in_keeps_the_token_past_the_plugin() {
     let luau = super::Luau::at(&base);
     luau.call(Hook::Action("sign_in".into()), json!({}))
         .unwrap();
-    luau.call(Hook::Action("check".into()), json!({})).unwrap();
+    // The job polls once GitHub's interval has gone by.
+    luau.now.set(luau.now.get() + 5);
     luau.call(Hook::Job("sign_in".into()), json!(null)).unwrap();
     assert_eq!(luau.kept().as_deref(), Some("gho_secret"));
     // In nothing the plugin keeps.
