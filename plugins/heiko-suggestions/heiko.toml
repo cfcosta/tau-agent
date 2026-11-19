@@ -1,0 +1,4 @@
+name = "heiko-suggestions"
+version = "0.1.0"
+description = "Suggests the next run in a repository after one ends; the empty composer says the newest"
+entry = "src/plugin.luau"

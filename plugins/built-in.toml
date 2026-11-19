@@ -4,6 +4,7 @@
 plugins = [
   "heiko-todo",
   "heiko-titles",
+  "heiko-suggestions",
   "heiko-compaction-chain",
   "heiko-watcher",
   "heiko-reasoning",
