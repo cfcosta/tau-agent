@@ -1130,12 +1130,17 @@ gap L; it was the Rust crates `heiko-memory` and `heiko-memory-host` until
   paths and error strings.
   - Front matter: `id`, `title`, `description` (one line), `type`,
     `tags`, `created`, `updated`, `valid_from`, `valid_to`, `source`
-    (run, turn, commit, files; said by the user, done by the agent, or
-    inferred) and `links`.
+    (run, turn, commit, the run's model, files; said by the user, done by
+    the agent, or inferred), `links`, and for a gotcha or a case
+    `attempts` (ADR 0062).
   - Types, a closed set: `fact`, `convention`, `decision`, `gotcha`
-    (symptom, cause, fix), `procedure`, `case` (task, approach,
-    outcome), `preference`, `index`. Task progress and TODOs are not
+    (symptom, cause, fix), `procedure`, `case` (how to do a task that
+    comes again), `preference`, `index`. Task progress and TODOs are not
     memory.
+  - Attempts, on a gotcha or a case: each thing tried for its problem,
+    oldest first, with `what`, `outcome` (`worked`, `failed`,
+    `untested`), `evidence`, `run` and `model`. Updating the note keeps
+    them, and a gotcha or case that supersedes it carries them on.
   - Links, a closed set: `relates` (a bare `[[x]]`), `refines`,
     `supersedes`, `contradicts`, `derived_from`, `about` (a file, crate
     or symbol). Backlinks live in the index; a link to a note not
@@ -1152,7 +1157,11 @@ gap L; it was the Rust crates `heiko-memory` and `heiko-memory-host` until
     budget;
     superseded notes rank lower and are labelled, never hidden;
   - `memory_read { id }` returns a note with its links and backlinks;
-  - `memory_link { from, to, type, why }` links two notes.
+  - `memory_link { from, to, type, why }` links two notes;
+  - `memory_attempt { id, what, outcome, evidence, settles? }` records an
+    attempt on a gotcha or a case, or settles an untested one once; a
+    hit then says "tried 2: 1 worked, 1 failed", and a reading lists
+    them and names the model a note came from.
   - Notes are plain files too, so the agent can grep them.
 - **The index note:** written by the agent, like Claude Code's
   `MEMORY.md`, within about 2k tokens. A write past the budget is
@@ -1171,6 +1180,11 @@ gap L; it was the Rust crates `heiko-memory` and `heiko-memory-host` until
   is where details are lost. Only a rewrite that drops conversation
   (`Rewrite::drops_conversation`: a summary, tree compaction's fold)
   asks; pruning, which keeps it, does not.
+- **What the memory requests keep:** at compaction and after a run, the
+  same rules (`render.WORTH`): knowledge a later run would find out
+  again, titled with the claim; never what the run did or how far it got,
+  what git log records, or a case that is one run's story; work on a
+  problem a note has goes in `memory_attempt`, failures too (ADR 0062).
 - **After a run:** a consolidation pass (signal gate, faithful to the
   transcript, search before write), "Save after each run" in its
   settings, **on** by default since 2026-10-07: without it, a run that

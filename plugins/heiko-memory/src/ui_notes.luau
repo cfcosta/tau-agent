@@ -74,6 +74,15 @@ function M.entry(n, now)
 		end
 		at = to + 1
 	end
+	-- What was tried for the problem, oldest first.
+	local said = { worked = "Worked", failed = "Failed", untested = "Untested" }
+	for _, attempt in ipairs(n.attempts or {}) do
+		local line = said[attempt.outcome] .. ": " .. attempt.what
+		if attempt.evidence ~= nil then
+			line ..= " (" .. attempt.evidence .. ")"
+		end
+		table.insert(body, line)
+	end
 	local seen, paths = {}, {}
 	local function path(p)
 		if not seen[p] then
@@ -103,7 +112,7 @@ function M.entry(n, now)
 		body = body,
 		links = links,
 		paths = paths,
-		written_by = n.type .. " " .. by_of(n.source),
+		written_by = n.type .. " " .. by_of(n.source) .. (n.source.model and (", on " .. n.source.model) or ""),
 		edited = M.ago(now, n.updated),
 	}
 end

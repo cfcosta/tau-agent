@@ -62,6 +62,42 @@
   },
   "tools": [
     {
+      "name": "memory_attempt",
+      "description": "Record an attempt on a gotcha or case note: what was tried for its problem, and whether it worked, failed, or is untested yet, with the evidence (the command, the test, the error). A failed attempt is worth as much as one that worked: a later run sees it and does not try it again blind. Use this, not a second note, when a run works on a problem a note already has. To settle an untested attempt once it is checked, pass its number as settles.",
+      "parameters": {
+        "properties": {
+          "evidence": {
+            "description": "What showed it, on one line: the check that passed or the error it gave",
+            "type": "string"
+          },
+          "id": {
+            "description": "The gotcha or case note, as search listed it",
+            "type": "string"
+          },
+          "outcome": {
+            "description": "worked, failed, or untested",
+            "type": "string"
+          },
+          "settles": {
+            "description": "The number of an untested attempt this settles",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "what": {
+            "description": "What was tried, on one line (not needed to settle)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "outcome"
+        ],
+        "type": "object"
+      },
+      "card": false,
+      "kind": "change"
+    },
+    {
       "name": "memory_link",
       "description": "Link two memory notes, typed: relates, refines, supersedes, contradicts or derived_from; or tie a note to a file, crate or symbol with about (the note is then flagged when that file changes). Links are how later searches reach a note that shares none of the query's words.",
       "parameters": {
@@ -135,7 +171,7 @@
     },
     {
       "name": "memory_write",
-      "description": "Save one idea to long-term memory, for later runs on this repository: a decision and why, a convention, a command, a gotcha (symptom, cause, fix), a case (task, approach, outcome), or a preference the user stated. One idea per note, in full prose. Answers with the nearest existing notes: link to them, or update (id) or supersede (supersedes) one instead of repeating it. Not for task progress or TODOs.",
+      "description": "Save one idea to long-term memory, for later runs on this repository: a decision and why, a convention, a command, a gotcha (symptom, cause, fix), a case (how to do a task that comes again), or a preference the user stated. One idea per note, in full prose. Answers with the nearest existing notes: link to them, or update (id) or supersede (supersedes) one instead of repeating it; work on a problem a note has goes in memory_attempt. Not for task progress, plans, TODOs, or what git log already records.",
       "parameters": {
         "properties": {
           "body": {
@@ -188,7 +224,7 @@
             "type": "array"
           },
           "title": {
-            "description": "The claim, on one line",
+            "description": "The claim itself, on one line, as a sentence a reader can act on; never what the run did",
             "type": "string"
           },
           "type": {

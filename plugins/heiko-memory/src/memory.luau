@@ -17,6 +17,10 @@
 --                                      hits across both scopes, the
 --                                      user's ids `user:<id>`
 --   scope:write(draft, now)            as `memory.write`, on one scope
+--   scope:attempt(id, attempt, now)    records an attempt on a gotcha or
+--                                      a case: appends it, or settles
+--                                      the untested one `attempt.settles`
+--                                      numbers
 --   scope:link(from, to, type, why, now), scope:search(query, budget),
 --   scope:read(id), scope:mark_stale(paths, why, written_by, now),
 --   scope:index_note(), scope.notes (the store)
@@ -25,7 +29,10 @@
 --
 -- A draft is `{ type, title, description, body, tags, links, id?,
 -- supersedes?, source }`, `links` each `{ to, type, why? }` and
--- `source` `{ by, run?, turn?, commit?, files, imported? }`. What a write
+-- `source` `{ by, run?, turn?, commit?, model?, files, imported? }`. A
+-- write keeps the attempts of the note it updates, and of the one it
+-- supersedes when both keep attempts, so a rewrite never loses what was
+-- tried; attempts are added with `scope:attempt`. What a write
 -- answers is `{ id, action ("created", "updated" or "superseded"),
 -- superseded (the id it replaced), redacted (how many secrets went),
 -- nearest (up to three hits, itself left out) }`.
@@ -154,6 +161,7 @@ function Memory:write(draft, now)
 	end
 
 	local existing = self.notes:get(target)
+	local replaced = draft.supersedes ~= nil and self.notes:get(draft.supersedes) or nil
 	-- A title that lands on another note's id never overwrites it: the
 	-- agent names the note it means to change. The index note has one
 	-- id, so it is always meant.
@@ -176,6 +184,12 @@ function Memory:write(draft, now)
 		links = clean_links,
 		body = body,
 	}
+	if note.keeps_attempts(kind) then
+		local before = existing or replaced
+		if before and before.attempts and note.keeps_attempts(before.type) then
+			written.attempts = note.copy(before).attempts
+		end
+	end
 	written.source.files = written.source.files or {}
 	local action, ok, err
 	if draft.supersedes ~= nil then
@@ -246,6 +260,63 @@ function Memory:link(from, to, kind, why, now)
 		return failed(err)
 	end
 	return true
+end
+
+-- Records `attempt`, `{ what, outcome, evidence?, run?, model?,
+-- settles? }`, on the gotcha or case `id`: appended, or, with `settles`,
+-- the outcome and evidence given to that untested attempt (1 is the
+-- first). Answers the attempt's number.
+function Memory:attempt(id, attempt, now)
+	local n = self.notes:get(id)
+	if n == nil then
+		return refused("no note is called " .. store.quoted(id))
+	end
+	if not note.keeps_attempts(n.type) then
+		return refused("only a gotcha or a case keeps attempts; " .. store.quoted(id) .. " is a " .. n.type)
+	end
+	if not note.is_outcome(attempt.outcome) then
+		return refused(string.format("%q is not an outcome: worked, failed or untested", tostring(attempt.outcome)))
+	end
+	for _, s in ipairs({ attempt.what or "", attempt.evidence or "" }) do
+		local why = safety.refusal(s)
+		if why then
+			return refused("not stored: " .. why)
+		end
+	end
+	local what = attempt.what and (safety.redact(attempt.what)) or nil
+	local evidence = attempt.evidence and (safety.redact(attempt.evidence)) or nil
+	n = note.copy(n)
+	n.attempts = n.attempts or {}
+	local number
+	if attempt.settles ~= nil then
+		local earlier = n.attempts[attempt.settles]
+		if earlier == nil then
+			return refused(store.quoted(id) .. " has no attempt " .. tostring(attempt.settles))
+		end
+		if earlier.outcome ~= "untested" then
+			return refused("attempt " .. attempt.settles .. " already " .. earlier.outcome .. "; record a new attempt instead")
+		end
+		earlier.outcome = attempt.outcome
+		earlier.evidence = evidence or earlier.evidence
+		number = attempt.settles
+	else
+		table.insert(n.attempts, {
+			at = now,
+			what = what,
+			outcome = attempt.outcome,
+			evidence = evidence,
+			run = attempt.run,
+			model = attempt.model,
+		})
+		number = #n.attempts
+	end
+	n.updated = now
+	local ok, err = self.notes:update(n)
+	if not ok then
+		return failed(err)
+	end
+	self.index:upsert(id, bm25.index_text(self.notes:get(id)))
+	return number
 end
 
 -- Up to `budget` hits for `query`.

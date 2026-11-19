@@ -99,6 +99,7 @@ function M.note(g)
 			run = optional(draw, g, M.line(g)),
 			turn = optional(draw, g, g.integers({ min = 0, max = 4294967295 })),
 			commit = optional(draw, g, M.line(g)),
+			model = optional(draw, g, M.line(g)),
 			files = list(draw, g, 3),
 		}
 		if draw(g.booleans()) then
@@ -108,11 +109,28 @@ function M.note(g)
 				session = optional(draw, g, M.line(g)),
 			}
 		end
+		local kind = draw(g.sampled_from(note.TYPES))
+		-- A gotcha or a case may keep attempts; no list stands for none.
+		local attempts = nil
+		if note.keeps_attempts(kind) then
+			for _ = 1, draw(g.integers({ min = 0, max = 3 })) do
+				attempts = attempts or {}
+				table.insert(attempts, {
+					at = draw(time),
+					what = draw(M.line(g)),
+					outcome = draw(g.sampled_from(note.OUTCOMES)),
+					evidence = optional(draw, g, M.line(g)),
+					run = optional(draw, g, M.line(g)),
+					model = optional(draw, g, M.line(g)),
+				})
+			end
+		end
 		return {
 			id = draw(M.id(g)),
 			title = draw(M.line(g)),
 			description = draw(M.line(g)),
-			type = draw(g.sampled_from(note.TYPES)),
+			type = kind,
+			attempts = attempts,
 			tags = list(draw, g, 3),
 			created = draw(time),
 			updated = draw(time),

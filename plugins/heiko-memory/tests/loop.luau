@@ -100,7 +100,7 @@ t.loop("a chat gets each note and the index once", {
 	for _, tool in ipairs(run.requests[1].tools) do
 		table.insert(tools, type(tool) == "table" and tool.name or tool)
 	end
-	for _, name in ipairs({ "memory_write", "memory_search", "memory_read", "memory_link" }) do
+	for _, name in ipairs({ "memory_write", "memory_search", "memory_read", "memory_link", "memory_attempt" }) do
 		t.equal(table.find(tools, name) ~= nil, true, name)
 	end
 	-- The second message: neither the note nor the index again.
@@ -143,7 +143,7 @@ t.loop("compaction gives memory one request over what it drops", {
 	for _, tool in ipairs(flush.tools) do
 		table.insert(names, type(tool) == "table" and tool.name or tool)
 	end
-	t.equal(names, { "memory_write", "memory_search", "memory_read", "memory_link" })
+	t.equal(names, { "memory_write", "memory_search", "memory_read", "memory_link", "memory_attempt" })
 	t.equal(flush.instructions, render.FLUSH_PROMPT)
 	local shown = first(flush)
 	t.equal(contains(shown, "why do lanes stall") and contains(shown, "[call memory_search]"), true, shown)

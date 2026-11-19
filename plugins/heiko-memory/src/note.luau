@@ -13,17 +13,30 @@
 --   [source]
 --   by = "agent"
 --   run = "01j…"
+--   model = "gpt-6.2-sol"
 --
 --   [[links]]
 --   to = "retry-policy"
 --   type = "refines"
+--
+--   [[attempts]]
+--   at = 1790000000000
+--   what = "Parse the date with httpdate before the seconds"
+--   outcome = "worked"
+--   run = "01j…"
+--   model = "gpt-6.2-sol"
 --   +++
 --   The body, in full prose: exact versions, flags, paths and errors.
 --
 -- A note is a table of those fields, `body` the text after the front
--- matter, `tags` and `links` lists, `source.files` a list; times are
--- milliseconds since the Unix epoch. A bare `[[id]]` in the body is a
--- `relates` link, as if it were listed.
+-- matter, `tags`, `links` and `attempts` lists, `source.files` a list;
+-- times are milliseconds since the Unix epoch. A bare `[[id]]` in the body
+-- is a `relates` link, as if it were listed.
+--
+-- A gotcha or a case keeps its attempts: each thing tried for the
+-- problem, with what came of it, the run and the model. A fix that failed
+-- stays, so a later run does not try it again blind, and one from another
+-- model may not hold for this one.
 local text = require("text")
 local toml = require("toml")
 
@@ -41,6 +54,12 @@ M.BY = { "user", "agent", "inferred" }
 -- The coding agents a note may be imported from.
 M.TOOLS = { "claude_code", "codex" }
 
+-- What came of an attempt; `untested` is one tried and not yet checked.
+M.OUTCOMES = { "worked", "failed", "untested" }
+
+-- The types whose notes keep attempts: a problem and what was tried.
+M.ATTEMPTED = { "gotcha", "case" }
+
 local function member(list, value)
 	return table.find(list, value) ~= nil
 end
@@ -51,6 +70,15 @@ end
 
 function M.is_link(name)
 	return member(M.LINKS, name)
+end
+
+function M.is_outcome(name)
+	return member(M.OUTCOMES, name)
+end
+
+-- Whether notes of type `kind` keep attempts.
+function M.keeps_attempts(kind)
+	return member(M.ATTEMPTED, kind)
 end
 
 -- Whether `id` can name a note: `a-z`, `0-9` and `-`, 1 to 64 long.
@@ -109,6 +137,17 @@ function M.validate(note)
 			return "the link target must be one line, and not empty"
 		end
 	end
+	if #(note.attempts or {}) > 0 and not M.keeps_attempts(note.type) then
+		return "only a gotcha or a case keeps attempts"
+	end
+	for _, attempt in ipairs(note.attempts or {}) do
+		if not one_line(attempt.what) then
+			return "what an attempt tried must be one line, and not empty"
+		end
+		if not M.is_outcome(attempt.outcome) then
+			return string.format("%q is not an outcome: worked, failed or untested", tostring(attempt.outcome))
+		end
+	end
 	-- Everything else in the front matter is one line too, so no value
 	-- can hold a line that closes it.
 	local source = note.source
@@ -124,7 +163,13 @@ function M.validate(note)
 	end
 	table.insert(fields, source.run)
 	table.insert(fields, source.commit)
+	table.insert(fields, source.model)
 	table.insert(fields, note.stale)
+	for _, attempt in ipairs(note.attempts or {}) do
+		table.insert(fields, attempt.evidence)
+		table.insert(fields, attempt.run)
+		table.insert(fields, attempt.model)
+	end
 	if source.imported then
 		table.insert(fields, source.imported.path)
 		table.insert(fields, source.imported.session)
@@ -173,6 +218,9 @@ function M.render(note)
 	if source.commit ~= nil then
 		put("commit", s(source.commit))
 	end
+	if source.model ~= nil then
+		put("model", s(source.model))
+	end
 	if source.files and #source.files > 0 then
 		put("files", toml.strings(source.files))
 	end
@@ -193,6 +241,22 @@ function M.render(note)
 		put("type", s(link.type))
 		if link.why ~= nil then
 			put("why", s(link.why))
+		end
+	end
+	for _, attempt in ipairs(note.attempts or {}) do
+		table.insert(lines, "")
+		table.insert(lines, "[[attempts]]")
+		put("at", n(attempt.at))
+		put("what", s(attempt.what))
+		put("outcome", s(attempt.outcome))
+		if attempt.evidence ~= nil then
+			put("evidence", s(attempt.evidence))
+		end
+		if attempt.run ~= nil then
+			put("run", s(attempt.run))
+		end
+		if attempt.model ~= nil then
+			put("model", s(attempt.model))
 		end
 	end
 	return "+++\n" .. table.concat(lines, "\n") .. "\n+++\n" .. note.body
@@ -330,6 +394,7 @@ local function note_of(fields)
 		run = string_of(source, "run", true),
 		turn = integer_of(source, "turn", true, U32),
 		commit = string_of(source, "commit", true),
+		model = string_of(source, "model", true),
 		files = strings_of(source, "files"),
 	}
 	local imported = table_of(source, "imported", true)
@@ -345,6 +410,18 @@ local function note_of(fields)
 			to = string_of(link, "to"),
 			type = one_of(link, "type", M.LINKS),
 			why = string_of(link, "why", true),
+		})
+	end
+	-- A note that never had an attempt has no list of them.
+	for _, attempt in ipairs(tables_of(fields, "attempts")) do
+		note.attempts = note.attempts or {}
+		table.insert(note.attempts, {
+			at = integer_of(attempt, "at"),
+			what = string_of(attempt, "what"),
+			outcome = one_of(attempt, "outcome", M.OUTCOMES),
+			evidence = string_of(attempt, "evidence", true),
+			run = string_of(attempt, "run", true),
+			model = string_of(attempt, "model", true),
 		})
 	end
 	return note
@@ -448,6 +525,12 @@ function M.copy(note)
 	out.links = {}
 	for _, link in ipairs(note.links or {}) do
 		table.insert(out.links, table.clone(link))
+	end
+	if note.attempts then
+		out.attempts = {}
+		for _, attempt in ipairs(note.attempts) do
+			table.insert(out.attempts, table.clone(attempt))
+		end
 	end
 	return out
 end

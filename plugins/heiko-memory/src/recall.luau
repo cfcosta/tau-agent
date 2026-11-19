@@ -48,6 +48,19 @@ end
 -- The body line holding most of the query's words, trimmed and cut to
 -- 200 characters; nil when no line holds any. Of lines that tie, the
 -- last.
+-- How many attempts `n` has, by outcome: `{ worked, failed, untested }`,
+-- or nil for none.
+function M.tried(n)
+	if #(n.attempts or {}) == 0 then
+		return nil
+	end
+	local count = { worked = 0, failed = 0, untested = 0 }
+	for _, attempt in ipairs(n.attempts) do
+		count[attempt.outcome] += 1
+	end
+	return count
+end
+
 function M.snippet(body, query)
 	local terms = {}
 	for _, word in ipairs(text.words(query)) do
@@ -80,7 +93,8 @@ end
 -- weighed down), then the notes linked with them, one hop, in the seeds'
 -- order. A third of the budget is kept for linked notes; seeds fill
 -- whatever links leave free. Each hit is `{ id, title, type,
--- description, snippet, superseded, stale, via }`, `via` `{ from, type }`
+-- description, snippet, superseded, stale, model, tried, via }`, `via`
+-- `{ from, type }`, `tried` the count of attempts by outcome
 -- for a note reached by a link.
 function M.recall(notes, index, query, budget)
 	if budget == 0 then
@@ -148,6 +162,8 @@ function M.recall(notes, index, query, budget)
 				snippet = M.snippet(n.body, query) or n.description,
 				superseded = note.is_superseded(n),
 				stale = n.stale,
+				model = n.source.model,
+				tried = M.tried(n),
 				via = p.via,
 			})
 		end

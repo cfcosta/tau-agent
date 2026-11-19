@@ -36,7 +36,7 @@ local EDITS = { "edit", "write" }
 
 local USER = memory.USER
 
-local TOOLS = { "memory_write", "memory_search", "memory_read", "memory_link" }
+local TOOLS = { "memory_write", "memory_search", "memory_read", "memory_link", "memory_attempt" }
 
 -- The families the settings offer, as the plan names them.
 local FAMILIES = { "sol", "luna", "astra", "terra" }
@@ -138,6 +138,8 @@ local function write_call(args, env, request)
 	local by = request and request.by or "agent"
 	local source = note.source(by)
 	source.run = env.run.id
+	-- The model whose run this is: what held for one may not for another.
+	source.model = env.run.model
 	for _, link in ipairs(links) do
 		if link.type == "about" then
 			table.insert(source.files, link.to)
@@ -195,6 +197,31 @@ local function read_call(args, _env)
 	end
 	local prefix = string.sub(id, 1, #USER) == USER and USER or ""
 	return render.render_reading(reading, prefix)
+end
+
+local function attempt_call(args, env)
+	local scope, id = resolve(memory.scopes(), need_string(args, "id"))
+	local settles = args.settles ~= nil and math.floor(tonumber(args.settles) or 0) or nil
+	local what = args.what
+	if settles == nil then
+		what = need_string(args, "what")
+	end
+	local outcome = need_string(args, "outcome")
+	local number, why = scope:attempt(id, {
+		what = what,
+		outcome = outcome,
+		evidence = args.evidence,
+		run = env.run.id,
+		model = env.run.model,
+		settles = settles,
+	}, now_ms(env))
+	if number == nil then
+		error(why, 0)
+	end
+	local prefix = string.sub(args.id, 1, #USER) == USER and USER or ""
+	local verb = settles and "Settled" or "Recorded"
+	return verb .. " attempt " .. number .. " on `" .. prefix .. id .. "`: " .. outcome .. ".",
+		{ id = prefix .. id, attempt = number, outcome = outcome }
 end
 
 local function link_call(args, env)
@@ -405,7 +432,7 @@ local plugin = heiko.plugin({
 	tools = {
 		memory_write = {
 			kind = "change",
-			description = "Save one idea to long-term memory, for later runs on this repository: a decision and why, a convention, a command, a gotcha (symptom, cause, fix), a case (task, approach, outcome), or a preference the user stated. One idea per note, in full prose. Answers with the nearest existing notes: link to them, or update (id) or supersede (supersedes) one instead of repeating it. Not for task progress or TODOs.",
+			description = "Save one idea to long-term memory, for later runs on this repository: a decision and why, a convention, a command, a gotcha (symptom, cause, fix), a case (how to do a task that comes again), or a preference the user stated. One idea per note, in full prose. Answers with the nearest existing notes: link to them, or update (id) or supersede (supersedes) one instead of repeating it; work on a problem a note has goes in memory_attempt. Not for task progress, plans, TODOs, or what git log already records.",
 			parameters = {
 				type = "object",
 				properties = {
@@ -413,7 +440,7 @@ local plugin = heiko.plugin({
 						type = "string",
 						description = "fact, convention, decision, gotcha, procedure, case, preference, or index (the one map note, loaded into every run)",
 					},
-					title = { type = "string", description = "The claim, on one line" },
+					title = { type = "string", description = "The claim itself, on one line, as a sentence a reader can act on; never what the run did" },
 					description = { type = "string", description = "One line for the index and search results" },
 					body = { type = "string", description = "The note in full prose: exact versions, flags, paths, error strings" },
 					tags = { type = "array", items = { type = "string" } },
@@ -448,6 +475,22 @@ local plugin = heiko.plugin({
 				required = { "id" },
 			},
 			call = saving("memory_read", read_call),
+		},
+		memory_attempt = {
+			kind = "change",
+			description = "Record an attempt on a gotcha or case note: what was tried for its problem, and whether it worked, failed, or is untested yet, with the evidence (the command, the test, the error). A failed attempt is worth as much as one that worked: a later run sees it and does not try it again blind. Use this, not a second note, when a run works on a problem a note already has. To settle an untested attempt once it is checked, pass its number as settles.",
+			parameters = {
+				type = "object",
+				properties = {
+					id = { type = "string", description = "The gotcha or case note, as search listed it" },
+					what = { type = "string", description = "What was tried, on one line (not needed to settle)" },
+					outcome = { type = "string", description = "worked, failed, or untested" },
+					evidence = { type = "string", description = "What showed it, on one line: the check that passed or the error it gave" },
+					settles = { type = "integer", minimum = 1, description = "The number of an untested attempt this settles" },
+				},
+				required = { "id", "outcome" },
+			},
+			call = saving("memory_attempt", attempt_call),
 		},
 		memory_link = {
 			kind = "change",

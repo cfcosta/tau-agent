@@ -18,7 +18,15 @@ M.B = 0.75
 
 -- What an index holds for a note: its title, description, tags and body.
 function M.index_text(note)
-	return note.title .. "\n" .. note.description .. "\n" .. table.concat(note.tags or {}, " ") .. "\n" .. note.body
+	local out = note.title .. "\n" .. note.description .. "\n" .. table.concat(note.tags or {}, " ") .. "\n" .. note.body
+	-- What was tried is found as much as what the note says.
+	for _, attempt in ipairs(note.attempts or {}) do
+		out ..= "\n" .. attempt.what
+		if attempt.evidence ~= nil then
+			out ..= "\n" .. attempt.evidence
+		end
+	end
+	return out
 end
 
 local Index = {}

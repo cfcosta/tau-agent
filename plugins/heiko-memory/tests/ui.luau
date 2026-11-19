@@ -451,7 +451,7 @@ t.case("a repository's notes page lists, filters, searches and opens its notes",
 
 	local open = run:page("notes", { repo = "shop", note = "lanes-drain" })
 	t.equal(find(open, "title").text, "lanes drain")
-	t.equal(shows(open, "lanes-drain · fact by the agent · edited just now"), true, "who wrote it, and when")
+	t.equal(shows(open, "lanes-drain · fact by the agent, on test · edited just now"), true, "who wrote it, and when")
 	t.equal(find(open, "stamp").label, "src/lane.rs")
 	t.equal(shows(open, "Backlinks · 1"), true, "its backlink")
 	t.equal(shows(open, "why: it says when"), true, "why it links")

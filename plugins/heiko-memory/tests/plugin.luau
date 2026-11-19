@@ -87,6 +87,43 @@ t.case("an unknown scope or link type is refused with its name", function()
 	t.equal({ ok, why }, { false, '"cites" is not a link type' })
 end)
 
+-- A gotcha keeps what was tried for its problem: attempts append, an
+-- untested one is settled once, rewriting the note keeps them, and a
+-- note that replaces it carries them on. A fact keeps none.
+t.case("a problem note keeps its attempts", function()
+	local run = run_with()
+	write(run, { type = "gotcha", title = "The fetch fails under impure-env", description = "nix fetchurl in checks", body = "A command-local impure-env breaks pinned fetches." })
+	local id = "the-fetch-fails-under-impure-env"
+	t.equal(
+		run:tool("memory_attempt", { id = id, what = "Pin the hash again", outcome = "failed", evidence = "same hash mismatch" }),
+		"Recorded attempt 1 on `" .. id .. "`: failed."
+	)
+	t.equal(run:tool("memory_attempt", { id = id, what = "Clear impure-env for the command", outcome = "untested" }), "Recorded attempt 2 on `" .. id .. "`: untested.")
+	t.equal(
+		run:tool("memory_attempt", { id = id, settles = 2, outcome = "worked", evidence = "nix build passed" }),
+		"Settled attempt 2 on `" .. id .. "`: worked."
+	)
+	local ok, why = pcall(run.tool, run, "memory_attempt", { id = id, settles = 2, outcome = "failed" })
+	t.equal({ ok, why }, { false, "attempt 2 already worked; record a new attempt instead" })
+	write(run, { type = "fact", title = "Checks run offline", description = "no network", body = "They do." })
+	ok, why = pcall(run.tool, run, "memory_attempt", { id = "checks-run-offline", what = "x", outcome = "worked" })
+	t.equal({ ok, why }, { false, 'only a gotcha or a case keeps attempts; "checks-run-offline" is a fact' })
+
+	write(run, { type = "gotcha", id = id, title = "The fetch fails under impure-env", description = "nix fetchurl in checks", body = "Clear impure-env for the command." })
+	local read = run:tool("memory_read", { id = id })
+	t.equal(
+		contains(read, "Attempts, oldest first:\n1. [failed] Pin the hash again — same hash mismatch (test)\n2. [worked] Clear impure-env for the command — nix build passed (test)\n"),
+		true,
+		read
+	)
+	local found = run:tool("memory_search", { query = "impure-env" })
+	t.equal(contains(found, "(tried 2: 1 worked, 1 failed) (from a run of test)"), true, found)
+
+	write(run, { type = "gotcha", title = "Pinned fetches need impure-env cleared", description = "nix fetchurl in checks", body = "Clear it.", supersedes = id })
+	read = run:tool("memory_read", { id = "pinned-fetches-need-impure-env-cleared" })
+	t.equal(contains(read, "2. [worked] Clear impure-env for the command"), true, read)
+end)
+
 -- The tools in both scopes: ids of the user's read `user:`, links keep
 -- to their note's scope, and reading a note gives its links both ways.
 t.case("the tools read, link and search across both scopes", function()
@@ -101,7 +138,7 @@ t.case("the tools read, link and search across both scopes", function()
 	local read = run:tool("memory_read", { id = "retry-reads-the-header" })
 	t.equal(
 		read,
-		'<note id="retry-reads-the-header" type="fact">\n# Retry reads the header\nin retry.rs\n<- `retry-with-jitter` refines\n\nIt reads Retry-After.\n</note>'
+		'<note id="retry-reads-the-header" type="fact">\n# Retry reads the header\nin retry.rs\nFrom a run of test: check it before relying on it with another model.\n<- `retry-with-jitter` refines\n\nIt reads Retry-After.\n</note>'
 	)
 	t.equal(contains(run:tool("memory_read", { id = "user:short-answers" }), '<note id="user:short-answers" type="preference">'), true)
 	local found = run:tool("memory_search", { query = "retry" })
