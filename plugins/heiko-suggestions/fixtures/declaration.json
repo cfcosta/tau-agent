@@ -1,0 +1,90 @@
+{
+  "name": "heiko-suggestions",
+  "description": "Suggests the next run in a repository after one ends; the empty composer says the newest",
+  "uses": {
+    "tools": [],
+    "decide": false,
+    "infer": true,
+    "network": [],
+    "secrets": [],
+    "model": "luna",
+    "store": true,
+    "transcript": true,
+    "archive": false,
+    "chats": true,
+    "files": []
+  },
+  "settings": {
+    "default": {
+      "count": 3,
+      "on": true
+    },
+    "schema": {
+      "properties": {
+        "count": {
+          "maximum": 5,
+          "minimum": 1,
+          "title": "How many to keep",
+          "type": "integer"
+        },
+        "on": {
+          "description": "After a run ends, one short request to the plan's smallest model; the empty composer of a new run says the newest. Off, it keeps its own words.",
+          "title": "Suggest the next run",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "tools": [],
+  "hooks": {
+    "start": true,
+    "before_tool": false,
+    "before_request": false,
+    "after_tool_result": false,
+    "rewrite_context": false,
+    "rewritten": false,
+    "before_stop": false,
+    "turn_end": false,
+    "on_event": false,
+    "title": false,
+    "notify": false,
+    "repo_data": true,
+    "recover": false,
+    "run_end": true,
+    "view": false,
+    "settings_view": false,
+    "app": false,
+    "page": false,
+    "setup": false,
+    "models": false
+  },
+  "actions": [
+    "again",
+    "dismiss"
+  ],
+  "events": [],
+  "fills": [],
+  "compaction": null,
+  "forge": null,
+  "nav": null,
+  "commands": [],
+  "jobs": [
+    {
+      "name": "suggest",
+      "every": 5,
+      "label": "Suggesting the next run"
+    }
+  ],
+  "pages": [
+    "suggested"
+  ],
+  "repo_nav": {
+    "label": "Suggestions",
+    "page": "suggested",
+    "icon": "arrow"
+  },
+  "picker_auto": null,
+  "continues": null,
+  "listed_commands": false
+}

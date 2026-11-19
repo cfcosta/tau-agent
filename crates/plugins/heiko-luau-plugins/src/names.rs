@@ -15,6 +15,7 @@ pub const NOTIFY: &str = "heiko-notify";
 pub const REASONING: &str = "heiko-reasoning";
 pub const SCHEDULE: &str = "heiko-schedule";
 pub const SKILLS: &str = "heiko-skills";
+pub const SUGGESTIONS: &str = "heiko-suggestions";
 pub const TITLES: &str = "heiko-titles";
 pub const TODO: &str = "heiko-todo";
 pub const TREE_COMPACTION: &str = "heiko-tree-compaction";

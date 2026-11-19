@@ -129,3 +129,50 @@ t.case("a refused request keeps the list, and is not asked again", function()
 	t.equal(r:repo_data().composer.placeholder, "Older")
 	t.equal(r.job_state.answered, nil)
 end)
+
+-- The demo's heiko-agent: a run on the retry policy ended, and the model
+-- answered with what may come next.
+local function demo_run()
+	local r = t.run({
+		now = "2026-01-05T09:00:00Z",
+		models = { { id = "gpt-6-luna", family = "luna" } },
+		transcript = array({
+			{ role = "user", text = "Make the retry wait the server's Retry-After header." },
+			{ role = "assistant", text = "", calls = { { name = "exec_command" } } },
+			{ role = "toolResult", name = "exec_command", text = "test retry::honours_retry_after ... ok" },
+			{ role = "assistant", text = "The retry waits Retry-After now, capped at max_delay." },
+		}),
+		tools = {
+			infer = function()
+				return {
+					ok = true,
+					value = {
+						suggestions = {
+							{
+								title = "Log malformed Retry-After headers once",
+								prompt = "Log a malformed Retry-After header once per run instead of on every retry.",
+								why = "the run parses the header and drops what it cannot read",
+							},
+							{
+								title = "Add jitter on top of the Retry-After hint",
+								prompt = "Add jitter on top of the Retry-After hint so clients do not retry in lockstep.",
+								why = "every client now waits exactly the server's hint",
+							},
+						},
+					},
+				}
+			end,
+		},
+	})
+	r:run_end({ stop = "Stop", text = "done" })
+	r:job("suggest")
+	return r
+end
+
+t.case("the demo's composer says the newest suggestion", function()
+	t.equal(demo_run():repo_data().composer.placeholder, "Add jitter on top of the Retry-After hint")
+end)
+
+t.fixture("demo", function()
+	return { repo_data = { ["heiko-agent"] = demo_run():repo_data() } }
+end)

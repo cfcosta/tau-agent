@@ -1,0 +1,13 @@
+{
+  "repo_data": {
+    "heiko-agent": {
+      "composer": {
+        "placeholder": "Add jitter on top of the Retry-After hint",
+        "prompt": "Add jitter on top of the Retry-After hint so clients do not retry in lockstep."
+      },
+      "nav": {
+        "detail": "2"
+      }
+    }
+  }
+}

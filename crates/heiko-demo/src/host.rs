@@ -219,11 +219,12 @@ impl DemoHost {
                     &self.cx,
                 ));
             }
-            // heiko-memory's and heiko-todo's, Luau plugins': what their
-            // fixtures keep of the repository.
+            // heiko-memory's, heiko-todo's and heiko-suggestions', Luau
+            // plugins': what their fixtures keep of the repository.
             let values: std::collections::BTreeMap<String, Value> = [
                 heiko_luau_plugins::names::MEMORY,
                 heiko_luau_plugins::names::TODO,
+                heiko_luau_plugins::names::SUGGESTIONS,
             ]
             .into_iter()
             .filter_map(|plugin| {
@@ -412,6 +413,7 @@ fn luau_built_ins(
             built_in(heiko_luau_plugins::names::SKILLS),
             built_in(heiko_luau_plugins::names::MEMORY),
             built_in(heiko_luau_plugins::names::TODO),
+            built_in(heiko_luau_plugins::names::SUGGESTIONS),
             github,
         ],
         error: None,
