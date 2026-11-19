@@ -109,19 +109,6 @@ t.case("a device sign-in polls until approved, the token past the plugin", funct
 	t.equal(r:app().sign_in, { state = "signed_out" })
 end)
 
-t.case("approving checks at the next tick", function()
-	local http = fake({
-		["POST /login/device/code"] = DEVICE,
-		["POST /login/oauth/access_token"] = { json = { access_token = "gho_token" } },
-		["GET /user"] = USER,
-	})
-	local r = run({ http = http })
-	r:action("sign_in", {})
-	r:action("check", {})
-	r:job("sign_in")
-	t.equal(r:app().sign_in, { state = "signed_in", user = "octo" })
-end)
-
 t.case("a code that expires, or a refusal on GitHub, says why", function()
 	local http = fake({
 		["POST /login/device/code"] = DEVICE,
@@ -209,13 +196,14 @@ end)
 
 t.case("the code opens GitHub, and signed in the step goes on and the section signs out", function()
 	local r = run({ http = fake({ ["POST /login/device/code"] = DEVICE, ["GET /user"] = USER }) })
-	r:action("sign_in", {})
+	local copied = { text = "ABCD-1234", url = "https://github.com/login/device" }
+	t.equal(r:action("sign_in", {}).heiko_interface, { action = "copy", args = copied })
 	local step = r:setup(r:app())
 	t.equal(step.heading, "Enter this code on GitHub")
-	local open = find(step.body, "button")[1]
-	t.equal(open.action, "heiko.copy")
-	t.equal(open.args, { text = "ABCD-1234", url = "https://github.com/login/device" })
-	t.equal(find(step.body, "button")[2].action, "check")
+	t.equal(labels(step.body), { "Copy code and open GitHub again", "Use a personal access token" })
+	local again = find(step.body, "button")[1]
+	t.equal(again.action, "heiko.copy")
+	t.equal(again.args, copied)
 	local signed = run({ http = fake({ ["GET /user"] = USER }), secrets = { github = true } })
 	signed:job("sign_in")
 	step = signed:setup(signed:app())

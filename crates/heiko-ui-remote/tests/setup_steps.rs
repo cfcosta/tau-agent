@@ -400,9 +400,9 @@ fn without_repositories_the_model_leads_to_the_plugin_s_step(
 }
 
 /// A step placed before the repositories comes right after the model,
-/// and the bar counts it there; ending it opens the repositories once
-/// the forge is signed in, which picking repositories from the app also
-/// starts with while it is not.
+/// and the bar counts it there; the forge signing in ends it and opens
+/// the repositories, as it does when picking repositories from the app
+/// starts with the sign-in; ending it by hand goes on too.
 #[gpui::test]
 fn a_step_before_the_repositories_follows_the_model(cx: &mut TestAppContext) {
     let (workspace, mut cx, _events) = open(false, cx);
@@ -422,23 +422,31 @@ fn a_step_before_the_repositories_follows_the_model(cx: &mut TestAppContext) {
     );
     connect(&workspace, &mut cx);
     assert_eq!(route(&workspace, &mut cx), Route::Setup(BEFORE_STEP));
-    // Signed in: the forge lists repositories.
-    workspace.update(&mut cx, |ws, cx| {
-        let mut catalog = ws.catalog().clone();
-        catalog.pull_requests = true;
-        ws.set_catalog(catalog, cx);
-    });
-    click("button:Signed in", &mut cx);
+    // Signed in: the forge lists repositories, and they come next.
+    let forge = |signed_in: bool, cx: &mut VisualTestContext| {
+        workspace.update(cx, |ws, cx| {
+            let mut catalog = ws.catalog().clone();
+            catalog.pull_requests = signed_in;
+            ws.set_catalog(catalog, cx);
+        })
+    };
+    forge(true, &mut cx);
     assert_eq!(route(&workspace, &mut cx), Route::Setup(SetupStep::Repos));
 
     // From the app, signed out: the sign-in first, then the repositories.
+    forge(false, &mut cx);
     workspace.update(&mut cx, |ws, cx| {
-        let mut catalog = ws.catalog().clone();
-        catalog.pull_requests = false;
-        ws.set_catalog(catalog, cx);
         ws.finish_setup(cx);
         ws.pick_repos(cx);
     });
+    assert_eq!(route(&workspace, &mut cx), Route::Setup(BEFORE_STEP));
+    forge(true, &mut cx);
+    assert_eq!(route(&workspace, &mut cx), Route::Setup(SetupStep::Repos));
+
+    // Back on the step, signed in already: its button goes on.
+    workspace
+        .update(&mut cx, |ws, cx| ws.navigate(Route::Setup(BEFORE_STEP), cx));
+    forge(true, &mut cx);
     assert_eq!(route(&workspace, &mut cx), Route::Setup(BEFORE_STEP));
     click("button:Signed in", &mut cx);
     assert_eq!(route(&workspace, &mut cx), Route::Setup(SetupStep::Repos));

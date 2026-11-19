@@ -34,7 +34,7 @@ end
 local function on_github()
 	local rows = {}
 	for n, line in ipairs({
-		"Enter the code heiko shows",
+		"Paste the code heiko copied",
 		"Pick the repositories heiko may use",
 		"Approve heiko's app",
 	}) do
@@ -44,15 +44,16 @@ local function on_github()
 	return ui.section("on-github", "On GitHub", rows, { open = true })
 end
 
--- The code to enter, where, and the ways on.
+-- The code to enter, where, and the ways on. Starting the sign-in copied
+-- the code and opened GitHub; the job sees the approval by itself.
 local function waiting(code)
 	return {
 		ui.figure(code.code),
 		ui.mono(code.url .. " · expires in " .. code.expires),
+		marked("working", ui.text("Waiting for you to approve heiko on GitHub…")),
 		on_github(),
 		ui.row({
-			ui.button("Copy code and open GitHub", "heiko.copy", { text = code.code, url = "https://" .. code.url }, "primary"),
-			ui.button("I have approved it", "check", {}, "secondary"),
+			ui.button("Copy code and open GitHub again", "heiko.copy", { text = code.code, url = "https://" .. code.url }, "secondary"),
 			token_link(),
 		}),
 		permissions(),
@@ -89,7 +90,7 @@ function sign_in.form(state, token, done)
 	if state.state == "signed_out" then
 		children = {
 			done and on_github()
-				or ui.text("GitHub shows a code; enter it on GitHub and approve heiko's app for the repositories you want."),
+				or ui.text("heiko copies a code and opens GitHub; paste it there and approve heiko's app for the repositories you want."),
 			ui.row({ ui.button("Sign in with GitHub", "sign_in", {}, "primary"), token_link() }),
 		}
 	elseif state.state == "starting" then

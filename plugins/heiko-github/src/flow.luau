@@ -64,14 +64,6 @@ flow.machine = heiko.machine({
 				return s, { "poll" }
 			end,
 		},
-		-- The person says they approved: poll at the next tick.
-		approve = {
-			waiting = function(s)
-				local next = table.clone(s)
-				next.next = 0
-				return next
-			end,
-		},
 		pending = {
 			waiting = function(s, e)
 				local next = table.clone(s)

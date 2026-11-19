@@ -119,7 +119,9 @@ return heiko.plugin({
 	},
 
 	actions = {
-		-- Asks GitHub for a device code and shows it; the job polls.
+		-- Asks GitHub for a device code and shows it, copies it and opens
+		-- the page to paste it on, as a browser sign-in opens its page; the
+		-- job polls until the person approves.
 		sign_in = function(_, _, env)
 			heiko.store.put("token_form", false)
 			step(env, { event = "start" })
@@ -128,22 +130,20 @@ return heiko.plugin({
 				step(env, { event = "start_failed", error = tostring(start) })
 				return
 			end
+			local code = {
+				code = start.user_code,
+				url = github.address(start.verification_uri),
+				expires = string.format("%d minutes", start.expires_in // 60),
+			}
 			step(env, {
 				event = "started",
 				at = heiko.now(env),
-				code = {
-					code = start.user_code,
-					url = github.address(start.verification_uri),
-					expires = string.format("%d minutes", start.expires_in // 60),
-				},
+				code = code,
 				device_code = start.device_code,
 				expires_in = start.expires_in,
 				interval = start.interval,
 			})
-		end,
-		-- The person says they approved: poll at the job's next tick.
-		check = function(_, _, env)
-			step(env, { event = "approve" })
+			return heiko.interface("copy", { text = code.code, url = "https://" .. code.url })
 		end,
 		sign_out = function(_, _, env)
 			heiko.give(cmd.secrets.forget(github.SECRET))

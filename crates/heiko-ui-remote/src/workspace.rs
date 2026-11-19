@@ -978,8 +978,12 @@ impl Workspace {
         }
         self.closed.extend(catalog.closed_runs.iter().cloned());
         crate::plugins::know(&catalog.plugins);
+        let signed_in = !self.catalog.pull_requests && catalog.pull_requests;
         self.catalog = catalog;
         self.restore_repos();
+        if signed_in {
+            self.forge_signed_in(cx);
+        }
         if !self.next_model_picked {
             self.next_model = self.catalog.models.default_for("coder");
         }

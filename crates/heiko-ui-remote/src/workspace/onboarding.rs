@@ -154,6 +154,22 @@ impl Workspace {
         }
     }
 
+    /// The forge signed in: a step before the repositories on screen,
+    /// its sign-in, is done, and the picker comes next.
+    pub(super) fn forge_signed_in(&mut self, cx: &mut Context<Self>) {
+        let Route::Setup(step @ SetupStep::Plugin { .. }) = self.route else {
+            return;
+        };
+        let before = self.plugin_setup_steps().into_iter().any(|(on, view)| {
+            on == step
+                && view.at
+                    == heiko_ui_plugin::points::SetupAt::BeforeRepositories
+        });
+        if before {
+            self.setup_next(step, cx);
+        }
+    }
+
     /// Goes back to the screen an onboarding step was opened from.
     pub fn leave_setup(&mut self, cx: &mut Context<Self>) {
         let mut route = self.back_stack.pop().unwrap_or(Route::Home);
