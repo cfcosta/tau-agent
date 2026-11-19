@@ -2059,3 +2059,46 @@ fn a_run_keeps_a_journal_only_while_a_hook_awaits() {
         "the call that awaited, and the close once its answer ended it"
     );
 }
+
+/// A plugin's tool calls a tool through the run's loop, which takes the
+/// call through every plugin's `before_tool`, its own among them, while
+/// the tool still runs: the run's state is not the tool's to hold
+/// meanwhile.
+#[test]
+fn a_plugin_tool_calls_a_tool_through_the_loop() {
+    let relay = r#"
+local heiko = require("heiko")
+return heiko.plugin { uses = { tools = { "exec_command" } },
+  tools = {
+    run_it = {
+      description = "Runs a command.",
+      parameters = { type = "object", properties = { cmd = { type = "string" } } },
+      call = function(args, model, env)
+        return heiko.await(heiko.cmd.tool("exec_command", { cmd = args.cmd }))
+      end,
+    },
+  },
+  before_tool = function(call, model, env)
+    model.seen = (model.seen or 0) + 1
+  end,
+}
+"#;
+    let llm = ScriptedModel::new()
+        .turn(|t| t.tool_call("run_it", json!({ "cmd": "ls" })))
+        .turn(|t| t.text("done"));
+    let store = block_on_io(heiko_store_sqlite::memory()).unwrap();
+    let plugins =
+        LuauPlugins::new(vec![active("relay", relay)], json!({}), None);
+    let agent = Agent::new(llm.clone()).tool(ExecCommand).plugin(plugins);
+    let outcome = block_on_io(async {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            agent.run("go", &store),
+        )
+        .await
+        .expect("the nested call deadlocked")
+    })
+    .unwrap();
+    assert_eq!(outcome.text, "done");
+    assert_eq!(tool_results(&llm), vec![("ran \"ls\"".to_owned(), false)]);
+}

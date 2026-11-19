@@ -599,7 +599,7 @@ impl Inner {
             .await
     }
 
-    /// [`Self::run_hook_whole`], its time kept under the plugin's name
+    /// [`Self::ready_hook`] run, its time kept under the plugin's name
     /// and the hook's (`heiko-perf`).
     #[allow(clippy::too_many_arguments)]
     async fn run_hook_of(
@@ -612,21 +612,17 @@ impl Inner {
         reach: Arc<dyn Reach>,
         call: Option<&str>,
     ) -> Option<Outcome> {
-        let outcome = self
-            .run_hook_whole(active, hook, input, state, ctx, reach, call)
+        let ready = self
+            .ready_hook(active, hook, input, state, ctx, reach, call)
             .await?;
-        // A tool's name is the model's to pick: its hook is `tool`.
-        let path = hook.path();
-        let hook = path.first().map_or("hook", String::as_str);
-        let name = &active.loaded.declaration.name;
-        heiko_perf::record("hook", &format!("{name} {hook}"), outcome.wall);
-        Some(outcome)
+        Some(ready.run(active, hook).await)
     }
 
-    /// [`Self::run_hook`], for a tool's `call` the call's id as
-    /// `ctx.run.call`.
+    /// `hook` of `active` made ready to run, from what it needs of the
+    /// run's state: `None` when its plugin is off or has no such hook.
+    /// For a tool's `call`, the call's id is `ctx.run.call`.
     #[allow(clippy::too_many_arguments)]
-    async fn run_hook_whole(
+    async fn ready_hook(
         &self,
         active: &Active,
         hook: &Hook,
@@ -635,7 +631,7 @@ impl Inner {
         ctx: &PluginCtx,
         reach: Arc<dyn Reach>,
         call: Option<&str>,
-    ) -> Option<Outcome> {
+    ) -> Option<ReadyHook> {
         let name = &active.loaded.declaration.name;
         if self.off(state, name)
             || !hook.declared_in(&active.loaded.declaration)
@@ -650,7 +646,9 @@ impl Inner {
         let started = std::time::Instant::now();
         let mailbox = match self.mailbox(active, state, ctx).await {
             Ok(mailbox) => mailbox,
-            Err(error) => return Some(failed_outcome(error, started)),
+            Err(error) => {
+                return Some(ReadyHook::Failed(failed_outcome(error, started)));
+            }
         };
         let env = json!({
             "run": context.run,
@@ -659,22 +657,15 @@ impl Inner {
             "models": crate::runtime::plan_models(),
         });
         let limit = hook.limit_for(&active.loaded.declaration);
-        // A drawing reads a frozen copy of the model, waiting on nothing.
         if hook.draws() {
-            let input = (!matches!(hook, Hook::View)).then_some(&input);
-            return Some(
-                match mailbox.draw(&hook.path(), input, &env, limit).await {
-                    Ok(value) => Outcome {
-                        value,
-                        state: Value::Null,
-                        logs: Vec::new(),
-                        error: None,
-                        raised: false,
-                        wall: started.elapsed(),
-                    },
-                    Err(error) => failed_outcome(error, started),
-                },
-            );
+            let input = (!matches!(hook, Hook::View)).then_some(input);
+            return Some(ReadyHook::Draw {
+                mailbox,
+                input,
+                env,
+                limit,
+                started,
+            });
         }
         // `run_end` runs however the run ended, stopped by the person
         // too: what it lets go of goes, the run's cancel or not; an
@@ -685,25 +676,24 @@ impl Inner {
             }
             _ => ctx.cancel.child_token(),
         };
-        let executor =
-            crate::runtime::Executor::new(&active.loaded, &context, reach);
+        let executor = Box::new(crate::runtime::Executor::new(
+            &active.loaded,
+            &context,
+            reach,
+        ));
         // What `start` leaves shows after the message the run started on,
         // in history as live.
-        let place =
-            matches!(hook, Hook::Start).then_some(heiko_ui_plugin::PLACE_MESSAGE);
-        let ended = mailbox
-            .call(hook.path(), input, env, &executor, limit, &cancel, place)
-            .await;
-        Some(match ended {
-            Ended::Value { value } => Outcome {
-                value,
-                state: Value::Null,
-                logs: Vec::new(),
-                error: None,
-                raised: false,
-                wall: started.elapsed(),
-            },
-            Ended::Error { error } => failed_outcome(error, started),
+        let place = matches!(hook, Hook::Start)
+            .then_some(heiko_ui_plugin::PLACE_MESSAGE);
+        Some(ReadyHook::Call {
+            mailbox,
+            input,
+            env,
+            executor,
+            limit,
+            cancel,
+            place,
+            started,
         })
     }
 
@@ -905,6 +895,95 @@ fn failed_outcome(error: String, started: std::time::Instant) -> Outcome {
         error: Some(error),
         raised,
         wall: started.elapsed(),
+    }
+}
+
+/// A hook ready to run on its plugin's mailbox, needing nothing of the
+/// run's state: what runs it may let the state go meanwhile, as the
+/// mailbox still takes the plugin's steps one at a time.
+enum ReadyHook {
+    /// It failed before it could start.
+    Failed(Outcome),
+    /// A drawing, which reads a frozen copy of the model, waiting on
+    /// nothing.
+    Draw {
+        mailbox: Arc<Mailbox>,
+        input: Option<Value>,
+        env: Value,
+        limit: std::time::Duration,
+        started: std::time::Instant,
+    },
+    Call {
+        mailbox: Arc<Mailbox>,
+        input: Value,
+        env: Value,
+        executor: Box<crate::runtime::Executor>,
+        limit: std::time::Duration,
+        cancel: tokio_util::sync::CancellationToken,
+        place: Option<&'static str>,
+        started: std::time::Instant,
+    },
+}
+
+impl ReadyHook {
+    /// Runs it, its time kept under `active`'s name and `hook`'s
+    /// (`heiko-perf`).
+    async fn run(self, active: &Active, hook: &Hook) -> Outcome {
+        let outcome = match self {
+            Self::Failed(outcome) => outcome,
+            Self::Draw {
+                mailbox,
+                input,
+                env,
+                limit,
+                started,
+            } => match mailbox
+                .draw(&hook.path(), input.as_ref(), &env, limit)
+                .await
+            {
+                Ok(value) => Outcome {
+                    value,
+                    state: Value::Null,
+                    logs: Vec::new(),
+                    error: None,
+                    raised: false,
+                    wall: started.elapsed(),
+                },
+                Err(error) => failed_outcome(error, started),
+            },
+            Self::Call {
+                mailbox,
+                input,
+                env,
+                executor,
+                limit,
+                cancel,
+                place,
+                started,
+            } => match mailbox
+                .call(hook.path(), input, env, &executor, limit, &cancel, place)
+                .await
+            {
+                Ended::Value { value } => Outcome {
+                    value,
+                    state: Value::Null,
+                    logs: Vec::new(),
+                    error: None,
+                    raised: false,
+                    wall: started.elapsed(),
+                },
+                Ended::Error { error } => failed_outcome(error, started),
+            },
+        };
+        // A tool's name is the model's to pick: its hook is `tool`.
+        let path = hook.path();
+        let name = path.first().map_or("hook", String::as_str);
+        heiko_perf::record(
+            "hook",
+            &format!("{} {name}", active.loaded.declaration.name),
+            outcome.wall,
+        );
+        outcome
     }
 }
 
@@ -1951,8 +2030,8 @@ impl AgentTool for LuauTool {
             files,
         });
         let failures = failures_of(&state.failures, &self.plugin);
-        let outcome = inner
-            .run_hook_of(
+        let ready = inner
+            .ready_hook(
                 &active,
                 &tool,
                 args.clone(),
@@ -1962,6 +2041,15 @@ impl AgentTool for LuauTool {
                 Some(ctx.call_id()),
             )
             .await;
+        // The run's state goes while the tool runs, so the run's other
+        // hooks and calls go on meanwhile: the calls it makes, which go
+        // through every plugin's `before_tool`, and the calls beside it.
+        drop(state);
+        let outcome = match ready {
+            Some(ready) => Some(ready.run(&active, &tool).await),
+            None => None,
+        };
+        let mut state = shared.lock().await;
         let value = match outcome {
             // An error the tool raised is its answer, as a value is: the
             // model reads it, and its plugin is not at fault (ADR 0027).
