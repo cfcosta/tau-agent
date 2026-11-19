@@ -189,6 +189,15 @@
                 # The sqlx query metadata is committed; no database at build time.
                 env.SQLX_OFFLINE = "true";
 
+                # Cargo's unit graph, so each registry crate comes ready-made
+                # from a derivation of its own, shared with any build that
+                # compiles it the same way: `nix run
+                # github:cfcosta/rust-dev-tools.nix#plan` after dependency
+                # changes.
+                unitPlan = ./rust-units.json;
+                # Planned crates get only the native inputs they declare.
+                crateOverrides.yeslogic-fontconfig-sys = _: { buildInputs = [ pkgs.fontconfig ]; };
+
                 nativeBuildInputs = [
                   pkgs.pkg-config
                   pkgs.makeWrapper

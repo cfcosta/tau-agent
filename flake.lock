@@ -122,11 +122,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1795025594,
-        "narHash": "sha256-KAGq+jx/mFXiAgD5Eme21r5c0/BudNlf4msMhc75oro=",
+        "lastModified": 1795046163,
+        "narHash": "sha256-zEbgrrHSTCcOyzxwsuy8Em9O5pgw4y+yVODTTNBotM4=",
         "owner": "cfcosta",
         "repo": "rust-dev-tools.nix",
-        "rev": "fd64480e3348f65eecfa2b5d3c0ff67670f3e005",
+        "rev": "39d17f2a6baafbc12e19b9a19877a62f9e75785e",
         "type": "github"
       },
       "original": {
