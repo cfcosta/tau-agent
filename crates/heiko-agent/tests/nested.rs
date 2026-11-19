@@ -38,7 +38,7 @@ use heiko_agent::{
     },
 };
 use heiko_ai::message::{InputBlock, Message};
-use heiko_testing::{block_on, scripted::ScriptedModel};
+use heiko_testing::{block_on, block_on_io, scripted::ScriptedModel};
 use tokio::time::Instant;
 
 use crate::common;
@@ -860,4 +860,106 @@ fn nested_calls_are_numbered_in_order(tc: hegel::TestCase) {
             }
         }
     });
+}
+
+/// Holds `lock` for the whole call, as a Luau plugin's tool holds its
+/// run's state.
+struct Locker(Arc<tokio::sync::Mutex<()>>);
+
+#[async_trait]
+impl AgentTool for Locker {
+    fn name(&self) -> &str {
+        "locker"
+    }
+    fn description(&self) -> &str {
+        "Holds the lock while it runs."
+    }
+    fn parameters(&self) -> &Value {
+        static SCHEMA: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
+        SCHEMA.get_or_init(|| json!({"type": "object"}))
+    }
+    async fn call(
+        &self,
+        _args: Value,
+        _ctx: ToolCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        let _held = self.0.lock().await;
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        Ok(ToolOutput::text("held"))
+    }
+}
+
+/// Takes the lock `Locker` holds in `after_tool_result`, as the Luau
+/// plugins' hooks take their run's state.
+#[derive(Clone)]
+struct Taker(Arc<tokio::sync::Mutex<()>>);
+
+#[async_trait]
+impl PluginRun for Taker {
+    async fn after_tool_result(
+        &mut self,
+        _view: &ToolResultView<'_>,
+        _output: &mut ToolOutput,
+        _ctx: &PluginCtx,
+    ) -> Result<(), PluginError> {
+        let _held = self.0.lock().await;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl Plugin for Taker {
+    fn name(&self) -> &str {
+        "taker"
+    }
+
+    async fn start(
+        &self,
+        _plan: &mut RunPlan,
+        _ctx: &PluginCtx,
+    ) -> Result<Box<dyn PluginRun>, PluginError> {
+        Ok(Box::new(self.clone()))
+    }
+}
+
+/// Calls running beside the one whose `after_tool_result` runs keep
+/// going: when the first `locker` returns, the lock passes to the
+/// second, which must run to free it for the hook. The model's calls
+/// and the nested ones alike. Real time: paused time would jump to the
+/// timeout while the store's threads work.
+#[test]
+fn calls_keep_running_while_a_hook_waits_on_them() {
+    for nested in [false, true] {
+        block_on_io(async {
+            let store = heiko_store_sqlite::memory().await.unwrap();
+            let lock = Arc::new(tokio::sync::Mutex::new(()));
+            let llm = if nested {
+                script(json!({
+                    "calls": [
+                        {"name": "locker", "args": {}},
+                        {"name": "locker", "args": {}},
+                        {"name": "locker", "args": {}}
+                    ],
+                    "parallel": true
+                }))
+            } else {
+                ScriptedModel::new()
+                    .turn(|t| {
+                        t.tool_call("locker", json!({}))
+                            .tool_call("locker", json!({}))
+                            .tool_call("locker", json!({}))
+                    })
+                    .turn(|t| t.text("done"))
+            };
+            let agent = Agent::new(llm)
+                .tool(Caller::default())
+                .tool(Locker(lock.clone()))
+                .plugin(Taker(lock));
+            let run = agent.run("go", &store);
+            tokio::time::timeout(Duration::from_secs(10), run)
+                .await
+                .unwrap_or_else(|_| panic!("deadlocked (nested: {nested})"))
+                .unwrap();
+        });
+    }
 }

@@ -497,11 +497,18 @@ impl Runner {
         };
         let args = call.args.clone();
         let tool = tool.tool;
-        batch.pending.push(Box::pin(async move {
+        // A task of its own, so it keeps running while the loop awaits a
+        // hook: a hook may wait on what the call holds, as the Luau
+        // plugins' hooks wait on the run state their tools hold.
+        let running = Running(tokio::spawn(async move {
             let updates = ctx.updates.clone();
             let result = tool.call(args, ctx).await;
             updates.close();
             open.store(false, Ordering::SeqCst);
+            result
+        }));
+        batch.pending.push(Box::pin(async move {
+            let result = running.await;
             Finished {
                 origin,
                 call,
@@ -509,5 +516,29 @@ impl Runner {
                 result,
             }
         }));
+    }
+}
+
+/// A call's task, aborted when the batch drops it.
+struct Running(tokio::task::JoinHandle<Result<ToolOutput, ToolError>>);
+
+impl std::future::Future for Running {
+    type Output = Result<ToolOutput, ToolError>;
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        std::pin::Pin::new(&mut self.0).poll(cx).map(|joined| {
+            joined.unwrap_or_else(|error| {
+                std::panic::resume_unwind(error.into_panic())
+            })
+        })
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }
