@@ -827,6 +827,16 @@ async fn a_token_about_to_expire_is_refreshed_first() {
         environment(dir.path()),
     );
     let first = sign_in(&connection).await;
+    // Four of its five seconds gone: rmcp refreshes a token once less
+    // than half its life, at most 30 seconds, remains.
+    TokenStore::in_dir(dir.path())
+        .update(&first.key(), |grant| {
+            grant.map(|mut grant| {
+                grant.received_at = grant.received_at.map(|at| at - 4);
+                grant
+            })
+        })
+        .unwrap();
     connection.connect();
     settle(&connection).await;
     assert_eq!(connection.status().state, State::Connected);
