@@ -5,8 +5,10 @@
 //! that may not, or with the context too long); it ends tools or has
 //! them call other tools; the person steers and cancels; a plugin sends
 //! an answer back (`before_stop`); compaction rewrites, declines or
-//! fails; a store write fails; and a run that ended starts again, fresh
-//! or resumed. After each step the test waits until the run waits on it
+//! fails; a store write fails; a plugin's `after_tool_result` waits on
+//! a call still running, as the Luau plugins' hooks wait on the run
+//! state their tools hold; and a run that ended starts again, fresh or
+//! resumed. After each step the test waits until the run waits on it
 //! again (time is paused: the clock moves only when every task is idle),
 //! and checks where the run is against where the model says it is: a
 //! response streaming, these tool calls running, or the run ended, and
@@ -259,6 +261,9 @@ enum Command {
     },
     /// Call [`INNER`], and keep waiting.
     Nest,
+    /// Answer at once, and keep waiting: what a hook waits on from a call
+    /// still running, which only a call the loop keeps running answers.
+    Ping(tokio::sync::oneshot::Sender<()>),
 }
 
 /// The calls running now, by id, and how to reach each.
@@ -350,6 +355,9 @@ impl AgentTool for Worker {
                 | Next::Command(None) => {
                     break Err(format!("{id} failed").into());
                 }
+                Next::Command(Some(Command::Ping(answer))) => {
+                    let _ = answer.send(());
+                }
                 Next::Command(Some(Command::Nest)) => {
                     let ctx = ctx.clone();
                     nested = Some(
@@ -403,17 +411,21 @@ struct World {
     compaction: Compaction,
     summaries: u32,
     sent_back: u32,
+    /// Whether `after_tool_result` waits on a call still running.
+    hook_waits_on_a_call: bool,
 }
 
 #[derive(Clone)]
 struct Harness {
     world: Arc<Mutex<World>>,
     ticks: Ticks,
+    desk: Arc<Mutex<Desk>>,
 }
 
 struct HarnessRun {
     world: Arc<Mutex<World>>,
     ticks: Ticks,
+    desk: Arc<Mutex<Desk>>,
     start: usize,
 }
 
@@ -433,6 +445,7 @@ impl Plugin for Harness {
         Ok(Box::new(HarnessRun {
             world: self.world.clone(),
             ticks: self.ticks.clone(),
+            desk: self.desk.clone(),
             start: world.starts.len() - 1,
         }))
     }
@@ -473,6 +486,34 @@ impl PluginRun for HarnessRun {
                 }))
             }
         }
+    }
+
+    /// When the world says so, waits for the first call still running to
+    /// answer: the loop must keep it running meanwhile, or the run waits
+    /// on itself for good.
+    async fn after_tool_result(
+        &mut self,
+        _view: &crate::plugin::ToolResultView<'_>,
+        _output: &mut ToolOutput,
+        _ctx: &PluginCtx,
+    ) -> Result<(), PluginError> {
+        if !self.world.lock().unwrap().hook_waits_on_a_call {
+            return Ok(());
+        }
+        let answered = {
+            let desk = self.desk.lock().unwrap();
+            let Some(running) = desk.running.values().next() else {
+                return Ok(());
+            };
+            let (answer, answered) = tokio::sync::oneshot::channel();
+            if running.send(Command::Ping(answer)).is_err() {
+                return Ok(());
+            }
+            answered
+        };
+        // A call cancelled meanwhile drops the question unanswered.
+        let _ = answered.await;
+        Ok(())
     }
 
     async fn before_stop(
@@ -1150,6 +1191,7 @@ impl Machine {
         .plugin(Harness {
             world: world.clone(),
             ticks,
+            desk: desk.clone(),
         })
         .retry(policy)
         .clock(counter_clock())
@@ -1623,6 +1665,14 @@ impl Machine {
     fn a_plugin_will_refuse_an_answer(&mut self, _tc: TestCase) {
         self.world.lock().unwrap().refusals += 1;
         self.model.refusals += 1;
+    }
+
+    /// From now on, a plugin's `after_tool_result` waits on a call still
+    /// running: nothing the model sees changes, so the run must go on as
+    /// before.
+    #[rule]
+    fn a_hook_will_wait_on_a_running_call(&mut self, _tc: TestCase) {
+        self.world.lock().unwrap().hook_waits_on_a_call = true;
     }
 
     /// From now on, compaction rewrites the context, declines, or fails.
