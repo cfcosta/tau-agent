@@ -22,4 +22,5 @@ mod runtime;
 mod skill;
 mod std;
 mod store;
+mod tool_model;
 mod writes;
