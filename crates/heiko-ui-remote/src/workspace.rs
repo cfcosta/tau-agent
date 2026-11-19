@@ -987,6 +987,8 @@ impl Workspace {
         if !self.next_model_picked {
             self.next_model = self.catalog.models.default_for("coder");
         }
+        // A plugin's suggestion for the composer may have come with it.
+        self.sync_placeholder(cx);
         cx.notify();
     }
 
@@ -1624,10 +1626,8 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.navigate(Route::NewRun, cx);
-        self.composer.update(cx, |input, cx| {
-            input.clear(cx);
-            input.set_placeholder(NEW_RUN_PLACEHOLDER);
-        });
+        self.composer.update(cx, |input, cx| input.clear(cx));
+        self.sync_placeholder(cx);
         self.composer.read(cx).focus_handle(cx).focus(window, cx);
     }
 
@@ -2028,6 +2028,11 @@ impl Workspace {
         self.composer.read(cx).text()
     }
 
+    /// What the composer says while it is empty.
+    pub fn composer_placeholder<'a>(&self, cx: &'a gpui::App) -> &'a str {
+        self.composer.read(cx).placeholder()
+    }
+
     /// The note a plugin left over the composer, while it shows.
     pub fn composer_note(&self) -> Option<&str> {
         self.composer_note.as_ref().map(|(text, _)| text.as_ref())
@@ -2358,6 +2363,7 @@ impl Workspace {
         let live = self.is_live();
         let forking = self.forking.is_some();
         let continues = self.continues_chat();
+        let hint = self.composer_hint().map(|hint| hint.placeholder);
         self.composer.update(cx, |input, _| {
             input.set_placeholder(if forking {
                 "What should the fork try instead?"
@@ -2366,9 +2372,47 @@ impl Workspace {
             } else if continues {
                 "Reply to go on with this run"
             } else {
-                NEW_RUN_PLACEHOLDER
+                hint.as_deref().unwrap_or(NEW_RUN_PLACEHOLDER)
             })
         });
+    }
+
+    /// A plugin's suggestion for the next run in the selected repository,
+    /// while the composer starts one (ADR 0063).
+    pub(crate) fn composer_hint(
+        &self,
+    ) -> Option<heiko_ui_plugin::points::ComposerHint> {
+        if self.forking.is_some() || self.shown_run().is_some() {
+            return None;
+        }
+        let at = heiko_ui_plugin::points::AtRepo {
+            repo: self.selected_repo()?.to_owned(),
+        };
+        self.contributions(heiko_ui_plugin::points::COMPOSER_HINT, &at)
+            .into_iter()
+            .next()
+    }
+
+    /// Tab in an empty composer that shows a suggestion: its prompt goes
+    /// in, to send as it is or change first.
+    pub(crate) fn take_composer_hint(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let composer = self.composer.read(cx);
+        if !composer.focus_handle(cx).is_focused(window)
+            || !composer.text().trim().is_empty()
+        {
+            return false;
+        }
+        let Some(hint) = self.composer_hint() else {
+            return false;
+        };
+        self.composer
+            .update(cx, |input, cx| input.set_text(hint.prompt, cx));
+        cx.notify();
+        true
     }
 
     /// Whether the run on screen is going.

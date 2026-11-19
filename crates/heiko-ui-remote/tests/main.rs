@@ -4,6 +4,7 @@
 
 mod agents;
 mod attention;
+mod composer_hint;
 mod core_names_no_plugin;
 mod design;
 mod fresh_main;

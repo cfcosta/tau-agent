@@ -195,8 +195,9 @@ impl Render for Workspace {
                     cx.propagate();
                 }
             }))
-            .on_action(cx.listener(|ws, _: &SlashComplete, _, cx| {
-                if !ws.slash_complete(cx) {
+            .on_action(cx.listener(|ws, _: &SlashComplete, window, cx| {
+                if !ws.slash_complete(cx) && !ws.take_composer_hint(window, cx)
+                {
                     cx.propagate();
                 }
             }))
