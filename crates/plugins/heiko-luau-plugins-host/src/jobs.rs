@@ -111,7 +111,8 @@ pub struct Ticks(std::sync::Mutex<HashMap<(String, String), Value>>);
 /// Runs `plugin`'s job `job` once, from what it kept in `dir` (a tick's
 /// from `ticks`), and keeps what it left, reaching what `reach` gives a
 /// job of a plugin with `uses.chats`. A job that fails still counts as
-/// run: it waits its turn again, rather than fail again at once.
+/// run: it waits its turn again, rather than fail again at once. Whether
+/// it left a state other than the one it began with.
 pub async fn run(
     registry: &Registry,
     plugin: &str,
@@ -120,7 +121,7 @@ pub async fn run(
     ticks: &Ticks,
     reach: JobRef,
     cancel: CancellationToken,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let active = registry
         .plugin(plugin)
         .await
@@ -145,6 +146,7 @@ pub async fn run(
         before.state.clone()
     };
     cx.job = Some(reach);
+    let began = cx.state.clone();
     let outcome = active
         .loaded
         .call(
@@ -172,6 +174,7 @@ pub async fn run(
             .expect("not poisoned")
             .insert(key, after.state.clone());
     }
+    let changed = after.state != began;
     if !tick || after.state != before.state {
         tokio::fs::create_dir_all(dir).await?;
         tokio::fs::write(
@@ -182,6 +185,6 @@ pub async fn run(
     }
     match outcome.error {
         Some(error) => anyhow::bail!("{plugin}'s job {job}: {error}"),
-        None => Ok(()),
+        None => Ok(changed),
     }
 }

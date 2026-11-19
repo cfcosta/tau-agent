@@ -769,7 +769,7 @@ fn a_plugins_job_runs_when_due_and_keeps_its_state() {
         }]
     );
     for _ in 0..2 {
-        block_on_io(jobs::run(
+        let changed = block_on_io(jobs::run(
             &registry,
             "greet",
             "count",
@@ -782,6 +782,8 @@ fn a_plugins_job_runs_when_due_and_keeps_its_state() {
             Default::default(),
         ))
         .unwrap();
+        // Each run counts one more: it changed its state.
+        assert!(changed);
     }
     let kept: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(dir.join("greet.count.json")).unwrap(),
@@ -865,7 +867,7 @@ fn a_job_shares_its_plugins_store_with_its_actions() {
     let dir = home.path().join("jobs");
     let ticks = jobs::Ticks::default();
     for _ in 0..2 {
-        block_on_io(jobs::run(
+        let changed = block_on_io(jobs::run(
             &registry,
             "greet",
             "step",
@@ -878,6 +880,7 @@ fn a_job_shares_its_plugins_store_with_its_actions() {
             Default::default(),
         ))
         .unwrap();
+        assert!(!changed, "it wrote its store, and left its state");
     }
     let store = block_on_io(
         registry

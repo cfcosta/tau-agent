@@ -191,8 +191,9 @@ impl HostHalf for LuauPluginsHost {
                             continue;
                         }
                         let going = going.clone();
+                        let refresh = host_cx.clone();
                         tokio::spawn(async move {
-                            if let Err(error) = crate::jobs::run(
+                            match crate::jobs::run(
                                 &registry,
                                 &due.plugin,
                                 &due.job,
@@ -203,7 +204,14 @@ impl HostHalf for LuauPluginsHost {
                             )
                             .await
                             {
-                                eprintln!("{}: {error:#}", crate::NAME);
+                                // A tick is not one of the person's jobs,
+                                // whose end draws the interface again:
+                                // one that changed its state asks.
+                                Ok(true) => refresh.refresh(),
+                                Ok(false) => {}
+                                Err(error) => {
+                                    eprintln!("{}: {error:#}", crate::NAME);
+                                }
                             }
                             going.lock().expect("not poisoned").remove(&id);
                         });
@@ -226,6 +234,7 @@ impl HostHalf for LuauPluginsHost {
                                 job_cx.cancel_token().clone(),
                             )
                             .await
+                            .map(|_| ())
                         },
                     );
                 }
