@@ -702,6 +702,9 @@ await. What it returns goes in these places:
   grew since the run was last drawn. Only one plugin's draws, the first
   by name.
 - `band`: pieces just above the composer.
+- `doing`: text, what the run is doing now, after "working, turn N" in
+  its header while it is live, as the step in progress. Only one
+  plugin's shows, the first by name.
 - `composer`: pieces in the composer's place, while the run goes on: a
   form the run waits on. Only one plugin's draws, the first by name;
   the composer comes back once none does.

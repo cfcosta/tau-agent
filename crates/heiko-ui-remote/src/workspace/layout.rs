@@ -422,7 +422,7 @@ impl Workspace {
         }
         let live = run.status.is_live();
         let (color, state): (gpui::Hsla, gpui::SharedString) = if live {
-            (t.green, format!("working, turn {}", run.turn).into())
+            (t.green, self.working_words(run).into())
         } else {
             ui::status_look(&run.status, t)
         };

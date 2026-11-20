@@ -528,6 +528,9 @@ impl Workspace {
                 at!(points::USER_MESSAGE, self.at_message(at))
             }
             p if p == points::CONTEXT.name => at!(points::CONTEXT, at_run()),
+            p if p == points::RUN_DOING.name => {
+                at!(points::RUN_DOING, at_run())
+            }
             p if p == points::RUN_BANNER.name => {
                 at!(points::RUN_BANNER, at_run())
             }

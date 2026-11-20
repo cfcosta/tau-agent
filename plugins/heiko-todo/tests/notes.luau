@@ -48,7 +48,7 @@ t.case("an issue filed and claimed is a step a call with its id, the undo on the
 	away(calls.c3)
 end)
 
-t.case("steps are one line over the composer while any is left", function()
+t.case("steps are open over the composer while any is left", function()
 	local run = t.run({ id = "r1" })
 	run:tool("todo_steps", {
 		steps = {
@@ -60,19 +60,21 @@ t.case("steps are one line over the composer while any is left", function()
 	local view = run:view()
 	away(view.calls.c1)
 	local band = view.band
-	t.equal({ band.piece, band.small, band.open, band.title }, { "section", true, false, "" })
+	t.equal({ band.piece, band.small, band.open, band.title }, { "section", true, true, "" })
 	t.equal(band.lead[1], heiko.ui.pips({ "good", "warn", "neutral" }))
 	t.equal({ band.lead[2].text, band.lead[3].text }, { "2 of 3", "Check launch overhead" })
 	t.equal(#band.children, 3)
 end)
 
-t.case("steps all done leave the composer, and one line where the last call is", function()
+t.case("steps all done stay over the composer until the next message, and leave one line where the last call is", function()
 	local run = t.run({ id = "r1" })
 	local done = { { text = "read", status = "done" }, { text = "patch", status = "done" } }
 	run:tool("todo_steps", { steps = { { text = "read", status = "done" }, { text = "patch", status = "in_progress" } } }, "c1")
 	run:tool("todo_steps", { steps = done }, "c2")
 	local view = run:view()
-	t.equal(view.band, nil)
+	t.equal({ view.band.lead[2].text, view.band.lead[3].text }, { "2 of 2", "all done" })
+	t.equal(view.band.lead[1], heiko.ui.pips({ "good", "good" }))
+	t.equal(view.doing, nil)
 	away(view.calls.c1)
 	local line = view.calls.c2.body
 	t.equal(view.calls.c2.line, false)
@@ -84,6 +86,11 @@ t.case("steps all done leave the composer, and one line where the last call is",
 	run:tool("todo_steps", { steps = done }, "c3")
 	view = run:view()
 	away(view.calls.c2)
+	t.equal(view.calls.c3.body.lead[1].text, "2 steps")
+	-- The next message clears the band; the line in the transcript stays.
+	run:start({ input = "thanks" })
+	view = run:view()
+	t.equal(view.band, nil)
 	t.equal(view.calls.c3.body.lead[1].text, "2 steps")
 end)
 

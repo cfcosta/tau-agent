@@ -191,7 +191,7 @@
           "text": "Pass the parsed header to the retry policy"
         }
       ],
-      "open": false,
+      "open": true,
       "piece": "section",
       "small": true,
       "title": ""
@@ -227,6 +227,7 @@
         "line": false
       }
     },
+    "doing": "Pass the parsed header to the retry policy",
     "row": {
       "line": "td-0cad"
     }

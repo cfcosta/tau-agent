@@ -2400,6 +2400,20 @@ impl Workspace {
         });
     }
 
+    /// What a live run says it is doing, after "working, turn N" in its
+    /// header: the step in progress a plugin gives (`points::RUN_DOING`).
+    pub(crate) fn working_words(&self, run: &RunView) -> String {
+        let at = heiko_ui_plugin::points::AtRun { run: run.info() };
+        let doing = self
+            .contributions(heiko_ui_plugin::points::RUN_DOING, &at)
+            .into_iter()
+            .next();
+        match doing {
+            Some(doing) => format!("working, turn {} · {doing}", run.turn),
+            None => format!("working, turn {}", run.turn),
+        }
+    }
+
     /// A plugin's suggestion for the next run in the selected repository,
     /// while the composer starts one (ADR 0063).
     pub(crate) fn composer_hint(

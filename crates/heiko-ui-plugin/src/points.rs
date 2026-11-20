@@ -418,6 +418,10 @@ pub const KIND_ROW_LINE: Point<AtRepo> = Point::new("heiko.sidebar.kind.line");
 /// What waits on the person among the plugin's things: each new one is
 /// a notice while they are away, on the computer and on the phone.
 pub const WAITING: Point<AtApp, Waiting> = Point::new("heiko.app.waiting");
+/// What the run is doing now, after "working" in its header while it is
+/// live: the step in progress (heiko-todo's). The first contribution is
+/// shown.
+pub const RUN_DOING: Point<AtRun, String> = Point::new("heiko.run.doing");
 /// Above a run's transcript.
 pub const RUN_BANNER: Point<AtRun> = Point::new("heiko.run.banner");
 /// A section of the run inspector.
@@ -505,7 +509,7 @@ pub const SETUP: Point<AtSetup, SetupView> = Point::new("heiko.setup.step");
 pub const PANE: Point<AtRun, PaneView> = Point::new("heiko.run.pane");
 
 /// Every point `heiko-ui` declares.
-pub const ALL: [&str; 36] = [
+pub const ALL: [&str; 37] = [
     CARD.name,
     CARD_STAT.name,
     CHANGES.name,
@@ -518,6 +522,7 @@ pub const ALL: [&str; 36] = [
     CONTEXT.name,
     CARD_BADGE.name,
     CARD_BODY.name,
+    RUN_DOING.name,
     RUN_BANNER.name,
     INSPECTOR.name,
     STATUS.name,

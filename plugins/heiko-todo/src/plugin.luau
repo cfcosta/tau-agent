@@ -1407,10 +1407,37 @@ local actions = {
 	end,
 }
 
--- The band's lines for the run's steps.
+-- How many steps the band shows at once.
+local BAND_STEPS = 5
+
+-- The step the list is on: the one in progress, else the first not
+-- done, else the last.
+local function focus(list)
+	for at, step in ipairs(list) do
+		if step.status == "in_progress" then
+			return at
+		end
+	end
+	for at, step in ipairs(list) do
+		if step.status ~= "done" then
+			return at
+		end
+	end
+	return #list
+end
+
+-- The band's lines for the run's steps: at most BAND_STEPS of them, from
+-- one before the step it is on, with how many more there are done above
+-- and to come below.
 local function step_lines(list)
 	local lines = {}
-	for at, step in ipairs(list) do
+	local last = math.min(#list, math.max(1, focus(list) - 1) + BAND_STEPS - 1)
+	local first = math.max(1, last - BAND_STEPS + 1)
+	if first > 1 then
+		table.insert(lines, ui.toned("+ " .. (first - 1) .. " done", "neutral", true))
+	end
+	for at = first, last do
+		local step = list[at]
 		local line = step.text
 		if step.issue then
 			line = line .. " → " .. step.issue
@@ -1422,6 +1449,9 @@ local function step_lines(list)
 			table.insert(row, ui.button("make an issue", "promote", { at = at }))
 		end
 		table.insert(lines, ui.row(row))
+	end
+	if last < #list then
+		table.insert(lines, ui.toned("+ " .. (#list - last) .. " more", "neutral", true))
 	end
 	return lines
 end
@@ -1477,16 +1507,27 @@ local function refreshing(f)
 	end
 end
 
--- The band over the composer, one line that opens: the step the run is
--- on while any is left, or else the issue it holds. Opened, the issue's
--- criteria and the steps.
+-- The step in progress, for the run's header: nil when none is.
+local function doing(model)
+	for _, step in ipairs(model.steps or {}) do
+		if step.status == "in_progress" then
+			return step.text
+		end
+	end
+	return nil
+end
+
+-- The band over the composer, open until the person folds it: the run's
+-- steps, from when it writes them until the next message after they are
+-- all done, and the issue it holds with its criteria.
 local function band(model)
 	local list = model.steps or {}
 	local held_issue = model.held
 	local id = held_issue and held_issue.id
-	local left = #list > 0 and steps.done(list) < #list
+	local shown = #list > 0
+	local finished = shown and steps.done(list) == #list
 	local lead, lines = {}, {}
-	if left then
+	if shown then
 		local inks, on = {}, nil
 		for at, step in ipairs(list) do
 			if step.status == "in_progress" then
@@ -1495,8 +1536,13 @@ local function band(model)
 			table.insert(inks, step.status == "done" and "good" or step.status == "in_progress" and "warn" or "neutral")
 		end
 		table.insert(lead, ui.pips(inks))
-		table.insert(lead, ui.toned((on or steps.done(list)) .. " of " .. #list, "warn", true))
-		table.insert(lead, on and ui.text(list[on].text) or ui.toned(held_issue and held_issue.title or "Steps", "neutral"))
+		if finished then
+			table.insert(lead, ui.toned(#list .. " of " .. #list, "good", true))
+			table.insert(lead, ui.toned("all done", "good"))
+		else
+			table.insert(lead, ui.toned((on or steps.done(list)) .. " of " .. #list, "warn", true))
+			table.insert(lead, on and ui.text(list[on].text) or ui.toned(held_issue and held_issue.title or "Steps", "neutral"))
+		end
 	end
 	if held_issue then
 		local done, total = 0, #held_issue.criteria
@@ -1509,7 +1555,7 @@ local function band(model)
 		if total > 0 then
 			table.insert(name, ui.toned(done .. "/" .. total, "neutral", true))
 		end
-		if left then
+		if shown then
 			table.insert(lines, ui.row(name))
 		else
 			lead = name
@@ -1524,7 +1570,7 @@ local function band(model)
 			table.insert(lines, ui.mono("next ready: " .. table.concat(held_issue.next, ", ")))
 		end
 	end
-	if left then
+	if shown then
 		for _, line in ipairs(step_lines(list)) do
 			table.insert(lines, line)
 		end
@@ -1535,7 +1581,7 @@ local function band(model)
 	if #lines == 0 then
 		return ui.row(lead), id
 	end
-	return ui.section("todo-band", "", lines, { small = true, lead = lead }), id
+	return ui.section("todo-band", "", lines, { small = true, open = true, lead = lead }), id
 end
 
 for _, tool in pairs(tools) do
@@ -1584,6 +1630,11 @@ return heiko.plugin({
 		}
 	end,
 	start = function(plan, model, env)
+		-- A list all done stays over the composer until the next message.
+		local list = model.steps or {}
+		if #list > 0 and steps.done(list) == #list then
+			model.steps = nil
+		end
 		refresh(model, env)
 		return heiko.start({ instructions = PROMPT })
 	end,
@@ -1639,6 +1690,6 @@ return heiko.plugin({
 	end),
 	view = function(model, env)
 		local drawn, id = band(model)
-		return { band = drawn, row = id and { line = id } or nil, calls = folded(model) }
+		return { band = drawn, doing = doing(model), row = id and { line = id } or nil, calls = folded(model) }
 	end,
 })

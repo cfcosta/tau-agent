@@ -92,3 +92,64 @@ t.case("its band says the step it is on and which of how many", function()
 	local lead = run:view().band.lead
 	t.equal({ lead[2].text, lead[3].text }, { "2 of 2", "fix" })
 end)
+
+t.case("its view says the step in progress, for the run's header", function()
+	local run = t.run({ state = { steps = { { text = "read", status = "done" }, { text = "fix", status = "in_progress" } } } })
+	t.equal(run:view().doing, "fix")
+	run = t.run({ state = { steps = { { text = "read", status = "done" }, { text = "fix", status = "pending" } } } })
+	t.equal(run:view().doing, nil)
+end)
+
+t.case("a message keeps a list with steps left", function()
+	local run = t.run({ state = { steps = { { text = "read", status = "done" }, { text = "fix", status = "pending" } } } })
+	run:start({ input = "go on" })
+	t.equal(#run:view().band.children, 2)
+end)
+
+-- The band's lines that are steps, and the counts of those cut above
+-- and below.
+local function band_lines(band)
+	local shown, above, below = {}, 0, 0
+	for _, line in ipairs(band.children) do
+		if line.piece == "toned" then
+			local n, word = string.match(line.text, "^%+ (%d+) (%a+)$")
+			if word == "done" then
+				above = tonumber(n)
+			else
+				below = tonumber(n)
+			end
+		else
+			table.insert(shown, line)
+		end
+	end
+	return shown, above, below
+end
+
+t.case("a long list shows five steps from one before the current, with what is cut", function()
+	local list = {}
+	for n = 1, 8 do
+		table.insert(list, { text = "step " .. n, status = n < 5 and "done" or n == 5 and "in_progress" or "pending" })
+	end
+	local shown, above, below = band_lines(t.run({ state = { steps = list } }):view().band)
+	t.equal({ #shown, above, below }, { 5, 3, 0 })
+	list[5].status, list[2].status = "pending", "in_progress"
+	list[3].status, list[4].status = "pending", "pending"
+	shown, above, below = band_lines(t.run({ state = { steps = list } }):view().band)
+	t.equal({ #shown, above, below }, { 5, 0, 3 })
+end)
+
+-- Any list of steps: the band shows at most five, the one it is on among
+-- them, and what it cuts adds up to the whole list.
+t.property("the band shows at most five steps, the current one among them", function(draw)
+	local count = draw(g.integers({ min = 1, max = 12 }))
+	local on = draw(g.integers({ min = 0, max = count }))
+	local list = {}
+	for n = 1, count do
+		table.insert(list, { text = "step " .. n, status = n < on and "done" or n == on and "in_progress" or "pending" })
+	end
+	local shown, above, below = band_lines(t.run({ state = { steps = list } }):view().band)
+	t.equal(#shown <= 5, true, "at most five")
+	t.equal(above + #shown + below, count, "adds up")
+	local current = on == 0 and 1 or on
+	t.equal(current > above and current <= above + #shown, true, "current shown")
+end, { cases = 200 })

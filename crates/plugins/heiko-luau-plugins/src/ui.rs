@@ -1194,6 +1194,9 @@ impl UiPlugin for LuauPluginsUi {
             })
             // What each plugin's `view` draws at the run's places.
             .contribute(points::PANE, |_: &AtRun, view| pane(view.state?))
+            .contribute(points::RUN_DOING, |_: &AtRun, view| {
+                doing(view.state?)
+            })
             .contribute(points::RUN_BANNER, |_: &AtRun, view| {
                 drawn(view.state?, "banner")
             })
@@ -2307,6 +2310,19 @@ fn drawn(state: &State, key: &str) -> Option<Node> {
         1 => trees.pop(),
         _ => Some(Node::stack(trees)),
     }
+}
+
+/// What the run is doing now, from the first plugin by name whose view
+/// says: `doing`, a line of text.
+fn doing(state: &State) -> Option<String> {
+    state
+        .plugins
+        .values()
+        .filter(|plugin| plugin.off.is_none())
+        .find_map(|plugin| {
+            let text = plugin.view.get("doing")?.as_str()?.trim();
+            (!text.is_empty()).then(|| text.to_owned())
+        })
 }
 
 /// What the first plugin by name whose view has `key` drew there: for a
@@ -3810,6 +3826,31 @@ mod tests {
             state.notes["note-1"].1,
             json!({ "piece": "text", "text": "second" })
         );
+    }
+
+    /// What the run is doing comes from the first plugin by name whose
+    /// view says it as text; blank text, any other value, or a plugin
+    /// that is off says nothing.
+    #[test]
+    fn the_run_is_doing_what_the_first_view_says() {
+        fn put(state: &mut State, name: &str, view: Value, off: bool) {
+            state.plugins.insert(
+                name.into(),
+                PluginState {
+                    view,
+                    off: off.then(|| "failed".to_owned()),
+                    ..PluginState::default()
+                },
+            );
+        }
+        let mut state = State::default();
+        put(&mut state, "a", json!({ "doing": "  " }), false);
+        put(&mut state, "b", json!({ "doing": 3 }), false);
+        put(&mut state, "c", json!({ "doing": "skipped" }), true);
+        assert_eq!(doing(&state), None);
+        put(&mut state, "d", json!({ "doing": " Fix the parser " }), false);
+        put(&mut state, "e", json!({ "doing": "later" }), false);
+        assert_eq!(doing(&state).as_deref(), Some("Fix the parser"));
     }
 
     /// A Luau plugin's tree keeps its state under the plugin's name, and

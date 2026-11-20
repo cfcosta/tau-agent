@@ -138,6 +138,7 @@ fn what_the_computer_builds_is_what_it_draws(cx: &mut TestAppContext) {
             count(same!(points::RUN_ROW, at()));
             count(same!(points::ASKS, at()));
             count(same!(points::CONTEXT, at()));
+            count(same!(points::RUN_DOING, at()));
             count(same!(points::RUN_BANNER, at()));
             count(same!(points::INSPECTOR, at()));
             count(same!(points::PLAN_STEPS, at()));

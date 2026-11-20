@@ -1297,10 +1297,14 @@ fn job_item(
 const PHONE_MARGIN: f32 = 4.5;
 
 /// The words a run's state reads as on a phone, in its color: at work
-/// with its turn, else its status.
-fn state_words(run: &RunView, t: &Theme) -> (Hsla, SharedString) {
+/// with its turn and what it is doing, else its status.
+fn state_words(
+    ws: &Workspace,
+    run: &RunView,
+    t: &Theme,
+) -> (Hsla, SharedString) {
     if run.ending.is_none() && run.status.is_live() {
-        (t.green, format!("working, turn {}", run.turn).into())
+        (t.green, ws.working_words(run).into())
     } else {
         super::run_look(run, t)
     }
@@ -1325,7 +1329,7 @@ pub fn phone_run_bar(
     t: &Theme,
     cx: &mut Context<Workspace>,
 ) -> Div {
-    let (color, label) = state_words(run, t);
+    let (color, label) = state_words(ws, run, t);
     let id = run.id.clone();
     // A word to tap, as tall as a finger needs.
     let word = |id: &'static str, label: &'static str| {

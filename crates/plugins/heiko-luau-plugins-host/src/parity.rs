@@ -79,6 +79,7 @@ pub fn point(name: &str) -> Option<Luau> {
         (TRANSCRIPT.name, "note"),
         (CARD.name, "step"),
         (CARD_BADGE.name, "badge"),
+        (RUN_DOING.name, "doing"),
         (RUN_BANNER.name, "banner"),
         (INSPECTOR.name, "inspector"),
         (COMPOSER_BAND.name, "band"),
