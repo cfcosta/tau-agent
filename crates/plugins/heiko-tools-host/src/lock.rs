@@ -3,8 +3,10 @@
 //!
 //! `edit` and `write` hold the lock of the file they change for the
 //! whole read-modify-write, so parallel calls on one file run one after
-//! another, in the order they asked, and calls on different files run
-//! together. The key is the canonical path, so a symlink and its target
+//! another, and calls on different files run together. Within a run,
+//! the loop starts them in the order the model made them
+//! (`AgentTool::mutates`): each call has a task of its own, so the
+//! order they reach the lock in is not theirs. The key is the canonical path, so a symlink and its target
 //! share a lock; a file that does not exist yet is keyed by its path.
 //! The locks are process-wide: every tool instance shares them.
 

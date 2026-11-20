@@ -82,6 +82,12 @@ drives the same steps, `begin` (1), `turn` (each pass of 2) and `end`
   the other calls), one after another, in the order their first calls
   come. `spawn` is grouped, so a sub-agent starts from a working copy
   no other tool is editing.
+- **Calls that change one file run in order.** A tool says which file a
+  call changes (`AgentTool::mutates`, `write` and `edit` do). The loop
+  queues each such call behind the last one made to change the same
+  file, in the order the calls were made, before its task starts; it
+  waits for that call to end, and other calls run beside it, as pi's
+  `file-mutation-queue.ts` does. Nested calls share the batch's queue.
 - **Events:** `ToolStart` in source order; `ToolUpdate` while a tool
   runs; `ToolEnd` in completion order.
 - **Result messages** are appended in source order.

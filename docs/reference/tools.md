@@ -225,7 +225,9 @@ output, truncated, dropped_lines }`.
   line.
 - **Serialization:** each read-modify-write holds a per-path async mutex,
   keyed by canonical path. Parallel edits to the same file are
-  serialized.
+  serialized, and within a run they run in the order the model made
+  them: the tool names the file (`mutates`) and the loop queues the
+  call before its task starts (`agent-loop.md`).
 
 - **Diff consistency:** applying the returned diff to the original
   content gives exactly the bytes written.

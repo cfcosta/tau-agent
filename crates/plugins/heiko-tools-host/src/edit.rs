@@ -79,6 +79,12 @@ impl AgentTool for Edit {
         prepare_edit_arguments(raw)
     }
 
+    /// The file it changes, as its path resolves: calls on one file run
+    /// in the order the model made them.
+    fn mutates(&self, args: &Value) -> Option<std::path::PathBuf> {
+        Some(self.root.resolve(args.get("path")?.as_str()?))
+    }
+
     async fn call(
         &self,
         args: Value,

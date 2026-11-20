@@ -472,6 +472,14 @@ pub trait AgentTool: Send + Sync + 'static {
     fn prepare_arguments(&self, raw: Value) -> Value {
         raw
     }
+    /// The file a call with `args` changes, when it changes one. Calls
+    /// that change the same file run one after another, in the order
+    /// they were made, while other calls run beside them, as pi's
+    /// `file-mutation-queue.ts` does. It must not touch the filesystem:
+    /// the loop asks it before the call's task starts.
+    fn mutates(&self, _args: &Value) -> Option<std::path::PathBuf> {
+        None
+    }
     async fn call(
         &self,
         args: Value,

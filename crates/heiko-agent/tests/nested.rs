@@ -963,3 +963,172 @@ fn calls_keep_running_while_a_hook_waits_on_them() {
         });
     }
 }
+
+/// Changes the file its `file` argument names: waits `ms` virtual
+/// milliseconds, then logs that call `n` changed it, between when it
+/// started and when it ended.
+#[derive(Clone, Default)]
+struct Mutator {
+    log: Arc<Mutex<Vec<Mutated>>>,
+}
+
+#[derive(Debug, Clone)]
+struct Mutated {
+    file: String,
+    n: u64,
+    start: Instant,
+    end: Instant,
+}
+
+#[async_trait]
+impl AgentTool for Mutator {
+    fn name(&self) -> &str {
+        "mutate"
+    }
+    fn description(&self) -> &str {
+        "Changes a file."
+    }
+    fn parameters(&self) -> &Value {
+        static SCHEMA: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
+        SCHEMA.get_or_init(|| json!({"type": "object"}))
+    }
+    fn mutates(&self, args: &Value) -> Option<std::path::PathBuf> {
+        Some(args["file"].as_str()?.into())
+    }
+    async fn call(
+        &self,
+        args: Value,
+        _ctx: ToolCtx,
+    ) -> Result<ToolOutput, ToolError> {
+        let start = Instant::now();
+        let ms = args["ms"].as_u64().unwrap_or(0);
+        tokio::time::sleep(Duration::from_millis(ms)).await;
+        self.log.lock().unwrap().push(Mutated {
+            file: args["file"].as_str().unwrap_or_default().to_owned(),
+            n: args["n"].as_u64().unwrap_or_default(),
+            start,
+            end: Instant::now(),
+        });
+        Ok(ToolOutput::text("changed"))
+    }
+}
+
+/// What the calls made to `mutate`, in the order they were made, did:
+/// for each file, the calls that changed it, in the order they ended,
+/// and whether any two calls on different files overlapped.
+fn mutations(calls: &[(String, u64)], nested: bool) -> (Vec<Vec<u64>>, bool) {
+    block_on(async {
+        let store = heiko_store_sqlite::memory().await.unwrap();
+        let mutator = Mutator::default();
+        let log = mutator.log.clone();
+        let args: Vec<Value> = calls
+            .iter()
+            .enumerate()
+            .map(|(n, (file, ms))| json!({ "file": file, "ms": ms, "n": n }))
+            .collect();
+        let llm = if nested {
+            let calls: Vec<Value> = args
+                .iter()
+                .map(|args| json!({ "name": "mutate", "args": args }))
+                .collect();
+            script(json!({ "calls": calls, "parallel": true }))
+        } else {
+            ScriptedModel::new()
+                .turn(move |mut t| {
+                    for args in &args {
+                        t = t.tool_call("mutate", args.clone());
+                    }
+                    t
+                })
+                .turn(|t| t.text("done"))
+        };
+        let agent = Agent::new(llm).tool(Caller::default()).tool(mutator);
+        agent.run("go", &store).await.unwrap();
+
+        let ran = log.lock().unwrap().clone();
+        let mut files: Vec<&str> =
+            calls.iter().map(|(file, _)| file.as_str()).collect();
+        files.sort_unstable();
+        files.dedup();
+        let mut by_file = Vec::new();
+        for file in files {
+            let mut on: Vec<&Mutated> =
+                ran.iter().filter(|ran| ran.file == file).collect();
+            on.sort_by_key(|ran| ran.end);
+            // One at a time: each starts once the one before it ended.
+            for pair in on.windows(2) {
+                assert!(pair[1].start >= pair[0].end, "{file}: {on:?}");
+            }
+            by_file.push(on.iter().map(|ran| ran.n).collect());
+        }
+        let beside = ran.iter().any(|a| {
+            ran.iter()
+                .any(|b| a.file != b.file && a.start < b.end && b.start < a.end)
+        });
+        (by_file, beside)
+    })
+}
+
+/// Two writes to one file in a turn, the first slower: the second waits
+/// for it, so the file ends as the second left it. With a task per call
+/// and no queue, the second finished first, and the file kept the
+/// first's content (heiko-vcs-host's fork model found it).
+#[test]
+fn a_later_change_to_a_file_waits_for_an_earlier_one() {
+    for nested in [false, true] {
+        let calls = [("a.txt".to_owned(), 20), ("a.txt".to_owned(), 0)];
+        let (by_file, _) = mutations(&calls, nested);
+        assert_eq!(by_file, [vec![0, 1]], "nested: {nested}");
+    }
+}
+
+/// For any calls changing any of three files, slow or fast, made by the
+/// model or nested in another call: the calls on each file run one at
+/// a time, in the order they were made, and calls on different files
+/// with a slow one among them run beside each other.
+#[hegel::test(test_cases = 60)]
+fn changes_to_a_file_run_in_the_order_they_were_made(tc: hegel::TestCase) {
+    let calls: Vec<(String, u64)> = tc.draw(
+        gs::vecs(gs::tuples!(
+            gs::sampled_from(vec![
+                "a.txt".to_owned(),
+                "b.txt".to_owned(),
+                "dir/c.txt".to_owned(),
+            ]),
+            gs::integers::<u64>().max_value(20)
+        ))
+        .min_size(1)
+        .max_size(8),
+    );
+    let nested = tc.draw(gs::booleans());
+    let (by_file, beside) = mutations(&calls, nested);
+    let mut files: Vec<&str> =
+        calls.iter().map(|(file, _)| file.as_str()).collect();
+    files.sort_unstable();
+    files.dedup();
+    for (file, ran) in files.iter().zip(&by_file) {
+        let made: Vec<u64> = calls
+            .iter()
+            .enumerate()
+            .filter(|(_, (on, _))| on == file)
+            .map(|(n, _)| n as u64)
+            .collect();
+        assert_eq!(ran, &made, "{file} (nested: {nested})");
+    }
+    // Two files, each with a call that takes time, overlap.
+    let slow: Vec<&str> = calls
+        .iter()
+        .filter(|(_, ms)| *ms > 0)
+        .map(|(file, _)| file.as_str())
+        .collect();
+    let first_slow =
+        |file: &str| calls.iter().position(|(on, ms)| on == file && *ms > 0);
+    let two_lead = files.iter().filter(|file| {
+        // The file's first call is slow, so it starts at once.
+        first_slow(file).is_some()
+            && calls.iter().position(|(on, _)| on == *file) == first_slow(file)
+    });
+    if two_lead.count() >= 2 && slow.len() >= 2 {
+        assert!(beside, "{calls:?} (nested: {nested})");
+    }
+}

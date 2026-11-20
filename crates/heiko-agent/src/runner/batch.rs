@@ -82,7 +82,14 @@ pub(super) struct Batch {
     requests: mpsc::UnboundedSender<NestedRequest>,
     /// Each nested call's parent, for its updates' events.
     parents: HashMap<Arc<str>, Arc<str>>,
+    /// For each file a call changes, when the last call made to change
+    /// it ends: the next one waits for it (`AgentTool::mutates`).
+    mutations: HashMap<std::path::PathBuf, Ended>,
 }
+
+/// When a call ends, however it ends: its sender is dropped with its
+/// task.
+type Ended = futures_util::future::Shared<oneshot::Receiver<()>>;
 
 impl Batch {
     /// Drops a scope that has ended and has no calls left.
@@ -146,6 +153,7 @@ impl Runner {
             updates: updates_tx,
             requests: requests_tx,
             parents: HashMap::new(),
+            mutations: HashMap::new(),
         };
         let mut skipped = Vec::new();
         self.launch(&mut groups, &mut batch, &mut skipped);
@@ -497,10 +505,27 @@ impl Runner {
         };
         let args = call.args.clone();
         let tool = tool.tool;
+        // A call that changes a file takes its place after the last one
+        // made to change it, here, in the order the calls were made.
+        let (before, ended) = match tool.mutates(&args) {
+            Some(path) => {
+                let (ended, end) = oneshot::channel();
+                let before = batch
+                    .mutations
+                    .insert(path, futures_util::FutureExt::shared(end));
+                (before, Some(ended))
+            }
+            None => (None, None),
+        };
         // A task of its own, so it keeps running while the loop awaits a
         // hook: a hook may wait on what the call holds, as the Luau
         // plugins' hooks wait on the run state their tools hold.
         let running = Running(tokio::spawn(async move {
+            if let Some(before) = before {
+                // Ended, or dropped with its task: either lets this go.
+                let _ = before.await;
+            }
+            let _ended = ended;
             let updates = ctx.updates.clone();
             let result = tool.call(args, ctx).await;
             updates.close();
