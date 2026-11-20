@@ -29,7 +29,6 @@ heiko-codemode.workspace = true
 heiko-direnv.workspace = true
 heiko-decide.workspace = true
 heiko-luau-plugins.workspace = true
-# Where the canvas keeps the demo's chart, as a call would.
 heiko-luau-plugins-host.workspace = true
 # heiko-github's secret store, as its sign-in leaves it.
 heiko-tools-host.workspace = true

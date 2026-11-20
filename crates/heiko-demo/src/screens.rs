@@ -432,16 +432,6 @@ pub static SCREENS: &[(&str, Screen)] = &[
             cx,
         )
     }),
-    // heiko-canvas: a chart and a plan on the demo run's canvas, its
-    // pane open on the plan, on the chart, then on the plan's earlier
-    // revision.
-    ("canvas", |ws, host, cx| canvas(ws, host, "canvas", cx)),
-    ("canvas-image", |ws, host, cx| {
-        canvas(ws, host, "canvas-image", cx)
-    }),
-    ("canvas-document", |ws, host, cx| {
-        canvas(ws, host, "canvas-document", cx)
-    }),
     // Uploads: a message the person sent with a picture, and another
     // image attached in the composer.
     ("uploads", |ws, _, cx| uploads(ws, cx)),
@@ -1751,109 +1741,6 @@ fn goal_at(
             body,
         };
         workspace.apply(HostUpdate::Event(event), cx);
-    }
-}
-
-/// The demo run's canvas: a chart, and a plan written then edited, the
-/// pane on what `fixture` picks. heiko-canvas is Luau (ADR 0050): its calls,
-/// state and view come from its fixtures, which its tests check against
-/// the plugin; the chart is kept in its blobs as a call would keep it.
-fn canvas(
-    workspace: &mut Workspace,
-    host: &DemoHost,
-    fixture: &str,
-    cx: &mut Context<Workspace>,
-) {
-    use heiko_agent::{event::RunEvent, tool::ToolOutput};
-    let run = run_id();
-    let mut fixture =
-        crate::luau_fixture(heiko_luau_plugins::names::CANVAS, fixture);
-    let dir = heiko_luau_plugins_host::files::blobs_dir(
-        &host.luau_blobs(),
-        heiko_luau_plugins::names::CANVAS,
-        "heiko-agent",
-    );
-    let blob = match host.block_on(heiko_luau_plugins_host::files::put_bytes(
-        dir,
-        crate::chart::chart(1200, 640),
-    )) {
-        Ok(blob) => blob,
-        Err(error) => {
-            eprintln!("the demo's canvas: {error:#}");
-            return;
-        }
-    };
-    let placeholder = fixture["blob"].clone();
-    for part in ["state", "view"] {
-        put_blob(&mut fixture[part], &placeholder, &blob);
-    }
-    workspace.navigate(Route::Run(run.clone()), cx);
-    for call in fixture["calls"].as_array().cloned().unwrap_or_default() {
-        let id = call["id"].as_str().unwrap_or_default().to_owned();
-        workspace.apply_event(
-            &RunEvent::ToolStart {
-                run: run.clone(),
-                call_id: id.clone(),
-                tool: Arc::from(call["tool"].as_str().unwrap_or_default()),
-                args: call["args"].clone(),
-                parent: None,
-            },
-            cx,
-        );
-        workspace.apply_event(
-            &RunEvent::ToolEnd {
-                run: run.clone(),
-                call_id: id,
-                output: Arc::new(ToolOutput::text(
-                    call["text"].as_str().unwrap_or_default(),
-                )),
-                is_error: false,
-                parent: None,
-            },
-            cx,
-        );
-    }
-    for body in
-        crate::luau_records_of(heiko_luau_plugins::names::CANVAS, &fixture)
-    {
-        workspace.apply(
-            HostUpdate::PluginFold {
-                run: run.clone(),
-                plugin: heiko_luau_plugins::NAME.into(),
-                body,
-            },
-            cx,
-        );
-    }
-    workspace.open_pane(cx);
-}
-
-/// `node` with each blob `placeholder` names, as an object or its id,
-/// in `blob`'s place.
-fn put_blob(
-    node: &mut serde_json::Value,
-    placeholder: &serde_json::Value,
-    blob: &serde_json::Value,
-) {
-    match node {
-        serde_json::Value::Object(fields) => {
-            if fields.get("id") == Some(placeholder) {
-                *node = blob.clone();
-                return;
-            }
-            if fields.get("key") == Some(placeholder) {
-                fields.insert("key".into(), blob["id"].clone());
-            }
-            for child in fields.values_mut() {
-                put_blob(child, placeholder, blob);
-            }
-        }
-        serde_json::Value::Array(items) => {
-            for item in items {
-                put_blob(item, placeholder, blob);
-            }
-        }
-        _ => {}
     }
 }
 

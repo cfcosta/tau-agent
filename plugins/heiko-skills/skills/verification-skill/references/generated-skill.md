@@ -36,7 +36,7 @@ What to capture for a proof, and where it goes. State the proof standards in the
 - Use mocks only where a production boundary already isolates the external system.
 - When the safe path is a dry-run or a test mode, check what it really skips by observing files, network, and VCS state. Do not trust its name. Some dry-runs still touch the network or open a browser.
 - UI proof includes a screenshot (and an accessibility snapshot where the harness has one). CLI proof includes the command, stdout, stderr, and exit code. Mutation proof includes a second, read-only view of the stored value.
-- Name the evidence folder, outside anything Cleanup deletes. Tell the agent to show screenshots to the person with `canvas_show`.
+- Name the evidence folder, outside anything Cleanup deletes.
 
 ## Cleanup
 

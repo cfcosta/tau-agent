@@ -1,8 +1,10 @@
 # 0040: What a run shows the person goes on a canvas beside it
 
-- Status: accepted. Built: `heiko-canvas` (`plugins/heiko-canvas`, Luau since ADR 0050)
-  and the `PANE` point in `heiko-ui-plugin`, which `heiko-ui-remote` draws
-  beside a run's transcript. Reference: [canvas.md](../reference/canvas.md).
+- Status: superseded by [0065](0065-the-canvas-is-removed.md): the
+  canvas plugin is removed; the `PANE` point stays. Built, until then:
+  `heiko-canvas` (`plugins/heiko-canvas`, Luau since ADR 0050) and the
+  `PANE` point in `heiko-ui-plugin`, which `heiko-ui-remote` draws beside
+  a run's transcript.
 - Date: 2026-10-13
 
 ## Context

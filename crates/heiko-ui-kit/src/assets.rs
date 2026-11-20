@@ -80,7 +80,7 @@ pub enum Icon {
     Clock,
     /// A run that stopped with an error.
     Failed,
-    /// A picture: what a run shows the person on its canvas.
+    /// A picture: an image a run shows the person.
     Image,
 }
 

@@ -35,7 +35,7 @@ Compare the viable candidates on interface depth. Prefer the design that hides m
 
 By default, go straight to implementation with the synthesized design.
 
-Use `ask` for a checkpoint when the person asked for one ("show me before you implement"), or when the candidates differ on a tradeoff only the person can weigh, such as a product behaviour or a public API that others will build on. Give each candidate as an option with one line on what it costs, your recommended one first, labelled "(Recommended)". Put the sketches on the canvas with `canvas_write` so the person can read them. On a sub-agent, which cannot ask, choose, and say in your answer what you chose and why.
+Use `ask` for a checkpoint when the person asked for one ("show me before you implement"), or when the candidates differ on a tradeoff only the person can weigh, such as a product behaviour or a public API that others will build on. Give each candidate as an option with one line on what it costs, your recommended one first, labelled "(Recommended)". On a sub-agent, which cannot ask, choose, and say in your answer what you chose and why.
 
 The synthesized sketch can land as its own commit either way, the "scaffold first" mode of `principle-foundational-thinking`. Planned breakage while you fill it in is fine, per `principle-outcome-oriented-execution`. For adversarial pressure on the design before you implement, load the `interrogate` skill and run it on the sketch.
 

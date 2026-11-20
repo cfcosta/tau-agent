@@ -16,7 +16,7 @@ Edit only the verification skill's own folder: its `SKILL.md`, `features/`, and 
 
 ## The pass
 
-Write these steps as a numbered checklist in your notes. For a long pass, keep a short decision trail on the canvas: one `canvas_write` item, appended with `canvas_edit`.
+Write these steps as a numbered checklist in your notes.
 
 0. **Locate the target.** The skill to maintain is the project skill with launch and drive sections and a feature map, usually a `verify-*` folder. With several, `ask` which one. With none, switch to create mode instead of inventing a target.
 
@@ -39,7 +39,7 @@ Write these steps as a numbered checklist in your notes. For a long pass, keep a
 
    A Doctor failure caused by drift in the skill is drift: fix it within the edit scope and retry once, restarting only what the fix invalidated, before you call the pass blocked. A feature that cannot be reached is `verified-unreachable` only with the concrete prerequisite (auth, an entitlement, an OS, external state) and the route you attempted. If the map omits that prerequisite, that is drift. Re-drive every harness fix live before it lands. Final teardown comes after the last drive of the run, re-proofs included, so nothing outlives the run. Evidence stays.
 
-   For a desktop GUI, every drive runs inside the headless compositor from the skill's Launch section. If it does not come up, the pass is blocked. Never fall back to the person's display. Show screenshots that prove a fix with `canvas_show`.
+   For a desktop GUI, every drive runs inside the headless compositor from the skill's Launch section. If it does not come up, the pass is blocked. Never fall back to the person's display.
 
 5. **Triage.** Each finding is one of three kinds:
    - **Doc drift**: the user-POV description is wrong or missing. Fix it.
@@ -48,7 +48,7 @@ Write these steps as a numbered checklist in your notes. For a long pass, keep a
 
 6. **Land or stop.** For changed: re-read every changed file, then commit the proven corrections with `vcs_commit`, one commit per feature or per harness fix, with messages such as `docs(verify-notes): search opens with / only outside the editor`. On a chat, finish with `vcs_land`. For clean or blocked: no commits. Report the outcome and the coverage honestly.
 
-Keep the run notes (features covered, unreachable prerequisites, confirmed drift, the outcome) in your reply or on the canvas. Do not commit them.
+Keep the run notes (features covered, unreachable prerequisites, confirmed drift, the outcome) in your reply. Do not commit them.
 
 ## Reply
 

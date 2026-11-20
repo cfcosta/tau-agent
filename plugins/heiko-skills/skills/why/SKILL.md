@@ -63,7 +63,7 @@ Write the answer yourself, following `references/synthesizer-prompt.md` and `ref
 
 ## 5. Present
 
-Present the answer in the synthesizer's structure. Keep the confidence language as written. A long answer goes on the canvas with `canvas_write`, and the reply gives the confidence summary and points to it.
+Present the answer in the synthesizer's structure. Keep the confidence language as written.
 
 If the question comes before a change to this code, end with a constraint set for planning that change:
 

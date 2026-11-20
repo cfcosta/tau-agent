@@ -58,7 +58,7 @@ mod skills;
 /// One scripted update, and how long to wait before it.
 pub type Step = (Duration, RunUpdate);
 
-/// The base64 of the image the demo's uploads screen sent: the canvas's
+/// The base64 of the image the demo's uploads screen sent: the demo's
 /// chart, small.
 pub fn upload_data() -> String {
     use base64::Engine as _;

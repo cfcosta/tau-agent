@@ -93,6 +93,6 @@ Screenshot, once Doctor sees the window:
 XDG_RUNTIME_DIR="$run/xdg" WAYLAND_DISPLAY="$wl" grim "$EVIDENCE/shot.png"
 ```
 
-Then show it to the person with `canvas_show`. For input, prefer the app's own automation (a demo mode, a flag that opens a given screen, a test IPC). Otherwise use `swaymsg` against the run's own IPC socket in `$run/xdg` to focus and resize, and `wtype` to type, if installed.
+For input, prefer the app's own automation (a demo mode, a flag that opens a given screen, a test IPC). Otherwise use `swaymsg` against the run's own IPC socket in `$run/xdg` to focus and resize, and `wtype` to type, if installed.
 
 On macOS, Windows, or a Linux setup with no headless compositor, there is no safe generic recipe. Use the app's own test or demo mode, or stop and tell the person what is missing. Never screenshot the person's screen.

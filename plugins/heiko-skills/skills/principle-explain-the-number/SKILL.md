@@ -11,7 +11,7 @@ A measured number is a claim about what the code did. Before you report or act o
 
 - **Ask "why not double?"** Name the resource or code path that bounds the result, such as a core, a lock, the disk, the network, or the load generator itself. Get it from a profile or from system counters taken during a run, then map it to source. A guess from reading the code is not a limiter. If you cannot say why the number is not twice as good, you do not know what you measured.
 - **List what else the number could be measuring, and rule out each one with evidence.** The usual suspects are errors, skipped or cached work, code that never ran, an untuned side (one left on default settings or a debug build), noise, and a piece too small to matter end to end.
-- **Keep the evidence with the number.** Put the run count, the spread, and the limiter in your reply, the commit message, or the canvas.
+- **Keep the evidence with the number.** Put the run count, the spread, and the limiter in your reply or the commit message.
 
 ## For a performance number
 

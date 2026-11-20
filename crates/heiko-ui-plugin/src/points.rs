@@ -498,7 +498,7 @@ pub const ACTIVITY: Point<AtApp> = Point::new("heiko.status.activity");
 pub const SETUP: Point<AtSetup, SetupView> = Point::new("heiko.setup.step");
 
 /// A wide pane beside a run's transcript, for what the run made for the
-/// person to look at: a canvas. The first contribution draws it, in the
+/// person to look at. The first contribution draws it, in the
 /// inspector's place on a desktop and over the run on a phone, while the
 /// person keeps it open. A plugin opens it with
 /// [`crate::Handle::open_pane`].

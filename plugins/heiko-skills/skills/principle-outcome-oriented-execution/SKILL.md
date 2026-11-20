@@ -16,7 +16,7 @@ Optimize for the intended, verifiable end state, not for smooth intermediate sta
 
 **Guardrails:**
 
-- Use this for planned rewrites and migrations with explicit phases. Write the phases down before you start, as a numbered checklist in your notes, or on the canvas for long work.
+- Use this for planned rewrites and migrations with explicit phases. Write the phases down before you start, as a numbered checklist in your notes.
 - Each phase is a commit, or a short run of commits. The `vcs_commit` message says what the phase did and, if it leaves something broken on purpose, what is broken and which phase fixes it. A reviewer reading `vcs_log` sees the plan.
 - Declare where temporary breakage is acceptable before you cause it. "Phase 2 leaves the old config keys unread until phase 3" is a declaration. Finding the breakage afterwards is not.
 - Keep high-signal checks on the areas you are touching while you migrate: the tests and compiler errors for the module you just changed. Do not wait for the end to learn that a phase went wrong.

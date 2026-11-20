@@ -284,18 +284,6 @@ impl DemoHost {
         self.cx.repo(name)
     }
 
-    /// Where the Luau plugins' blobs are kept (`ctx.blobs`): a screen puts
-    /// one in place, as the canvas's chart.
-    pub fn luau_blobs(&self) -> std::path::PathBuf {
-        self.cx.plugin_dir(heiko_luau_plugins::NAME).join("blobs")
-    }
-
-    /// Runs `future` on the demo's runtime: a screen putting in place
-    /// what a host half would have, such as an image the canvas kept.
-    pub fn block_on<F: Future>(&self, future: F) -> F::Output {
-        self.runtime.block_on(future)
-    }
-
     /// Carries out what `plugin`'s UI asked, as a host would.
     pub fn act(
         &self,

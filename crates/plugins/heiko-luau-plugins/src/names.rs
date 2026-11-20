@@ -3,7 +3,6 @@
 //! the list: `plugins/built-in.toml` is what heiko comes with.
 
 pub const ASK: &str = "heiko-ask";
-pub const CANVAS: &str = "heiko-canvas";
 pub const COMPACTION: &str = "heiko-compaction";
 pub const COMPACTION_CHAIN: &str = "heiko-compaction-chain";
 pub const CONSTITUTION: &str = "heiko-constitution";

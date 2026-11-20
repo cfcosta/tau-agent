@@ -1,6 +1,6 @@
 ---
 name: playbook-autonomous-run
-description: 'Load when told to drive a task to done without stopping ("run until done", "keep going until the tests pass", "going to bed, finish this"). Makes you state a checkable exit condition, offer it as a /goal, iterate in small verified commits, and keep a decision trail on the canvas.'
+description: 'Load when told to drive a task to done without stopping ("run until done", "keep going until the tests pass", "going to bed, finish this"). Makes you state a checkable exit condition, offer it as a /goal, and iterate in small verified commits.'
 ---
 
 # Autonomous run
@@ -16,7 +16,7 @@ The person is away, so blocking on them wastes the run. Load the `principle-neve
 ## Steps
 
 1. **State the exit condition.** Write it as something you can check by running a command or reading a result: "the repository's test command passes with 0 failures", "the repro script exits 0", "p50 under 30 ms on the bench". Offer it to the person in one line as the exact text to type: `/goal <condition>`. You cannot set a goal yourself. Once they set it, heiko checks every stop against it and sends you back until it holds. Do not wait for them to type it. Start.
-2. **Open the trail.** Create one canvas item with `canvas_write`, titled after the task, holding the exit condition and a table with the columns `when | decision | why | evidence | result`. Append a row with `canvas_edit` at each decision point: a fork chosen, a unit finished with its check, a revert and its trigger, a blocker, a side fix. Evidence is a pointer (a commit id, a path, a command), never a paragraph. Rows are append-only. A wrong call gets a new row that supersedes it.
+2. **Open the trail.** Keep the exit condition and a table with the columns `when | decision | why | evidence | result`. Append a row at each decision point: a fork chosen, a unit finished with its check, a revert and its trigger, a blocker, a side fix. Evidence is a pointer (a commit id, a path, a command), never a paragraph. Rows are append-only. A wrong call gets a new row that supersedes it.
 3. **Pick the wake-up for each wait.** A long command: start it with `exec_command` and `notify: true`, then end the turn. heiko starts a turn when it exits. Waiting on something outside (a job elsewhere, a time of day): `schedule {name, note, in}` with a note that says what to check and what to do next, then end the turn. Size the interval to when the result is worth checking. Use `scheduled` to see what is pending and `unschedule` to drop a wake-up you no longer need. On the main chat, a sub-agent finishing also starts a turn. On a sub-agent, neither `schedule` nor `notify` works: poll the process with `write_stdin` instead.
 4. **Iterate in small verified units.** Load the `principle-sequence-verifiable-units` skill. Each iteration makes the smallest change the evidence justifies, then checks it against the exit condition or the nearest check that predicts it. If it moved things forward, `vcs_commit` it with a Conventional Commits message. If it did not, revert it in full with `vcs_restore` on the paths you touched, or `vcs_undo` if you already committed it. A change that "might help" gets reverted, not left to ride. On the main chat, independent units may go to sub-agents: commit first, `spawn` each with the whole scope and a one-line check it must pass, end the turn, and review each landed diff with `vcs_show`.
 5. **Own mid-run discoveries.** A broken skill, a related bug, a flaky check, a tooling failure: fix it yourself as its own commit, record it in the trail, and return to the exit condition. Do not park reversible work for the person.
@@ -26,6 +26,6 @@ The person is away, so blocking on them wastes the run. Load the `principle-neve
 
 ## Reply
 
-Give the exit condition and its final state (checked by running it now), iterations run, what landed (commits), what was reverted and why, side fixes, and the canvas title of the trail. End with an "Attention" section: rows with weak evidence, checks you skipped, choices that look risky in hindsight, and assumptions the person should confirm. "Nothing to flag" is a valid answer.
+Give the exit condition and its final state (checked by running it now), iterations run, what landed (commits), what was reverted and why, and side fixes. End with an "Attention" section: rows with weak evidence, checks you skipped, choices that look risky in hindsight, and assumptions the person should confirm. "Nothing to flag" is a valid answer.
 
 Write short declarative sentences. Label each claim measured, inferred, or guess. Never hand the person a check you could run yourself. Name each principle that changed a decision.

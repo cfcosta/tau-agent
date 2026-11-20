@@ -7,7 +7,6 @@ mod common;
 mod sync;
 
 mod ask;
-mod canvas;
 mod compaction;
 mod constitution;
 mod crash_model;

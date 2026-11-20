@@ -18,7 +18,7 @@ Keep the conversation for decisions and summaries. Move bulk reading and bulk da
 - **Make commands quiet.** Pipe through `tail`, `grep`, or `head`, or use the tool's own quiet flag, so a passing run prints a line, not a page.
 - **Do not read the same thing twice.** Note what you learned from a file in your working notes before moving on. Re-read only when the file changed.
 - **Size phases and cap scope.** Limit the files each phase touches and each sub-agent reads. Budget the turns a phase may take. Count the cost of the mechanism too: a sub-agent's report and a big diff both land in your context.
-- **Keep durable facts out of the window.** A fact the next conversation needs goes to `memory_write`. A long report for the person goes on the canvas with `canvas_write`, and your reply points to it.
+- **Keep durable facts out of the window.** A fact the next conversation needs goes to `memory_write`.
 
 You skipped this when you pasted a whole log to find one line, read a large file top to bottom to answer a question `grep` could, or re-ran a slow command because its output was cut.
 

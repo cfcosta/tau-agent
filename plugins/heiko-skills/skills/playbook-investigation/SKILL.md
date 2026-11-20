@@ -24,7 +24,6 @@ Stay in this playbook when the answer is a cited fact. Do not build a prototype 
    - For "how does X work", use the `how` output: Overview, Key Concepts, How It Works, Where Things Live, Gotchas.
    - For "should we do X or Y", give a recommendation and a tradeoffs table, one row per option and one column per criterion that matters to the person.
    - For "are we sure?", give your real judgment and the reasons. If the premise is wrong, say so and say what is true instead. Load `principle-attack-the-premise` when the question rests on an assumption you can test.
-   - A long answer goes on the canvas with `canvas_write`, with Mermaid for any diagram. The reply then gives the conclusion and points to the canvas item.
 5. Load the `humanizer` skill and apply it to the answer before you send it.
 
 ## Rules that hold throughout

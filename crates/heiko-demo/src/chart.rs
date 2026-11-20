@@ -1,5 +1,4 @@
-//! The demo's chart: a PNG drawn here, for the canvas and the uploads
-//! screens.
+//! The demo's chart: a PNG drawn here, for the uploads screen.
 
 /// A line chart of two falling series on a dark ground, as a PNG.
 pub fn chart(width: u32, height: u32) -> Vec<u8> {

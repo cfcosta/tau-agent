@@ -46,7 +46,7 @@ second.
 kinds of task (`playbook-*`), and procedures such as `how`, `why`,
 `architect`, `arena`, `interrogate` and `humanizer`. They are adapted
 from pstack and humanizer (see THIRD_PARTY_NOTICES.md) to heiko's tools:
-sub-agents, commits and landing, `ask`, the canvas, `schedule` and
+sub-agents, commits and landing, `ask`, `schedule` and
 `/goal`. A skill is added by adding its folder.
 
 ## Testing

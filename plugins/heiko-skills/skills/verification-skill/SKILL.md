@@ -59,7 +59,7 @@ If the seed data lacks a precondition a journey needs, the journey reports a fai
 
 ### 4. Prove the generated skill
 
-Run its own instructions end to end once: launch, doctor, drive one mapped feature, capture evidence, clean up. After cleanup, confirm the evidence still exists at the named location. A cleanup that eats the proof fails this step. Show a screenshot, if there is one, with `canvas_show`.
+Run its own instructions end to end once: launch, doctor, drive one mapped feature, capture evidence, clean up. After cleanup, confirm the evidence still exists at the named location. A cleanup that eats the proof fails this step.
 
 Fix what fails, and run the generated cleanup after every failed attempt too, so broken attempts do not strand processes and ports. A generated skill that was never run is a draft. If you proved it in a stand-in for the real target (a container instead of a fresh machine, a local stack instead of a remote one), list every setup step the stand-in did that the target will not. Those steps stay unverified.
 

@@ -35,7 +35,6 @@ Move every Accepted item that a lint, a script, a type, a config flag, or a runt
 
 ## 4. Ask before applying
 
-Put the synthesis on the canvas (`canvas_write`, one item) so the person can read the full tables.
 
 Then ask with `ask`, one question per Accepted row, up to four questions per call. Each question quotes the problem and the proposal in one line each. The options are "Keep (Recommended)", "Change", and "Drop". If the person picks "Change", rewrite the proposal from their note and ask about the new wording, or, with no note, offer two concrete rewordings.
 

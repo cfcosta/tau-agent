@@ -83,14 +83,8 @@ choice. You can always write your own answer instead.
 
 ![A question from the agent, with previews, in place of the composer](docs/screenshots/ask.png)
 
-It can show you images and Markdown documents on a canvas beside the
-chat, and every revision of a document is kept. You can send it images
-too: paste them, drop them on the composer, or attach them.
-
-<p>
-  <img src="docs/screenshots/canvas-image.png" alt="An image on the canvas" width="49%">
-  <img src="docs/screenshots/canvas-document.png" alt="A document on the canvas, at an earlier revision" width="49%">
-</p>
+You can send it images: paste them, drop them on the composer, or
+attach them.
 
 ![An image sent to the agent, and another waiting in the composer](docs/screenshots/uploads.png)
 
@@ -123,7 +117,6 @@ same runs with the same screens.
   <img src="docs/screenshots/phone-agents.png" alt="The runs and agents on a phone" width="19%">
   <img src="docs/screenshots/phone-run.png" alt="A chat on a phone" width="19%">
   <img src="docs/screenshots/phone-ask.png" alt="A question from the agent on a phone" width="19%">
-  <img src="docs/screenshots/phone-canvas.png" alt="The canvas on a phone" width="19%">
   <img src="docs/screenshots/phone-pair.png" alt="Pairing a phone by QR code" width="19%">
 </p>
 
@@ -254,7 +247,7 @@ scripted session with no sign-in and no agent:
 ```sh
 cargo run --release -p heiko -- --demo
 cargo run --release -p heiko -- --demo --phone         # the phone layout
-cargo run --release -p heiko -- --demo --open canvas   # one screen
+cargo run --release -p heiko -- --demo --open skill    # one screen
 ```
 
 [crates/heiko/README.md](crates/heiko/README.md) lists every flag. The

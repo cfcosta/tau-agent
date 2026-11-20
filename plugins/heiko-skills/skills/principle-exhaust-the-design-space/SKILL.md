@@ -25,9 +25,9 @@ If the codebase already does this kind of thing, follow its precedent and skip t
 - Keep each prototype throwaway: no tests, no polish.
 - On the main chat, commit, then `spawn` two or three sub-agents with `land: false`, each building one candidate from its own brief and lens. Their commits stay beside yours and never land, so they may work on the real files. End the turn; each reports its changes when it finishes. Load the `arena` skill for the full procedure, including a fresh judge.
 - On a chat or a sub-agent, where `spawn` is refused, sketch the variants yourself, one after another, each under its own scratch path.
-- Compare side by side on the canvas: a `canvas_write` table of candidates against the rubric, plus a `canvas_show` screenshot of each visual one.
+- Compare side by side: a table of candidates against the rubric, plus a screenshot of each visual one.
 - Pick one. Take its files with `vcs_restore {paths, from: <change>}`, graft what is worth keeping from the others by hand, and commit. Spawned losers never land. Prototypes you wrote yourself, delete in your own commit. When two feel tied, prefer the cleaner boundary or the smaller API (load the `principle-laziness-protocol` skill).
-- If the choice belongs to the person (product direction, a tradeoff between their preferences), put the comparison on the canvas and `ask`, with your recommendation first.
+- If the choice belongs to the person (product direction, a tradeoff between their preferences), `ask`, with your recommendation first.
 
 You skipped this when you cannot say what the second-best design was and why it lost.
 

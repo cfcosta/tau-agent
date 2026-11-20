@@ -12,7 +12,7 @@ Verify every task output by checking the real thing directly. Do not infer from 
 Check the real thing, not a proxy:
 
 - Run the repository's own test command, from its instructions or its build files. Do not substitute a narrower command you assume is equivalent.
-- For behavior a person sees, run the real app. Use the repository's `verify-*` skill if it has one, or whatever its instructions say to run. Take screenshots from a headless compositor, never from the person's display, and put them on the canvas with `canvas_show`.
+- For behavior a person sees, run the real app. Use the repository's `verify-*` skill if it has one, or whatever its instructions say to run. Take screenshots from a headless compositor, never from the person's display.
 - Check process liveness directly, not through state derived from it.
 - Read the actual value, not a cached or derived copy.
 - Inspect the diff you are about to commit with `vcs_diff`. Make sure it holds what you meant and nothing else.
@@ -28,7 +28,7 @@ The strongest proof is a deterministic script that reruns the same comparison, n
 
 The proof must show up in your tool results. When the person sets a `/goal`, heiko checks each stop against your last answer and your recent tool results, and tells you to run what proves it. Run the proving command last, so its output is the evidence. When you suggest a goal to the person, phrase the condition as a check that a command can show, such as "the repository's tests pass and the new test fails on the old code".
 
-For large or long work, such as a big port or migration, keep the evidence visible. Put the commands you ran, their results, and any screenshots on the canvas, so the person can audit the trail later.
+For large or long work, such as a big port or migration, keep the evidence visible: the commands you ran, their results, and any screenshots, so the person can audit the trail later.
 
 You skipped this when your "done" rests on a build that compiled, a test you did not run, a summary you did not check, or a value you inferred instead of read.
 

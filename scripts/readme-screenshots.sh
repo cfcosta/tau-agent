@@ -39,8 +39,6 @@ compare            compare           7
 pull-request       pr                7
 pushed             pushed            7  --steps 0
 ask                ask               7
-canvas-image       canvas-image      7
-canvas-document    canvas-document   7
 uploads            uploads           7  --steps 0
 agents             agents            7
 agent              agent             7
@@ -67,7 +65,6 @@ phone-run          run               7  --phone
 phone-pair         pair-scan         7  --phone
 phone-agents       agents-home       7  --phone
 phone-ask          ask               7  --phone
-phone-canvas       canvas-image      7  --phone
 '
 
 shoot() {

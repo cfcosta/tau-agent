@@ -12,7 +12,6 @@ plugins = [
   "heiko-constitution",
   "heiko-ask",
   "heiko-schedule",
-  "heiko-canvas",
   "heiko-skills",
   "heiko-github",
   "heiko-memory",

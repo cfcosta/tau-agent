@@ -1,6 +1,6 @@
 ---
 name: teach
-description: "Load when the person asks you to teach them something, help them really understand a subsystem or a change, or walk them through how and why it works. Runs `how` and a narrow `why`, then explains in layers with diagrams built up step by step on the canvas."
+description: "Load when the person asks you to teach them something, help them really understand a subsystem or a change, or walk them through how and why it works. Runs `how` and a narrow `why`, then explains in layers with diagrams built up step by step."
 ---
 
 # Teach
@@ -39,9 +39,9 @@ When no person is reading live (a sub-agent, or a one-shot request), deliver the
 
 Open the diff or the code when that is the fastest way to land a point. Draw when a picture lands faster than words.
 
-Diagrams go on the canvas. Write Mermaid inside the Markdown of `canvas_write`. For anything with three or more moving parts, do not draw one diagram with all of them. Draw a short series where each diagram redraws the last and adds one part, so the person watches the system assemble. To teach a flow from A to B to C, draw it three times: A to B, then the same with C added, then with the return edge or the next piece. Put the first diagram in a new canvas item and add each later one with `canvas_edit`, next to the sentence it goes with. A single diagram of everything, especially one saved for the end, is reference, not teaching.
+For anything with three or more moving parts, do not draw one diagram with all of them. Draw a short series where each diagram redraws the last and adds one part, so the person watches the system assemble. To teach a flow from A to B to C, draw it three times: A to B, then the same with C added, then with the return edge or the next piece. A single diagram of everything, especially one saved for the end, is reference, not teaching.
 
-Match the medium to the idea. Mermaid fits a flow or a structure where the labels carry the meaning. For a spatial idea (a layout, an overlap, a scroll position, a before and after), show a real image with `canvas_show`: a screenshot from the repository's `verify-*` skill if it has one, or an image already in the repository. The build-up rule holds for images too: a before, then an after. Never take a screenshot of the person's own screen. A single simple point needs no figure.
+Match the medium to the idea. Mermaid fits a flow or a structure where the labels carry the meaning. For a spatial idea (a layout, an overlap, a scroll position, a before and after), show a real image: a screenshot from the repository's `verify-*` skill if it has one, or an image already in the repository. The build-up rule holds for images too: a before, then an after. Never take a screenshot of the person's own screen. A single simple point needs no figure.
 
 ## How to write it
 
@@ -57,4 +57,4 @@ This is the target density: "Virtualization runs in two parts, one for rendering
 
 ## Reply
 
-The explanation itself, never a report about what you did. Lead with the main point, then the plain account of what it is, how it works, and why, with the diagrams on the canvas. End with the threads worth chasing next with `how` or `why`.
+The explanation itself, never a report about what you did. Lead with the main point, then the plain account of what it is, how it works, and why, with the diagrams. End with the threads worth chasing next with `how` or `why`.

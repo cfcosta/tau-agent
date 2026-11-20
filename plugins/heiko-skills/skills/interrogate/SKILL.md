@@ -52,7 +52,6 @@ You are the lead reviewer, a pragmatic senior engineer, not a neutral aggregator
 
 ## Output format
 
-Put a long verdict on the canvas with `canvas_write` and give the Act on list in the reply. A short one goes in the reply.
 
 ### Intent
 

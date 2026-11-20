@@ -36,7 +36,6 @@ Write the explanation yourself, following `references/explainer-prompt.md` with 
 
 Present the explanation. Keep the sections in the explainer template and drop any that do not apply.
 
-A long explanation goes on the canvas: `canvas_write` with the explanation as Markdown, with Mermaid for diagrams. The reply then gives the overview in a few sentences and points to the canvas item. A short answer goes in the reply.
 
 Load the `humanizer` skill and apply it to the prose before you send it.
 

@@ -1251,14 +1251,15 @@ its files and real time. Give the run as data; the check gets what it
 came to.
 
 ```luau
-t.loop("an image is kept as a blob", {
-  files = { ["plot.png"] = t.png(12, 8) },     -- the run's workspace
+t.loop("the model counts a file's words", {
+  tools = { read = "one two three" },          -- fake host tools
   model = {                                    -- the model's turns, in order
-    { tool = "canvas_show", args = { path = "plot.png", title = "Plot" } },
-    { text = "Shown." },
+    { tool = "word_count", args = { path = "notes.md" } },
+    { text = "Counted." },
   },
 }, function(run)
-  t.equal(run.results[1].text, 'Image 1, "Plot", is on the canvas (12×8 PNG).')
+  t.equal(run.results[1].error, false)
+  t.equal(run.state.counted, 1)
 end)
 ```
 
