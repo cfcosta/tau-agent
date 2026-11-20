@@ -205,6 +205,16 @@ return heiko.plugin({
 				end
 				return text
 			end,
+			-- The line it opened, `id+n`, how many messages that is, and what
+			-- the model read of them (ADR 0064).
+			step = function(input)
+				local args = input.call
+				return {
+					subject = tostring(args.id) .. "+" .. tostring(args.n),
+					receipt = { ui.receipt.count(args.n, "message") },
+					body = ui.form.code(nil, input.result),
+				}
+			end,
 		},
 	},
 	-- The effort the run starts at, which its lines are built at.

@@ -195,6 +195,13 @@ t.case("zoom opens what was folded, and says when there is nothing", function()
 	run:rewrite_context(view(first_run()))
 	t.equal(run:tool("zoom", { id = 2, n = 1 }), "2+1|echo: [read] " .. contents("src/lib.rs"))
 	t.equal(run:tool("zoom", { id = 0, n = 2 }), '0+1|user: go\n1+1|tool: read {"path":"src/lib.rs"}')
+	-- Its step names the line, counts its messages and holds what it read.
+	local opened = '0+1|user: go\n1+1|tool: read {"path":"src/lib.rs"}'
+	t.equal(run:step("zoom", { id = 0, n = 2 }, opened), {
+		subject = "0+2",
+		receipt = { heiko.ui.receipt.count(2, "message") },
+		body = heiko.ui.form.code(nil, opened),
+	})
 	ok, why = pcall(function()
 		return run:tool("zoom", { id = 1, n = 2 })
 	end)

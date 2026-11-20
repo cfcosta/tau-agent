@@ -165,3 +165,11 @@ t.fixture("note", function()
 	}, "call_todo_3")
 	return { state = run.state, view = run:view() }
 end)
+
+-- The steps' call says how far the list is, should a view leave it a line.
+t.case("a steps call's step says how far its list is", function()
+	local run = t.run({ id = "r1" })
+	local args = { steps = { { text = "Read", status = "done" }, { text = "Fix", status = "in_progress" } } }
+	local counted = run:tool("todo_steps", args, "c1")
+	t.equal(run:step("todo_steps", args, counted), { receipt = { heiko.ui.receipt.measure("1 of 2 done") } })
+end)

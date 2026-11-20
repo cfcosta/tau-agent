@@ -38,6 +38,9 @@ return heiko.plugin { uses = { store = true },
           args = { issue = args.issue },
         }
       end,
+      step = function(input)
+        return { subject = input.call.issue, receipt = { heiko.ui.receipt.measure(input.result) } }
+      end,
     },
   },
   actions = {
@@ -234,6 +237,8 @@ struct Asked {
     started: Vec<(String, String)>,
     /// What each device's answer met.
     answered: Vec<bool>,
+    /// The step kept with the call's result.
+    step: serde_json::Value,
 }
 
 fn ask(answers: &[Answer], cancel: bool) -> Asked {
@@ -258,7 +263,7 @@ fn ask(answers: &[Answer], cancel: bool) -> Asked {
     });
     let agent = Agent::new(llm.clone()).plugin(plugins);
     let allows = registry.allows();
-    let (result, run, answered) = block_on_io(async {
+    let (result, step, run, answered) = block_on_io(async {
         let mut run = agent.start("hand it off", &store);
         let (id, control) = (run.id(), run.control());
         let answering = async {
@@ -285,10 +290,10 @@ fn ask(answers: &[Answer], cancel: bool) -> Asked {
             events
         };
         let (answered, events) = tokio::join!(answering, events);
-        let result = events
+        let (result, step) = events
             .iter()
             .find_map(|event| match event {
-                RunEvent::ToolEnd { output, .. } => Some(
+                RunEvent::ToolEnd { output, .. } => Some((
                     output
                         .content
                         .iter()
@@ -299,11 +304,17 @@ fn ask(answers: &[Answer], cancel: bool) -> Asked {
                             heiko_ai::message::InputBlock::Image(_) => None,
                         })
                         .collect::<String>(),
-                ),
+                    output
+                        .details
+                        .as_ref()
+                        .map_or(serde_json::Value::Null, |details| {
+                            details["step"].clone()
+                        }),
+                )),
                 _ => None,
             })
             .unwrap_or_default();
-        (result, id, answered)
+        (result, step, id, answered)
     });
     let records = block_on_io(store.records(&run.0, NAME))
         .unwrap()
@@ -323,6 +334,7 @@ fn ask(answers: &[Answer], cancel: bool) -> Asked {
         records,
         started,
         answered,
+        step,
     }
 }
 
@@ -349,6 +361,14 @@ fn an_allowed_dispatch_starts_one_chat_however_many_devices_allow() {
         [("home".to_owned(), "Work on td-1".to_owned())]
     );
     assert_eq!(asked.result, "started r-new in home");
+    // The tool's step reads what the allowed action answered (ADR 0064).
+    assert_eq!(
+        asked.step,
+        json!({
+            "subject": "td-1",
+            "receipt": [{ "part": "measure", "text": "started r-new in home" }],
+        })
+    );
     assert!(
         matches!(
             &asked.records[0],

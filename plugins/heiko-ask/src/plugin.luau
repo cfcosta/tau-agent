@@ -223,6 +223,18 @@ return heiko.plugin({
 				})
 				return heiko.ask({ questions = form(questions), action = "answered" })
 			end,
+			-- What was asked, by the questions' headers, and whether the
+			-- person answered (ADR 0064); the answers show under the line.
+			step = function(input)
+				local asked = input.result
+				return {
+					subject = table.concat(asked.headers, " · "),
+					receipt = {
+						asked.declined and ui.receipt.stamp("declined", "warn")
+							or ui.receipt.count(#asked.headers, "answer"),
+					},
+				}
+			end,
 		},
 	},
 	-- The calls the run's history left waiting: a run that went on from
@@ -301,7 +313,13 @@ return heiko.plugin({
 				reply = { answers = args.answers }
 			end
 			call.reply = reply
-			return ask.reply_text(call.ask, reply)
+			-- The call's step reads what was asked and whether it was
+			-- answered.
+			local headers = {}
+			for _, question in ipairs(call.ask.questions) do
+				table.insert(headers, question.header)
+			end
+			return heiko.reply(ask.reply_text(call.ask, reply), { headers = headers, declined = args.declined == true })
 		end,
 	},
 	view = function(state, env)

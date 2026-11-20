@@ -130,7 +130,9 @@ env)` with `input = { call, result }`, and `settings.view` is
 `(settings, model, env)`. Each draws from a frozen copy of the model,
 and none of them may await.
 
-A tool's `step` runs once, when its call ends, and heiko keeps it with
+A tool's `step` runs once, when its call ends (for a call that asked
+with `heiko.ask` or `heiko.allow`, once the person answered, reading
+what the action answered), and heiko keeps it with
 the result and draws the line (ADR 0064): the tool's name, the
 `subject`, the `receipt` and, folded under it, the `body`. The receipt
 is a list of `ui.receipt.count(n, noun)` (`noun` in the singular),

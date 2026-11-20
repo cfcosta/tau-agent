@@ -60,12 +60,17 @@ t.case("the call waits on its form, and the model reads the answers with their n
 	t.equal(view.asks, "How should the ask tool wait for your answer?")
 	t.equal(view.composer.piece, "keys")
 	-- The answers reach the call: the model reads them.
-	local text = run:action("answered", { call = "call_1", answers = answered() })
+	local reply = run:action("answered", { call = "call_1", answers = answered() })
 	t.equal(
-		text,
+		reply.heiko_reply.text,
 		'The person answered:\n"How should the ask tool wait for your answer?" = "Hold the call open (Recommended)"\n  note: Cancel must drop the sender too.\n"Where else should a waiting question show?" = "Run list badge, Parent run, the tray icon"'
 	)
 	t.equal(run.state.calls[1].reply, { answers = answered() })
+	-- Its step names the questions and counts the answers.
+	t.equal(run:step("ask", questions(), reply), {
+		subject = "Waiting · Surfaces",
+		receipt = { heiko.ui.receipt.count(2, "answer") },
+	})
 	-- Nothing waits once answered.
 	local after = run:view()
 	t.equal(after.composer, nil)
@@ -76,8 +81,10 @@ end)
 t.case("declining tells the model to go on", function()
 	local run = t.run({})
 	run:tool("ask", questions())
-	local text = run:action("answered", { call = "call_1", declined = true })
+	local reply = run:action("answered", { call = "call_1", declined = true })
+	local text = reply.heiko_reply.text
 	t.equal(string.sub(text, 1, #"The person declined to answer.") == "The person declined to answer.", true)
+	t.equal(run:step("ask", questions(), reply).receipt, { heiko.ui.receipt.stamp("declined", "warn") })
 	t.equal(run.state.calls[1].reply, { declined = true })
 end)
 

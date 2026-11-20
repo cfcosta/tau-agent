@@ -24,6 +24,12 @@ return heiko.plugin {
 				step(model, { event = "ask", change = args.change })
 				return "Asked the person about " .. args.change .. "."
 			end,
+			-- The change it asked about, and that the person was asked;
+			-- the answer comes from the inspector (ADR 0064).
+			subject = "change",
+			step = function(input)
+				return { subject = input.call.change, receipt = { ui.receipt.stamp("asked", "warn") } }
+			end,
 		},
 	},
 	actions = {

@@ -223,6 +223,7 @@
         "type": "object"
       },
       "step": false,
+      "subject": "id",
       "kind": "people"
     },
     {
@@ -433,7 +434,7 @@
         ],
         "type": "object"
       },
-      "step": false,
+      "step": true,
       "kind": "change"
     },
     {

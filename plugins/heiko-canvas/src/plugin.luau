@@ -166,19 +166,41 @@ local function read(args, model)
 		error("Item " .. args.item .. " has revisions 1 to " .. count .. ".", 0)
 	end
 	local content = found.content
+	-- What its step shows: the item, the revision of how many, and a
+	-- document's text.
+	local read_ = {
+		subject = canvas.kind(item) .. " " .. item.id .. " · " .. item.title,
+		revision = revision,
+		count = count,
+		text = content.type == "document" and content.text or nil,
+	}
 	if content.type == "document" then
-		return content.text
+		return heiko.reply(content.text, read_)
 	end
 	local caption = content.caption ~= "" and (". " .. content.caption) or ""
-	return "Image "
-		.. args.item
-		.. ', "'
-		.. item.title
-		.. '": '
-		.. canvas.format_name(content.image.mime)
-		.. " from "
-		.. content.image.path
-		.. caption
+	return heiko.reply(
+		"Image "
+			.. args.item
+			.. ', "'
+			.. item.title
+			.. '": '
+			.. canvas.format_name(content.image.mime)
+			.. " from "
+			.. content.image.path
+			.. caption,
+		read_
+	)
+end
+
+-- A read's step (ADR 0064): the item, which revision of how many, and a
+-- document's text.
+local function read_step(input)
+	local read_ = input.result
+	return {
+		subject = read_.subject,
+		receipt = { ui.receipt.measure("revision " .. read_.revision .. " of " .. read_.count) },
+		body = read_.text and ui.form.code("markdown", read_.text) or nil,
+	}
 end
 
 -- The image `image` of the run's repository as a piece, `height` rems
@@ -317,6 +339,7 @@ return heiko.plugin({
 				additionalProperties = false,
 			},
 			call = show,
+			subject = "title",
 		},
 		canvas_write = {
 			kind = "change",
@@ -336,6 +359,7 @@ return heiko.plugin({
 				additionalProperties = false,
 			},
 			call = write,
+			subject = "title",
 		},
 		canvas_edit = {
 			kind = "change",
@@ -366,6 +390,7 @@ return heiko.plugin({
 				additionalProperties = false,
 			},
 			call = edit,
+			subject = "item",
 		},
 		canvas_read = {
 			kind = "look",
@@ -384,6 +409,8 @@ return heiko.plugin({
 				additionalProperties = false,
 			},
 			call = read,
+			subject = "item",
+			step = read_step,
 		},
 	},
 

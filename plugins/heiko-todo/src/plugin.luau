@@ -722,6 +722,7 @@ local tools = {
 				args = { issue = issue.id, to = args.to, from = env.run.id },
 			})
 		end,
+		subject = "id",
 	},
 	todo_steps = {
 		kind = "change",
@@ -765,6 +766,12 @@ local tools = {
 				table.insert(model.finished, { call = env.run.call, steps = list })
 			end
 			return { steps = #list, done = steps.done(list) }
+		end,
+		-- How far the list is; its line shows only where a view leaves it
+		-- one (ADR 0064).
+		step = function(input)
+			local counted = input.result
+			return { receipt = { ui.receipt.measure(counted.done .. " of " .. counted.steps .. " done") } }
 		end,
 	},
 }

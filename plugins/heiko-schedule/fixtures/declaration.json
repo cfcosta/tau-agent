@@ -45,7 +45,8 @@
         ],
         "type": "object"
       },
-      "step": false,
+      "step": true,
+      "subject": "name",
       "kind": "change"
     },
     {
@@ -56,7 +57,7 @@
         "properties": {},
         "type": "object"
       },
-      "step": false,
+      "step": true,
       "kind": "look"
     },
     {
@@ -74,7 +75,8 @@
         ],
         "type": "object"
       },
-      "step": false,
+      "step": true,
+      "subject": "name",
       "kind": "change"
     }
   ],

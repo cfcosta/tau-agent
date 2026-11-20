@@ -38,6 +38,9 @@ return heiko.plugin { tools = {
           action = "answered",
         }
       end,
+      step = function(input)
+        return { subject = "Pick", receipt = { ui.receipt.stamp(input.result.picked or "declined") } }
+      end,
     },
     bad = {
       description = "Asks nothing.",
@@ -55,8 +58,9 @@ return heiko.plugin { tools = {
     end,
     answered = function(args, model, env)
       model.reply = args
-      if args.declined then return "declined" end
-      return "picked " .. args.answers[1].picked[1] .. " for " .. args.call
+      if args.declined then return heiko.reply("declined", {}) end
+      local picked = args.answers[1].picked[1]
+      return heiko.reply("picked " .. picked .. " for " .. args.call, { picked = picked })
     end,
   },
   view = function(state, env)
@@ -120,6 +124,8 @@ struct Asked {
     errors: Vec<Option<String>>,
     state: Value,
     waited: bool,
+    /// The step kept with the call's result.
+    step: Value,
 }
 
 fn ask(tool: &str, clicks: &[Click], cancel: bool) -> Asked {
@@ -197,12 +203,19 @@ fn ask(tool: &str, clicks: &[Click], cancel: bool) -> Asked {
         let ((errors, waited), events) = tokio::join!(answering, events);
         (events, id, errors, waited)
     });
-    let (result, failed) = events
+    let (result, failed, step) = events
         .iter()
         .find_map(|event| match event {
             RunEvent::ToolEnd {
                 output, is_error, ..
-            } => Some((output.text_content(), *is_error)),
+            } => Some((
+                output.text_content(),
+                *is_error,
+                output
+                    .details
+                    .as_ref()
+                    .map_or(Value::Null, |details| details["step"].clone()),
+            )),
             _ => None,
         })
         .unwrap_or_default();
@@ -213,6 +226,7 @@ fn ask(tool: &str, clicks: &[Click], cancel: bool) -> Asked {
         errors,
         state: block_on_io(stored(&store, &run.0)),
         waited,
+        step,
     }
 }
 
@@ -254,6 +268,14 @@ fn the_first_answer_takes_the_form_from_whichever_device() {
     );
     assert!(!asked.failed);
     assert_eq!(asked.result, "picked B for call_0|fc_0");
+    // The tool's step reads what the action gave its step (ADR 0064).
+    assert_eq!(
+        asked.step,
+        json!({
+            "subject": "Pick",
+            "receipt": [{ "part": "stamp", "text": "B", "tone": "neutral" }],
+        })
+    );
     assert_eq!(
         asked.state["reply"],
         json!({ "call": "call_0|fc_0", "answers": [{ "picked": ["B"] }] })

@@ -52,6 +52,16 @@ t.case("images and documents land on the canvas with every revision", function()
 	t.equal(r:tool("canvas_read", { item = 2, revision = 2 }), "# Plan\nFirst, profile.")
 	t.equal(r:tool("canvas_read", { item = 1, revision = 1 }), 'Image 1, "Chart": PNG from plot.png. Loss')
 	t.equal(r:tool("canvas_read", { item = 1 }), 'Image 1, "Chart": SVG from chart.svg')
+	-- A read's step: the item, which revision of how many, and a
+	-- document's text; an image has no body.
+	local _, read = r:tool("canvas_read", { item = 2, revision = 2 })
+	t.equal(r:step("canvas_read", { item = 2, revision = 2 }, read), {
+		subject = "document 2 · Plan v3",
+		receipt = { heiko.ui.receipt.measure("revision 2 of 3") },
+		body = heiko.ui.form.code("markdown", "# Plan\nFirst, profile."),
+	})
+	_, read = r:tool("canvas_read", { item = 1 })
+	t.equal(r:step("canvas_read", { item = 1 }, read).body, nil)
 	local items = r.state.canvas.items
 	t.equal(#items, 2)
 	t.equal(#items[1].revisions, 2)

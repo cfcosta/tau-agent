@@ -117,8 +117,9 @@ fn a_chat_is_woken_on_its_note_through_the_host() {
         &in_chat,
     );
     let local = |at: i64| heiko_clock::local(&heiko_clock::SystemClock, at);
+    // What the model reads; the step reads the reply's data.
     assert_eq!(
-        answer,
+        answer["heiko_reply"]["text"],
         json!(format!(
             "Scheduled `recheck` for {}. This chat wakes then with your note.",
             local(unix + 7200)

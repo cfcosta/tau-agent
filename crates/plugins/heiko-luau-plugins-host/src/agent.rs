@@ -2089,27 +2089,13 @@ impl AgentTool for LuauTool {
         };
         if let Some(asked) = crate::chats::ask(&value) {
             drop(state);
-            return self.ask_first(asked?, &ctx, &plugin).await;
+            return self.ask_first(asked?, &args, &ctx, &plugin).await;
         }
         if let Some(form) = crate::forms::asked(&value) {
             drop(state);
-            return self.ask_form(form?, &ctx, &plugin).await;
+            return self.ask_form(form?, &args, &ctx, &plugin).await;
         }
-        // `heiko.reply(text, data)`: the model reads the text, the step
-        // the data.
-        let (text, value) = match value.get("heiko_reply") {
-            Some(reply) => (
-                reply["text"].as_str().unwrap_or_default().to_owned(),
-                reply["data"].clone(),
-            ),
-            None => (
-                match &value {
-                    Value::String(text) => text.clone(),
-                    other => other.to_string(),
-                },
-                value,
-            ),
-        };
+        let (text, value) = replied(value);
         let step = if self.spec.step {
             let input = json!({ "call": args, "result": value });
             inner
@@ -2137,6 +2123,56 @@ impl AgentTool for LuauTool {
     }
 }
 
+/// What a tool answered, as the model reads it and as its step reads it:
+/// `heiko.reply(text, data)` splits them; anything else is both, as text
+/// or JSON for the model.
+fn replied(value: Value) -> (String, Value) {
+    match value.get("heiko_reply") {
+        Some(reply) => (
+            reply["text"].as_str().unwrap_or_default().to_owned(),
+            reply["data"].clone(),
+        ),
+        None => (
+            match &value {
+                Value::String(text) => text.clone(),
+                other => other.to_string(),
+            },
+            value,
+        ),
+    }
+}
+
+impl LuauTool {
+    /// The tool's step (ADR 0064) for a call with `args` that answered
+    /// `value`, once the person answered what it asked: none when its
+    /// table has no `step`, or its plugin is not active any more.
+    async fn step_after_asking(
+        &self,
+        args: &Value,
+        value: &Value,
+        ctx: &ToolCtx,
+        plugin: &PluginCtx,
+    ) -> Option<Value> {
+        if !self.spec.step {
+            return None;
+        }
+        let inner = &self.plugins.0;
+        let active = inner.plugin(&self.plugin)?;
+        let shared = inner.run_state(&ctx.run);
+        let mut state = shared.lock().await;
+        inner
+            .call(
+                &active,
+                Hook::Step(self.spec.name.clone()),
+                json!({ "call": args, "result": value }),
+                &mut state,
+                plugin,
+                Arc::new(NoReach),
+            )
+            .await
+    }
+}
+
 impl LuauTool {
     /// Asks the person to allow what the call asked (`heiko.allow`), with
     /// no hook going meanwhile: a card in the run and on phones, which
@@ -2146,6 +2182,7 @@ impl LuauTool {
     async fn ask_first(
         &self,
         ask: crate::chats::Ask,
+        args: &Value,
         ctx: &ToolCtx,
         plugin: &PluginCtx,
     ) -> Result<ToolOutput, ToolError> {
@@ -2218,13 +2255,21 @@ impl LuauTool {
             )
             .await
             .map_err(|error| format!("{error:#}"))?;
-        let text = match &value {
-            Value::String(text) => text.clone(),
-            Value::Null => "The person allowed it, and it is done.".to_owned(),
-            other => other.to_string(),
+        let (text, value) = match value {
+            Value::Null => (
+                "The person allowed it, and it is done.".to_owned(),
+                Value::Null,
+            ),
+            value => replied(value),
         };
+        let step = self.step_after_asking(args, &value, ctx, plugin).await;
         Ok(ToolOutput {
-            details: Some(json!({ "plugin": self.plugin, "value": value })),
+            details: Some(json!({
+                "plugin": self.plugin,
+                "value": value,
+                "step": step,
+                "kind": self.spec.kind,
+            })),
             ..ToolOutput::text(text)
         })
     }
@@ -2240,6 +2285,7 @@ impl LuauTool {
     async fn ask_form(
         &self,
         form: crate::forms::Form,
+        args: &Value,
         ctx: &ToolCtx,
         plugin: &PluginCtx,
     ) -> Result<ToolOutput, ToolError> {
@@ -2305,11 +2351,14 @@ impl LuauTool {
             }
             None => given.clone(),
         };
-        let text = match &value {
-            Value::String(text) => text.clone(),
-            other => other.to_string(),
-        };
-        let details = json!({ "plugin": self.plugin, "value": given });
+        let (text, value) = replied(value);
+        let step = self.step_after_asking(args, &value, ctx, plugin).await;
+        let details = json!({
+            "plugin": self.plugin,
+            "value": given,
+            "step": step,
+            "kind": self.spec.kind,
+        });
         Ok(ToolOutput {
             details: Some(details),
             structured: Some(given),

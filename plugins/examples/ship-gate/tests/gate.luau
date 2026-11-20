@@ -40,6 +40,10 @@ t.case("a release waits for the person's yes", function()
 	local release = { name = "release", args = { change = "v1.2" } }
 	t.equal(run:before_tool(release) ~= nil, true, "not asked")
 	run:tool("ask_to_ship", { change = "v1.2" })
+	t.equal(
+		run:step("ask_to_ship", { change = "v1.2" }, "Asked the person about v1.2."),
+		{ subject = "v1.2", receipt = { heiko.ui.receipt.stamp("asked", "warn") } }
+	)
 	t.equal(run:view().status.text, "waiting to ship v1.2")
 	t.equal(run:before_tool(release) ~= nil, true, "not answered")
 	run:action("approve", {})

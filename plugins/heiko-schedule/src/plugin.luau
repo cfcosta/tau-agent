@@ -116,26 +116,26 @@ local function schedule(args, model, env)
 	end
 	heiko.store.put(key, { run = run, name = name, note = note, at = at, made = now })
 	refresh(model, env)
-	return (replaced and "Replaced" or "Scheduled")
-		.. " `"
-		.. name
-		.. "` for "
-		.. local_time(at)
-		.. ". This chat wakes then with your note."
+	return heiko.reply(
+		(replaced and "Replaced" or "Scheduled") .. " `" .. name .. "` for " .. local_time(at) .. ". This chat wakes then with your note.",
+		{ name = name, note = note, at = local_time(at), replaced = replaced }
+	)
 end
 
 local function scheduled(_, _, env)
 	local list = waiting(heiko.store, env.run.id)
 	local now = local_time(env.now.unix)
 	if #list == 0 then
-		return "It is " .. now .. ". Nothing is scheduled."
+		return heiko.reply("It is " .. now .. ". Nothing is scheduled.", { waiting = {} })
 	end
 	local lines = { "It is " .. now .. ". " .. #list .. " of the " .. wake.MAX_WAITING .. " this chat may have:" }
+	local waiting_ = {}
 	for _, one in ipairs(list) do
 		local first = string.match(one.note, "^[^\n]*")
 		table.insert(lines, "- " .. one.name .. " · " .. local_time(one.at) .. " · " .. first)
+		table.insert(waiting_, { key = one.name, value = local_time(one.at) .. " · " .. first })
 	end
-	return table.concat(lines, "\n")
+	return heiko.reply(table.concat(lines, "\n"), { waiting = waiting_ })
 end
 
 -- Cancels what the chat scheduled as `name`: whether there was one.
@@ -150,9 +150,38 @@ end
 local function unschedule(args, model, env)
 	local name = tostring(args.name)
 	if cancel(name, model, env) then
-		return "Cancelled `" .. name .. "`."
+		return heiko.reply("Cancelled `" .. name .. "`.", { name = name, cancelled = true })
 	end
-	return "Nothing is scheduled as `" .. name .. "`."
+	return heiko.reply("Nothing is scheduled as `" .. name .. "`.", { name = name, cancelled = false })
+end
+
+-- Each tool's step (ADR 0064): the wake-up's name, what came of the
+-- call, and the note or the list under it.
+local steps = {}
+
+function steps.schedule(input)
+	local made = input.result
+	return {
+		subject = made.name,
+		receipt = { ui.receipt.stamp(made.replaced and "replaced" or "scheduled", "good"), ui.receipt.measure(made.at) },
+		body = ui.form.record({ { key = "note", value = made.note } }),
+	}
+end
+
+function steps.scheduled(input)
+	local list = input.result.waiting
+	if #list == 0 then
+		return { receipt = { ui.receipt.measure("nothing scheduled") } }
+	end
+	return { receipt = { ui.receipt.count(#list, "wake-up") }, body = ui.form.record(list) }
+end
+
+function steps.unschedule(input)
+	local done = input.result
+	return {
+		subject = done.name,
+		receipt = { done.cancelled and ui.receipt.stamp("cancelled", "good") or ui.receipt.measure("not scheduled") },
+	}
 end
 
 -- One wake-up: its name, when it comes due and the way to cancel it;
@@ -272,12 +301,15 @@ return heiko.plugin({
 				additionalProperties = false,
 			},
 			call = schedule,
+			subject = "name",
+			step = steps.schedule,
 		},
 		scheduled = {
 			kind = "look",
 			description = "What this chat has scheduled with `schedule` that is still to come, soonest first, and the host's local time now. Look before you schedule something again.",
 			parameters = { type = "object", properties = {}, additionalProperties = false },
 			call = scheduled,
+			step = steps.scheduled,
 		},
 		unschedule = {
 			kind = "change",
@@ -289,6 +321,8 @@ return heiko.plugin({
 				additionalProperties = false,
 			},
 			call = unschedule,
+			subject = "name",
+			step = steps.unschedule,
 		},
 	},
 

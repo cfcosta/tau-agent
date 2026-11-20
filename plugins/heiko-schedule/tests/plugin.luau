@@ -307,3 +307,28 @@ t.case("the message a chat woke on shows each wake-up's time as a figure", funct
 	t.equal(blocks[3].children[1].text, "12:02")
 	t.equal(blocks[3].children[2].children[2], { piece = "text", text = "Two" })
 end)
+
+-- Each call's step (ADR 0064): the wake-up's name, what came of the call
+-- and when, and the note or what waits under it.
+t.case("each call's step names the wake-up and says what came of it", function()
+	local run = chat()
+	local ui = heiko.ui
+	local function step(name, args)
+		local _, data = run:tool(name, args)
+		return run:step(name, args, data)
+	end
+	t.equal(step("scheduled", {}), { receipt = { ui.receipt.measure("nothing scheduled") } })
+	local args = { name = "recheck", note = "Did #412 merge?", ["in"] = "2h" }
+	t.equal(step("schedule", args), {
+		subject = "recheck",
+		receipt = { ui.receipt.stamp("scheduled", "good"), ui.receipt.measure("2026-01-05 14:00") },
+		body = ui.form.record({ { key = "note", value = "Did #412 merge?" } }),
+	})
+	t.equal(step("schedule", args).receipt[1], ui.receipt.stamp("replaced", "good"))
+	t.equal(step("scheduled", {}), {
+		receipt = { ui.receipt.count(1, "wake-up") },
+		body = ui.form.record({ { key = "recheck", value = "2026-01-05 14:00 · Did #412 merge?" } }),
+	})
+	t.equal(step("unschedule", { name = "recheck" }), { subject = "recheck", receipt = { ui.receipt.stamp("cancelled", "good") } })
+	t.equal(step("unschedule", { name = "recheck" }).receipt, { ui.receipt.measure("not scheduled") })
+end)

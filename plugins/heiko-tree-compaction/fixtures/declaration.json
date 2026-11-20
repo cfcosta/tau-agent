@@ -70,7 +70,7 @@
         ],
         "type": "object"
       },
-      "step": false,
+      "step": true,
       "kind": "look",
       "when": "on"
     }

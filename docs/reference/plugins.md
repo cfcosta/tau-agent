@@ -911,8 +911,10 @@ itself, changed in place, and `env` the run's `run`, `now`, `settings`,
 `models` and a command's `drafts`. `view` is `(model, env)`, a tool's
 `step` `(input, model, env)` with `input = { call, result }`, and
 `settings.view` `(settings, model, env)`: each draws a frozen copy of the
-model and cannot await. A tool's `step` runs once, when its call ends,
-and is kept with the result; it returns `{ subject, receipt, body,
+model and cannot await. A tool's `step` runs once, when its call ends
+(after the person answered, for a call that asked with `heiko.ask` or
+`heiko.allow`, with what the plugin's action answered), and is kept
+with the result; it returns `{ subject, receipt, body,
 action }`, the receipt's parts from `ui.receipt` (`count`, `diff`,
 `stamp`, `measure`) and the body from `ui.form` (`code`, `matches`,
 `diff`, `names`, `output`, `record`, `tree`). A tool whose step needs
