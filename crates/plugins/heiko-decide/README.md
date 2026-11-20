@@ -24,7 +24,7 @@ is one crate they share instead of code copied into each.
 | `fake::response`           | Builds a `Response` billed one input token per request byte                                       |
 | `api_key`, `MissingApiKey` | Reading a key; the error when it is missing or blank                                              |
 | `API_KEY_VAR`              | `TYPESAFE_API_KEY`                                                                                |
-| `DEFAULT_MODEL`            | `decide-latest`                                                                                      |
+| `DEFAULT_MODEL`            | `jev-latest`                                                                                         |
 | `SYSTEM_ONE_URL`           | `https://api.typesafe.ai/v1/systemone`                                                            |
 | `PRICE_PER_MILLION_INPUT`  | US dollars per million input tokens; output tokens are free                                       |
 | `NAME`, `SERVICE`          | `"heiko-decide"`, and the service it gives, `"heiko.decide"`                                                |

@@ -45,8 +45,9 @@ pub const NAME: &str = "heiko-decide";
 /// there is a key (`heiko_ui_plugin::Services`).
 pub const SERVICE: &str = "heiko.decide";
 
-/// The model most requests should use: TypeSafe's latest stable the decider.
-pub const DEFAULT_MODEL: &str = "decide-latest";
+/// The model most requests should use: TypeSafe's latest stable model.
+/// It is TypeSafe's id, so it keeps the name Jev.
+pub const DEFAULT_MODEL: &str = "jev-latest";
 
 /// The System One endpoint.
 pub const SYSTEM_ONE_URL: &str = "https://api.typesafe.ai/v1/systemone";
@@ -94,8 +95,9 @@ impl Request {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Question {
-    /// TypeSafe's name for it, on the wire, is `predicate`.
-    #[serde(rename = "predicate")]
+    /// TypeSafe's name for it, on the wire, is `noul`; it refuses
+    /// `predicate` with 400.
+    #[serde(rename = "noul")]
     Predicate {
         instructions: Value,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -171,10 +173,10 @@ pub struct Response {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Answer {
-    /// TypeSafe's name for it, and for its probability, is `predicate`.
-    #[serde(rename = "predicate")]
+    /// TypeSafe's name for it, and for its probability, is `noul`.
+    #[serde(rename = "noul")]
     Predicate {
-        #[serde(rename = "predicate")]
+        #[serde(rename = "noul")]
         predicate: f64,
     },
     Choice {

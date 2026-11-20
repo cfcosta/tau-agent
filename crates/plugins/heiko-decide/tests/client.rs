@@ -140,7 +140,7 @@ fn answers() -> Value {
     json!({
         "model": "jev-1.13.0",
         "answers": {
-            "refund": {"type": "predicate", "predicate": 0.97},
+            "refund": {"type": "noul", "noul": 0.97},
             "team": {"type": "choice", "choice": "billing", "probabilities": {"billing": 0.9, "support": 0.1}, "confidence": 0.8},
             "urgency": {"type": "score", "score": 0.6, "probabilities": {"0": 0.4, "1": 0.6}, "confidence": 0.2},
         },
@@ -155,7 +155,7 @@ fn answers() -> Value {
 fn a_request_round_trips() {
     runtime().block_on(async {
         let (url, seen) = serve(vec![ok(answers())]).await;
-        let decide = TypeSafe::new("sk-test").url(url).model("decide-preview");
+        let decide = TypeSafe::new("sk-test").url(url).model("jev-preview");
         let response = decide.ask(&request()).await.unwrap();
         assert_eq!(response.predicate("refund").unwrap(), 0.97);
         assert_eq!(response.choice("team").unwrap(), ("billing", 0.8));
@@ -185,15 +185,27 @@ fn a_request_round_trips() {
         assert_eq!(
             seen[0].body,
             json!({
-                "model": "decide-preview",
+                "model": "jev-preview",
                 "state": {"ticket": "refund please"},
                 "questions": {
-                    "refund": {"type": "predicate", "instructions": "Does this ask for a refund?"},
+                    "refund": {"type": "noul", "instructions": "Does this ask for a refund?"},
                     "team": {"type": "choice", "instructions": "Which team?", "criteria": {"billing": "money", "support": "rest"}},
                     "urgency": {"type": "score", "instructions": "How urgent?", "criteria": ["low", "high"]},
                 },
             })
         );
+    });
+}
+
+/// A client asks for TypeSafe's own model id unless told otherwise:
+/// the rename to "decide" once sent `decide-latest`, which TypeSafe
+/// refuses with 400 "Unknown model".
+#[test]
+fn the_default_model_is_typesafes_id() {
+    runtime().block_on(async {
+        let (url, seen) = serve(vec![ok(answers())]).await;
+        TypeSafe::new("k").url(url).ask(&request()).await.unwrap();
+        assert_eq!(seen.lock().unwrap()[0].body["model"], "jev-latest");
     });
 }
 
