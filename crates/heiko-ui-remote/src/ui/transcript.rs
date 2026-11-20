@@ -247,7 +247,7 @@ fn card_view(
     ws: &Workspace,
     run: &RunView,
     card: &ToolCard,
-) -> Option<heiko_ui_plugin::points::CardView> {
+) -> Option<heiko_ui_plugin::step::Step> {
     let contexts: Vec<(String, heiko_ui_plugin::points::AtCard)> = ws
         .plugin_names()
         .into_iter()
@@ -804,15 +804,8 @@ enum Folded {
     Note,
 }
 
-/// Whether `head`, what a plugin gave in place of a call's arguments,
-/// is an empty stack: the call has no line of its own.
-fn headless(head: Option<&heiko_ui_plugin::tree::Node>) -> bool {
-    use heiko_ui_plugin::tree::Node;
-    matches!(head, Some(Node::Stack { children }) if children.is_empty())
-}
-
 /// Whether the call `card` has no line of its own, and what is left of
-/// it: its plugin gave it an empty stack for a head. A call that was
+/// it: its plugin's step is lineless. A call that was
 /// refused, flagged or dropped, or that a plugin put a badge on, keeps
 /// its line.
 fn folded(ws: &Workspace, run: &RunView, card: &ToolCard) -> Option<Folded> {
@@ -840,7 +833,7 @@ fn folded(ws: &Workspace, run: &RunView, card: &ToolCard) -> Option<Folded> {
         .contributions_named(points::CARD, context_of)
         .into_iter()
         .next()?;
-    if !headless(view.head.as_ref())
+    if !view.lineless
         || !ws
             .contributions_named(points::CARD_BADGE, context_of)
             .is_empty()
@@ -858,8 +851,8 @@ fn folded(ws: &Workspace, run: &RunView, card: &ToolCard) -> Option<Folded> {
 /// color of its kind, its arguments, and what came back at the line's
 /// end, or under the line on a phone. Its body, when open, sits under
 /// it on a flat band. A refused call stands under a red rule, with what
-/// it proposed. A call its plugin gave an empty stack for a head has no
-/// line: only what the plugin draws under it shows.
+/// it proposed. A call whose step is lineless has no line: only what the
+/// plugin draws under it shows.
 fn tool(
     ws: &Workspace,
     run: &RunView,
@@ -905,12 +898,76 @@ fn tool(
         let origin = crate::plugins::Origin::at(at);
         Some(ws.plugin_tree(plugin, &id, &node, origin, cx))
     };
-    let headless = headless(view.head.as_ref());
-    let (head, shape, card_body) = (
-        part("head", view.head),
-        part("shape", view.shape),
-        part("body", view.body),
-    );
+    let headless = view.lineless;
+    // A form shows its peek until the person asks for all of it.
+    let whole = ws.card_whole(&run.id, &card.call_id);
+    let drawn = view
+        .body
+        .as_ref()
+        .map(|body| (body.draw(whole, compact), body.folds(), body.inset()));
+    let (folding, inset) = drawn
+        .as_ref()
+        .map_or((false, false), |(_, folds, inset)| (*folds, *inset));
+    let (body_node, rest) = match drawn {
+        Some((drawn, ..)) => (Some(drawn.node), drawn.rest),
+        None => (None, None),
+    };
+    let body_tree = part("body", body_node);
+    let action = part("action", view.action.clone());
+    // The receipt's stamps and diffstat, as trees the plugin's own.
+    let shape = {
+        use heiko_ui_plugin::{step::Receipt, tree::Node};
+        let pieces: Vec<Node> = view
+            .receipt
+            .iter()
+            .filter_map(|receipt| match receipt {
+                Receipt::Diff { added, removed, .. } => {
+                    Some(heiko_ui_plugin::step::diffstat(
+                        *added as usize,
+                        *removed as usize,
+                    ))
+                }
+                Receipt::Stamp { text, tone } => Some(Node::Stamp {
+                    label: text.clone(),
+                    tone: *tone,
+                }),
+                _ => None,
+            })
+            .collect();
+        (!pieces.is_empty())
+            .then(|| part("shape", Some(Node::row(pieces))))
+            .flatten()
+    };
+    // The receipt's words: counts, measures and a diff's `+N −M`.
+    let words: Vec<String> = view
+        .receipt
+        .iter()
+        .filter(|receipt| {
+            !matches!(receipt, heiko_ui_plugin::step::Receipt::Stamp { .. })
+        })
+        .map(heiko_ui_plugin::step::Receipt::text)
+        .collect();
+    let receipt = (!words.is_empty()).then(|| words.join(" · "));
+    let card_body = body_tree.map(|body| {
+        let more = rest.map(|rest| {
+            let (run_id, call_id) = (run.id.clone(), card.call_id.clone());
+            div()
+                .id(SharedString::from(format!("more-{}", card.call_id)))
+                .pt(sp(1.5))
+                .cursor_pointer()
+                .hover(|style| style.underline())
+                .child(mono(rest.label(), Type::SMALL, t.blue))
+                .on_click(cx.listener(move |ws, _, _, cx| {
+                    ws.toggle_card_whole(&run_id, &call_id, cx)
+                }))
+        });
+        div()
+            .flex()
+            .flex_col()
+            .child(body)
+            .children(more)
+            .into_any_element()
+    });
     let badges =
         ws.drawn_with(heiko_ui_plugin::points::CARD_BADGE, context_of, cx);
     let blocked = matches!(card.state, ToolState::Blocked { .. });
@@ -968,33 +1025,25 @@ fn tool(
             .map_or(t.text, |kind| t.roles.kind(kind))
     };
     let waits = view.waits;
-    // A result that wants attention is written in its tone.
-    let quiet = match view.edge {
-        Some(Tone::Danger) => t.red,
-        Some(Tone::Warn) => t.roles.live,
-        _ => t.dim,
-    };
-    let summary = match head {
-        Some(head) => div()
-            .flex_1()
-            .min_w(rems(0.))
-            .child(head)
-            .into_any_element(),
-        None => mono(card.summary.clone(), Type::SMALL, t.text_soft)
+    // A result that failed is written in red.
+    let quiet = if view.failed.is_some() { t.red } else { t.dim };
+    let summary = {
+        let subject = view.subject.clone().unwrap_or_default();
+        mono(subject, Type::SMALL, t.text_soft)
             .flex_1()
             .min_w(rems(0.))
             .truncate()
             .when(card.dropped == Some(Dropped::Call), |s| {
                 s.line_through().text_color(t.muted)
             })
-            .into_any_element(),
+            .into_any_element()
     };
     // A body that folds starts closed; its line opens it.
-    let folds = view.folds && card_body.is_some();
+    let folds = folding && card_body.is_some();
     let open = !folds || ws.card_open(&run.id, &card.call_id);
     // A call that came back with nothing to say has no label.
     let silent = view.failed.is_none()
-        && view.label.is_none()
+        && view.receipt.is_empty()
         && matches!(card.state, ToolState::Done { summary: None });
     // A failed call whose shape already stamps how it ended (`exit
     // 100`) says it once: the shape stands for the failure.
@@ -1002,7 +1051,8 @@ fn tool(
         _ if silent => None,
         _ if failed && !blocked && shape.is_some() => None,
         Some(failure) => Some(stamp(failure.clone(), Tone::Danger, t)),
-        None => Some(match (&card.state, view.label) {
+        None if receipt.is_none() && shape.is_some() => None,
+        None => Some(match (&card.state, receipt) {
             (ToolState::Done { .. }, Some(text)) => {
                 result_label(&text, quiet, t)
             }
@@ -1014,6 +1064,7 @@ fn tool(
     let came: Vec<AnyElement> = label
         .map(IntoElement::into_any_element)
         .into_iter()
+        .chain(action)
         .chain(badges)
         .collect();
     let (at_end, under) = if compact {
@@ -1100,7 +1151,7 @@ fn tool(
     let cut =
         card.cut
             .as_ref()
-            .filter(|_| !dropped && !view.inset)
+            .filter(|_| !dropped && !inset)
             .map(|cut| {
                 let path = std::path::PathBuf::from(&cut.archive);
                 div()

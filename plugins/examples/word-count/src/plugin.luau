@@ -1,4 +1,4 @@
--- A tool with a card: counts a file's words, through the run's `read`.
+-- A tool with a step: counts a file's words, through the run's `read`.
 local heiko = require("heiko")
 local words = require("words")
 local ui = heiko.ui
@@ -24,13 +24,12 @@ return heiko.plugin {
 				model.counted = (model.counted or 0) + 1
 				return { path = args.path, words = n }
 			end,
-			-- A card draws `{ call, result }`, and may not await.
-			card = function(input)
-				local result = input.result
-				return ui.row({
-					ui.mono(result.path),
-					ui.badge(tostring(result.words) .. " words", result.words > 1000 and "warn" or "neutral"),
-				})
+			-- The line's subject while the call runs.
+			subject = "path",
+			-- A step reads `{ call, result }` once the call ends, and may not
+			-- await; heiko draws its line (ADR 0064).
+			step = function(input)
+				return { subject = input.result.path, receipt = { ui.receipt.count(input.result.words, "word") } }
 			end,
 		},
 	},

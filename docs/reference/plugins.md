@@ -600,20 +600,22 @@ heiko-luau-plugins the plugins repository.
   over the offset, a click carrying out its action with its arguments
   and the choice's `value` (`ui.segments(choices, picked, action,
   args)`, a choice a string or `{ label, value }`).
-  A tool call's part of the tree is still called its card (`AtCard`,
-  `CardView`, a Luau tool's `card`): it draws as a line of the
-  transcript, with its body under it when open. A Luau plugin's view
-  draws on a call's line with `calls[call_id] = { head, label, badge,
-  body }`. A `head` that is an empty stack (`ui.stack({})`) takes the
+  A tool call is a step on the spine (ADR 0060, ADR 0064): the tool's
+  plugin gives a `Step` (`points::CARD`, a Luau tool's `step`) with its
+  `subject`, its `receipt` (counts, a diff's `+N −M`, stamps or a
+  measure) and its `body`: one of the forms the host draws, folds and
+  cuts short with `+ N more` (`Code`, `Matches`, `Diff`, `Names`,
+  `Output`, `Record`), or a `Tree` the plugin draws itself for a body
+  the person works in. The host draws the verb, the square, the
+  number and the folding. A Luau plugin's view lays the same fields
+  over a call's step, live, with `calls[call_id] = { subject, receipt,
+  action, waits, line }` (`heiko-todo`'s receipt that says an issue was
+  undone, and its undo on the issue's last call), and draws `badge`
+  beside any call's line and `body` under it. `line = false` takes the
   line away: only the `body` shows, a note in the call's place, and
   with no `body` the call draws nothing at all, nor does reasoning
   without words right before it (`heiko-todo`'s calls that set a run's
-  steps, which show over the composer instead). A `label` is the call's
-  receipt (`heiko-todo` gives each call about an issue the run filed
-  the issue's id, and the last of them its undo as a `badge`). With
-  `folds = true`
-  the `body` is closed under the line until the person clicks it
-  (`heiko-skills`' line of a loaded skill). A call that was
+  steps, which show over the composer instead). A call that was
   refused, flagged, dropped or given a badge keeps its line. A
   button, a switch, an input's Enter or a key in one of its trees
   names one of the plugin's actions, which the interface hands to
@@ -907,11 +909,19 @@ app), and every hook is `(input, model, env)`: `input` what it is given
 (`nil` for a job's `run`, `repo_data` and `app`), `model` the model
 itself, changed in place, and `env` the run's `run`, `now`, `settings`,
 `models` and a command's `drafts`. `view` is `(model, env)`, a tool's
-`card` `(input, model, env)` with `input = { call, result }`, and
+`step` `(input, model, env)` with `input = { call, result }`, and
 `settings.view` `(settings, model, env)`: each draws a frozen copy of the
-model and cannot await. A tool's table may say what it does with `kind`:
-`look`, `search`, `change`, `run`, `reach` or `people`. The kind colors
-the tool's name in the chat (ADR 0060), and any other value is an error.
+model and cannot await. A tool's `step` runs once, when its call ends,
+and is kept with the result; it returns `{ subject, receipt, body,
+action }`, the receipt's parts from `ui.receipt` (`count`, `diff`,
+`stamp`, `measure`) and the body from `ui.form` (`code`, `matches`,
+`diff`, `names`, `output`, `record`, `tree`). A tool whose step needs
+more than the model reads returns `heiko.reply(text, data)`: the model
+reads `text`, the step `data` as `input.result`. A tool's table may say
+what it does with `kind`: `look`, `search`, `change`, `run`, `reach` or
+`people`, and with `subject` the argument a call is about, which its
+line shows while it runs. The kind colors the tool's name in the chat
+(ADR 0060), and any other value is an error.
 
 A hook reaches nothing itself. Every effect is a command of `heiko.cmd`:
 reads and waits are awaited, `local v = heiko.await(cmd.store.get(k))`

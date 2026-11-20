@@ -115,8 +115,9 @@ return heiko.plugin({
 				required = { "name" },
 				additionalProperties = false,
 			},
+			subject = "name",
 			-- A listed skill's instructions, as its SKILL.md has them now.
-			call = function(args, model, env)
+			call = function(args, model)
 				local name = tostring(args.name or "")
 				local skill = (model.skills or {})[name]
 				if skill == nil then
@@ -132,44 +133,25 @@ return heiko.plugin({
 				local file = skill.dir .. "/" .. scan.SKILL_FILE
 				local text = heiko.await(cmd.files.read(file))
 				local front = heiko.await(cmd.files.frontmatter(file))
-				local body = front.body or text
-				local instructions = heiko.text.trim(body)
-				-- Read after the awaits: another call may have loaded one meanwhile.
-				model.loaded = model.loaded or {}
-				model.loaded[env.run.call] = {
-					name = name,
-					description = skill.description,
-					file = file,
-					instructions = instructions,
+				local instructions = heiko.text.trim(front.body or text)
+				return heiko.reply(
+					"Skill " .. name .. ". Its folder, where the files it names are: " .. skill.dir .. "\n\n" .. instructions,
+					{ name = name, instructions = instructions }
+				)
+			end,
+			-- Which skill, and how long it is; a click opens what the model
+			-- read: its instructions as written.
+			step = function(input)
+				local loaded = input.result
+				local _, breaks = string.gsub(loaded.instructions, "\n", "")
+				return {
+					subject = loaded.name,
+					receipt = { ui.receipt.count(breaks + 1, "line") },
+					body = ui.form.code("markdown", loaded.instructions),
 				}
-				return "Skill "
-					.. name
-					.. ". Its folder, where the files it names are: "
-					.. skill.dir
-					.. "\n\n"
-					.. instructions
 			end,
 		},
 	},
-
-	-- Each loaded skill's line: which, and what it is for. A click opens
-	-- what the model read: its instructions as written.
-	view = function(model)
-		local calls = {}
-		for call, loaded in pairs(model.loaded or {}) do
-			local _, breaks = string.gsub(loaded.instructions, "\n", "")
-			calls[call] = {
-				head = ui.line({ ui.mono(loaded.name), ui.toned(loaded.description, "neutral") }),
-				label = breaks == 0 and "1 line" or ((breaks + 1) .. " lines"),
-				body = ui.code("markdown", loaded.instructions),
-				folds = true,
-			}
-		end
-		if next(calls) == nil then
-			return {}
-		end
-		return { calls = calls }
-	end,
 
 	-- What the folders hold, for the sidebar, the page and the commands:
 	-- how many skills, and a badge for the folders that are not one.

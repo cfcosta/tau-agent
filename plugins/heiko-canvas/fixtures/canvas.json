@@ -135,11 +135,13 @@
           ],
           "piece": "stack"
         },
-        "head": {
-          "piece": "mono",
-          "text": "document 2 · Canvas plan"
-        },
-        "label": "revision 2 · 72 words"
+        "receipt": [
+          {
+            "part": "measure",
+            "text": "revision 2 · 72 words"
+          }
+        ],
+        "subject": "document 2 · Canvas plan"
       },
       "canvas-show": {
         "body": {
@@ -172,11 +174,13 @@
           ],
           "piece": "stack"
         },
-        "head": {
-          "piece": "mono",
-          "text": "image 1 · Retry latency"
-        },
-        "label": "1200×640 PNG"
+        "receipt": [
+          {
+            "part": "measure",
+            "text": "1200×640 PNG"
+          }
+        ],
+        "subject": "image 1 · Retry latency"
       },
       "canvas-write": {
         "body": {
@@ -224,11 +228,13 @@
           ],
           "piece": "stack"
         },
-        "head": {
-          "piece": "mono",
-          "text": "document 2 · Canvas plan"
-        },
-        "label": "revision 1 · 64 words"
+        "receipt": [
+          {
+            "part": "measure",
+            "text": "revision 1 · 64 words"
+          }
+        ],
+        "subject": "document 2 · Canvas plan"
       }
     },
     "pane": {

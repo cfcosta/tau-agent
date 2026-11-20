@@ -94,7 +94,7 @@
         ],
         "type": "object"
       },
-      "card": false,
+      "step": false,
       "kind": "change"
     },
     {
@@ -125,7 +125,7 @@
         ],
         "type": "object"
       },
-      "card": false,
+      "step": false,
       "kind": "change"
     },
     {
@@ -143,7 +143,7 @@
         ],
         "type": "object"
       },
-      "card": false,
+      "step": false,
       "kind": "look"
     },
     {
@@ -166,7 +166,7 @@
         ],
         "type": "object"
       },
-      "card": false,
+      "step": false,
       "kind": "search"
     },
     {
@@ -240,7 +240,7 @@
         ],
         "type": "object"
       },
-      "card": false,
+      "step": false,
       "kind": "change"
     }
   ],

@@ -36,7 +36,8 @@
         ],
         "type": "object"
       },
-      "card": false,
+      "step": true,
+      "subject": "name",
       "kind": "look"
     }
   ],
@@ -55,7 +56,7 @@
     "repo_data": false,
     "recover": false,
     "run_end": false,
-    "view": true,
+    "view": false,
     "settings_view": false,
     "app": true,
     "page": true,

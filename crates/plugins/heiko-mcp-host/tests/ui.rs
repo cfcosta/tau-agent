@@ -70,6 +70,7 @@ use heiko_ui_plugin::{
     UiPlugin as _,
     ViewCx,
     points::{AtCard, AtRepo, AtRun},
+    step::{Body, Receipt},
     tree,
 };
 
@@ -1588,23 +1589,26 @@ fn at_card(tool: &str, data: CallData) -> AtCard {
     }
 }
 
-/// A call's card names its server and tool and their hints while it
+/// A call's step names its server and tool and their hints while it
 /// runs, from the repository's servers, and once it ended, from its
-/// details; it shows the structured result when there is one, else the
-/// text, and goes red when the call failed. It never folds: its body
-/// is there once the call returned something.
+/// details; its body is what it sent until it returns, then the
+/// structured result when there is one, else the text; it goes red when
+/// the call failed.
 #[test]
 fn the_card_shows_the_server_and_the_result() {
     let repos = BTreeMap::from([("r".to_owned(), servers())]);
     let draw = |at: AtCard| {
         with_view(&repos, &BTreeMap::new(), None, false, |view| {
             card::card(&at, view).map(|card| {
-                (
-                    card.failed,
-                    card.folds,
-                    card.body.is_some(),
-                    card.edge.is_some(),
-                )
+                let form = match card.body {
+                    Some(Body::Record { .. }) => "record",
+                    Some(Body::Code { .. }) => "code",
+                    Some(_) => "other",
+                    None => "none",
+                };
+                let stamps: Vec<String> =
+                    card.receipt.iter().map(Receipt::text).collect();
+                (card.failed, card.subject, form, stamps)
             })
         })
     };
@@ -1615,7 +1619,12 @@ fn the_card_shows_the_server_and_the_result() {
     };
     assert_eq!(
         draw(at_card("mcp__git__push", running.clone())),
-        Some((None, false, false, false))
+        Some((
+            None,
+            Some("git · push".into()),
+            "record",
+            vec!["destructive".into(), "open world".into()]
+        ))
     );
     let listed = card::shown(
         &running,
@@ -1650,7 +1659,12 @@ fn the_card_shows_the_server_and_the_result() {
     assert_eq!(shown.text, None);
     assert_eq!(
         draw(at_card("mcp__git__status", done)),
-        Some((None, false, true, false))
+        Some((
+            None,
+            Some("git · status".into()),
+            "code",
+            vec!["read-only".into()]
+        ))
     );
 
     let mut failed = running;
@@ -1670,9 +1684,9 @@ fn the_card_shows_the_server_and_the_result() {
         draw(at_card("mcp__git__push", failed)),
         Some((
             Some("MCP tool git/push returned an error".into()),
-            false,
-            true,
-            true
+            Some("git · push".into()),
+            "code",
+            Vec::new()
         ))
     );
 }

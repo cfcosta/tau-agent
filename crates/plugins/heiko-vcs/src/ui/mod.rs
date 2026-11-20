@@ -25,7 +25,8 @@ use heiko_ui_plugin::{
     Manifest,
     UiPlugin,
     ViewCx,
-    points::{self, AtCard, CardView},
+    points::{self, AtCard},
+    step::{Body, Receipt, Step},
     tree::{Ink, Kind, Node, SquareLook, Tone, open_key},
     vcs::{LAND, spawned},
 };
@@ -177,27 +178,6 @@ pub(crate) fn quiet(text: impl Into<String>) -> Node {
     }
 }
 
-/// A diffstat's five squares: green by the share of lines added, red by
-/// the share removed.
-pub(crate) fn diffstat(added: usize, removed: usize) -> Node {
-    use heiko_ui_kit::diff::{SQUARES, squares};
-    let (green, red) = squares(added, removed);
-    Node::row(
-        [
-            (green, Tone::Good),
-            (red, Tone::Bad),
-            (SQUARES - green - red, Tone::Neutral),
-        ]
-        .into_iter()
-        .filter(|(count, _)| *count > 0)
-        .map(|(count, tone)| Node::Toned {
-            text: "■".repeat(count),
-            tone,
-            mono: true,
-        }),
-    )
-}
-
 /// The files a card lists before it says how many more there are.
 pub(crate) const FILES_PEEK: usize = 12;
 
@@ -345,8 +325,17 @@ impl UiPlugin for VcsUi {
     }
 }
 
-/// A card of one of its tools.
-fn card(at: &AtCard, view: &mut ViewCx<'_, VcsUi>) -> Option<CardView> {
+/// A body the person works in: picks, opens and links, drawn here.
+fn tree(node: Node) -> Option<Body> {
+    Some(Body::Tree {
+        node,
+        folds: false,
+        inset: false,
+    })
+}
+
+/// A call to one of its tools, as a step.
+fn card(at: &AtCard, view: &mut ViewCx<'_, VcsUi>) -> Option<Step> {
     let card = Card {
         run: at.run.id.clone(),
         call_id: at.call_id.clone(),
@@ -357,40 +346,40 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, VcsUi>) -> Option<CardView> {
         .ui_value(&card.pick_key())
         .and_then(Value::as_str)
         .map(str::to_owned);
+    let said = |text: String| vec![Receipt::measure(text)];
     match at.tool.as_str() {
         details::SPAWN => {
             let child = spawned(data)?;
-            Some(CardView {
-                shape: Some(Node::Stamp {
-                    label: "started".into(),
-                    tone: Ink::Good,
-                }),
-                body: Some(open_child(&child)),
-                ..CardView::default()
+            Some(Step {
+                receipt: vec![Receipt::stamp("started", Ink::Good)],
+                body: tree(open_child(&child)),
+                ..Step::default()
             })
         }
         details::COMMIT => {
             let commit = details(data).and_then(commit_card::Commit::parse)?;
-            Some(CardView {
-                head: Some(commit_card::summary(&commit)),
-                label: Some(commit.label()),
-                body: Some(commit_card::body(&commit)),
-                ..CardView::default()
+            Some(Step {
+                subject: Some(commit_card::summary(&commit)),
+                receipt: said(commit.label()),
+                body: tree(commit_card::body(&commit)),
+                ..Step::default()
             })
         }
         change_status::TOOL => {
             let status = details(data).and_then(ChangeStatus::parse)?;
-            Some(CardView {
-                head: Some(status_card::summary(&status)),
-                label: Some(status.summary()),
-                edge: status_card::edge(&status),
-                body: status_card::body(&status),
-                ..CardView::default()
+            Some(Step {
+                subject: Some(status_card::summary(&status)),
+                receipt: status_card::warning(&status)
+                    .into_iter()
+                    .chain([Receipt::measure(status.summary())])
+                    .collect(),
+                body: status_card::body(&status).and_then(tree),
+                ..Step::default()
             })
         }
         change_diff::DIFF_TOOL | change_diff::SHOW_TOOL => {
             let diff = details(data).and_then(ChangeDiff::parse)?;
-            let (head, body) = if at.tool == change_diff::SHOW_TOOL {
+            let (subject, body) = if at.tool == change_diff::SHOW_TOOL {
                 (
                     diff_card::commit_summary(&diff),
                     diff_card::commit_body(&diff),
@@ -406,46 +395,52 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, VcsUi>) -> Option<CardView> {
                     diff_card::files_body(&card, &diff, &open),
                 )
             };
-            Some(CardView {
-                head: Some(head),
-                label: Some(diff.stat()),
-                shape: Some(diffstat(diff.added(), diff.removed())),
-                body: Some(body),
-                ..CardView::default()
+            Some(Step {
+                subject: Some(subject),
+                receipt: vec![Receipt::Diff {
+                    added: diff.added() as u64,
+                    removed: diff.removed() as u64,
+                    new: false,
+                }],
+                body: tree(body),
+                ..Step::default()
             })
         }
-        DESCRIBE | NEW => Some(CardView {
-            label: Some(working_copy(details(data)?)?.short_id().to_owned()),
-            ..CardView::default()
+        DESCRIBE | NEW => Some(Step {
+            receipt: said(working_copy(details(data)?)?.short_id().to_owned()),
+            ..Step::default()
         }),
         RESTORE => {
             let restored = details(data)?.get("restored")?.as_array()?.len();
-            Some(CardView {
-                label: Some(match restored {
-                    0 => "nothing to restore".into(),
-                    n => format!("{} restored", count(n, "file")),
-                }),
-                ..CardView::default()
+            Some(Step {
+                receipt: vec![match restored {
+                    0 => Receipt::measure("nothing to restore"),
+                    n => Receipt::measure(format!(
+                        "{} restored",
+                        heiko_ui_plugin::step::counted(n, "file")
+                    )),
+                }],
+                ..Step::default()
             })
         }
         RESOLVE => {
             let details = details(data)?;
             let resolved = details.get("resolved")?.as_array()?.len();
             let left = working_copy(details)?.info.conflict;
-            Some(CardView {
-                label: Some(if left {
+            Some(Step {
+                receipt: said(if left {
                     format!("{resolved} resolved · conflicts left")
                 } else {
                     "0 conflicts left".into()
                 }),
-                ..CardView::default()
+                ..Step::default()
             })
         }
         UNDO => {
             let tool = details(data)?.get("tool")?.as_str()?;
-            Some(CardView {
-                label: Some(format!("undid: {tool}")),
-                ..CardView::default()
+            Some(Step {
+                receipt: said(format!("undid: {tool}")),
+                ..Step::default()
             })
         }
         LAND => {
@@ -453,48 +448,20 @@ fn card(at: &AtCard, view: &mut ViewCx<'_, VcsUi>) -> Option<CardView> {
                 .get("proposed")
                 .and_then(Value::as_bool)
                 .filter(|proposed| *proposed)?;
-            Some(CardView {
-                shape: Some(Node::Stamp {
-                    label: "proposed".into(),
-                    tone: Ink::Warn,
-                }),
-                ..CardView::default()
+            Some(Step {
+                receipt: vec![Receipt::stamp("proposed", Ink::Warn)],
+                ..Step::default()
             })
         }
         change_log::TOOL => {
             let log = details(data).and_then(ChangeLog::parse)?;
             let body = log_card::body(&card, &log, picked.as_deref());
-            Some(CardView {
-                label: Some(log.summary()),
-                body: Some(body),
-                ..CardView::default()
+            Some(Step {
+                receipt: said(log.summary()),
+                body: tree(body),
+                ..Step::default()
             })
         }
         _ => None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use heiko_ui_kit::diff::SQUARES;
-
-    use super::*;
-
-    /// A diffstat always has five squares, however the lines split.
-    #[test]
-    fn a_diffstat_has_five_squares() {
-        for (added, removed) in [(0, 0), (3, 1), (38, 0), (0, 2), (1, 900)] {
-            let Node::Row { children } = diffstat(added, removed) else {
-                panic!("a row");
-            };
-            let squares: usize = children
-                .iter()
-                .map(|node| match node {
-                    Node::Toned { text, .. } => text.chars().count(),
-                    other => panic!("squares: {other:?}"),
-                })
-                .sum();
-            assert_eq!(squares, SQUARES);
-        }
     }
 }

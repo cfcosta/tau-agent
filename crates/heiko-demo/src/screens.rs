@@ -1942,7 +1942,7 @@ fn watcher(
 }
 
 /// heiko-agent's main chat with a `skill` call: release-notes loaded, as
-/// the line heiko-skills' fixture draws; or a skill not there.
+/// the step heiko-skills' fixture gives; or a skill not there.
 fn skill(workspace: &mut Workspace, found: bool, cx: &mut Context<Workspace>) {
     let run = run_id();
     let call = "call_skill".to_owned();
@@ -1970,32 +1970,29 @@ fn skill(workspace: &mut Workspace, found: bool, cx: &mut Context<Workspace>) {
          release-notes."
             .to_owned()
     };
+    // A loaded skill's step is kept with its result, as heiko-skills'
+    // fixture gives it.
+    let details = found.then(|| {
+        serde_json::json!({
+            "plugin": heiko_luau_plugins::names::SKILLS,
+            "value": fixture["value"],
+            "step": fixture["step"],
+            "kind": "look",
+        })
+    });
     workspace.apply(
         HostUpdate::Event(RunEvent::ToolEnd {
             run: run.clone(),
             call_id: call.clone(),
-            output: std::sync::Arc::new(heiko_agent::tool::ToolOutput::text(
-                text,
-            )),
+            output: std::sync::Arc::new(heiko_agent::tool::ToolOutput {
+                details,
+                ..heiko_agent::tool::ToolOutput::text(text)
+            }),
             is_error: !found,
             parent: None,
         }),
         cx,
     );
-    if found {
-        for body in
-            crate::luau_records_of(heiko_luau_plugins::names::SKILLS, &fixture)
-        {
-            workspace.apply(
-                HostUpdate::PluginFold {
-                    run: run.clone(),
-                    plugin: heiko_luau_plugins::NAME.into(),
-                    body,
-                },
-                cx,
-            );
-        }
-    }
 }
 
 /// heiko-agent's main chat after it filed an issue, claimed it and wrote

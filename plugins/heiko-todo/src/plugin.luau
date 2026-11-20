@@ -256,7 +256,7 @@ local function held(store, run)
 	return issues.held_by(store, run)[1]
 end
 
--- A change's answer: what the model reads, the line its card shows, and
+-- A change's answer: what the model reads, the line its step shows, and
 -- what undoes it.
 local function changed(store, issue, line, before)
 	bump(store)
@@ -327,14 +327,14 @@ local function object(properties, required)
 	return { type = "object", properties = properties, required = array(required or {}), additionalProperties = false }
 end
 
--- A change's card: its line, and an undo.
-local function change_card(input, model, env)
+-- A change's step: the issue's title, what the call did, and an undo.
+local function change_step(input)
 	local result = input.result
-	local line = ui.text(result.line or "")
-	if not result.undo then
-		return line
-	end
-	return ui.row({ line, ui.button("undo", "undo", result.undo, "secondary") })
+	return {
+		subject = result.issue and result.issue.title or result.line,
+		receipt = { ui.receipt.measure(result.line or "") },
+		action = result.undo and ui.button("undo", "undo", result.undo, "secondary") or nil,
+	}
 end
 
 -- The run's note of the issue `id`, if it has one. A run's notes
@@ -377,8 +377,9 @@ local function note_calls(note, calls)
 	for at, call in ipairs(note.calls) do
 		local last = at == #note.calls
 		calls[call] = {
-			label = (last and undone) and (note.id .. " · undone") or note.id,
-			badge = (last and note.undo) and ui.button("undo", "undo", note.undo, "secondary") or nil,
+			receipt = { ui.receipt.measure((last and undone) and (note.id .. " · undone") or note.id) },
+			-- Only the last call keeps an undo.
+			action = (last and note.undo) and ui.button("undo", "undo", note.undo, "secondary") or false,
 		}
 	end
 end
@@ -409,7 +410,7 @@ local function folded(model)
 	end
 	for _, call in ipairs(model.step_calls or {}) do
 		calls = calls or {}
-		calls[call] = { head = ui.stack({}) }
+		calls[call] = { line = false }
 	end
 	for _, done in ipairs(model.finished or {}) do
 		calls[done.call].body = finished_line(done.call, done.steps)
@@ -417,21 +418,24 @@ local function folded(model)
 	return calls
 end
 
--- A read's card: the issues it found.
-local function read_card(input, model, env)
+-- A read's step: how many issues it found, and them.
+local function read_step(input)
 	local result = input.result
 	local found = result.issues or result.ready or result.blocked or {}
 	if result.issue and not result.line then
 		found = { result.issue }
 	end
 	if #found == 0 then
-		return ui.text("No issues.")
+		return { receipt = { ui.receipt.measure("no issues") } }
 	end
 	local rows = {}
 	for _, issue in ipairs(found) do
 		table.insert(rows, { issue.id, issue.priority or "", issue.title or "", issue.status or "" })
 	end
-	return ui.table({ "Id", "P", "Title", "Status" }, rows)
+	return {
+		receipt = { ui.receipt.count(#found, "issue") },
+		body = ui.form.tree(ui.table({ "Id", "P", "Title", "Status" }, rows), { folds = true }),
+	}
 end
 
 local tools = {
@@ -459,7 +463,7 @@ local tools = {
 			end
 			return { ready = briefs(all, graph.ready(all, heiko.now(env), filter)) }
 		end,
-		card = read_card,
+		step = read_step,
 	},
 	todo_list = {
 		kind = "look",
@@ -501,7 +505,7 @@ local tools = {
 			end
 			return { issues = out }
 		end,
-		card = read_card,
+		step = read_step,
 	},
 	todo_show = {
 		kind = "look",
@@ -511,7 +515,8 @@ local tools = {
 			local all = issues.all(store_of())
 			return { issue = whole(all, issues.find(all, args.id), heiko.now(env)) }
 		end,
-		card = read_card,
+		step = read_step,
+		subject = "id",
 	},
 	todo_search = {
 		kind = "search",
@@ -521,7 +526,8 @@ local tools = {
 			local all = issues.all(store_of())
 			return { issues = briefs(all, issues.search(all, args.text)) }
 		end,
-		card = read_card,
+		step = read_step,
+		subject = "text",
 	},
 	todo_create = {
 		kind = "change",
@@ -550,7 +556,8 @@ local tools = {
 			table.insert(model.notes, { id = issue.id, title = issue.title, said = array({ "filed" }), calls = array({ env.run.call }), undo = undo })
 			return { issue = brief(issue), line = "filed " .. issue.id .. ": " .. issue.title, undo = undo }
 		end,
-		card = change_card,
+		step = change_step,
+		subject = "title",
 	},
 	todo_update = {
 		kind = "change",
@@ -582,7 +589,8 @@ local tools = {
 			end
 			return changed(store, issue, line, before)
 		end,
-		card = change_card,
+		step = change_step,
+		subject = "id",
 	},
 	todo_claim = {
 		kind = "change",
@@ -599,7 +607,8 @@ local tools = {
 			bump(store)
 			return { issue = brief(issue), line = "claimed " .. issue.id }
 		end,
-		card = change_card,
+		step = change_step,
+		subject = "id",
 	},
 	todo_check = {
 		kind = "change",
@@ -612,7 +621,8 @@ local tools = {
 			local verb = args.done == false and "unmet" or "met"
 			return changed(store, issue, issue.id .. ": criterion " .. args.criterion .. " " .. verb, before)
 		end,
-		card = change_card,
+		step = change_step,
+		subject = "id",
 	},
 	todo_link = {
 		kind = "change",
@@ -631,7 +641,8 @@ local tools = {
 				or (args.kind == "blocks" and (args.on .. " blocks " .. args.id) or (args.id .. " " .. args.kind .. " " .. args.on))
 			return changed(store, issue, line, before)
 		end,
-		card = change_card,
+		step = change_step,
+		subject = "id",
 	},
 	todo_comment = {
 		kind = "change",
@@ -643,7 +654,8 @@ local tools = {
 			bump(store)
 			return { issue = brief(issue), line = "commented on " .. issue.id }
 		end,
-		card = change_card,
+		step = change_step,
+		subject = "id",
 	},
 	todo_close = {
 		kind = "change",
@@ -673,7 +685,8 @@ local tools = {
 			end
 			return result
 		end,
-		card = change_card,
+		step = change_step,
+		subject = "id",
 	},
 	todo_defer = {
 		kind = "change",
@@ -688,7 +701,8 @@ local tools = {
 			fold(model, env, issue, "deferred", result.undo)
 			return result
 		end,
-		card = change_card,
+		step = change_step,
+		subject = "id",
 	},
 	todo_dispatch = {
 		kind = "people",

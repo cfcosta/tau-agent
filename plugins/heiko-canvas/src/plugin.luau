@@ -285,8 +285,8 @@ local function card(of, item, revision, env)
 		body = ui.stack({ ui.stack(canvas.excerpt(content.text, EXCERPT_LINES)), open })
 	end
 	return {
-		head = ui.mono(canvas.kind(item) .. " " .. item.id .. " · " .. item.title),
-		label = label,
+		subject = canvas.kind(item) .. " " .. item.id .. " · " .. item.title,
+		receipt = { ui.receipt.measure(label) },
 		body = body,
 	}
 end

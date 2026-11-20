@@ -39,7 +39,8 @@
         ],
         "type": "object"
       },
-      "card": true,
+      "step": true,
+      "subject": "id",
       "kind": "change"
     },
     {
@@ -58,7 +59,8 @@
         ],
         "type": "object"
       },
-      "card": true,
+      "step": true,
+      "subject": "id",
       "kind": "change"
     },
     {
@@ -83,7 +85,8 @@
         ],
         "type": "object"
       },
-      "card": true,
+      "step": true,
+      "subject": "id",
       "kind": "change"
     },
     {
@@ -106,7 +109,8 @@
         ],
         "type": "object"
       },
-      "card": true,
+      "step": true,
+      "subject": "id",
       "kind": "change"
     },
     {
@@ -171,7 +175,8 @@
         ],
         "type": "object"
       },
-      "card": true,
+      "step": true,
+      "subject": "title",
       "kind": "change"
     },
     {
@@ -193,7 +198,8 @@
         ],
         "type": "object"
       },
-      "card": true,
+      "step": true,
+      "subject": "id",
       "kind": "change"
     },
     {
@@ -216,7 +222,7 @@
         ],
         "type": "object"
       },
-      "card": false,
+      "step": false,
       "kind": "people"
     },
     {
@@ -253,7 +259,8 @@
         ],
         "type": "object"
       },
-      "card": true,
+      "step": true,
+      "subject": "id",
       "kind": "change"
     },
     {
@@ -307,7 +314,7 @@
         "required": [],
         "type": "object"
       },
-      "card": true,
+      "step": true,
       "kind": "look"
     },
     {
@@ -348,7 +355,7 @@
         "required": [],
         "type": "object"
       },
-      "card": true,
+      "step": true,
       "kind": "look"
     },
     {
@@ -366,7 +373,8 @@
         ],
         "type": "object"
       },
-      "card": true,
+      "step": true,
+      "subject": "text",
       "kind": "search"
     },
     {
@@ -385,7 +393,8 @@
         ],
         "type": "object"
       },
-      "card": true,
+      "step": true,
+      "subject": "id",
       "kind": "look"
     },
     {
@@ -424,7 +433,7 @@
         ],
         "type": "object"
       },
-      "card": false,
+      "step": false,
       "kind": "change"
     },
     {
@@ -497,7 +506,8 @@
         ],
         "type": "object"
       },
-      "card": true,
+      "step": true,
+      "subject": "id",
       "kind": "change"
     }
   ],

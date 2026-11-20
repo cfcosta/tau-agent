@@ -88,7 +88,7 @@
         ],
         "type": "object"
       },
-      "card": false,
+      "step": false,
       "kind": "people",
       "model_only": true
     }

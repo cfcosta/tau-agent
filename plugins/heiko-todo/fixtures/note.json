@@ -198,10 +198,16 @@
     },
     "calls": {
       "call_todo_1": {
-        "label": "td-0cad"
+        "action": false,
+        "receipt": [
+          {
+            "part": "measure",
+            "text": "td-0cad"
+          }
+        ]
       },
       "call_todo_2": {
-        "badge": {
+        "action": {
           "action": "undo",
           "args": {
             "forget": "td-0cad"
@@ -210,13 +216,15 @@
           "label": "undo",
           "piece": "button"
         },
-        "label": "td-0cad"
+        "receipt": [
+          {
+            "part": "measure",
+            "text": "td-0cad"
+          }
+        ]
       },
       "call_todo_3": {
-        "head": {
-          "children": [],
-          "piece": "stack"
-        }
+        "line": false
       }
     },
     "row": {

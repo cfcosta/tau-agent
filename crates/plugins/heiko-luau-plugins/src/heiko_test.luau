@@ -848,11 +848,17 @@ function test.run(spec)
 		return call_in({ drafts = args.drafts }, need((plugin.actions or {})[name], "action " .. name), args)
 	end
 	-- `call` is the call's id, `ctx.run.call`: "call_1" when not given.
+	-- What the tool `name` answers: for `heiko.reply(text, data)`, the
+	-- text the model reads and the data its step reads.
 	function run:tool(name, args, call_id)
 		local tool = need((plugin.tools or {})[name], "tool " .. name)
 		local of = table.clone(run.data.run)
 		of.call = call_id or "call_1"
-		return call_in({ run = of }, tool.call, args or {})
+		local value = call_in({ run = of }, tool.call, args or {})
+		if type(value) == "table" and type(value.heiko_reply) == "table" then
+			return value.heiko_reply.text, value.heiko_reply.data
+		end
+		return value
 	end
 	-- Moves the run's clock to `iso`.
 	function run:at(iso)
@@ -910,10 +916,16 @@ function test.run(spec)
 	function run:recover(input)
 		return call(need(plugin.recover, "recover"), input)
 	end
-	function run:card(name, c, result)
+	-- The step the tool `name` gives a call with arguments `c` that
+	-- answered `result` (ADR 0064): what `heiko.reply` gave its step, or
+	-- the result itself.
+	function run:step(name, c, result)
 		local tool = need((plugin.tools or {})[name], "tool " .. name)
-		local card = need(tool.card, "card for " .. name)
-		return draw(card, { call = c, result = result })
+		local step = need(tool.step, "step for " .. name)
+		if type(result) == "table" and type(result.heiko_reply) == "table" then
+			result = result.heiko_reply.data
+		end
+		return draw(step, { call = c, result = result })
 	end
 	return run
 end

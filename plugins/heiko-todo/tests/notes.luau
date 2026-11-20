@@ -3,19 +3,21 @@
 local heiko = require("heiko")
 local t = heiko.test
 
--- What a call folded away draws: a head that is an empty stack, and no
--- body.
+-- What a call folded away draws: no line, and no body.
 local function away(call)
-	t.equal(call.head.piece, "stack")
-	t.equal(#call.head.children, 0)
+	t.equal(call.line, false)
 	t.equal(call.body, nil)
 end
 
 -- A step's receipt, and its undo when it has one.
 local function step(call)
-	t.equal(call.head, nil)
+	t.equal(call.line, nil)
 	t.equal(call.body, nil)
-	return call.label, call.badge
+	local undo = call.action
+	if undo == false then
+		undo = nil
+	end
+	return call.receipt[1].text, undo
 end
 
 t.case("an issue filed and claimed is a step a call with its id, the undo on the last; its steps are not there", function()
@@ -73,7 +75,7 @@ t.case("steps all done leave the composer, and one line where the last call is",
 	t.equal(view.band, nil)
 	away(view.calls.c1)
 	local line = view.calls.c2.body
-	t.equal(#view.calls.c2.head.children, 0)
+	t.equal(view.calls.c2.line, false)
 	t.equal({ line.piece, line.small, line.open }, { "section", true, false })
 	t.equal(line.lead[1].text, "2 steps")
 	t.equal(line.lead[2], heiko.ui.pips({ "good", "good" }))

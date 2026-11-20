@@ -245,9 +245,12 @@ pub struct ToolSpec {
     pub description: String,
     /// The JSON Schema of its arguments.
     pub parameters: Value,
-    /// It draws its own card.
+    /// It describes its calls as steps (ADR 0064).
     #[serde(default)]
-    pub card: bool,
+    pub step: bool,
+    /// The argument a call is about, which its line shows while it runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
     /// What it does, which colors its name (ADR 0060).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<heiko_ui_kit::theme::ToolKind>,

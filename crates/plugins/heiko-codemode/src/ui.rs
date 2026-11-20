@@ -35,7 +35,8 @@ use heiko_ui_plugin::{
     RunCx,
     UiPlugin,
     ViewCx,
-    points::{self, AtCard, AtRun, CardView},
+    points::{self, AtCard, AtRun},
+    step::{Body, Receipt, Step},
     tree::{KeyValue, Kind, Node, StepState, Tone, open_key},
 };
 use serde::{Deserialize, Serialize};
@@ -526,38 +527,25 @@ pub fn code_key(call_id: &str) -> String {
     format!("codemode-code-{call_id}")
 }
 
-/// The header's line, in place of the script: what it called, as
-/// `read ×4 · grep ×2`, and the link that opens the script (`code_open`
-/// says whether it is). `ended` is whether the script did.
-pub fn head(
-    call_id: &str,
-    calls: &Calls,
-    ended: bool,
-    code_open: bool,
-) -> Node {
-    let dim = |text: String| Node::Toned {
-        text,
-        tone: Tone::Neutral,
-        mono: true,
-    };
-    let mut line = Vec::new();
-    for (n, (name, count)) in counts(calls).into_iter().enumerate() {
-        if n > 0 {
-            line.push(dim("·".into()));
-        }
-        line.push(Node::Mono {
-            text: match count {
-                1 => name.to_owned(),
-                n => format!("{name} ×{n}"),
-            },
+/// The line's subject: what the script called, `read · grep ×2`.
+pub fn subject(calls: &Calls, ended: bool) -> String {
+    let mut parts = Vec::new();
+    for (name, count) in counts(calls) {
+        parts.push(match count {
+            1 => name.to_owned(),
+            n => format!("{name} ×{n}"),
         });
     }
-    // While it runs, the card's own state says so.
+    // While it runs, the step's own state says so.
     if calls.rows.is_empty() && ended {
-        line.push(dim("no calls".into()));
+        parts.push("no calls".into());
     }
-    line.push(Node::Spacer);
-    line.push(Node::Button {
+    parts.join(" · ")
+}
+
+/// The button at the line's end that shows the script, or hides it.
+pub fn code_button(call_id: &str, code_open: bool) -> Node {
+    Node::Button {
         label: if code_open { "hide code" } else { "code" }.into(),
         action: outline::OPEN.into(),
         args: json!({
@@ -569,8 +557,7 @@ pub fn head(
         size: Default::default(),
         wide: false,
         detail: None,
-    });
-    Node::row(line)
+    }
 }
 
 impl UiPlugin for CodemodeUi {
@@ -732,11 +719,8 @@ pub fn description(decide: bool) -> String {
     }
 }
 
-/// The `codemode` card.
-pub fn card(
-    at: &AtCard,
-    view: &mut ViewCx<'_, CodemodeUi>,
-) -> Option<CardView> {
+/// The `codemode` step.
+pub fn card(at: &AtCard, view: &mut ViewCx<'_, CodemodeUi>) -> Option<Step> {
     if at.tool != NAME {
         return None;
     }
@@ -752,7 +736,6 @@ pub fn card(
         .ui_value(&open_key(&code_key(&at.call_id)))
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let head = head(&at.call_id, &calls, data.result.is_some(), code_open);
     // An output item is open once clicked; a lone one from the start.
     let items = details.map(outline::items).unwrap_or_default();
     let open = |index: usize| {
@@ -770,21 +753,25 @@ pub fn card(
         details,
     );
     let label = label(&calls, details);
-    Some(CardView {
-        head: Some(head),
-        label: (!label.is_empty()).then_some(label),
+    Some(Step {
+        subject: Some(subject(&calls, data.result.is_some())),
+        receipt: (!label.is_empty())
+            .then(|| Receipt::measure(label))
+            .into_iter()
+            .collect(),
         failed: failed
             .as_ref()
             .map(|error| error.lines().next().unwrap_or_default().to_owned()),
-        edge: failed.as_ref().map(|_| theme::Tone::Danger),
-        shape: None,
-        body: Some(body),
         // Its calls stay open under its line; only the script is closed,
-        // behind the line's link.
-        folds: false,
-        inset: false,
+        // behind the line's button.
+        body: Some(Body::Tree {
+            node: body,
+            folds: false,
+            inset: false,
+        }),
+        action: Some(code_button(&at.call_id, code_open)),
         kind: Some(theme::ToolKind::Run),
-        waits: false,
+        ..Step::default()
     })
 }
 

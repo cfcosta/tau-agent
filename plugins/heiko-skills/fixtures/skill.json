@@ -1,56 +1,23 @@
 {
-  "state": {
-    "loaded": {
-      "call_skill": {
-        "description": "Writes release notes from the commits between two tags: groups by kind, leads with what users notice.",
-        "file": "~/.agents/skills/release-notes/SKILL.md",
-        "instructions": "Run scripts/commits.sh with the two tags, group what it lists, and lead with what users will notice.",
-        "name": "release-notes"
-      }
+  "step": {
+    "body": {
+      "first_line": null,
+      "form": "code",
+      "lang": "markdown",
+      "text": "Run scripts/commits.sh with the two tags, group what it lists, and lead with what users will notice."
     },
-    "order": [
-      "code-review",
-      "release-notes"
-    ],
-    "skills": {
-      "code-review": {
-        "description": "Reviews the current diff for correctness bugs, ranked by severity, with a failing input for each.",
-        "dir": "~/.agents/skills/code-review"
-      },
-      "release-notes": {
-        "description": "Writes release notes from the commits between two tags: groups by kind, leads with what users notice.",
-        "dir": "~/.agents/skills/release-notes"
+    "receipt": [
+      {
+        "n": 1,
+        "noun": "line",
+        "part": "count"
       }
-    }
+    ],
+    "subject": "release-notes"
   },
   "text": "Skill release-notes. Its folder, where the files it names are: ~/.agents/skills/release-notes\n\nRun scripts/commits.sh with the two tags, group what it lists, and lead with what users will notice.",
-  "view": {
-    "calls": {
-      "call_skill": {
-        "body": {
-          "first_line": null,
-          "lang": "markdown",
-          "piece": "code",
-          "text": "Run scripts/commits.sh with the two tags, group what it lists, and lead with what users will notice."
-        },
-        "folds": true,
-        "head": {
-          "children": [
-            {
-              "piece": "mono",
-              "text": "release-notes"
-            },
-            {
-              "mono": false,
-              "piece": "toned",
-              "text": "Writes release notes from the commits between two tags: groups by kind, leads with what users notice.",
-              "tone": "neutral"
-            }
-          ],
-          "piece": "line"
-        },
-        "label": "1 line"
-      }
-    }
+  "value": {
+    "instructions": "Run scripts/commits.sh with the two tags, group what it lists, and lead with what users will notice.",
+    "name": "release-notes"
   }
 }

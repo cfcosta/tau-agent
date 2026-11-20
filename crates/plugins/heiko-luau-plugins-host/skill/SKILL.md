@@ -70,7 +70,7 @@ return heiko.plugin {
            transcript = false, archive = false, chats = false,
            files = { "workspace" } },
   settings = { schema = { ... }, default = { ... }, view = function(settings, model, env) end },
-  tools = { name = { description, parameters, call, card } },
+  tools = { name = { description, parameters, kind, subject, call, step } },
   start = function(plan, model, env) end,
   before_tool = function(call, model, env) end,
   before_request = function(request, model, env) end,
@@ -103,8 +103,10 @@ return heiko.plugin {
 ```
 
 Every field is optional. `tools` adds tools the model can
-call, each with its arguments' JSON Schema, its `call` and, if it draws
-one, its `card`. A tool with `when = "on"` is offered only while the
+call, each with its arguments' JSON Schema, its `call` and, to say
+what a call did on its line, its `step`; `subject` names the argument a
+call is about, shown while it runs, and `kind` (look, search, change,
+run, reach or people) colors its name. A tool with `when = "on"` is offered only while the
 boolean setting `on` is on. One with `model_only = true` is the model's
 alone, never a script's: a tool whose call waits for the person
 (`heiko.ask`) should be, as a script's call ends with the script. In a
@@ -123,15 +125,29 @@ Every hook is a function of `(input, model, env)`:
   `models` and, in a command, `drafts` (below).
 
 A tool's `call` is `(args, model, env)`, and an action's too. Drawing is
-different: `view` is `(model, env)`, a tool's `card` is `(input, model,
+different: `view` is `(model, env)`, a tool's `step` is `(input, model,
 env)` with `input = { call, result }`, and `settings.view` is
 `(settings, model, env)`. Each draws from a frozen copy of the model,
 and none of them may await.
 
+A tool's `step` runs once, when its call ends, and heiko keeps it with
+the result and draws the line (ADR 0064): the tool's name, the
+`subject`, the `receipt` and, folded under it, the `body`. The receipt
+is a list of `ui.receipt.count(n, noun)` (`noun` in the singular),
+`ui.receipt.diff(added, removed, new)`, `ui.receipt.stamp(text, of)`
+and `ui.receipt.measure(text)`; the body is one of `ui.form.code(lang,
+text)`, `ui.form.matches(lines)`, `ui.form.diff(text, path)`,
+`ui.form.names(names, noun)`, `ui.form.output(lines)`,
+`ui.form.record({ { key, value } })`, or `ui.form.tree(piece, { folds
+})` for one the person works in. heiko cuts a long form short with
+`+ N more`. A tool whose step needs more than the model reads returns
+`heiko.reply(text, data)`: the model reads `text`, the step `data` as
+`input.result`.
+
 | Hook                | Given                                                                     | Returns                                                                       | Time   |
 | ------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------ |
 | tool `call`         | the arguments, as `parameters` describes                                  | a JSON value, or `error(message)`                                             | 60 s   |
-| tool `card`         | `{ call, result }`: the call's arguments and the result                   | a view piece, drawn on the call's card                                        | 200 ms |
+| tool `step`         | `{ call, result }`: the call's arguments and the result                   | `{ subject, receipt, body, action }`, kept with the result                    | 200 ms |
 | `start`             | `{ input, context, instructions, model, efforts, effort, prefix_tokens }` | `nil`, `heiko.start{ context, instructions, effort, input }` or `heiko.fail(why)` | 2 s    |
 | `before_tool`       | `{ id, name, args }`                                                      | `nil`, or `heiko.block(why)`                                                        | 2 s    |
 | `before_request`    | `{ model, effort, turn, messages, replies }`                              | `nil`, or `heiko.effort(level)`                                                 | 200 ms |
@@ -362,7 +378,7 @@ The commands, in `heiko.cmd`:
 It needs no `give`.
 
 `heiko.await` works anywhere in a hook's calls: in a module's function
-the hook calls too. It does not work in `view`, a `card` or
+the hook calls too. It does not work in `view`, a `step` or
 `settings.view`, nor in a coroutine the plugin makes itself.
 
 `model` is stored with the run: a resumed or forked run keeps it.
@@ -691,10 +707,12 @@ await. What it returns goes in these places:
   under its title in the sidebar; `tone` is `"good"`, `"warn"` or
   `"bad"`, `icon` one of the interface's icons, and `phone_line` the
   line on a phone, when it differs.
-- `calls`: `{ [call_id] = { head?, label?, badge?, body?, mark?, reason?, dropped?, cut? } }`,
-  pieces on a tool's card, its own or another's: `head` in place of its
-  arguments, `label` at the header's end, `badge` beside its title,
-  `body` under it, such as why a check flagged or blocked the call. `mark =
+- `calls`: `{ [call_id] = { subject?, receipt?, action?, waits?, line?, badge?, body?, mark?, reason?, dropped?, cut? } }`,
+  what a view says of a call, live. On its own tool's call, `subject`,
+  `receipt` and `action` replace its step's (`action = false` takes the
+  step's away), and `line = false` leaves the call no line. On any
+  call, `badge` sits beside its line and `body` under it, such as why a
+  check flagged or blocked the call. `mark =
 "blocked"` (with the `reason` the model got) or `"flagged"` marks the
   card so, as the phone and the run's review list show it. `dropped =
 "result"` or `"call"` shows that a rewrite cut its result or dropped
@@ -1089,7 +1107,8 @@ end)
 ```
 
 - `run:tool(name, args, call)` (`call` is `env.run.call`, `"call_1"`
-  when not given), `run:card(name, args, result)`,
+  when not given; for `heiko.reply(text, data)` it gives `text, data`),
+  `run:step(name, args, result)`,
   `run:settings_view(settings)`, `run:action(name, args)`,
   `run:start(plan)`, `run:before_tool(call)`,
   `run:before_request(request)`, `run:after_tool_result(result)`,
@@ -1272,7 +1291,7 @@ end)
 
 {{no-friday-deploys}}
 
-### A tool with a card, a module and a status line
+### A tool with a step, a module and a status line
 
 {{word-count}}
 

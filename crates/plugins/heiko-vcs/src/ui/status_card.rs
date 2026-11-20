@@ -4,25 +4,27 @@
 //! removes, after the files that hold conflict markers and the new ones
 //! left out for their size.
 
-use heiko_ui_kit::theme;
-use heiko_ui_plugin::tree::{Ink, Node, Tone};
+use heiko_ui_plugin::{
+    step::Receipt,
+    tree::{Ink, Node, Tone},
+};
 
 use super::{change_status::ChangeStatus, file_rows, quiet};
 
-/// The card's edge: red while a file holds conflict markers, amber
-/// while a file is left out, else none of its own.
-pub fn edge(status: &ChangeStatus) -> Option<theme::Tone> {
+/// A stamp on the line: red while a file holds conflict markers, amber
+/// while a file is left out, else none.
+pub fn warning(status: &ChangeStatus) -> Option<Receipt> {
     if !status.conflicts.is_empty() {
-        Some(theme::Tone::Danger)
+        Some(Receipt::stamp("conflicts", Ink::Bad))
     } else if !status.too_large.is_empty() {
-        Some(theme::Tone::Warn)
+        Some(Receipt::stamp("files left out", Ink::Warn))
     } else {
         None
     }
 }
 
 /// The header: `@ ourtwkkx on onvkmqwo`.
-pub fn summary(status: &ChangeStatus) -> Node {
+pub fn summary(status: &ChangeStatus) -> String {
     let parents = status
         .parents
         .iter()
@@ -33,7 +35,7 @@ pub fn summary(status: &ChangeStatus) -> Node {
     if !parents.is_empty() {
         text.push_str(&format!(" on {parents}"));
     }
-    Node::Mono { text }
+    text
 }
 
 /// What `@` holds: the conflicts its files do not list, the files left

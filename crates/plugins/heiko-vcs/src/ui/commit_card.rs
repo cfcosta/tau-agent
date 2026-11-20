@@ -95,10 +95,8 @@ impl Commit {
 }
 
 /// The card's head: the change's first line.
-pub fn summary(commit: &Commit) -> Node {
-    Node::Mono {
-        text: first_line(&commit.change),
-    }
+pub fn summary(commit: &Commit) -> String {
+    first_line(&commit.change)
 }
 
 /// A change's row on the line, and `under` it on a band, when there is

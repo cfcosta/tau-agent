@@ -164,10 +164,10 @@ t.case("each call's card shows its revision and opens it on the canvas", functio
 	r:tool("canvas_show", { path = "plot.png", title = "Plot" }, "c1")
 	r:tool("canvas_write", { title = "Plan", text = "# Plan\n\nOne two `three`." }, "c2")
 	local calls = r:view().calls
-	t.equal(calls.c1.head, { piece = "mono", text = "image 1 · Plot" })
-	t.equal(calls.c1.label, "12×8 PNG")
+	t.equal(calls.c1.subject, "image 1 · Plot")
+	t.equal(calls.c1.receipt, { heiko.ui.receipt.measure("12×8 PNG") })
 	t.equal(find(calls.c1.body, "image")[1].height, 10)
-	t.equal(calls.c2.label, "revision 1 · 5 words")
+	t.equal(calls.c2.receipt, { heiko.ui.receipt.measure("revision 1 · 5 words") })
 	local open = find(calls.c2.body, "button")[1]
 	t.equal(open.label, "open on the canvas")
 	t.equal(r:action("open", open.args), heiko.interface("pane"))

@@ -21,18 +21,14 @@ use super::{
 };
 
 /// A diff's header: which change, and how many files.
-pub fn files_summary(diff: &ChangeDiff) -> Node {
-    Node::Mono {
-        text: format!("{} · {}", diff.change.short_id(), diff.file_count()),
-    }
+pub fn files_summary(diff: &ChangeDiff) -> String {
+    format!("{} · {}", diff.change.short_id(), diff.file_count())
 }
 
 /// A show's header: the change's short id and first line.
-pub fn commit_summary(diff: &ChangeDiff) -> Node {
+pub fn commit_summary(diff: &ChangeDiff) -> String {
     let change = &diff.change;
-    Node::Mono {
-        text: format!("{} {}", change.short_id(), first_line(change)),
-    }
+    format!("{} {}", change.short_id(), first_line(change))
 }
 
 /// An open diff: its files, those `open` names with their hunks.

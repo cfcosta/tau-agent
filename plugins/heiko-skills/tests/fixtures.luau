@@ -1,5 +1,5 @@
--- The demo's fixtures: a run that loaded release-notes, its card's state
--- and view, from the demo's skills folder.
+-- The demo's fixtures: a run that loaded release-notes, what the model
+-- read and the call's step, from the demo's skills folder.
 local heiko = require("heiko")
 local t = heiko.test
 
@@ -32,6 +32,7 @@ local FILES = {
 t.fixture("skill", function()
 	local r = t.run({ id = "demo", files = FILES, roots = { skills = FOLDER } })
 	r:start({})
-	local text = r:tool("skill", { name = "release-notes" }, "call_skill")
-	return { text = text, state = r.state, view = r:view() }
+	local args = { name = "release-notes" }
+	local text, loaded = r:tool("skill", args, "call_skill")
+	return { text = text, value = loaded, step = r:step("skill", args, loaded) }
 end)

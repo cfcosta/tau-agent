@@ -83,9 +83,9 @@ Markdown. It shows the item revised last until the person picks
 another tab or revision, which its buttons keep in the run's state.
 Whatever comes next takes its place again.
 
-A canvas tool's card shows the revision its call made, from the view's
-`calls`: what it is in place of the arguments, its size or word count
-at the header's end, and a thumbnail of the image or the document's
+A canvas tool's step shows the revision its call made, from the view's
+`calls`: what it is for its subject, its size or word count for its
+receipt, and under the line a thumbnail of the image or the document's
 first lines. A click opens the pane on that revision. The card of
 `canvas_read`, or of a call that failed, is the tool's as the loop
 draws it.

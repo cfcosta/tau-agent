@@ -1,5 +1,5 @@
 -- heiko-skills in a run: the list in the instructions, the tool loading a
--- skill and its card; and outside one, the page, the sidebar's count and
+-- skill and its step; and outside one, the page, the sidebar's count and
 -- the composer's commands.
 local heiko = require("heiko")
 local t = heiko.test
@@ -22,18 +22,19 @@ t.case("a run lists the skills and loads one by name", function()
 	local plan = r:start({})
 	t.equal(string.find(plan.instructions, "- release-notes: Writes release notes", 1, true) ~= nil, true)
 	t.equal(string.find(plan.instructions, "## Principles", 1, true) ~= nil, true)
+	local text, loaded = r:tool("skill", { name = "release-notes" }, "c1")
 	t.equal(
-		r:tool("skill", { name = "release-notes" }, "c1"),
+		text,
 		"Skill release-notes. Its folder, where the files it names are: /mine/release-notes\n\nGroup the commits by kind."
 	)
 	local ok, why = pcall(r.tool, r, "skill", { name = "nope" })
 	t.equal(ok, false)
 	t.equal(why, 'There is no skill "nope". The skills are: principle-small, release-notes.')
-	local card = r:view().calls.c1
-	t.equal(card.head.children[1].text, "release-notes")
-	t.equal(card.label, "1 line")
-	t.equal(card.folds, true)
-	t.equal(card.body, heiko.ui.code("markdown", "Group the commits by kind."))
+	t.equal(r:step("skill", { name = "release-notes" }, loaded), {
+		subject = "release-notes",
+		receipt = { heiko.ui.receipt.count(1, "line") },
+		body = heiko.ui.form.code("markdown", "Group the commits by kind."),
+	})
 end)
 
 t.case("the page shows each skill, and the folder's button reveals it", function()

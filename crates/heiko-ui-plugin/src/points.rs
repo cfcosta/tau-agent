@@ -2,7 +2,6 @@
 //! its contributions. A plugin contributes to them in its manifest.
 
 use serde::{Deserialize, Serialize};
-use heiko_ui_kit::theme::Tone;
 
 use crate::{
     host::RepoId,
@@ -300,34 +299,6 @@ pub struct AtCard {
     pub cut: Option<crate::OutputCut>,
 }
 
-/// How a tool's own plugin draws its card, in heiko-ui's frame.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct CardView {
-    /// In place of the summary of its arguments.
-    pub head: Option<Node>,
-    /// The result's line at the header's end: `+12 −3`, `3 matches`.
-    pub label: Option<String>,
-    /// The call failed, as its result tells, though the tool returned.
-    pub failed: Option<String>,
-    /// The card's edge, when its result wants attention.
-    pub edge: Option<Tone>,
-    /// A small drawing of the result, before the fold's chevron.
-    pub shape: Option<Node>,
-    /// Under the header.
-    pub body: Option<Node>,
-    /// Whether the body folds, closed until its header is clicked.
-    pub folds: bool,
-    /// Whether the body sits inset under the header and says itself what
-    /// was cut from the result (a terminal's screen).
-    pub inset: bool,
-    /// What the tool does, when its plugin says it: its name's color.
-    pub kind: Option<heiko_ui_kit::theme::ToolKind>,
-    /// The call waits on the person: it leaves the spine, under an
-    /// orange rule, and shows while its stretch is folded.
-    pub waits: bool,
-}
-
 /// What a plugin shows in a run's pane ([`PANE`]).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PaneView {
@@ -421,7 +392,7 @@ pub const REWRITE: Point<AtRewrite> = Point::new("heiko.run.rewrite");
 pub const CONTEXT: Point<AtRun> = Point::new("heiko.run.context");
 /// A tool call's card, drawn by the plugin whose tool it is: the first
 /// to answer draws it.
-pub const CARD: Point<AtCard, CardView> = Point::new("heiko.run.card");
+pub const CARD: Point<AtCard, crate::step::Step> = Point::new("heiko.run.card");
 /// Beside a tool card's title.
 pub const CARD_BADGE: Point<AtCard> = Point::new("heiko.run.card.badge");
 /// Under a tool card's body.

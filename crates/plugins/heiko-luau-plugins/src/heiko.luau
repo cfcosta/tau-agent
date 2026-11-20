@@ -1232,6 +1232,116 @@ function ui.status(text, detail, of)
 	}
 end
 
+-- A tool call's step (ADR 0064): what a tool's `step` gives, and what
+-- `view.calls[call]` lays over it. Its receipt is a list of parts, from
+-- `ui.receipt`; its body one form, from `ui.form`.
+ui.receipt = {}
+ui.form = {}
+
+local function count_of(n)
+	return math.max(0, math.floor(tonumber(n) or 0))
+end
+
+-- `29 lines`: `noun` in the singular; heiko writes the plural.
+function ui.receipt.count(n, noun)
+	return { part = "count", n = count_of(n), noun = tostring(noun) }
+end
+
+-- `+3 −1`, with its diffstat; `new` for a file the call made.
+function ui.receipt.diff(added, removed, new)
+	return { part = "diff", added = count_of(added), removed = count_of(removed), new = new == true }
+end
+
+-- `exit 100`, `worked`: a word or two outlined in the color `of`.
+function ui.receipt.stamp(text, of)
+	return { part = "stamp", text = tostring(text), tone = ink(of) }
+end
+
+-- What is not a count: `4.0 KB of 18 KB`.
+function ui.receipt.measure(text)
+	return { part = "measure", text = tostring(text) }
+end
+
+-- Code, its lines numbered from `opts.first_line`, highlighted as `lang`.
+function ui.form.code(lang, text, opts)
+	opts = opts or {}
+	return {
+		form = "code",
+		lang = lang and tostring(lang) or json.null,
+		text = tostring(text),
+		first_line = opts.first_line and math.floor(tonumber(opts.first_line) or 1) or json.null,
+	}
+end
+
+-- Lines a search found: each `{ path, number, text, matched, spans }`.
+function ui.form.matches(lines)
+	local out = array({})
+	for _, line in ipairs(lines or {}) do
+		local spans = array({})
+		for _, span in ipairs(line.spans or {}) do
+			table.insert(spans, array({ count_of(span[1]), count_of(span[2]) }))
+		end
+		table.insert(out, {
+			path = tostring(line.path or ""),
+			number = count_of(line.number),
+			text = tostring(line.text or ""),
+			matched = line.matched == true,
+			spans = spans,
+		})
+	end
+	return { form = "matches", lines = out }
+end
+
+-- A unified diff: its added and removed lines.
+function ui.form.diff(text, path)
+	return { form = "diff", text = tostring(text), path = path and tostring(path) or json.null }
+end
+
+-- Names in columns, each a string or `{ text, tone }`; `noun` is what
+-- one is, for `+ N more`.
+function ui.form.names(names, noun)
+	local out = array({})
+	for _, name in ipairs(names or {}) do
+		if type(name) == "table" then
+			table.insert(out, { text = tostring(name.text or name[1]), tone = name.tone and tone(name.tone) or json.null })
+		else
+			table.insert(out, { text = tostring(name), tone = json.null })
+		end
+	end
+	return { form = "names", names = out, noun = tostring(noun or "name") }
+end
+
+-- A program's lines.
+function ui.form.output(lines)
+	local out = array({})
+	for _, line in ipairs(lines or {}) do
+		table.insert(out, tostring(line))
+	end
+	return { form = "output", lines = out }
+end
+
+-- Keys and their values, in order: each `{ key, value }`.
+function ui.form.record(pairs_)
+	local out = array({})
+	for _, pair in ipairs(pairs_ or {}) do
+		table.insert(out, { key = tostring(pair.key or pair[1]), value = tostring(pair.value or pair[2]) })
+	end
+	return { form = "record", pairs = out }
+end
+
+-- A body the person works in, drawn by the plugin: `opts.folds` closes
+-- it until the line is clicked.
+function ui.form.tree(node, opts)
+	opts = opts or {}
+	return { form = "tree", node = node, folds = opts.folds == true, inset = false }
+end
+
+-- What a tool answers when its step has more to read than the model:
+-- the model reads `text`, the step reads `data` as `call.result`.
+function heiko.reply(text, data)
+	return { heiko_reply = { text = tostring(text), data = data == nil and json.null or data } }
+end
+
 -- `list` as a list of strings, or an error naming `what`.
 function heiko._strings(list, what)
 	local out = array({})
@@ -1285,7 +1395,9 @@ function heiko._describe(plugin)
 			name = name,
 			description = tool.description or "",
 			parameters = tool.parameters or { type = "object", properties = {} },
-			card = tool.card ~= nil,
+			step = tool.step ~= nil,
+			-- The argument the call is about, for its line while it runs.
+			subject = tool.subject and tostring(tool.subject) or nil,
 			-- What it does (ADR 0060): look, search, change, run, reach or people.
 			kind = kind_of(name, tool.kind),
 			-- The boolean setting the tool is offered while it is on.
@@ -1658,6 +1770,10 @@ local function tool_text(value)
 	-- `heiko.result(text)`.
 	if type(value) == "table" and type(value.text) == "string" and type(value.flag) == "boolean" then
 		return value.text
+	end
+	-- `heiko.reply(text, data)`.
+	if type(value) == "table" and type(value.heiko_reply) == "table" then
+		return value.heiko_reply.text
 	end
 	if value == nil then
 		return "null"

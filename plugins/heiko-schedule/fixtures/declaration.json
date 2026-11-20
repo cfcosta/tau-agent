@@ -45,7 +45,7 @@
         ],
         "type": "object"
       },
-      "card": false,
+      "step": false,
       "kind": "change"
     },
     {
@@ -56,7 +56,7 @@
         "properties": {},
         "type": "object"
       },
-      "card": false,
+      "step": false,
       "kind": "look"
     },
     {
@@ -74,7 +74,7 @@
         ],
         "type": "object"
       },
-      "card": false,
+      "step": false,
       "kind": "change"
     }
   ],

@@ -192,7 +192,7 @@ wired!(
     crate::PluginStatus,
     crate::PlanField,
     crate::RowNote,
-    crate::points::CardView,
+    crate::step::Step,
     crate::points::PaneView,
     crate::points::ComposerHint,
     f32,
@@ -402,7 +402,8 @@ mod tests {
             NavEntry,
             Request,
             RowNote,
-            points::{CardView, PaneView},
+            points::PaneView,
+            step::{Body, Receipt, Step},
             view::Link,
         };
 
@@ -429,21 +430,35 @@ mod tests {
             tone: tone(&tc),
         };
         assert_eq!(back(&note), note);
-        let card = CardView {
-            head: tc.draw(gs::booleans()).then(|| node(&tc)),
-            label: maybe(&tc),
+        let receipt =
+            |tc: &TestCase| match tc.draw(gs::integers::<u8>().max_value(3)) {
+                0 => Receipt::count(tc.draw(gs::integers::<usize>()), word(tc)),
+                1 => Receipt::Diff {
+                    added: tc.draw(gs::integers::<u64>()),
+                    removed: tc.draw(gs::integers::<u64>()),
+                    new: tc.draw(gs::booleans()),
+                },
+                2 => Receipt::stamp(word(tc), crate::tree::Ink::Bad),
+                _ => Receipt::measure(word(tc)),
+            };
+        let receipts = tc.draw(gs::integers::<usize>().max_value(3));
+        let card = Step {
+            subject: maybe(&tc),
+            receipt: (0..receipts).map(|_| receipt(&tc)).collect(),
             failed: maybe(&tc),
-            edge: tc.draw(gs::booleans()).then(|| tone(&tc)),
-            shape: None,
-            body: tc.draw(gs::booleans()).then(|| node(&tc)),
-            folds: tc.draw(gs::booleans()),
-            inset: tc.draw(gs::booleans()),
+            body: tc.draw(gs::booleans()).then(|| Body::Tree {
+                node: node(&tc),
+                folds: tc.draw(gs::booleans()),
+                inset: tc.draw(gs::booleans()),
+            }),
+            action: tc.draw(gs::booleans()).then(|| node(&tc)),
             kind: tc.draw(gs::booleans()).then(|| {
                 tc.draw_silent(gs::sampled_from(
                     heiko_ui_kit::theme::ToolKind::ALL.to_vec(),
                 ))
             }),
             waits: tc.draw(gs::booleans()),
+            lineless: tc.draw(gs::booleans()),
         };
         assert_eq!(back(&card), card);
         let pane = PaneView {

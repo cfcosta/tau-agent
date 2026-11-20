@@ -70,7 +70,7 @@
         ],
         "type": "object"
       },
-      "card": false,
+      "step": false,
       "kind": "look",
       "when": "on"
     }

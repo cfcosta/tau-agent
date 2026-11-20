@@ -481,8 +481,8 @@ fn required(source: &str, libs: &BTreeMap<String, String>) -> Vec<String> {
 pub enum Hook {
     /// A tool's handler, with its arguments as input.
     Tool(String),
-    /// A tool's card, with `{ call, result }` as input.
-    Card(String),
+    /// A tool's step (ADR 0064), with `{ call, result }` as input.
+    Step(String),
     /// As the run starts, with `{ input, context, instructions }`.
     Start,
     BeforeTool,
@@ -542,8 +542,8 @@ impl Hook {
             Self::Tool(name) => {
                 return vec!["tools".into(), name.clone(), "call".into()];
             }
-            Self::Card(name) => {
-                return vec!["tools".into(), name.clone(), "card".into()];
+            Self::Step(name) => {
+                return vec!["tools".into(), name.clone(), "step".into()];
             }
             Self::Forge(name) => return vec!["forge".into(), name.clone()],
             Self::Job(name) => {
@@ -579,7 +579,7 @@ impl Hook {
     /// Whether it draws from a frozen copy of the model, waiting on
     /// nothing, rather than taking a step.
     pub fn draws(&self) -> bool {
-        matches!(self, Self::View | Self::Card(_) | Self::SettingsView)
+        matches!(self, Self::View | Self::Step(_) | Self::SettingsView)
     }
 
     /// How long it may run (ADR 0027).
@@ -587,7 +587,7 @@ impl Hook {
         Duration::from_millis(match self {
             Self::Tool(_) | Self::Job(_) => 60_000,
             Self::Forge(_) => 30_000,
-            Self::Card(_)
+            Self::Step(_)
             | Self::View
             | Self::SettingsView
             | Self::BeforeRequest
@@ -653,7 +653,7 @@ impl Hook {
             |name: &str| declaration.tools.iter().find(|t| t.name == name);
         match self {
             Self::Tool(name) => tool(name).is_some(),
-            Self::Card(name) => tool(name).is_some_and(|t| t.card),
+            Self::Step(name) => tool(name).is_some_and(|t| t.step),
             Self::Start => declaration.hooks.start,
             Self::BeforeTool => declaration.hooks.before_tool,
             Self::BeforeRequest => declaration.hooks.before_request,

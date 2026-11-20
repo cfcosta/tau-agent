@@ -19,9 +19,9 @@ t.case("counts the words read", function()
 	t.equal(run():tool("word_count", { path = "notes.md" }), { path = "notes.md", words = 4 })
 end)
 
-t.case("the card shows the count", function()
-	local card = run():card("word_count", { path = "notes.md" }, { path = "notes.md", words = 4 })
-	t.equal(card, ui.row({ ui.mono("notes.md"), ui.badge("4 words", "neutral") }))
+t.case("the step counts the words", function()
+	local step = run():step("word_count", { path = "notes.md" }, { path = "notes.md", words = 4 })
+	t.equal(step, { subject = "notes.md", receipt = { ui.receipt.count(4, "word") } })
 end)
 
 t.case("the status line counts the files", function()

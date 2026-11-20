@@ -1335,7 +1335,7 @@ fn luau_event(
 fn hook_name(hook: &Hook) -> String {
     match hook {
         Hook::Tool(name) => format!("tool {name}"),
-        Hook::Card(name) => format!("card of {name}"),
+        Hook::Step(name) => format!("step of {name}"),
         Hook::Start => "start".into(),
         Hook::BeforeTool => "before_tool".into(),
         Hook::BeforeRequest => "before_request".into(),
@@ -2095,12 +2095,27 @@ impl AgentTool for LuauTool {
             drop(state);
             return self.ask_form(form?, &ctx, &plugin).await;
         }
-        let card = if self.spec.card {
+        // `heiko.reply(text, data)`: the model reads the text, the step
+        // the data.
+        let (text, value) = match value.get("heiko_reply") {
+            Some(reply) => (
+                reply["text"].as_str().unwrap_or_default().to_owned(),
+                reply["data"].clone(),
+            ),
+            None => (
+                match &value {
+                    Value::String(text) => text.clone(),
+                    other => other.to_string(),
+                },
+                value,
+            ),
+        };
+        let step = if self.spec.step {
             let input = json!({ "call": args, "result": value });
             inner
                 .call(
                     &active,
-                    Hook::Card(self.spec.name.clone()),
+                    Hook::Step(self.spec.name.clone()),
                     input,
                     &mut state,
                     &plugin,
@@ -2110,15 +2125,11 @@ impl AgentTool for LuauTool {
         } else {
             None
         };
-        let text = match &value {
-            Value::String(text) => text.clone(),
-            other => other.to_string(),
-        };
         Ok(ToolOutput {
             details: Some(json!({
                 "plugin": self.plugin,
                 "value": value,
-                "card": card,
+                "step": step,
                 "kind": self.spec.kind,
             })),
             ..ToolOutput::text(text)

@@ -40,7 +40,6 @@ use heiko_ui_plugin::{
         AtRepo,
         AtRun,
         AtSetup,
-        CardView,
         ComposerHint,
         HomeAction,
         HomeList,
@@ -49,6 +48,7 @@ use heiko_ui_plugin::{
         SetupRepo,
         SetupView,
     },
+    step::{Body, Step},
     tree::{GapSize, Ink, Kind, MarkState, Node, SquareLook, Tab, Tone, draft_key},
 };
 
@@ -64,6 +64,7 @@ use crate::{
     Record,
     Standing,
     TestResult,
+    ToolSpec,
     Uses,
 };
 
@@ -1243,40 +1244,58 @@ impl UiPlugin for LuauPluginsUi {
                 // What the plugin's tool does, as its table declares it:
                 // as its result says, or its plugin's declaration while
                 // it runs.
+                let spec = declared(view.data, &at.tool);
                 let kind = details
                     .and_then(|details| details.get("kind"))
                     .and_then(|kind| serde_json::from_value(kind.clone()).ok())
-                    .or_else(|| declared_kind(view.data, &at.tool));
+                    .or_else(|| spec.and_then(|spec| spec.kind));
                 if let Some(ask) =
                     view.state.and_then(|state| state.asks.get(&at.call_id))
                 {
-                    return Some(CardView {
-                        body: Some(allow_card(ask, at)),
+                    return Some(Step {
+                        body: Some(Body::Tree {
+                            node: allow_card(ask, at),
+                            folds: false,
+                            inset: false,
+                        }),
                         kind,
                         waits: true,
-                        ..CardView::default()
+                        ..Step::default()
                     });
                 }
-                if let Some(header) =
-                    view.state.and_then(|state| card_header(state, &at.call_id))
-                {
-                    return Some(CardView { kind, ..header });
-                }
-                // The tool's own card, once it ended.
-                let card = details.and_then(|details| {
+                // The tool's own step, kept with its result once it
+                // ended.
+                let kept = details.and_then(|details| {
                     let plugin = details.get("plugin")?.as_str()?;
-                    let card =
-                        details.get("card").filter(|card| !card.is_null())?;
-                    Some(embed(card, plugin))
+                    let step =
+                        details.get("step").filter(|step| !step.is_null())?;
+                    Some(own_step(step, plugin))
                 });
-                if card.is_none() && kind.is_none() {
+                let had_step = kept.is_some();
+                let mut step = kept.unwrap_or_default();
+                // A step that names no subject has the argument its
+                // table names.
+                if step.subject.is_none() {
+                    step.subject = spec
+                        .and_then(|spec| spec.subject.as_deref())
+                        .and_then(|key| at.data.args.get(key))
+                        .map(|value| match value {
+                            Value::String(text) => text.clone(),
+                            other => other.to_string(),
+                        });
+                }
+                let live = view
+                    .state
+                    .and_then(|state| over_step(state, &at.call_id, &mut step));
+                if !had_step
+                    && live.is_none()
+                    && kind.is_none()
+                    && step.subject.is_none()
+                {
                     return None;
                 }
-                Some(CardView {
-                    body: card,
-                    kind,
-                    ..CardView::default()
-                })
+                step.kind = step.kind.or(kind);
+                Some(step)
             })
             .contribute(points::TRANSCRIPT, |at: &AtAnchor, view| {
                 let (plugin, note) = view.state?.notes.get(&at.key)?.clone();
@@ -2326,57 +2345,71 @@ fn pane(state: &State) -> Option<heiko_ui_plugin::points::PaneView> {
         })
 }
 
-/// The kind the active plugin that adds the tool `tool` declares for it.
-fn declared_kind(
-    overview: &Overview,
-    tool: &str,
-) -> Option<heiko_ui_kit::theme::ToolKind> {
+/// How the active plugin that adds the tool `tool` declares it.
+fn declared<'a>(overview: &'a Overview, tool: &str) -> Option<&'a ToolSpec> {
     overview
         .plugins
         .iter()
         .filter_map(|entry| entry.declaration.as_ref())
         .flat_map(|declaration| &declaration.tools)
-        .find(|spec| spec.name == tool)?
-        .kind
+        .find(|spec| spec.name == tool)
 }
 
-/// What the first plugin by name whose view draws on the card of
-/// `call_id` puts in place of its head and at its header's end:
-/// `calls = { [call_id] = { head, label } }`. A head that is an empty
-/// stack leaves the call no line at all: only its `body` shows, a note
-/// in the call's place, or nothing.
-/// With `folds`, the `body` is closed until the person clicks the line.
-fn card_header(state: &State, call_id: &str) -> Option<CardView> {
+/// A step a plugin's Luau gave, its trees drawn with that plugin. One
+/// that does not read as a step is an empty one.
+fn own_step(value: &Value, plugin: &str) -> Step {
+    let mut step: Step =
+        serde_json::from_value(value.clone()).unwrap_or_default();
+    if let Some(Body::Tree { node, .. }) = &mut step.body {
+        *node =
+            embed(&serde_json::to_value(&*node).unwrap_or_default(), plugin);
+    }
+    step.action = step.action.take().map(|action| {
+        embed(&serde_json::to_value(action).unwrap_or_default(), plugin)
+    });
+    step
+}
+
+/// Lays what the first plugin by name whose view says it of the call
+/// `call_id` over `step`: `calls = { [call_id] = { subject, receipt,
+/// action, waits, line } }`, live; `action = false` takes the step's
+/// own away, and `line = false` leaves the call no line. None when no
+/// view says anything of it.
+fn over_step(state: &State, call_id: &str, step: &mut Step) -> Option<()> {
     state
         .plugins
         .iter()
         .filter(|(_, plugin)| plugin.off.is_none())
         .find_map(|(name, plugin)| {
             let call = plugin.view.get("calls")?.get(call_id)?;
-            let head = call.get("head").filter(|head| !head.is_null());
-            let label = call.get("label").and_then(Value::as_str);
-            let body = folding(call);
-            if head.is_none() && label.is_none() && body.is_none() {
+            let field =
+                |key: &str| call.get(key).filter(|value| !value.is_null());
+            let keys = ["subject", "receipt", "action", "waits", "line"];
+            if !keys.iter().any(|key| field(key).is_some()) {
                 return None;
             }
-            Some(CardView {
-                head: head.map(|head| embed(head, name)),
-                label: label.map(str::to_owned),
-                folds: body.is_some(),
-                body: body.map(|body| embed(body, name)),
-                ..CardView::default()
-            })
+            if let Some(subject) = field("subject").and_then(Value::as_str) {
+                step.subject = Some(subject.to_owned());
+            }
+            if let Some(receipt) = field("receipt").and_then(|receipt| {
+                serde_json::from_value(receipt.clone()).ok()
+            }) {
+                step.receipt = receipt;
+            }
+            // `action = false` takes the step's own away.
+            match field("action") {
+                Some(Value::Bool(false)) => step.action = None,
+                Some(action) => step.action = Some(embed(action, name)),
+                None => {}
+            }
+            if let Some(waits) = field("waits").and_then(Value::as_bool) {
+                step.waits = waits;
+            }
+            if field("line").and_then(Value::as_bool) == Some(false) {
+                step.lineless = true;
+            }
+            Some(())
         })
-}
-
-/// The body of a call's view that folds: one with `folds = true`.
-fn folding(call: &Value) -> Option<&Value> {
-    call.get("folds")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-        .then(|| call.get("body"))
-        .flatten()
-        .filter(|body| !body.is_null())
 }
 
 fn on_card(state: &State, call_id: &str, place: &str) -> Option<Node> {
@@ -2386,10 +2419,6 @@ fn on_card(state: &State, call_id: &str, place: &str) -> Option<Node> {
         .filter(|(_, plugin)| plugin.off.is_none())
         .filter_map(|(name, plugin)| {
             let call = plugin.view.get("calls")?.get(call_id)?;
-            // A body that folds is the card's own, under its line.
-            if place == "body" && folding(call).is_some() {
-                return None;
-            }
             let piece = call.get(place)?;
             (!piece.is_null()).then(|| embed(piece, name))
         })
@@ -3446,21 +3475,20 @@ mod tests {
         assert_eq!(on_card(&state, "c2", "badge"), None);
     }
 
-    /// A call whose `head` is an empty stack keeps it as one, which the
-    /// transcript reads as a call with no line: its `body` is the note
-    /// that stands for it, and a call with neither draws nothing.
+    /// A view's call that says `line = false` has no line: its `body`
+    /// is the note that stands for it, and a call with neither draws
+    /// nothing.
     #[test]
-    fn a_views_call_with_an_empty_head_has_no_line() {
+    fn a_views_call_without_a_line_is_lineless() {
         let mut state = State::default();
         let mut run = heiko_ui_plugin::testing::FakeRun::default();
-        let nothing = json!({ "piece": "stack", "children": [] });
         state.apply(
             Record::View {
                 plugin: "todo".into(),
                 view: json!({ "calls": {
-                    "c1": { "head": nothing },
+                    "c1": { "line": false },
                     "c2": {
-                        "head": nothing,
+                        "line": false,
                         "body": { "piece": "text", "text": "the note" },
                     },
                 } }),
@@ -3468,36 +3496,50 @@ mod tests {
             &mut run,
         );
         for call in ["c1", "c2"] {
-            let head = card_header(&state, call).unwrap().head;
-            assert_eq!(head, Some(Node::Stack { children: vec![] }), "{call}");
+            let mut step = Step::default();
+            assert_eq!(over_step(&state, call, &mut step), Some(()));
+            assert!(step.lineless, "{call}");
         }
         assert_eq!(on_card(&state, "c1", "body"), None);
         let body = format!("{:?}", on_card(&state, "c2", "body").unwrap());
         assert!(body.contains("the note"), "{body}");
     }
 
-    /// A call whose view says `folds` gives its `body` to the card, closed
-    /// under its line, and not to what plugins draw under a call.
+    /// What a view says of a call lays over the step its tool kept: its
+    /// receipt and action replace the kept ones, and the rest stays; a
+    /// view that says only a badge leaves the step as it was.
     #[test]
-    fn a_views_call_that_folds_keeps_its_body_closed() {
+    fn a_views_call_lays_over_the_kept_step() {
         let mut state = State::default();
         let mut run = heiko_ui_plugin::testing::FakeRun::default();
         state.apply(
             Record::View {
-                plugin: "skills".into(),
-                view: json!({ "calls": { "c1": {
-                    "head": { "piece": "mono", "text": "review" },
-                    "body": { "piece": "text", "text": "the file" },
-                    "folds": true,
-                } } }),
+                plugin: "todo".into(),
+                view: json!({ "calls": {
+                    "c1": {
+                        "receipt": [{ "part": "measure", "text": "td-1 · undone" }],
+                        "action": { "piece": "mono", "text": "undo" },
+                    },
+                    "c2": { "badge": { "piece": "mono", "text": "R1" } },
+                } }),
             },
             &mut run,
         );
-        let card = card_header(&state, "c1").unwrap();
-        assert!(card.folds);
-        let body = format!("{:?}", card.body.unwrap());
-        assert!(body.contains("the file"), "{body}");
-        assert_eq!(on_card(&state, "c1", "body"), None);
+        let kept = own_step(
+            &json!({
+                "subject": "Fix the flaky test",
+                "receipt": [{ "part": "measure", "text": "td-1" }],
+            }),
+            "todo",
+        );
+        let mut step = kept.clone();
+        over_step(&state, "c1", &mut step).expect("a view of c1");
+        assert_eq!(step.subject.as_deref(), Some("Fix the flaky test"));
+        assert_eq!(step.receipt[0].text(), "td-1 · undone");
+        assert!(step.action.is_some());
+        let mut step = kept.clone();
+        assert_eq!(over_step(&state, "c2", &mut step), None);
+        assert_eq!(step, kept);
     }
 
     /// A view's `calls` that say `mark` mark their cards, refused with

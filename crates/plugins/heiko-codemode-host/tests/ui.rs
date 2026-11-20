@@ -1180,8 +1180,17 @@ fn draw(at: &AtCard) -> Option<(Option<String>, Option<String>, bool, bool)> {
         &list,
         &cards,
     );
-    ui::card(at, &mut view)
-        .map(|card| (card.label, card.failed, card.folds, card.body.is_some()))
+    ui::card(at, &mut view).map(|card| {
+        let label = (!card.receipt.is_empty()).then(|| {
+            card.receipt
+                .iter()
+                .map(heiko_ui_plugin::step::Receipt::text)
+                .collect::<Vec<_>>()
+                .join(" · ")
+        });
+        let folds = card.body.as_ref().is_some_and(|body| body.folds());
+        (label, card.failed, folds, card.body.is_some())
+    })
 }
 
 /// The card is codemode's only: its calls open under its line while the
@@ -1227,21 +1236,6 @@ fn calls_of(rows: Vec<Value>) -> ui::Calls {
     ui::stored_rows(&json!({ "calls": rows, "complete": true })).unwrap()
 }
 
-/// The pieces of a row.
-fn row_of(node: &Node) -> &[Node] {
-    match node {
-        Node::Row { children } => children,
-        other => panic!("not a row: {other:?}"),
-    }
-}
-
-fn toned(node: &Node) -> &str {
-    match node {
-        Node::Toned { text, .. } | Node::Mono { text } => text,
-        other => panic!("not a toned line: {other:?}"),
-    }
-}
-
 /// The line says what the script called, in the order of first use, and
 /// never its source.
 #[test]
@@ -1254,22 +1248,17 @@ fn the_line_counts_what_the_script_called() {
     rows[2] = stored_row(3, "grep", "error");
     let calls = calls_of(rows);
     assert_eq!(ui::counts(&calls), [("read", 3), ("grep", 2)]);
-    let head = ui::head(CALL, &calls, true, false);
-    let line = row_of(&head);
-    let words: Vec<&str> = line[..3].iter().map(toned).collect();
-    assert_eq!(words, ["read ×3", "·", "grep ×2"]);
-    let Node::Button { label, args, .. } = &line[4] else {
-        panic!("no link: {:?}", line[4]);
+    assert_eq!(ui::subject(&calls, true), "read ×3 · grep ×2");
+    let Node::Button { label, args, .. } = ui::code_button(CALL, false) else {
+        panic!("no button");
     };
     assert_eq!(label, "code");
     assert_eq!(
         args,
-        &json!({ "key": open_key(&ui::code_key(CALL)), "open": true })
+        json!({ "key": open_key(&ui::code_key(CALL)), "open": true })
     );
-    let open = ui::head(CALL, &calls, true, true);
-    let Node::Button { label, args, .. } = row_of(&open).last().unwrap()
-    else {
-        panic!("no link");
+    let Node::Button { label, args, .. } = ui::code_button(CALL, true) else {
+        panic!("no button");
     };
     assert_eq!(
         (label.as_str(), &args["open"]),
@@ -1278,14 +1267,8 @@ fn the_line_counts_what_the_script_called() {
 
     // With nothing called: nothing while it runs, then no calls.
     let none = calls_of(Vec::new());
-    assert!(matches!(
-        row_of(&ui::head(CALL, &none, false, false))[0],
-        Node::Spacer
-    ));
-    assert_eq!(
-        toned(&row_of(&ui::head(CALL, &none, true, false))[0]),
-        "no calls"
-    );
+    assert_eq!(ui::subject(&none, false), "");
+    assert_eq!(ui::subject(&none, true), "no calls");
 }
 
 /// The script is closed until its link opens it; the calls are listed

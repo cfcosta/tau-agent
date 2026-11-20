@@ -77,7 +77,7 @@ pub fn point(name: &str) -> Option<Luau> {
     let hooks = [
         (STATUS.name, "status"),
         (TRANSCRIPT.name, "note"),
-        (CARD.name, "card"),
+        (CARD.name, "step"),
         (CARD_BADGE.name, "badge"),
         (RUN_BANNER.name, "banner"),
         (INSPECTOR.name, "inspector"),
@@ -100,7 +100,7 @@ pub fn point(name: &str) -> Option<Luau> {
     let outside = "drawn outside any run, where a Luau plugin has no view; \
                    its place there is its sidebar entry (`nav`)";
     let excluded = [
-        (CARD_STAT.name, "a tool's `card` draws its whole card"),
+        (CARD_STAT.name, "a tool's `step` gives its whole line"),
         (
             REPO_KIND.name,
             "heiko-luau-plugins' own: the plugins repository",

@@ -1,5 +1,5 @@
 //! Luau plugins in real runs (ADR 0027): a scripted model calls a
-//! plugin's tool, which draws its card; `before_tool` blocks a call;
+//! plugin's tool, which gives its step; `before_tool` blocks a call;
 //! `before_stop` keeps the run going once; `turn_end` counts turns into
 //! the plugin's state, stored with the run with the view drawn from it;
 //! and a plugin whose hooks keep failing is turned off.
@@ -43,8 +43,8 @@ return heiko.plugin { uses = { tools = { "exec_command" } },
       call = function(args, model, env)
         return { ok = not heiko.values.contains(env.settings.days, env.now.weekday) }
       end,
-      card = function(input, model, env) local call, result = input.call, input.result;
-        return ui.badge(result.ok and "safe" or "wait", result.ok and "good" or "warn")
+      step = function(input, model, env) local result = input.result;
+        return { receipt = { ui.receipt.stamp(result.ok and "safe" or "wait", result.ok and "good" or "warn") } }
       end,
     },
   },
@@ -180,7 +180,7 @@ fn a_plugin_takes_part_in_a_run() {
     });
     assert_eq!(outcome.text, "ran the tests");
 
-    // The tool answered, with its card in the details.
+    // The tool answered, with its step in the details.
     let window = events
         .iter()
         .find_map(|event| match event {
@@ -197,8 +197,8 @@ fn a_plugin_takes_part_in_a_run() {
         .expect("the tool's result");
     assert_eq!(window["value"], json!({ "ok": false }));
     assert_eq!(
-        window["card"],
-        json!({ "piece": "badge", "text": "wait", "tone": "warn" })
+        window["step"],
+        json!({ "receipt": [{ "part": "stamp", "text": "wait", "tone": "warn" }] })
     );
 
     // The deploy was blocked, and the stop held once.

@@ -28,8 +28,9 @@ use heiko_ui_plugin::{
     RunCx,
     UiPlugin,
     ViewCx,
-    points::{self, AtCard, AtRun, CardView},
-    tree::{Ink, Kind, Node, Tone as TreeTone},
+    points::{self, AtCard, AtRun},
+    step::{self, Body, Match, Receipt, Step},
+    tree::{Ink, Kind, Node},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -185,9 +186,6 @@ fn artifact_line(status: &ArtifactStatus) -> Node {
     Node::Mono { text }
 }
 
-/// The lines a card shows of a `read` before it is opened.
-pub const PEEK: usize = 4;
-
 /// What a `read` gave the model: its lines, numbered from `first`, of a
 /// file `total` lines long.
 #[derive(Debug, PartialEq, Eq)]
@@ -235,12 +233,12 @@ impl ReadView {
     pub fn label(&self) -> String {
         let shown = self.lines.len();
         if self.first == 1 && shown >= self.total {
-            return counted(self.total, "line");
+            return step::counted(self.total, "line");
         }
         format!(
             "{} of {}",
             heiko_ui_kit::format::grouped(shown),
-            counted(self.total, "line")
+            step::counted(self.total, "line")
         )
     }
 }
@@ -289,125 +287,11 @@ pub fn tests_stat(at: &AtCard) -> Option<PluginStatus> {
     })
 }
 
-/// The last `count` lines of `lines`.
-fn tail(lines: Vec<String>, count: usize) -> Vec<String> {
-    let start = lines.len().saturating_sub(count);
-    lines[start..].to_vec()
-}
-
-/// The key of the UI state that holds whether a card shows all of its
-/// result: `what` is the card's tool.
-fn open_key(what: &str, at: &AtCard) -> String {
-    format!("{what}-open/{}/{}", at.run.id.0, at.call_id)
-}
-
-/// Whether the person opened the card's result.
-fn opened(key: &str, view: &ViewCx<'_, ToolsUi>) -> bool {
-    view.ui_value(key).and_then(Value::as_bool).unwrap_or(false)
-}
-
-/// The button that shows the rest of a result (`label` says how much),
-/// or hides it again, by setting the UI state `key`.
-pub(crate) fn more(key: &str, open: bool, label: String) -> Node {
-    Node::Button {
-        label: if open { "show less".to_owned() } else { label },
-        action: MORE.into(),
-        args: json!({ "key": key, "open": !open }),
-        kind: Kind::Secondary,
-        icon: None,
-        size: Default::default(),
-        wide: false,
-        detail: None,
-    }
-}
-
-/// `n noun`, or `n nouns`, the number grouped.
-fn counted(n: usize, noun: &str) -> String {
-    format!(
-        "{} {noun}{}",
-        heiko_ui_kit::format::grouped(n),
-        if n == 1 { "" } else { "s" }
-    )
-}
-
-/// The lines a card shows of a diff before it is opened.
-pub const DIFF_PEEK: usize = 12;
-
-/// A unified diff down to its first `keep` lines, its headers aside.
-pub fn diff_head(diff: &str, keep: usize) -> String {
-    let mut kept = Vec::new();
-    let mut left = None;
-    for line in diff.lines() {
-        match &mut left {
-            None => {
-                if line.starts_with("@@") {
-                    left = Some(keep);
-                }
-            }
-            Some(0) => break,
-            Some(left) => *left -= 1,
-        }
-        kept.push(line);
-    }
-    kept.join("\n")
-}
-
-/// A diffstat's five squares: green by the share of lines added, red by
-/// the share removed.
-pub fn diffstat(added: usize, removed: usize) -> Node {
-    let (green, red) = diff::squares(added, removed);
-    let squares = |count: usize, tone| Node::Toned {
-        text: "■".repeat(count),
-        tone,
-        mono: true,
-    };
-    Node::row(
-        [
-            (green, TreeTone::Good),
-            (red, TreeTone::Bad),
-            (diff::SQUARES - green - red, TreeTone::Neutral),
-        ]
-        .into_iter()
-        .filter(|(count, _)| *count > 0)
-        .map(|(count, tone)| squares(count, tone)),
-    )
-}
-
-/// An `edit` or `write` card's body: the diff's first lines, or all of
-/// them once opened, as bands, and the button that shows the rest
-/// (opening the UI state `key`).
-pub fn diff_body(
-    text: &str,
-    path: Option<&str>,
-    key: &str,
-    open: bool,
-) -> Node {
-    let lines = diff::parse(text).len();
-    let rest = lines.saturating_sub(DIFF_PEEK);
-    let shown = if open || rest == 0 {
-        text.to_owned()
-    } else {
-        diff_head(text, DIFF_PEEK)
-    };
-    let mut pieces = vec![Node::Diff {
-        text: shown,
-        path: path.map(str::to_owned),
-    }];
-    if rest > 0 {
-        pieces.push(more(
-            key,
-            open,
-            format!("+ {}", counted(rest, "more line")),
-        ));
-    }
-    Node::stack(pieces)
-}
-
 /// How a command stands, as the stamp its card ends with: `exit 0`,
 /// `exit 100`, `running`. None for a call that failed before the
 /// command ran.
-pub fn outcome(data: &CallData) -> Option<Node> {
-    let stamp = |label: String, tone| Node::Stamp { label, tone };
+pub fn outcome(data: &CallData) -> Option<Receipt> {
+    let stamp = |label: String, tone| Receipt::stamp(label, tone);
     let running = || stamp("running".into(), Ink::Good);
     let Some(result) = &data.result else {
         return Some(running());
@@ -443,9 +327,10 @@ pub fn outcome(data: &CallData) -> Option<Node> {
     }
 }
 
-/// What a command card says beside its stamp: the process a call left
-/// running, to write to; for `write_stdin`, how many lines came back.
-pub fn command_label(tool: &str, data: &CallData) -> Option<String> {
+/// What a command's receipt says beside its stamp: the process a call
+/// left running, to write to; for `write_stdin`, how many lines came
+/// back.
+pub fn command_label(tool: &str, data: &CallData) -> Option<Receipt> {
     let result = data.result.as_ref()?;
     if tool == "write_stdin" {
         let output = result
@@ -456,13 +341,13 @@ pub fn command_label(tool: &str, data: &CallData) -> Option<String> {
             "(no new output)" | "(no output)" => 0,
             output => output.lines().count(),
         };
-        return Some(counted(lines, "new line"));
+        return Some(Receipt::count(lines, "new line"));
     }
     let term = result.details.as_ref()?.get("term")?;
     (term.get("status").and_then(Value::as_str) == Some("running"))
         .then(|| term.get("process").and_then(Value::as_u64))
         .flatten()
-        .map(|process| format!("process {process}"))
+        .map(|process| Receipt::measure(format!("process {process}")))
 }
 
 /// The paths a `find` gave the model, without the notice after them.
@@ -476,28 +361,6 @@ pub fn found(data: &CallData) -> Option<Vec<String>> {
         .split_once("\n\n[")
         .map_or(result.text.as_str(), |(paths, _)| paths);
     Some(paths.lines().map(str::to_owned).collect())
-}
-
-/// The paths a card shows of a `find` before it is opened.
-pub const FOUND_PEEK: usize = 8;
-
-/// A `find` card's body: its paths on a band, the first few until
-/// opened.
-pub fn found_body(paths: &[String], key: &str, open: bool) -> Node {
-    let rest = paths.len().saturating_sub(FOUND_PEEK);
-    let shown = if open {
-        paths.len()
-    } else {
-        paths.len() - rest
-    };
-    let mut pieces: Vec<Node> = paths[..shown]
-        .iter()
-        .map(|path| Node::Mono { text: path.clone() })
-        .collect();
-    if rest > 0 {
-        pieces.push(more(key, open, format!("+ {rest} more")));
-    }
-    Node::Band { children: pieces }
 }
 
 /// One line a `grep` gave the model.
@@ -549,21 +412,42 @@ fn grep_line(line: &str) -> Option<GrepLine> {
 }
 
 /// `5 matches · 2 files`.
-pub fn grep_label(lines: &[GrepLine]) -> String {
+pub fn grep_label(lines: &[GrepLine]) -> Vec<Receipt> {
     let matches = lines.iter().filter(|line| line.matched).count();
     if matches == 0 {
-        return "no matches".into();
+        return vec![Receipt::measure("no matches")];
     }
     let mut files: Vec<&str> =
         lines.iter().map(|line| line.path.as_str()).collect();
     files.sort_unstable();
     files.dedup();
-    format!(
-        "{} {} · {}",
-        heiko_ui_kit::format::grouped(matches),
-        if matches == 1 { "match" } else { "matches" },
-        counted(files.len(), "file")
-    )
+    vec![
+        Receipt::count(matches, "match"),
+        Receipt::count(files.len(), "file"),
+    ]
+}
+
+/// A `grep`'s body: the lines it found, what `needles` find in a
+/// matching line marked.
+pub fn grep_matches(lines: &[GrepLine], needles: Option<&Needles>) -> Body {
+    Body::Matches {
+        lines: lines
+            .iter()
+            .map(|line| {
+                let text = line.text.replace('\t', "    ");
+                Match {
+                    spans: match needles {
+                        Some(needles) if line.matched => needles.spans(&text),
+                        _ => Vec::new(),
+                    },
+                    path: line.path.clone(),
+                    number: line.number,
+                    text,
+                    matched: line.matched,
+                }
+            })
+            .collect(),
+    }
 }
 
 /// What a `grep` looked for, when its matches can be found again
@@ -631,79 +515,6 @@ impl Needles {
     }
 }
 
-/// The lines a card shows of a `grep` before it is opened.
-pub const GREP_PEEK: usize = 8;
-
-/// A `grep` card's body, on a band: each file's path over its lines,
-/// every line after its number, what `needles` find in a matching line
-/// marked, context lines dimmed; the first few until opened.
-pub fn grep_body(
-    lines: &[GrepLine],
-    needles: Option<&Needles>,
-    key: &str,
-    open: bool,
-) -> Node {
-    let rest = lines.len().saturating_sub(GREP_PEEK);
-    let shown = if open {
-        lines.len()
-    } else {
-        lines.len() - rest
-    };
-    let width = lines[..shown]
-        .iter()
-        .map(|line| line.number.to_string().len())
-        .max()
-        .unwrap_or(1);
-    let mut pieces = Vec::new();
-    let mut path = None;
-    for line in &lines[..shown] {
-        if path != Some(&line.path) {
-            path = Some(&line.path);
-            pieces.push(Node::Toned {
-                text: line.path.clone(),
-                tone: TreeTone::Neutral,
-                mono: true,
-            });
-        }
-        // The number is part of the line, so a long one is cut at the
-        // band's edge beside its number, not moved under it.
-        let number = format!("{:>width$}  ", line.number);
-        let code = line.text.replace('\t', "    ");
-        let spans = match needles {
-            Some(needles) if line.matched => needles
-                .spans(&code)
-                .into_iter()
-                .map(|(first, last)| {
-                    let shift = number.len() as u32;
-                    (first + shift, last + shift)
-                })
-                .collect(),
-            _ => Vec::new(),
-        };
-        let text = format!("{number}{code}");
-        pieces.push(if line.matched {
-            Node::Marked { text, spans }
-        } else {
-            Node::Toned {
-                text,
-                tone: TreeTone::Neutral,
-                mono: true,
-            }
-        });
-    }
-    if rest > 0 {
-        pieces.push(more(
-            key,
-            open,
-            format!("+ {}", counted(rest, "more line")),
-        ));
-    }
-    Node::Band { children: pieces }
-}
-
-/// The ticks an `artifact_read` card draws its share on.
-pub const SHARE_TICKS: u32 = 21;
-
 /// What an `artifact_read` read: the artifact, and the bytes from
 /// `start` up to `end`, from its result's text.
 pub fn artifact_range(data: &CallData) -> Option<(String, u64, u64)> {
@@ -714,28 +525,15 @@ pub fn artifact_range(data: &CallData) -> Option<(String, u64, u64)> {
     Some((id.to_owned(), start.parse().ok()?, end.parse().ok()?))
 }
 
-/// An `artifact_read` card: `4.0 KB of 18 KB`, over ticks lit by the
-/// share of the artifact read so far. `size` is the artifact's, when the
-/// run's grants tell.
-pub fn artifact_card(start: u64, end: u64, size: Option<u64>) -> CardView {
+/// An `artifact_read`'s receipt: `4.0 KB of 18 KB`, or how much was read
+/// when the run's grants do not tell the artifact's `size`.
+pub fn artifact_receipt(start: u64, end: u64, size: Option<u64>) -> Receipt {
     let read = listing::size(end.saturating_sub(start));
-    let Some(size) = size.filter(|size| *size > 0) else {
-        return CardView {
-            label: Some(read),
-            ..CardView::default()
-        };
-    };
-    let lit = (end.min(size) * u64::from(SHARE_TICKS)).div_ceil(size) as u32;
-    CardView {
-        label: Some(format!("{read} of {}", listing::size(size))),
-        body: Some(Node::Ticks {
-            lit,
-            total: SHARE_TICKS,
-            tone: Ink::Info,
-            marked: Vec::new(),
-            labels: Vec::new(),
-        }),
-        ..CardView::default()
+    match size.filter(|size| *size > 0) {
+        Some(size) => {
+            Receipt::measure(format!("{read} of {}", listing::size(size)))
+        }
+        None => Receipt::measure(read),
     }
 }
 
@@ -761,10 +559,6 @@ fn lang_name(lang: syntax::Lang) -> &'static str {
 /// The action of the inspector's preview buttons, whose arguments are
 /// the [`Action`] to ask the host half.
 const ACT: &str = "act";
-/// The action of a card's button that shows the rest of its result, or
-/// hides it again, with `{ "key": its UI state key, "open": bool }`.
-const MORE: &str = "more";
-
 impl UiPlugin for ToolsUi {
     type State = State;
     type Data = ();
@@ -833,14 +627,6 @@ impl UiPlugin for ToolsUi {
                 if let Ok(act) = serde_json::from_value::<Action>(args.clone())
                 {
                     view.handle.act(act);
-                }
-            }
-            MORE => {
-                if let (Some(key), Some(open)) = (
-                    args.get("key").and_then(Value::as_str),
-                    args.get("open").and_then(Value::as_bool),
-                ) {
-                    view.handle.set_ui(key, Some(Value::Bool(open)));
                 }
             }
             #[cfg(feature = "terminal")]
@@ -922,184 +708,196 @@ pub fn inspector(
     Node::stack(pieces)
 }
 
-/// A `read` card's body: its first lines, or all of them once opened,
-/// highlighted as `lang`, the button that shows the rest (opening the
-/// UI state `key`), and why its artifact was not kept, when it was not.
-pub fn read_body(
-    read: &ReadView,
-    key: &str,
-    lang: Option<&str>,
-    open: bool,
-    missing: Option<&ArtifactStatus>,
-) -> Node {
-    let mut pieces = Vec::new();
-    if !read.lines.is_empty() {
-        let shown = if open {
-            read.lines.len()
-        } else {
-            read.lines.len().min(PEEK)
-        };
-        pieces.push(Node::Code {
-            lang: lang.map(str::to_owned),
-            text: read.lines[..shown].join("\n"),
-            first_line: Some(read.first.max(1) as u32),
-        });
-        let rest = read.lines.len() - read.lines.len().min(PEEK);
-        if rest > 0 {
-            pieces.push(more(
-                key,
-                open,
-                format!("+ {}", counted(rest, "more line")),
-            ));
+/// The subject of a call to one of its tools: the argument it is about.
+fn subject(tool: &str, args: &Value) -> Option<String> {
+    let text = |key: &str| args.get(key).and_then(Value::as_str);
+    match tool {
+        "exec_command" => text("cmd").map(str::to_owned),
+        // `write_stdin` reads as the process and what it was typed.
+        "write_stdin" => {
+            let process = args.get("process_id").and_then(Value::as_i64)?;
+            Some(match text("chars").filter(|chars| !chars.is_empty()) {
+                Some(chars) => format!("#{process} ← {}", chars.escape_debug()),
+                None => format!("#{process}"),
+            })
         }
-    }
-    if let Some(status) = missing {
-        pieces.push(artifact_line(status));
-    }
-    Node::stack(pieces)
-}
-
-/// Output lines, as the model got them, on a band.
-fn output(lines: &[String]) -> Node {
-    Node::Code {
-        lang: None,
-        text: lines.join("\n"),
-        first_line: None,
+        // grep and find read best as `"pattern" path`.
+        "grep" | "find" => match (text("pattern"), text("path")) {
+            (Some(pattern), Some(path)) => {
+                Some(format!("\"{pattern}\" {path}"))
+            }
+            (Some(pattern), None) => Some(format!("\"{pattern}\"")),
+            (None, path) => path.map(str::to_owned),
+        },
+        "artifact_read" => text("id").map(str::to_owned),
+        _ => text("path").map(str::to_owned),
     }
 }
 
-/// A card of one of its tools.
-fn card(at: &AtCard, view: &mut ViewCx<'_, ToolsUi>) -> Option<CardView> {
-    let compact = view.compact;
+/// A `read`'s step: its lines as code, highlighted as its path's
+/// language, and how many of how many it read.
+fn read_step(data: &CallData, step: Step) -> Step {
+    let Some(read) = ReadView::of(data) else {
+        return step;
+    };
+    let lang = data
+        .args
+        .get("path")
+        .and_then(Value::as_str)
+        .and_then(syntax::Lang::of_path)
+        .map(lang_name);
+    let receipt = if read.first == 1 && read.lines.len() >= read.total {
+        Receipt::count(read.total, "line")
+    } else {
+        Receipt::measure(read.label())
+    };
+    let code = (!read.lines.is_empty()).then(|| Body::Code {
+        lang: lang.map(str::to_owned),
+        text: read.lines.join("\n"),
+        first_line: Some(read.first.max(1) as u32),
+    });
+    // Provenance is the inspector's; the step says only that keeping it
+    // failed.
+    let body = match artifact_error(data) {
+        Some(missing) => Some(Body::Tree {
+            node: Node::stack(
+                code.map(|code| code.draw(true, false).node)
+                    .into_iter()
+                    .chain([artifact_line(&missing)]),
+            ),
+            folds: true,
+            inset: false,
+        }),
+        None => code,
+    };
+    Step {
+        receipt: vec![receipt],
+        body,
+        ..step
+    }
+}
+
+/// A call to one of its tools, as a step.
+fn card(at: &AtCard, view: &mut ViewCx<'_, ToolsUi>) -> Option<Step> {
     let data = &at.data;
+    let step = Step {
+        subject: subject(&at.tool, &data.args),
+        ..Step::default()
+    };
     match at.tool.as_str() {
         "exec_command" | "write_stdin" => {
-            let shape = outcome(data);
-            let label = command_label(&at.tool, data);
+            let receipt: Vec<Receipt> = outcome(data)
+                .into_iter()
+                .chain(command_label(&at.tool, data))
+                .collect();
             #[cfg(feature = "terminal")]
             if let Some(term) = term::TermOutput::of(data, at.cut.is_some()) {
                 let id = format!("{}-{}", at.run.id.0, at.call_id);
-                let body = term_card::body(&id, &term, at.cut.as_ref());
-                return Some(CardView {
-                    label,
+                return Some(Step {
+                    receipt,
                     failed: term.failure(),
-                    shape,
-                    body: Some(body),
-                    inset: true,
-                    ..CardView::default()
+                    body: Some(Body::Tree {
+                        node: term_card::body(&id, &term, at.cut.as_ref()),
+                        folds: false,
+                        inset: true,
+                    }),
+                    ..step
                 });
             }
-            let lines = match &data.result {
-                Some(_) => tail(output_lines(data), 4),
-                None => tail(output_lines(data), 6),
-            };
-            Some(CardView {
-                label,
-                shape,
-                body: (!lines.is_empty()).then(|| output(&lines)),
-                ..CardView::default()
+            let lines = output_lines(data);
+            Some(Step {
+                receipt,
+                body: (!lines.is_empty()).then_some(Body::Output { lines }),
+                ..step
             })
         }
-        "read" => {
-            let read = ReadView::of(data)?;
-            let key = open_key("read", at);
-            let open = opened(&key, view);
-            let lang = data
-                .args
-                .get("path")
-                .and_then(Value::as_str)
-                .and_then(syntax::Lang::of_path)
-                .map(lang_name);
-            // Provenance is the inspector's; the card says only that
-            // keeping it failed.
-            let missing = artifact_error(data);
-            if read.lines.is_empty() && missing.is_none() {
-                return Some(CardView {
-                    label: Some(read.label()),
-                    ..CardView::default()
-                });
-            }
-            let body = read_body(&read, &key, lang, open, missing.as_ref());
-            Some(CardView {
-                label: Some(read.label()),
-                body: Some(body),
-                folds: true,
-                ..CardView::default()
-            })
-        }
+        "read" => Some(read_step(data, step)),
         "edit" | "write" => {
-            let result = data.result.as_ref().filter(|result| !result.error)?;
-            let details = result.details.as_ref()?;
-            let text = details.get("diff")?.as_str()?;
+            let Some(details) = data
+                .result
+                .as_ref()
+                .filter(|result| !result.error)
+                .and_then(|result| result.details.as_ref())
+            else {
+                return Some(step);
+            };
+            let Some(text) = details.get("diff").and_then(Value::as_str) else {
+                return Some(step);
+            };
             let (added, removed) = diff::counts(&diff::parse(text));
             let created =
                 details.get("created").and_then(Value::as_bool) == Some(true);
-            let key = open_key(&at.tool, at);
             let path = data.args.get("path").and_then(Value::as_str);
-            Some(CardView {
-                label: Some(if created {
-                    format!("new · +{added}")
-                } else {
-                    format!("+{added} −{removed}")
+            Some(Step {
+                receipt: vec![Receipt::Diff {
+                    added: added as u64,
+                    removed: removed as u64,
+                    new: created,
+                }],
+                body: Some(Body::Diff {
+                    text: text.to_owned(),
+                    path: path.map(str::to_owned),
                 }),
-                shape: Some(diffstat(added, removed)),
-                body: Some(diff_body(text, path, &key, opened(&key, view))),
-                ..CardView::default()
+                ..step
             })
         }
         listing::TOOL => {
-            let result = data.result.as_ref().filter(|result| !result.error)?;
-            let listing = DirListing::parse(result.details.as_ref()?)?;
-            let key = open_key("ls", at);
-            let body =
-                listing_card::body(&listing, &key, opened(&key, view), compact);
-            Some(CardView {
-                label: Some(listing.summary()),
-                body,
-                folds: true,
-                ..CardView::default()
+            let Some(listing) = data
+                .result
+                .as_ref()
+                .filter(|result| !result.error)
+                .and_then(|result| result.details.as_ref())
+                .and_then(DirListing::parse)
+            else {
+                return Some(step);
+            };
+            Some(Step {
+                receipt: vec![Receipt::measure(listing.summary())],
+                body: listing_card::body(&listing),
+                ..step
             })
         }
         "find" => {
-            let paths = found(data)?;
-            let key = open_key("find", at);
-            Some(CardView {
-                label: Some(if paths.is_empty() {
-                    "no files".into()
+            let Some(paths) = found(data) else {
+                return Some(step);
+            };
+            Some(Step {
+                receipt: vec![if paths.is_empty() {
+                    Receipt::measure("no files")
                 } else {
-                    counted(paths.len(), "file")
+                    Receipt::count(paths.len(), "file")
+                }],
+                body: (!paths.is_empty()).then(|| Body::Names {
+                    names: paths.into_iter().map(step::Name::plain).collect(),
+                    noun: "file".into(),
                 }),
-                body: (!paths.is_empty())
-                    .then(|| found_body(&paths, &key, opened(&key, view))),
-                folds: true,
-                ..CardView::default()
+                ..step
             })
         }
         "grep" => {
-            let lines = grep_lines(data)?;
-            let key = open_key("grep", at);
-            Some(CardView {
-                label: Some(grep_label(&lines)),
-                body: (!lines.is_empty()).then(|| {
-                    let needles = Needles::of(&data.args);
-                    grep_body(
-                        &lines,
-                        needles.as_ref(),
-                        &key,
-                        opened(&key, view),
-                    )
-                }),
-                folds: true,
-                ..CardView::default()
+            let Some(lines) = grep_lines(data) else {
+                return Some(step);
+            };
+            let needles = Needles::of(&data.args);
+            Some(Step {
+                receipt: grep_label(&lines),
+                body: (!lines.is_empty())
+                    .then(|| grep_matches(&lines, needles.as_ref())),
+                ..step
             })
         }
         "artifact_read" => {
-            let (id, start, end) = artifact_range(data)?;
+            let Some((id, start, end)) = artifact_range(data) else {
+                return Some(step);
+            };
             let size = view
                 .state
                 .and_then(|state| state.grants.get(&id))
                 .map(|grant| grant.artifact.size_bytes);
-            Some(artifact_card(start, end, size))
+            Some(Step {
+                receipt: vec![artifact_receipt(start, end, size)],
+                ..step
+            })
         }
         _ => None,
     }
@@ -1126,12 +924,7 @@ mod tests {
     /// when its call left it going, then its exit code, good only at 0.
     #[test]
     fn a_command_is_stamped_with_how_it_stands() {
-        let stamp = |label: &str, tone| {
-            Some(Node::Stamp {
-                label: label.into(),
-                tone,
-            })
-        };
+        let stamp = |label: &str, tone| Some(Receipt::stamp(label, tone));
         let term = |status: &str, code: Option<i32>| {
             Some(json!({"term": {"status": status, "exitCode": code,
                 "process": 3}}))
@@ -1144,8 +937,8 @@ mod tests {
         let going = ended("so far", term("running", None), false);
         assert_eq!(outcome(&going), stamp("running", Ink::Good));
         assert_eq!(
-            command_label("exec_command", &going).as_deref(),
-            Some("process 3")
+            command_label("exec_command", &going),
+            Some(Receipt::measure("process 3"))
         );
         assert_eq!(command_label("exec_command", &done), None);
         // Without a terminal, the text says it.
@@ -1153,10 +946,32 @@ mod tests {
         assert_eq!(outcome(&text), stamp("exit 2", Ink::Bad));
         assert_eq!(outcome(&ended("no such workdir", None, true)), None);
         assert_eq!(
-            command_label("write_stdin", &ended("a\nb\nc", None, false))
-                .as_deref(),
-            Some("3 new lines")
+            command_label("write_stdin", &ended("a\nb\nc", None, false)),
+            Some(Receipt::count(3, "new line"))
         );
+    }
+
+    /// A `read` gives its lines as code from its first line, in its
+    /// path's language, and counts them when it read the whole file.
+    #[test]
+    fn a_read_is_code_from_its_first_line() {
+        let text: String = (1..=10).map(|n| format!("line {n}\n")).collect();
+        let data = CallData {
+            args: json!({ "path": "src/a.rs" }),
+            ..ended(&text, Some(json!({ "total_lines": 10 })), false)
+        };
+        let step = read_step(&data, Step::default());
+        assert_eq!(step.receipt, vec![Receipt::count(10, "line")]);
+        let Some(Body::Code {
+            lang,
+            text,
+            first_line,
+        }) = step.body
+        else {
+            panic!("code");
+        };
+        assert_eq!((lang.as_deref(), first_line), (Some("rust"), Some(1)));
+        assert_eq!(text.lines().count(), 10);
     }
 
     /// A grep line as the host writes it: `path:12: text` for a match,
@@ -1240,13 +1055,20 @@ mod tests {
             line("src/a.rs", false),
             line("src/b.rs", true),
         ];
-        assert_eq!(grep_label(&lines), "2 matches · 2 files");
-        assert_eq!(grep_label(&lines[..1]), "1 match · 1 file");
+        let said = |lines: &[GrepLine]| {
+            grep_label(lines)
+                .iter()
+                .map(Receipt::text)
+                .collect::<Vec<_>>()
+                .join(" · ")
+        };
+        assert_eq!(said(&lines), "2 matches · 2 files");
+        assert_eq!(said(&lines[..1]), "1 match · 1 file");
         assert_eq!(
             grep_lines(&ended("No matches found", None, false)),
             Some(Vec::new())
         );
-        assert_eq!(grep_label(&[]), "no matches");
+        assert_eq!(said(&[]), "no matches");
         assert_eq!(grep_lines(&ended("bad pattern", None, true)), None);
     }
 
@@ -1291,56 +1113,29 @@ mod tests {
             line(5, "pub struct RetryPolicy {", true),
             line(12, "    max: u32,", false),
         ];
-        let Node::Band { children } =
-            grep_body(&lines, Some(&needles), "key", false)
+        let Body::Matches { lines: found } =
+            grep_matches(&lines, Some(&needles))
         else {
-            panic!("a band");
+            panic!("matches");
         };
-        assert_eq!(
-            children[1],
-            Node::Marked {
-                text: " 5  pub struct RetryPolicy {".into(),
-                spans: vec![(16, 26)],
-            }
-        );
-        assert!(matches!(&children[2], Node::Toned { text, .. }
-            if text == "12      max: u32,"));
+        assert_eq!(found[0].spans, vec![(12, 22)]);
+        assert!(found[1].spans.is_empty() && !found[1].matched);
         // Without literals to find, the line is there unmarked.
-        let Node::Band { children } = grep_body(&lines, None, "key", false)
-        else {
-            panic!("a band");
+        let Body::Matches { lines: found } = grep_matches(&lines, None) else {
+            panic!("matches");
         };
-        assert!(matches!(&children[1], Node::Marked { spans, .. }
-            if spans.is_empty()));
+        assert!(found[0].spans.is_empty());
     }
 
-    /// A long diff shows its first lines until opened, under its headers.
+    /// An artifact read says how much it read of how much; with no size
+    /// known, only how much was read.
     #[test]
-    fn a_long_diff_opens_to_every_line() {
-        let body: String = (0..20).map(|n| format!("+line {n}\n")).collect();
-        let text = format!("--- a\n+++ b\n@@ -0,0 +1,20 @@\n{body}");
-        let shown = |open| match diff_body(&text, None, "key", open) {
-            Node::Stack { children } => match &children[0] {
-                Node::Diff { text, .. } => diff::parse(text).len(),
-                other => panic!("a diff: {other:?}"),
-            },
-            other => panic!("a stack: {other:?}"),
-        };
-        assert_eq!(shown(false), DIFF_PEEK);
-        assert_eq!(shown(true), 20);
-    }
-
-    /// The share of an artifact read lights its ticks; with no size
-    /// known, the card says only how much was read.
-    #[test]
-    fn an_artifact_read_lights_its_share() {
-        let card = artifact_card(0, 4096, Some(18 * 1024));
-        assert_eq!(card.label.as_deref(), Some("4.0 KB of 18 KB"));
-        let Some(Node::Ticks { lit, total, .. }) = card.body else {
-            panic!("ticks");
-        };
-        assert_eq!((lit, total), (5, SHARE_TICKS));
-        assert_eq!(artifact_card(0, 10, None).body, None);
+    fn an_artifact_read_says_its_share() {
+        assert_eq!(
+            artifact_receipt(0, 4096, Some(18 * 1024)).text(),
+            "4.0 KB of 18 KB"
+        );
+        assert_eq!(artifact_receipt(0, 10, None).text(), "10 B");
         assert_eq!(
             artifact_range(&ended(
                 "Read artifact art-7c21 at bytes 0..4096",

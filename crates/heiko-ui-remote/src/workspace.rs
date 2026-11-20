@@ -557,6 +557,9 @@ pub struct Workspace {
     /// Tool cards that fold, opened, as `(run, call id)`. They start
     /// closed.
     open_cards: HashSet<(RunId, String)>,
+    /// The calls whose body the person asked to see all of: past its
+    /// peek, `+ N more` clicked.
+    whole_cards: HashSet<(RunId, String)>,
     /// Stretches of calls the person folded or opened, by their run and
     /// first call's id: whether each is folded (ADR 0060).
     stretch_folds: HashMap<(RunId, String), bool>,
@@ -852,6 +855,7 @@ impl Workspace {
             history_repo: None,
             open_notes: HashSet::new(),
             open_cards: HashSet::new(),
+            whole_cards: HashSet::new(),
             stretch_folds: HashMap::new(),
             kept_branch: None,
             landings: HashMap::new(),
@@ -1712,6 +1716,25 @@ impl Workspace {
 
     pub fn card_open(&self, run: &RunId, call_id: &str) -> bool {
         self.open_cards.contains(&(run.clone(), call_id.to_owned()))
+    }
+
+    /// Shows all of a call's body, past its peek, or its peek again.
+    pub fn toggle_card_whole(
+        &mut self,
+        run: &RunId,
+        call_id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let key = (run.clone(), call_id.to_owned());
+        if !self.whole_cards.remove(&key) {
+            self.whole_cards.insert(key);
+        }
+        cx.notify();
+    }
+
+    pub fn card_whole(&self, run: &RunId, call_id: &str) -> bool {
+        self.whole_cards
+            .contains(&(run.clone(), call_id.to_owned()))
     }
 
     /// Folds the stretch of calls starting at `first_call`, or opens it,

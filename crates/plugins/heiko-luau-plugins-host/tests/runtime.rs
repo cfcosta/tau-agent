@@ -43,9 +43,9 @@ return heiko.plugin {
       call = function(args, model, env)
         return { ok = not days.blocked(env) }
       end,
-      card = function(input, model, env)
+      step = function(input, model, env)
         local result = input.result
-        return ui.badge(result.ok and "safe" or "wait", result.ok and "good" or "warn")
+        return { receipt = { ui.receipt.stamp(result.ok and "safe" or "wait", result.ok and "good" or "warn") } }
       end,
     },
     run_it = {
@@ -147,7 +147,7 @@ async fn a_plugin_declares_what_it_is() {
     let tools: Vec<(&str, bool)> = declared
         .tools
         .iter()
-        .map(|tool| (tool.name.as_str(), tool.card))
+        .map(|tool| (tool.name.as_str(), tool.step))
         .collect();
     assert_eq!(
         tools,
@@ -230,15 +230,15 @@ async fn hooks_answer_as_the_plugin_says() {
     let window =
         call("Friday", Hook::Tool("deploy_window".into()), json!({})).await;
     assert_eq!(window.value, json!({ "ok": false }));
-    let card = call(
+    let step = call(
         "Friday",
-        Hook::Card("deploy_window".into()),
+        Hook::Step("deploy_window".into()),
         json!({ "call": {}, "result": { "ok": false } }),
     )
     .await;
     assert_eq!(
-        card.value,
-        json!({ "piece": "badge", "text": "wait", "tone": "warn" })
+        step.value,
+        json!({ "receipt": [{ "part": "stamp", "text": "wait", "tone": "warn" }] })
     );
 
     // A hook it does not have answers nothing.
@@ -369,9 +369,9 @@ async fn a_failing_hook_says_why_and_keeps_the_state() {
 local heiko = require("heiko")
 return heiko.plugin { tools = {
     slow = {
-      description = "Never draws its card.",
+      description = "Never gives its step.",
       call = function(args, model, env) return 1 end,
-      card = function(input, model, env)
+      step = function(input, model, env)
         while true do end
       end,
     },
@@ -404,7 +404,7 @@ return heiko.plugin { tools = {
     assert_eq!(failed.state, json!({ "kept": 1 }));
     let looped = loaded
         .call(
-            &Hook::Card("slow".into()),
+            &Hook::Step("slow".into()),
             json!({ "call": {}, "result": 1 }),
             &ctx,
             no_reach(),
@@ -485,9 +485,9 @@ t.case("lets them through on Monday", function()
   t.equal(run:before_tool { name = "exec_command", args = { cmd = "make deploy" } }, nil)
 end)
 
-t.case("the card says when to wait", function()
+t.case("the step says when to wait", function()
   local run = t.run { now = "2026-10-09T10:00:00Z" }
-  t.equal(run:card("deploy_window", {}, { ok = false }), ui.badge("wait", "warn"))
+  t.equal(run:step("deploy_window", {}, { ok = false }), { receipt = { ui.receipt.stamp("wait", "warn") } })
 end)
 
 t.case("turns are counted, and the view shows them", function()
@@ -531,7 +531,7 @@ async fn a_plugins_tests_run_against_fake_runs() {
             ("broken", "tests/broken.luau", false),
             ("friday", "blocks deploys on Friday", true),
             ("friday", "lets them through on Monday", true),
-            ("friday", "the card says when to wait", true),
+            ("friday", "the step says when to wait", true),
             ("friday", "turns are counted, and the view shows them", true),
             ("friday", "a tool calls the fake tools it is given", true),
             ("friday", "this one is wrong on purpose", false),

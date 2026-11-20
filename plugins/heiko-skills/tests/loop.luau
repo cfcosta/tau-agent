@@ -34,9 +34,6 @@ t.loop("the model loads a listed skill", {
 	t.equal(has(result.text, "Group the commits by kind."), true)
 	t.equal(has(result.text, "description:"), false)
 	t.equal(has(result.text, "/skills/release-notes\n\n"), true, result.text)
-	local _, loaded = next(run.state.loaded)
-	t.equal(loaded.name, "release-notes")
-	t.equal(string.sub(loaded.file, -#"/skills/release-notes/SKILL.md"), "/skills/release-notes/SKILL.md")
 end)
 
 t.loop("an unknown skill names the ones there are", {
