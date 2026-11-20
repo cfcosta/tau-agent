@@ -124,7 +124,8 @@ local function saving(name, call)
 		if not ok then
 			error(answer, 0)
 		end
-		return answer
+		-- The model reads the answer; the call's step, what it did.
+		return heiko.reply(answer, details or {})
 	end
 end
 
@@ -171,21 +172,33 @@ local function write_call(args, env, request)
 		error(why, 0)
 	end
 	local prefix = scope_name == "user" and USER or ""
-	return render.render_written(written, prefix), { id = prefix .. written.id, title = written.redacted == 0 and draft.title or nil, action = written.action, redacted = written.redacted }
+	-- A note a secret was taken out of shows neither its title nor its
+	-- body in the chat.
+	local clean = written.redacted == 0
+	return render.render_written(written, prefix),
+		{
+			id = prefix .. written.id,
+			type = kind,
+			title = clean and draft.title or nil,
+			body = clean and draft.body or nil,
+			action = written.action,
+			redacted = written.redacted,
+		}
 end
 
 local function search_call(args, _env)
 	local query = need_string(args, "query")
 	local limit = math.clamp(math.floor(tonumber(args.limit) or 8), 1, 20)
 	local hits = memory.search(memory.scopes(), query, limit)
-	local ids = {}
+	local ids, titles = {}, {}
 	for _, hit in ipairs(hits) do
 		table.insert(ids, hit.id)
+		table.insert(titles, hit.title)
 	end
 	if #hits == 0 then
-		return "No notes match.", { ids = ids }
+		return "No notes match.", { ids = ids, titles = titles }
 	end
-	return render.render_hits(hits), { ids = ids }
+	return render.render_hits(hits), { ids = ids, titles = titles }
 end
 
 local function read_call(args, _env)
@@ -196,7 +209,8 @@ local function read_call(args, _env)
 		error("no note is called " .. require("store").quoted(id), 0)
 	end
 	local prefix = string.sub(id, 1, #USER) == USER and USER or ""
-	return render.render_reading(reading, prefix)
+	local text = render.render_reading(reading, prefix)
+	return text, { id = id, text = text }
 end
 
 local function attempt_call(args, env)
@@ -221,7 +235,7 @@ local function attempt_call(args, env)
 	local prefix = string.sub(args.id, 1, #USER) == USER and USER or ""
 	local verb = settles and "Settled" or "Recorded"
 	return verb .. " attempt " .. number .. " on `" .. prefix .. id .. "`: " .. outcome .. ".",
-		{ id = prefix .. id, attempt = number, outcome = outcome }
+		{ id = prefix .. id, attempt = number, outcome = outcome, what = what, evidence = args.evidence }
 end
 
 local function link_call(args, env)
@@ -235,7 +249,75 @@ local function link_call(args, env)
 	if not ok then
 		error(why, 0)
 	end
-	return "Linked `" .. from .. "` " .. kind .. " `" .. to .. "`.", { from = from, to = to, type = kind }
+	return "Linked `" .. from .. "` " .. kind .. " `" .. to .. "`.", { from = from, to = to, type = kind, why = args.why }
+end
+
+-- Each memory tool's step (ADR 0064): what it is about, what it did, and
+-- what it wrote or found.
+local OUTCOME_TONES = { worked = "good", failed = "bad", untested = "warn" }
+
+local function lines_of(text)
+	local _, breaks = string.gsub(text, "\n", "")
+	return breaks + 1
+end
+
+local steps = {}
+
+function steps.memory_write(input)
+	local written = input.result
+	return {
+		subject = written.title or written.id,
+		receipt = { ui.receipt.stamp(written.type .. " · " .. (written.action or "written")) },
+		body = written.body and ui.form.code("markdown", written.body) or nil,
+	}
+end
+
+function steps.memory_search(input)
+	local found = input.result
+	local names = {}
+	-- Each note by its title; the model reads its id.
+	for at, id in ipairs(found.ids or {}) do
+		table.insert(names, (found.titles or {})[at] or id)
+	end
+	return {
+		subject = input.call.query,
+		receipt = { ui.receipt.count(#names, "note") },
+		body = #names > 0 and ui.form.names(names, "note") or nil,
+	}
+end
+
+function steps.memory_read(input)
+	local read = input.result
+	return {
+		subject = read.id,
+		receipt = { ui.receipt.count(lines_of(read.text), "line") },
+		body = ui.form.code("markdown", read.text),
+	}
+end
+
+function steps.memory_attempt(input)
+	local tried = input.result
+	local pairs_ = {}
+	if tried.what then
+		table.insert(pairs_, { key = "tried", value = tried.what })
+	end
+	if tried.evidence then
+		table.insert(pairs_, { key = "evidence", value = tried.evidence })
+	end
+	return {
+		subject = tried.id,
+		receipt = { ui.receipt.stamp(tried.outcome, OUTCOME_TONES[tried.outcome]) },
+		body = #pairs_ > 0 and ui.form.record(pairs_) or nil,
+	}
+end
+
+function steps.memory_link(input)
+	local linked = input.result
+	return {
+		subject = linked.from .. " → " .. linked.to,
+		receipt = { ui.receipt.stamp(linked.type) },
+		body = linked.why and ui.form.record({ { key = "why", value = linked.why } }) or nil,
+	}
 end
 
 local LINK_SCHEMA = {
@@ -452,6 +534,8 @@ local plugin = heiko.plugin({
 				required = { "type", "title", "description", "body" },
 			},
 			call = saving("memory_write", write_call),
+			subject = "title",
+			step = steps.memory_write,
 		},
 		memory_search = {
 			kind = "search",
@@ -465,6 +549,8 @@ local plugin = heiko.plugin({
 				required = { "query" },
 			},
 			call = saving("memory_search", search_call),
+			subject = "query",
+			step = steps.memory_search,
 		},
 		memory_read = {
 			kind = "look",
@@ -475,6 +561,8 @@ local plugin = heiko.plugin({
 				required = { "id" },
 			},
 			call = saving("memory_read", read_call),
+			subject = "id",
+			step = steps.memory_read,
 		},
 		memory_attempt = {
 			kind = "change",
@@ -491,6 +579,8 @@ local plugin = heiko.plugin({
 				required = { "id", "outcome" },
 			},
 			call = saving("memory_attempt", attempt_call),
+			subject = "id",
+			step = steps.memory_attempt,
 		},
 		memory_link = {
 			kind = "change",
@@ -506,6 +596,8 @@ local plugin = heiko.plugin({
 				required = { "from", "to", "type" },
 			},
 			call = saving("memory_link", link_call),
+			subject = "from",
+			step = steps.memory_link,
 		},
 	},
 

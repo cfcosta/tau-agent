@@ -1,0 +1,173 @@
+[
+  {
+    "args": {
+      "body": "The property tests of heiko-ui-remote take minutes in a debug build and hit nextest's timeout.\n\nRun `cargo nextest run --release`.",
+      "description": "Build tests with --release; debug binaries run the property tests too slowly",
+      "title": "Release tests time out when the test binary is built in debug",
+      "type": "gotcha"
+    },
+    "step": {
+      "body": {
+        "first_line": null,
+        "form": "code",
+        "lang": "markdown",
+        "text": "The property tests of heiko-ui-remote take minutes in a debug build and hit nextest's timeout.\n\nRun `cargo nextest run --release`."
+      },
+      "receipt": [
+        {
+          "part": "stamp",
+          "text": "gotcha · created",
+          "tone": "neutral"
+        }
+      ],
+      "subject": "Release tests time out when the test binary is built in debug"
+    },
+    "text": "Saved `release-tests-time-out-when-the-test-binary-is-built-in-debug`.",
+    "tool": "memory_write",
+    "value": {
+      "action": "created",
+      "body": "The property tests of heiko-ui-remote take minutes in a debug build and hit nextest's timeout.\n\nRun `cargo nextest run --release`.",
+      "id": "release-tests-time-out-when-the-test-binary-is-built-in-debug",
+      "redacted": 0,
+      "title": "Release tests time out when the test binary is built in debug",
+      "type": "gotcha"
+    }
+  },
+  {
+    "args": {
+      "query": "nextest timeout"
+    },
+    "step": {
+      "body": {
+        "form": "names",
+        "names": [
+          {
+            "text": "Release tests time out when the test binary is built in debug",
+            "tone": null
+          }
+        ],
+        "noun": "note"
+      },
+      "receipt": [
+        {
+          "n": 1,
+          "noun": "note",
+          "part": "count"
+        }
+      ],
+      "subject": "nextest timeout"
+    },
+    "text": "- `release-tests-time-out-when-the-test-binary-is-built-in-debug` [gotcha] Release tests time out when the test binary is built in debug — Build tests with --release; debug binaries run the property tests too slowly (from a run of test)\n  The property tests of heiko-ui-remote take minutes in a debug build and hit nextest's timeout.\n",
+    "tool": "memory_search",
+    "value": {
+      "ids": [
+        "release-tests-time-out-when-the-test-binary-is-built-in-debug"
+      ],
+      "titles": [
+        "Release tests time out when the test binary is built in debug"
+      ]
+    }
+  },
+  {
+    "args": {
+      "id": "release-tests-time-out-when-the-test-binary-is-built-in-debug"
+    },
+    "step": {
+      "body": {
+        "first_line": null,
+        "form": "code",
+        "lang": "markdown",
+        "text": "<note id=\"release-tests-time-out-when-the-test-binary-is-built-in-debug\" type=\"gotcha\">\n# Release tests time out when the test binary is built in debug\nBuild tests with --release; debug binaries run the property tests too slowly\nFrom a run of test: check it before relying on it with another model.\n\nThe property tests of heiko-ui-remote take minutes in a debug build and hit nextest's timeout.\n\nRun `cargo nextest run --release`.\n</note>"
+      },
+      "receipt": [
+        {
+          "n": 9,
+          "noun": "line",
+          "part": "count"
+        }
+      ],
+      "subject": "release-tests-time-out-when-the-test-binary-is-built-in-debug"
+    },
+    "text": "<note id=\"release-tests-time-out-when-the-test-binary-is-built-in-debug\" type=\"gotcha\">\n# Release tests time out when the test binary is built in debug\nBuild tests with --release; debug binaries run the property tests too slowly\nFrom a run of test: check it before relying on it with another model.\n\nThe property tests of heiko-ui-remote take minutes in a debug build and hit nextest's timeout.\n\nRun `cargo nextest run --release`.\n</note>",
+    "tool": "memory_read",
+    "value": {
+      "id": "release-tests-time-out-when-the-test-binary-is-built-in-debug",
+      "text": "<note id=\"release-tests-time-out-when-the-test-binary-is-built-in-debug\" type=\"gotcha\">\n# Release tests time out when the test binary is built in debug\nBuild tests with --release; debug binaries run the property tests too slowly\nFrom a run of test: check it before relying on it with another model.\n\nThe property tests of heiko-ui-remote take minutes in a debug build and hit nextest's timeout.\n\nRun `cargo nextest run --release`.\n</note>"
+    }
+  },
+  {
+    "args": {
+      "evidence": "the hegel suite still timed out at 300 s",
+      "id": "release-tests-time-out-when-the-test-binary-is-built-in-debug",
+      "outcome": "failed",
+      "what": "Raise the slow-timeout to 300 s"
+    },
+    "step": {
+      "body": {
+        "form": "record",
+        "pairs": [
+          {
+            "key": "tried",
+            "value": "Raise the slow-timeout to 300 s"
+          },
+          {
+            "key": "evidence",
+            "value": "the hegel suite still timed out at 300 s"
+          }
+        ]
+      },
+      "receipt": [
+        {
+          "part": "stamp",
+          "text": "failed",
+          "tone": "bad"
+        }
+      ],
+      "subject": "release-tests-time-out-when-the-test-binary-is-built-in-debug"
+    },
+    "text": "Recorded attempt 1 on `release-tests-time-out-when-the-test-binary-is-built-in-debug`: failed.",
+    "tool": "memory_attempt",
+    "value": {
+      "attempt": 1,
+      "evidence": "the hegel suite still timed out at 300 s",
+      "id": "release-tests-time-out-when-the-test-binary-is-built-in-debug",
+      "outcome": "failed",
+      "what": "Raise the slow-timeout to 300 s"
+    }
+  },
+  {
+    "args": {
+      "from": "release-tests-time-out-when-the-test-binary-is-built-in-debug",
+      "to": "crates/heiko-ui-remote",
+      "type": "about",
+      "why": "its tests are the slow ones"
+    },
+    "step": {
+      "body": {
+        "form": "record",
+        "pairs": [
+          {
+            "key": "why",
+            "value": "its tests are the slow ones"
+          }
+        ]
+      },
+      "receipt": [
+        {
+          "part": "stamp",
+          "text": "about",
+          "tone": "neutral"
+        }
+      ],
+      "subject": "release-tests-time-out-when-the-test-binary-is-built-in-debug → crates/heiko-ui-remote"
+    },
+    "text": "Linked `release-tests-time-out-when-the-test-binary-is-built-in-debug` about `crates/heiko-ui-remote`.",
+    "tool": "memory_link",
+    "value": {
+      "from": "release-tests-time-out-when-the-test-binary-is-built-in-debug",
+      "to": "crates/heiko-ui-remote",
+      "type": "about",
+      "why": "its tests are the slow ones"
+    }
+  }
+]

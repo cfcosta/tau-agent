@@ -417,6 +417,7 @@ pub static SCREENS: &[(&str, Screen)] = &[
     }),
     ("skill", |ws, _, cx| skill(ws, true, cx)),
     ("todo", |ws, _, cx| todo(ws, cx)),
+    ("memory-calls", |ws, _, cx| memory_calls(ws, cx)),
     ("skill-missing", |ws, _, cx| skill(ws, false, cx)),
     ("codemode", |ws, _, cx| codemode(ws, cx)),
     ("reasoning-wait", |ws, _, cx| reasoning(ws, None, cx)),
@@ -1993,6 +1994,55 @@ fn skill(workspace: &mut Workspace, found: bool, cx: &mut Context<Workspace>) {
         }),
         cx,
     );
+}
+
+/// heiko-agent's main chat after the model used each of heiko-memory's
+/// tools, as heiko-memory's `steps` fixture made them: each call's step
+/// kept with its result.
+fn memory_calls(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
+    let run = run_id();
+    workspace.navigate(Route::Run(run.clone()), cx);
+    let fixture = crate::luau_fixture(heiko_luau_plugins::names::MEMORY, "steps");
+    let kinds = |tool: &str| match tool {
+        "memory_search" => "search",
+        "memory_read" => "look",
+        _ => "change",
+    };
+    for (n, call) in fixture.as_array().into_iter().flatten().enumerate() {
+        let tool = call["tool"].as_str().unwrap_or_default().to_owned();
+        let call_id = format!("call_memory_{}", n + 1);
+        workspace.apply(
+            HostUpdate::Event(RunEvent::ToolStart {
+                run: run.clone(),
+                call_id: call_id.clone(),
+                tool: tool.clone().into(),
+                args: call["args"].clone(),
+                parent: None,
+            }),
+            cx,
+        );
+        let details = serde_json::json!({
+            "plugin": heiko_luau_plugins::names::MEMORY,
+            "value": call["value"],
+            "step": call["step"],
+            "kind": kinds(&tool),
+        });
+        workspace.apply(
+            HostUpdate::Event(RunEvent::ToolEnd {
+                run: run.clone(),
+                call_id,
+                output: std::sync::Arc::new(heiko_agent::tool::ToolOutput {
+                    details: Some(details),
+                    ..heiko_agent::tool::ToolOutput::text(
+                        call["text"].as_str().unwrap_or_default().to_owned(),
+                    )
+                }),
+                is_error: false,
+                parent: None,
+            }),
+            cx,
+        );
+    }
 }
 
 /// heiko-agent's main chat after it filed an issue, claimed it and wrote

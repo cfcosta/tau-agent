@@ -94,7 +94,8 @@
         ],
         "type": "object"
       },
-      "step": false,
+      "step": true,
+      "subject": "id",
       "kind": "change"
     },
     {
@@ -125,7 +126,8 @@
         ],
         "type": "object"
       },
-      "step": false,
+      "step": true,
+      "subject": "from",
       "kind": "change"
     },
     {
@@ -143,7 +145,8 @@
         ],
         "type": "object"
       },
-      "step": false,
+      "step": true,
+      "subject": "id",
       "kind": "look"
     },
     {
@@ -166,7 +169,8 @@
         ],
         "type": "object"
       },
-      "step": false,
+      "step": true,
+      "subject": "query",
       "kind": "search"
     },
     {
@@ -240,7 +244,8 @@
         ],
         "type": "object"
       },
-      "step": false,
+      "step": true,
+      "subject": "title",
       "kind": "change"
     }
   ],
